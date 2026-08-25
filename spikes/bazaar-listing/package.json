@@ -1,0 +1,21 @@
+{
+  "name": "coinslot-spike-bazaar-listing",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Спайк: config-driven x402-витрина на официальном стеке x402 + CDP facilitator",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "@coinbase/cdp-sdk": "1.55.0",
+    "@x402/core": "2.23.0",
+    "@x402/evm": "2.23.0",
+    "@x402/express": "2.23.0",
+    "@x402/extensions": "2.23.0",
+    "@x402/fetch": "2.23.0",
+    "@x402/svm": "2.23.0",
+    "express": "5.2.1",
+    "viem": "2.47.0"
+  }
+}

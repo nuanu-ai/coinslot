@@ -1,9 +1,7 @@
 {
-  "comment": "Мок-каталог Coinslot: несколько мерчантов, у каждого свой payTo (non-custodial). Формат — x402 v2 (specs/x402-specification-v2.md). serviceName/tags уходят в resource, их фасилитатор режет по printable ASCII (32 симв., ≤5 тегов). payTo — заглушки.",
+  "comment": "Мок-каталог Coinslot: несколько мерчантов, у каждого свой payTo (non-custodial). Витрина целиком генерируется отсюда. serviceName/tags уходят в resource, их фасилитатор режет по printable ASCII (32 симв., ≤5 тегов). payTo — одноразовый seller-кошелёк спайка (buyer отдельный: CDP facilitator запрещает self-send). asset/assetMeta больше не задаём: официальный стек берёт дефолтный ассет сети (USDC на Base, EIP-712 name=USD Coin version=2).",
   "defaults": {
     "network": "eip155:8453",
-    "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-    "assetMeta": { "name": "USD Coin", "version": "2" },
     "maxTimeoutSeconds": 300
   },
   "merchants": [
@@ -12,7 +10,7 @@
       "name": "Freeland (mock)",
       "serviceName": "Freeland",
       "tags": ["vpn", "esim", "privacy", "telecom"],
-      "payTo": "0x000000000000000000000000000000000000dEaD",
+      "payTo": "0x784dEc24ac4605A8DD7145e66446E7cf139ad1aC",
       "skus": [
         {
           "id": "vpn-config",
@@ -96,7 +94,7 @@
       "name": "Второй мерчант для проверки мульти-листинга (mock)",
       "serviceName": "Acme Espresso",
       "tags": ["coffee", "commerce", "quote"],
-      "payTo": "0x000000000000000000000000000000000000bEEF",
+      "payTo": "0x784dEc24ac4605A8DD7145e66446E7cf139ad1aC",
       "skus": [
         {
           "id": "beans-quote",
