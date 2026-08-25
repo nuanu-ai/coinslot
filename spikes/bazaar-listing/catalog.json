@@ -1,0 +1,114 @@
+{
+  "comment": "Мок-каталог Coinslot: несколько мерчантов, у каждого свой payTo (non-custodial). Формат accepts скопирован с живой записи Bitrefill в Bazaar (2026-08-25). payTo — заглушки.",
+  "defaults": {
+    "network": "eip155:8453",
+    "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "assetMeta": { "name": "USD Coin", "version": "2" },
+    "maxTimeoutSeconds": 300
+  },
+  "merchants": [
+    {
+      "id": "freeland",
+      "name": "Freeland (mock)",
+      "payTo": "0x000000000000000000000000000000000000dEaD",
+      "skus": [
+        {
+          "id": "vpn-config",
+          "method": "GET",
+          "path": "/freeland/vpn/config",
+          "priceUsd": 5.0,
+          "description": "Buy 30 days of VPN access, get a ready-to-import WireGuard config. One-shot purchase, no account needed. Pay in USDC via x402.",
+          "input": {
+            "type": "http",
+            "method": "GET",
+            "queryParams": { "protocol": "wireguard" }
+          },
+          "inputSchema": {
+            "queryParams": {
+              "properties": {
+                "protocol": { "type": "string", "enum": ["wireguard"], "description": "Tunnel protocol; only wireguard is supported" }
+              }
+            }
+          },
+          "outputExample": {
+            "expiresAt": "2026-09-24T00:00:00Z",
+            "config": "[Interface]\nPrivateKey = <redacted>\nAddress = 10.66.0.2/32\n\n[Peer]\nPublicKey = <server>\nEndpoint = mock.freeland.example:51820\nAllowedIPs = 0.0.0.0/0"
+          }
+        },
+        {
+          "id": "esim-plans",
+          "method": "GET",
+          "path": "/freeland/esim/plans",
+          "priceUsd": 0.001,
+          "description": "Search available eSIM data plans by country (ISO 3166-1 alpha-2). Returns plan ids, data caps and USD prices. Pay per query in USDC via x402.",
+          "input": {
+            "type": "http",
+            "method": "GET",
+            "queryParams": { "country": "TR" }
+          },
+          "inputSchema": {
+            "queryParams": {
+              "properties": {
+                "country": { "type": "string", "description": "ISO 3166-1 alpha-2 country code" }
+              },
+              "required": ["country"]
+            }
+          },
+          "outputExample": {
+            "plans": [
+              { "planId": "tr-5gb-30d", "dataGb": 5, "days": 30, "priceUsd": 8.4 },
+              { "planId": "tr-10gb-30d", "dataGb": 10, "days": 30, "priceUsd": 13.2 }
+            ]
+          }
+        },
+        {
+          "id": "virtual-number-rent",
+          "method": "POST",
+          "path": "/freeland/numbers/rent",
+          "priceUsd": 2.0,
+          "description": "Rent a virtual phone number for inbound SMS/OTP in the given country. Returns the number and a polling URL for received messages. USDC via x402.",
+          "input": {
+            "type": "http",
+            "method": "POST",
+            "body": { "country": "US" }
+          },
+          "inputSchema": {
+            "body": {
+              "properties": {
+                "country": { "type": "string", "description": "ISO 3166-1 alpha-2 country code" }
+              },
+              "required": ["country"]
+            }
+          },
+          "outputExample": {
+            "number": "+1 202 555 0139",
+            "expiresAt": "2026-08-26T00:00:00Z",
+            "messagesUrl": "/freeland/numbers/msg-mock-id/messages"
+          }
+        }
+      ]
+    },
+    {
+      "id": "acme-espresso",
+      "name": "Второй мерчант для проверки мульти-листинга (mock)",
+      "payTo": "0x000000000000000000000000000000000000bEEF",
+      "skus": [
+        {
+          "id": "beans-quote",
+          "method": "GET",
+          "path": "/acme/beans/quote",
+          "priceUsd": 0.001,
+          "description": "Get a shipping-inclusive USD quote for a bag of single-origin espresso beans by weight. Demo of a physical-goods quote flow over x402.",
+          "input": { "type": "http", "method": "GET", "queryParams": { "grams": "250" } },
+          "inputSchema": {
+            "queryParams": {
+              "properties": { "grams": { "type": "string", "description": "Bag size in grams: 250 or 1000" } },
+              "required": ["grams"]
+            }
+          },
+          "outputExample": { "grams": 250, "priceUsd": 14.5, "shipsTo": ["ID", "SG"] }
+        }
+      ]
+    }
+  ]
+}
