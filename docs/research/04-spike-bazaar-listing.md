@@ -67,14 +67,24 @@ extension (собирать сервер из `@x402/*` напрямую, мин
 - Оговорка: wire-формат воспроизведён по наблюдаемым данным; в Phase 1
   заменить самописный 402 официальным middleware и свериться.
 
-### Phase 1 — валидация и листинг в песочнице (следующий шаг)
+### Phase 1 — валидация и листинг (в работе, 2026-08-25)
 
-Нужно (действия Дмитрия):
-- [ ] аккаунт CDP + API key (создание аккаунтов — только вручную);
-- [ ] публичный URL для витрины: для validate хватит туннеля, но Bazaar
-      занижает shared-домены → для честного замера нужен свой домен/сабдомен;
-- [ ] кошелёк с небольшим количеством USDC на Base для self-settle
-      (несколько долларов).
+Публичный URL: **https://coinslot.nuanu.ai** — инфраструктура подготовлена:
+- PR nuanu-ai/infra#283: DNS A-запись + четвёртый маршрут Comino ingress
+  (SNI passthrough → dmitry-dev 10.20.10.20:443), запись заклеймлена как
+  experiment с expiry 2026-10-25, decision
+  `2026-08-25-coinslot-spike-public-route`;
+- на VM dmitry-dev развёрнуто (docker compose, `~/coinslot-spike/`):
+  Caddy (TLS-ALPN ACME, слушает 10.20.10.20:443) → spike-витрина
+  (node:22-alpine, `BASE_URL=https://coinslot.nuanu.ai`); UFW открыт 443
+  из vswitch-сети. Caddy ретраит ACME до применения маршрута — по
+  задокументированному прецеденту vibe.nuanu.ai.
+
+Осталось (действия Дмитрия):
+- [ ] смержить infra#283 и применить: tofu apply (cloudflare stack) +
+      `ansible/comino-ingress/run.sh --diff` (дважды, до changed=0);
+- [ ] CDP API key — положить на VM в env (не в чат, не в репо);
+- [ ] кошелёк с небольшим количеством USDC на Base для self-settle.
 
 План: официальный middleware → `validate` → первый settle → замер задержки
 появления в discovery → изменение цены/описания → замер задержки обновления.
