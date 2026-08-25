@@ -1,5 +1,5 @@
 {
-  "comment": "Мок-каталог Coinslot: несколько мерчантов, у каждого свой payTo (non-custodial). Формат accepts скопирован с живой записи Bitrefill в Bazaar (2026-08-25). payTo — заглушки.",
+  "comment": "Мок-каталог Coinslot: несколько мерчантов, у каждого свой payTo (non-custodial). Формат — x402 v2 (specs/x402-specification-v2.md). serviceName/tags уходят в resource, их фасилитатор режет по printable ASCII (32 симв., ≤5 тегов). payTo — заглушки.",
   "defaults": {
     "network": "eip155:8453",
     "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
@@ -10,6 +10,8 @@
     {
       "id": "freeland",
       "name": "Freeland (mock)",
+      "serviceName": "Freeland",
+      "tags": ["vpn", "esim", "privacy", "telecom"],
       "payTo": "0x000000000000000000000000000000000000dEaD",
       "skus": [
         {
@@ -70,6 +72,7 @@
           "input": {
             "type": "http",
             "method": "POST",
+            "bodyType": "json",
             "body": { "country": "US" }
           },
           "inputSchema": {
@@ -91,6 +94,8 @@
     {
       "id": "acme-espresso",
       "name": "Второй мерчант для проверки мульти-листинга (mock)",
+      "serviceName": "Acme Espresso",
+      "tags": ["coffee", "commerce", "quote"],
       "payTo": "0x000000000000000000000000000000000000bEEF",
       "skus": [
         {
