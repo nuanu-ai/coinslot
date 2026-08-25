@@ -9,6 +9,8 @@
 - [x] Есть ли аналоги/конкуренты, от которых отталкиваемся? →
       `02-agentic-storefronts.md` (ниша пуста; ближайшие: Stripe syndication /
       PayPal Store Sync — фиат; Bitrefill/Travala — прецеденты мерчантов в x402)
+- [ ] Механика адреса доставки для физтовара (delivery token) — открытый
+      дизайн-вопрос H3 (см. docs/vision.md)
 
 ## Ограничения
 - [ ] Платформа: web / mobile / desktop / CLI / сервис без UI?
