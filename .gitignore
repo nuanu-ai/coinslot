@@ -1,0 +1,14 @@
+# OS
+.DS_Store
+
+# Editors
+.idea/
+.vscode/
+*.swp
+
+# Claude Code — локальные настройки не коммитим
+.claude/settings.local.json
+
+# Секреты и окружение
+.env
+.env.*
