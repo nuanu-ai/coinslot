@@ -1,8 +1,15 @@
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import type { Card, Order } from "@coinslot/contracts";
 import { afterEach, describe, expect, it } from "vitest";
-import { ANSWER_NOT_UNDERSTOOD, CALL_DID_NOT_REACH_US, createClient } from "./index.js";
+import {
+  ANSWER_NOT_UNDERSTOOD,
+  CALL_DID_NOT_REACH_US,
+  createClient,
+  OUTCOME_UNKNOWN,
+} from "./index.js";
 import { type FakeGateway, startFakeGateway } from "./testing/fake-gateway.js";
-import { REACH, reachOf } from "./transport.js";
+import { REACH, type Reach, reachOf, type TransportFailure, whatIsKnown } from "./transport.js";
 
 const API_KEY = "merchant-key-for-the-tests";
 
@@ -269,6 +276,56 @@ describe("closing an order the merchant took on", () => {
     expect(never.ok === false && never.error.message).toMatch(/did not reach us/);
   });
 
+  it("carries the third fact under its own code when nothing came back", async () => {
+    // A request that was taken and then dropped mid-flight. Filed under the
+    // code for a call that never arrived, this would tell a merchant their
+    // delivery certainly did not happen — which is the one thing nobody on
+    // this side knows.
+    const takenAndDropped = createServer((_request, response) => {
+      response.socket?.destroy();
+    });
+
+    await new Promise<void>((resolve) => takenAndDropped.listen(0, "127.0.0.1", resolve));
+
+    const port = (takenAndDropped.address() as AddressInfo).port;
+    const coinslot = createClient({ apiKey: API_KEY, baseUrl: `http://127.0.0.1:${port}` });
+
+    try {
+      const result = await coinslot.orders.deliver("order-1", { access_url: "https://a.example" });
+
+      expect(result.ok === false && result.error.code).toBe(OUTCOME_UNKNOWN);
+      expect(result.ok === false && result.error.retryable).toBe(true);
+      expect(result.ok === false && result.error.message).toMatch(/not known here/);
+      expect(result.ok === false && result.error.message).not.toMatch(/did not reach us/);
+    } finally {
+      takenAndDropped.closeAllConnections();
+      await new Promise<void>((resolve) => takenAndDropped.close(() => resolve()));
+    }
+  });
+
+  it("promises a safe repeat only where the contract promises one", async () => {
+    // Delivering is idempotent by the order's identifier and taking an order
+    // on happens again on every redelivery, so both may be repeated. Refusing
+    // is documented as neither, and a merchant who retried a refusal on our
+    // say-so would be retrying the call that opens a refund debt.
+    const coinslot = await gatewayServing({
+      deliver_order: () => ({ text: "not an answer" }),
+      refuse_order: () => ({ text: "not an answer" }),
+      accept_order: () => ({ text: "not an answer" }),
+    });
+
+    const delivered = await coinslot.orders.deliver("order-1", { access_url: "https://a.example" });
+    const refused = await coinslot.orders.refuse("order-1", {
+      code: "out_of_stock",
+      message: "no",
+    });
+    const accepted = await coinslot.orders.accept("order-1");
+
+    expect(delivered.ok === false && delivered.error.message).toMatch(/may be made again/);
+    expect(accepted.ok === false && accepted.error.message).toMatch(/may be made again/);
+    expect(refused.ok === false && refused.error.message).not.toMatch(/may be made again/);
+  });
+
   it("takes an order on, with and without an expected time", async () => {
     const coinslot = await gatewayServing({ accept_order: () => ({ body: { ok: true } }) });
 
@@ -315,5 +372,40 @@ describe("what a failed call says about whether it arrived", () => {
     expect(reachOf(failing())).toBe(REACH.UNKNOWN);
     expect(reachOf(new Error("something with no cause at all"))).toBe(REACH.UNKNOWN);
     expect(reachOf(undefined)).toBe(REACH.UNKNOWN);
+  });
+});
+
+describe("what a failed call is told to the merchant as", () => {
+  const failing = (reach: Reach): TransportFailure => ({
+    route: "deliver_order",
+    reason: "the reason, whatever it was",
+    reach,
+  });
+
+  it("says a different thing for each of the three, and never the wrong one", () => {
+    // The three sentences are what a merchant actually reads, and each of them
+    // is a claim about their own books. Two of them saying the same thing, or
+    // one of them wearing another's words, is the defect this exists to catch:
+    // the wording is the whole of the difference between "your delivery did
+    // not happen" and "we cannot tell you whether it did".
+    const said = {
+      [REACH.NOT_RECEIVED]: whatIsKnown(failing(REACH.NOT_RECEIVED)),
+      [REACH.ANSWERED]: whatIsKnown(failing(REACH.ANSWERED)),
+      [REACH.UNKNOWN]: whatIsKnown(failing(REACH.UNKNOWN)),
+    };
+
+    expect(new Set(Object.values(said)).size).toBe(3);
+
+    // Only the first is allowed to say the call did not arrive.
+    expect(said[REACH.NOT_RECEIVED]).toMatch(/did not reach us/);
+    expect(said[REACH.ANSWERED]).not.toMatch(/did not reach us/);
+    expect(said[REACH.UNKNOWN]).not.toMatch(/did not reach us/);
+
+    // The other two have to say plainly that we cannot tell, and they have to
+    // say which of the two silences it was.
+    expect(said[REACH.ANSWERED]).toMatch(/reached us/);
+    expect(said[REACH.ANSWERED]).toMatch(/not known here/);
+    expect(said[REACH.UNKNOWN]).toMatch(/nothing came back/);
+    expect(said[REACH.UNKNOWN]).toMatch(/not known here/);
   });
 });

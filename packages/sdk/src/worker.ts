@@ -272,16 +272,35 @@ const assertEveryKindIsHandled = (envelope: never): never => {
  */
 export const POLL_WAIT_SECONDS = 25;
 
+/**
+ * How long the worker will wait for a poll before giving up on it.
+ *
+ * A window asked for is not a promise kept: a connection dropped silently by
+ * something in the middle — a load balancer that recycled it, a firewall that
+ * forgot it — leaves this side waiting on an answer that will never come, with
+ * nothing reported and nothing retried. Without a deadline of our own the only
+ * thing that eventually breaks that is whatever timeout the runtime happens to
+ * default to, which is a number nobody here chose and which is measured in
+ * minutes against a window measured in seconds.
+ *
+ * Twice the window, so a gateway that holds the full window and answers late is
+ * never cut off, and a connection that has gone quiet costs one window of
+ * silence rather than several minutes of it.
+ */
+export const POLL_DEADLINE_MS = POLL_WAIT_SECONDS * 2 * 1_000;
+
 export interface Subscription {
   /**
    * Stops the loop and waits for it to finish. Safe to call twice.
    *
-   * Two things are abandoned rather than finished, and both come back on their
-   * own. A poll parked at the gateway is dropped, and whatever it would have
-   * carried is redelivered. An answer already on its way — a delivery the
-   * handler produced a moment ago — is dropped too, and its order is
-   * redelivered; the merchant is told through the problem channel, because on
-   * their side the work happened and only the answer was lost.
+   * Two things are abandoned rather than finished, and they are not abandoned
+   * on the same terms. A poll parked at the gateway is dropped, and whatever
+   * it would have carried was never handed to anybody, so it is redelivered.
+   * An answer already on its way — a delivery the handler produced a moment
+   * ago — is dropped too, and there the honest thing to say is that nobody on
+   * this side knows whether it arrived first: the order may already be closed
+   * by it, or may come back. The merchant is told which of their orders that
+   * happened to, because on their side the work happened.
    *
    * Stopping does not drain. The contract has a word for a poll that asks for
    * whatever is queued right now and comes straight back, and it is not what a
@@ -301,6 +320,13 @@ export const startWorker = (
   gateway: Gateway,
   handlers: HandlerRegistry,
   clock: WorkerClock = systemClock,
+  /**
+   * The deadline is a parameter for the same reason the clock is: a test
+   * cannot wait out fifty seconds to find out whether the worker gives up on a
+   * poll, and a deadline nothing exercises is a deadline nobody has seen work.
+   * It is not part of anything a merchant passes.
+   */
+  deadlineMs: number = POLL_DEADLINE_MS,
 ): RunningWorker => {
   const controller = new AbortController();
   let stopping = false;
@@ -494,7 +520,12 @@ export const startWorker = (
         kind: WORKER_PROBLEM_KINDS.ANSWER_FAILED,
         fatal: false,
         subject: question.price_id,
-        message: `the price for question ${question.price_id} was answered and ${whatIsKnown(sent.failure)}; stock set aside under that identifier can be released once the question expires: ${sent.failure.reason}`,
+        // The advice about stock holds whichever of the three this was, which
+        // is why it is not branched the way an order's consequence is. A price
+        // that did arrive and was used produces an order before the question
+        // expires, and a merchant releasing stock at that moment is releasing
+        // stock they have already committed to an order they hold.
+        message: `the price for question ${question.price_id} was answered and ${whatIsKnown(sent.failure)}; stock set aside under that identifier can be released once the question expires, whichever of those it was: ${sent.failure.reason}`,
       });
       return;
     }
@@ -573,7 +604,9 @@ export const startWorker = (
       const startedAt = clock.now();
       const answer = await callRoute(gateway, "poll_worker", {
         body: { wait_seconds: POLL_WAIT_SECONDS },
-        signal: controller.signal,
+        // Two ways this call can end early, and they are different: the worker
+        // was stopped, or the answer took longer than any answer should.
+        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(deadlineMs)]),
       });
 
       if (stopping) break;

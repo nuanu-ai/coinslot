@@ -14,7 +14,8 @@
  * verify` cannot start against these sources under a plain `node`, and a `bin`
  * entry pointing here would be advertising a command that fails on a
  * merchant's machine and nowhere else. What the package does offer meanwhile
- * is `runVerify` and `checkCard`, which are the whole of the work.
+ * is `runVerify` and `checkCard`, exported from its entry point, which are the
+ * whole of the work this file wraps.
  *
  * The line goes in with the build, and the build is a decision about how these
  * packages are compiled and published rather than something to settle here.

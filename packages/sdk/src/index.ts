@@ -2,11 +2,14 @@
  * The Coinslot merchant SDK: what someone else's engineer installs so that
  * their catalog sells to agents.
  *
- * There are three things in here and they are all one process. `createClient`
- * builds a handle on the gateway from a key and an address. Through it a
- * merchant publishes cards, receives paid orders on an outgoing subscription
- * and answers questions about prices, and closes orders they took on earlier.
- * Beside it, `npx coinslot verify` checks a card before it is published.
+ * There are two things in here and they are one process. `createClient` builds
+ * a handle on the gateway from a key and an address; through it a merchant
+ * publishes cards, receives paid orders on an outgoing subscription, answers
+ * questions about prices, and closes orders they took on earlier. Beside it,
+ * `checkCard` and `runVerify` are the check a merchant runs on their own cards
+ * before publishing them — the same check the documentation calls
+ * `npx coinslot verify`, which is not yet a command that can start: this
+ * workspace has no build step, and `src/cli.ts` explains what that costs.
  *
  * The runtime dependency tree is minimal and listed in full: our own
  * `@coinslot/contracts`, and zod underneath it, and nothing else. A merchant
@@ -64,6 +67,8 @@ export {
   OUTCOME_UNKNOWN,
 } from "./client.js";
 export { contractVersion, speaksContract } from "./contract.js";
+export type { Say } from "./verify.js";
+export { IDEMPOTENCY_IS_NOT_BUILDABLE, NOT_JSON, runVerify, VERIFY_EXIT } from "./verify.js";
 export type {
   Delivered,
   EventHandler,

@@ -57,7 +57,8 @@ describe("npx coinslot verify", () => {
     const { said } = await verifying("verify", fileHolding("card.json", validCard));
 
     expect(said).toMatch(/purchase_item/);
-    expect(said).toMatch(/test/);
+    expect(said).toMatch(/test flag comes to be true/);
+    expect(said).toMatch(/published-but-not-yet-in-catalogs/);
   });
 
   it("reports every finding of a card, pointing at the fields", async () => {

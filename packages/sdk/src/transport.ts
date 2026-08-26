@@ -206,11 +206,11 @@ const failure = (
 export const whatIsKnown = (failure: TransportFailure): string => {
   switch (failure.reach) {
     case REACH.NOT_RECEIVED:
-      return "it did not reach us";
+      return "no connection was made, so it did not reach us";
     case REACH.ANSWERED:
-      return "it reached us and the answer could not be read, so whether it took effect is not known here";
+      return "it reached us and what came back could not be read, so what it did is not known here";
     case REACH.UNKNOWN:
-      return "it was sent and nothing came back, so whether it reached us is not known here";
+      return "it was sent and nothing came back, so whether it arrived is not known here";
   }
 };
 

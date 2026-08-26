@@ -138,8 +138,23 @@ const send = (response: ServerResponse, status: number, text: string): void => {
   response.end(text);
 };
 
-const complain = (response: ServerResponse, status: number, message: string): void =>
+/**
+ * Refuses a call, having first read whatever it was carrying.
+ *
+ * The reading is not decoration. A response ended while the request's body is
+ * still arriving leaves that body in the socket, and the next call on the same
+ * connection reads it as its own — which is a state no test would ever guess
+ * at from the assertion that failed.
+ */
+const complain = async (
+  request: IncomingMessage,
+  response: ServerResponse,
+  status: number,
+  message: string,
+): Promise<void> => {
+  await readBody(request);
   send(response, status, JSON.stringify({ fake_gateway_refused: message }));
+};
 
 /**
  * The findings of a schema as one line, for the complaints this double sends
@@ -163,14 +178,20 @@ export const startFakeGateway = async (options: FakeGatewayOptions): Promise<Fak
       .find((found) => found.params !== null);
 
     if (hit === undefined || hit.params === null) {
-      complain(response, 404, `no mountable route answers ${method} ${url.pathname}`);
+      await complain(
+        request,
+        response,
+        404,
+        `no mountable route answers ${method} ${url.pathname}`,
+      );
       return;
     }
 
     const { candidate, params } = hit;
 
     if (!answersOn(candidate.route, method)) {
-      complain(
+      await complain(
+        request,
         response,
         405,
         `${candidate.name} answers on ${candidate.route.method}, not ${method}`,
@@ -183,7 +204,7 @@ export const startFakeGateway = async (options: FakeGatewayOptions): Promise<Fak
       authorization?.startsWith("Bearer ") === true ? authorization.slice(7) : undefined;
 
     if (candidate.route.auth === "merchant_key" && apiKey !== options.apiKey) {
-      complain(response, 401, `${candidate.name} is behind the merchant's key`);
+      await complain(request, response, 401, `${candidate.name} is behind the merchant's key`);
       return;
     }
 
@@ -194,7 +215,7 @@ export const startFakeGateway = async (options: FakeGatewayOptions): Promise<Fak
       try {
         body = JSON.parse(raw);
       } catch {
-        complain(response, 400, "the body was not JSON");
+        await complain(request, response, 400, "the body was not JSON");
         return;
       }
     }
@@ -204,7 +225,8 @@ export const startFakeGateway = async (options: FakeGatewayOptions): Promise<Fak
     if (candidate.route.query !== undefined) {
       const checked = candidate.route.query.safeParse(query);
       if (!checked.success) {
-        complain(
+        await complain(
+          request,
           response,
           400,
           `the query string is not what ${candidate.name} takes: ${findingsOf(checked.error.issues)}`,
@@ -216,7 +238,8 @@ export const startFakeGateway = async (options: FakeGatewayOptions): Promise<Fak
     if (candidate.route.request !== undefined && method === candidate.route.method) {
       const checked = candidate.route.request.safeParse(body);
       if (!checked.success) {
-        complain(
+        await complain(
+          request,
           response,
           422,
           `the body is not what ${candidate.name} takes: ${findingsOf(checked.error.issues)}`,
@@ -232,7 +255,7 @@ export const startFakeGateway = async (options: FakeGatewayOptions): Promise<Fak
     const responder = options.routes[candidate.name];
 
     if (responder === undefined) {
-      complain(response, 501, `the test did not script ${candidate.name}`);
+      await complain(request, response, 501, `the test did not script ${candidate.name}`);
       return;
     }
 
@@ -268,7 +291,8 @@ export const startFakeGateway = async (options: FakeGatewayOptions): Promise<Fak
     if (document !== undefined && status >= 200 && status < 300) {
       const checked = document.safeParse(answer.body);
       if (!checked.success) {
-        complain(
+        await complain(
+          request,
           response,
           500,
           `the test scripted an answer ${candidate.name} could never send: ${findingsOf(checked.error.issues)}`,
@@ -282,7 +306,7 @@ export const startFakeGateway = async (options: FakeGatewayOptions): Promise<Fak
 
   const server: Server = createServer((request, response) => {
     handle(request, response).catch((cause: unknown) => {
-      complain(response, 500, `the double itself failed: ${String(cause)}`);
+      void complain(request, response, 500, `the double itself failed: ${String(cause)}`);
     });
   });
 

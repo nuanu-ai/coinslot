@@ -235,7 +235,16 @@ const failedCall = (repeatIsSafe: boolean, failure: TransportFailure): OrderCall
  * about it from a buyer, and between the two this is the cheaper one.
  */
 const reportToConsole: ProblemReporter = (problem: WorkerProblem): void => {
-  console.error(`[coinslot] ${problem.kind}: ${problem.message}`);
+  // The exception goes out beside the sentence rather than inside it. The
+  // message already carries what the exception says; what it cannot carry is
+  // the stack, and the stack is the whole of what a merchant debugging their
+  // own handler is looking for.
+  if (problem.cause === undefined) {
+    console.error(`[coinslot] ${problem.kind}: ${problem.message}`);
+    return;
+  }
+
+  console.error(`[coinslot] ${problem.kind}: ${problem.message}`, problem.cause);
 };
 
 const keyOf = (apiKey: string | undefined): string => {
@@ -304,7 +313,16 @@ export const createClient = (options: ClientOptions): CoinslotClient => {
    */
   interface Live {
     readonly registry: HandlerRegistry;
-    readonly worker: RunningWorker;
+    /**
+     * The loop, which is the one part of a subscription that can be replaced
+     * under it. A loop ends on its own when the gateway turns out to speak
+     * another dialect; if a later registration built a whole new subscription
+     * around a new loop, the handle the merchant is already holding would stop
+     * naming anything — their stop() would return having stopped a loop that
+     * was already over while the replacement polled on, and the handlers and
+     * the reporter they registered would have been left behind with it.
+     */
+    worker: RunningWorker;
     readonly subscription: Subscription;
     /** Set once stopping begins, and shared by every caller of stop(). */
     stopping?: Promise<void>;
@@ -338,12 +356,17 @@ export const createClient = (options: ClientOptions): CoinslotClient => {
       );
     }
 
-    if (live?.worker.running() === true) return live;
+    if (live !== undefined) {
+      // The subscription is still the merchant's; only its loop ended, and it
+      // ended for a reason that has not gone away — a gateway of another
+      // dialect is still of another dialect. Starting a loop over the same
+      // handlers reports that again, where handing back the dead one would
+      // register a handler on something that will never poll and say nothing.
+      if (!live.worker.running()) live.worker = startWorker(gateway, live.registry);
 
-    // Either there was none, or the last one ended on its own — a contract
-    // mismatch stops the loop without anybody calling stop(). Handing that one
-    // back would register a handler on a loop that will never poll again, and
-    // nothing would arrive and nothing would be said.
+      return live;
+    }
+
     const registry: HandlerRegistry = { problem: reportToConsole };
     const started: Live = {
       registry,
