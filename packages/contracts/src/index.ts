@@ -9,6 +9,16 @@
  * or a merchant can see, the refusal codes, the event names. What the gateway
  * calls things inside itself is its own business, and the two are tied
  * together where they meet rather than by one importing the other.
+ *
+ * One shape a reader might expect here is deliberately absent. The worker
+ * channel carries orders, price questions and events on one stream, each in an
+ * envelope with a marker saying which it is (ADR-0004 §2). The envelope is not
+ * described here because the merchant never sees it: the same decision has the
+ * SDK hide the transport entirely, handing a handler an order rather than
+ * anything it is wrapped in. Where the envelope should be described — here,
+ * because it is still a format between two of our own parts, or alongside the
+ * transport that invented it — is a question nobody has answered, and it is
+ * better asked than quietly settled by whichever side writes it first.
  */
 
 import type { ZodType } from "zod";
