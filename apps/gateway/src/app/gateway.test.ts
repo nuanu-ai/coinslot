@@ -279,6 +279,12 @@ describe("an asynchronous purchase", () => {
     const owing = await harnessed.store.orderById(offered.order.order.id);
     expect(owing?.order.state).toBe("refund_due");
 
+    // No receipt, and that is a gap rather than a decision. The receipt
+    // vocabulary has a word for an order that owes money back, and receipts are
+    // only written when goods are released — so an order that took money and
+    // never released any has none to carry that word.
+    expect(await harnessed.store.receiptForOrder(offered.order.order.id)).toBeNull();
+
     const told = await harnessed.gateway.poll(10, 0);
     const events = told.envelopes.flatMap((e) => (e.kind === "order_event" ? [e.payload] : []));
     expect(events.map((e) => e.type)).toContain("order.refund_due");

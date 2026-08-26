@@ -14,9 +14,9 @@
  * machine is what runs in production.
  */
 
-import { encodePaymentSignatureHeader, decodePaymentRequiredHeader } from "@x402/core/http";
 import { randomUUID } from "node:crypto";
 import type { AddressInfo } from "node:net";
+import { decodePaymentRequiredHeader, encodePaymentSignatureHeader } from "@x402/core/http";
 import { describe, expect, it } from "vitest";
 import { ScriptedFacilitator } from "./adapters/memory/facilitator.js";
 import { MemoryQueue } from "./adapters/memory/queue.js";
@@ -169,7 +169,8 @@ describe("a purchase from the outside", () => {
       // The agent finds it. Nothing here needs a key.
       const catalog = await gateway.call("GET", "/v0/catalog");
       expect(catalog.status).toBe(200);
-      const offered = (catalog.body as { items: { id: string; price: { amount: string } }[] }).items;
+      const offered = (catalog.body as { items: { id: string; price: { amount: string } }[] })
+        .items;
       expect(offered).toHaveLength(1);
       expect(offered[0]?.id).toBe(itemId);
       expect(offered[0]?.price.amount).toBe("80.00");
@@ -276,7 +277,9 @@ describe("a purchase from the outside", () => {
         body: { wait_seconds: 0 },
         headers: { authorization: `Bearer ${MERCHANT_KEY}` },
       });
-      const { envelopes } = drawn.body as { envelopes: { kind: string; payload: { id: string } }[] };
+      const { envelopes } = drawn.body as {
+        envelopes: { kind: string; payload: { id: string } }[];
+      };
       expect(envelopes.map((envelope) => envelope.payload.id)).toStrictEqual([orderId]);
 
       const accepted = await gateway.call(

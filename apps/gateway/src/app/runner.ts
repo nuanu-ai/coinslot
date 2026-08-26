@@ -242,13 +242,16 @@ export class OrderRunner {
           break;
 
         case "mark_refund_due":
-          // The state itself is the record of the debt and the merchant is told
-          // separately, by the event the machine asked for alongside this. What
-          // is left to do here is keep the receipt honest: it is the document
-          // the merchant reconciles against, and one still reading "delivered"
-          // over an order that owes money back is the wrong claim in the one
-          // place somebody checks.
-          await this.#refreshReceipt(record);
+          // The order's own state is the record of the debt, and the merchant
+          // is told about it by the event the machine asked for alongside this.
+          // There is nothing else to write down.
+          //
+          // Worth knowing, because it is a gap rather than a decision: a
+          // receipt can say "refund due" and none ever does. Receipts are
+          // issued when goods are released, and an order reaches this effect
+          // without ever having released any, so there is no receipt here to
+          // bring into line. A merchant reconciling money that came in and went
+          // back out has the order and the event and no receipt for it.
           break;
 
         case "emit_merchant_event":
@@ -388,15 +391,6 @@ export class OrderRunner {
       outcome: receiptOutcomeOf(record.order),
       test: record.order.test,
     });
-  }
-
-  /** Brings an existing receipt into line with where the order now stands. */
-  async #refreshReceipt(record: StoredOrder): Promise<void> {
-    const existing = await this.#runtime.store.receiptForOrder(record.order.id);
-    if (existing === null) {
-      return;
-    }
-    await this.#runtime.store.putReceipt({ ...existing, outcome: receiptOutcomeOf(record.order) });
   }
 
   #orderEnvelope(record: StoredOrder, at: number): WorkerEnvelope {
