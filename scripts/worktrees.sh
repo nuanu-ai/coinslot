@@ -68,6 +68,14 @@ flush() {
     state="dirty (uncommitted work)"
   elif [ -z "${short_branch}" ]; then
     state="detached HEAD — inspect by hand"
+  elif [ "$(git rev-parse "${short_branch}")" = "$(git rev-parse main)" ]; then
+    # A branch sitting exactly on main's HEAD has no history of its own: it is
+    # either a worktree an agent has only just created and not yet committed
+    # into, or one that did nothing. Either way it is not litter left by a
+    # merge — a merged branch's HEAD stays on its own last commit while main
+    # moves past it. Removing it here is what once deleted a running agent's
+    # fresh worktree out from under it (2026-08-27). Left for a human.
+    state="no commits of its own — fresh or untouched, not auto-removed"
   elif git cherry main "${short_branch}" | grep -q '^+'; then
     state="unmerged commits — accept or discard by hand"
   fi
