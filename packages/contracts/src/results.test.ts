@@ -73,10 +73,9 @@ describe("one finding about a card", () => {
 
   it("refuses a path that is not a list of field names", () => {
     for (const path of ["price.amount", ["price", 0], [null]]) {
-      expect(
-        PublishErrorSchema.safeParse({ ...finding, path }).success,
-        JSON.stringify(path),
-      ).toBe(false);
+      expect(PublishErrorSchema.safeParse({ ...finding, path }).success, JSON.stringify(path)).toBe(
+        false,
+      );
     }
   });
 });
