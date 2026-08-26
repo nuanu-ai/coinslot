@@ -1,12 +1,13 @@
 import { defineConfig } from 'vitepress'
 
 // Тема — дефолтная, без визуальной кастомизации. В themeConfig только
-// навигация и русские подписи стандартных элементов темы.
+// навигация, локальный поиск и русские подписи стандартных элементов темы.
 export default defineConfig({
   lang: 'ru-RU',
   title: 'Coinslot',
-  description: 'Документация мерчанта: подключение, карточки, деньги, отказы.',
+  description: 'Документация продавца: подключение, карточки, деньги, отказы.',
   cleanUrls: true,
+  srcExclude: ['WRITING.md'],
   themeConfig: {
     sidebar: [
       {
@@ -27,6 +28,25 @@ export default defineConfig({
         ]
       }
     ],
+    search: {
+      provider: 'local',
+      options: {
+        translations: {
+          button: { buttonText: 'Поиск', buttonAriaLabel: 'Поиск' },
+          modal: {
+            displayDetails: 'Показать подробности',
+            resetButtonTitle: 'Очистить запрос',
+            backButtonTitle: 'Закрыть поиск',
+            noResultsText: 'Ничего не найдено по запросу',
+            footer: {
+              selectText: 'открыть',
+              navigateText: 'перейти',
+              closeText: 'закрыть'
+            }
+          }
+        }
+      }
+    },
     outline: { label: 'На этой странице' },
     docFooter: { prev: 'Предыдущая страница', next: 'Следующая страница' },
     sidebarMenuLabel: 'Разделы',
