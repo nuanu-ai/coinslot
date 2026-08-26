@@ -72,6 +72,8 @@ const jsonBodyOf = (fence: string): string => fence.slice(fence.indexOf("{"));
 interface Token {
   kind: "key" | "text" | "literal";
   text: string;
+  /** The name this token belongs to: itself for a key, its field for a value. */
+  key: string | null;
 }
 
 /**
@@ -83,16 +85,16 @@ interface Token {
  * against `'15.00'`, which is not a hypothetical: both went through unnoticed
  * before the tag was here.
  */
-const tokensOf = (value: unknown): Token[] => {
-  if (typeof value === "string") return [{ kind: "text", text: value }];
+const tokensOf = (value: unknown, key: string | null = null): Token[] => {
+  if (typeof value === "string") return [{ kind: "text", text: value, key }];
   if (typeof value === "number" || typeof value === "boolean") {
-    return [{ kind: "literal", text: String(value) }];
+    return [{ kind: "literal", text: String(value), key }];
   }
-  if (Array.isArray(value)) return value.flatMap(tokensOf);
+  if (Array.isArray(value)) return value.flatMap((item) => tokensOf(item, key));
   if (value !== null && typeof value === "object") {
     return Object.entries(value).flatMap(([name, child]) => [
-      { kind: "key" as const, text: name },
-      ...tokensOf(child),
+      { kind: "key" as const, text: name, key: name },
+      ...tokensOf(child, name),
     ]);
   }
   return [];
@@ -158,6 +160,18 @@ type Fixture =
       completeKeys?: boolean;
       /** Names the fence writes around the payload rather than inside it. */
       outerKeys?: string[];
+      /**
+       * Fields whose value the example computes instead of writing out — a
+       * timestamp from a clock, an amount from a lookup. The name is still
+       * checked; the value cannot be, because there is no literal in the fence
+       * to compare against, and the transcription has to invent one for the
+       * schema to have something to parse.
+       *
+       * The escape hatch verifies itself: a field listed here whose value the
+       * example does write literally fails the test, so the list cannot
+       * quietly grow into a way of switching the drift check off.
+       */
+      computed?: string[];
     });
 
 /**
@@ -240,6 +254,32 @@ const fixtures: Fixture[] = [
     schema: RefusalSchema,
     value: { code: "out_of_stock", message: "Поставщик не подтвердил номер" },
   },
+  {
+    kind: "transcribed",
+    what: "a price handler answering that the item is there",
+    fence: { file: "portal/quickstart.md", language: "ts", index: 5 },
+    schema: QuoteResponseSchema,
+    // The available branch names every field the fence writes on a line of
+    // its own, so it can be held to the example in both directions.
+    completeKeys: true,
+    computed: ["amount", "as_of"],
+    value: {
+      available: true,
+      price: { amount: "5.00", currency: "USD" },
+      as_of: "2026-08-26T10:15:00Z",
+    },
+  },
+  {
+    kind: "transcribed",
+    what: "the same price handler answering that it is not",
+    fence: { file: "portal/quickstart.md", language: "ts", index: 5 },
+    schema: QuoteResponseSchema,
+    // No `completeKeys` here: one fence carries both answers, and `price`
+    // belongs to the other one. Asking this fixture to account for every name
+    // on the page would be asking it about a payload that is not its own.
+    computed: ["as_of"],
+    value: { available: false, as_of: "2026-08-26T10:15:00Z" },
+  },
 ];
 
 const fenceTextOf = (fence: Fence): string => {
@@ -261,23 +301,28 @@ describe("the drift check itself", () => {
   // against a portal that said `'async'` while `'5.00'` passed against
   // `'15.00'` — the guard was green and guarding nothing.
 
+  /** A token to look for, as `tokensOf` would have produced it. */
+  const token = (kind: Token["kind"], text: string, key: string | null = null): Token => ({
+    kind,
+    text,
+    key,
+  });
+
   it("does not let one value pass as the tail of a longer one", () => {
-    expect(occursIn("fulfillment: 'async'", { kind: "text", text: "sync" })).toBe(false);
-    expect(occursIn("fulfillment: 'sync'", { kind: "text", text: "sync" })).toBe(true);
+    expect(occursIn("fulfillment: 'async'", token("text", "sync"))).toBe(false);
+    expect(occursIn("fulfillment: 'sync'", token("text", "sync"))).toBe(true);
 
-    expect(occursIn("amount: '15.00'", { kind: "text", text: "5.00" })).toBe(false);
-    expect(occursIn("amount: '5.00'", { kind: "text", text: "5.00" })).toBe(true);
+    expect(occursIn("amount: '15.00'", token("text", "5.00"))).toBe(false);
+    expect(occursIn("amount: '5.00'", token("text", "5.00"))).toBe(true);
 
-    expect(occursIn("eta_seconds: 160", { kind: "literal", text: "60" })).toBe(false);
-    expect(occursIn("eta_seconds: 60 }", { kind: "literal", text: "60" })).toBe(true);
+    expect(occursIn("eta_seconds: 160", token("literal", "60"))).toBe(false);
+    expect(occursIn("eta_seconds: 60 }", token("literal", "60"))).toBe(true);
   });
 
   it("wants a name written where a name goes", () => {
-    expect(occursIn("const email = order.params.email", { kind: "key", text: "email" })).toBe(
-      false,
-    );
-    expect(occursIn("  email: { type: 'string' }", { kind: "key", text: "email" })).toBe(true);
-    expect(occursIn('  "email": "buyer@example.com"', { kind: "key", text: "email" })).toBe(true);
+    expect(occursIn("const email = order.params.email", token("key", "email"))).toBe(false);
+    expect(occursIn("  email: { type: 'string' }", token("key", "email"))).toBe(true);
+    expect(occursIn('  "email": "buyer@example.com"', token("key", "email"))).toBe(true);
   });
 
   it("reads the names an example writes, for the other direction", () => {
@@ -286,6 +331,18 @@ describe("the drift check itself", () => {
       "amount",
       "title",
     ]);
+  });
+
+  it("keeps a value token tied to the field it came from", () => {
+    // What lets a fixture say "this one field the example works out" without
+    // that turning into "check nothing". The tie is the `key` on each token.
+    const tokens = tokensOf({ available: true, price: { amount: "5.00", currency: "USD" } });
+
+    expect(tokens.filter((token) => token.kind === "key").map((token) => token.text)).toStrictEqual(
+      ["available", "price", "amount", "currency"],
+    );
+    expect(tokens.find((token) => token.text === "5.00")?.key).toBe("amount");
+    expect(tokens.find((token) => token.kind === "literal")?.key).toBe("available");
   });
 
   it("notices a name the example grew and the transcription never heard of", () => {
@@ -307,8 +364,21 @@ describe("the portal's examples pass the schemas", () => {
       const text = fenceTextOf(fixture.fence);
 
       if (fixture.kind === "transcribed") {
+        const computed = new Set(fixture.computed ?? []);
+
         // The transcription is only worth as much as its likeness to the page.
         for (const token of tokensOf(fixture.value)) {
+          if (token.kind !== "key" && token.key !== null && computed.has(token.key)) {
+            // The example works this value out rather than writing it, so the
+            // transcription's stand-in has nothing to be compared against —
+            // but it does have to still be a stand-in.
+            expect(
+              occursIn(text, token),
+              `the example now writes ${JSON.stringify(token.text)} for "${token.key}" literally, so it no longer belongs in this fixture's computed list`,
+            ).toBe(false);
+            continue;
+          }
+
           expect(
             occursIn(text, token),
             `the example no longer writes the ${token.kind} ${JSON.stringify(token.text)}; the transcription here has to be brought back in line with the portal`,
@@ -339,40 +409,6 @@ describe("the portal's examples pass the schemas", () => {
       ).toBe("");
     });
   }
-});
-
-describe("where the portal and the schemas disagree", () => {
-  // One example on the portal cannot be pinned above, because it does not
-  // pass. Deleting it from the map would make the disagreement disappear; a
-  // skipped test would report nothing either. So it is written as a test that
-  // holds today and fails on the day the portal is fixed, at which point this
-  // whole block goes.
-
-  it("the quickstart's price handler answers with a price even when the item is gone", () => {
-    // The example builds one object for both answers: `available` comes from a
-    // stock lookup while `price` is filled in regardless. When the lookup says
-    // no, the shape it produces is this one.
-    const asWritten = {
-      available: false,
-      price: { amount: "5.00", currency: "USD" },
-      as_of: "2026-08-26T10:15:00Z",
-    };
-
-    expect(QuoteResponseSchema.safeParse(asWritten).success).toBe(false);
-
-    // What makes it more than a style question: an answer that does not parse
-    // counts as silence, and in the synchronous mode silence sells at the price
-    // in the card — for an item the merchant has just said they do not have.
-    // The same page's sibling on portal/cards.md branches and is correct.
-    const text = fenceTextOf({ file: "portal/quickstart.md", language: "ts", index: 5 });
-
-    expect(text).toContain("available: await inStock");
-    expect(text).toContain("price: {");
-    expect(
-      text.includes("if ("),
-      "the quickstart's price handler now branches; the portal has been fixed and this block can go",
-    ).toBe(false);
-  });
 });
 
 describe("no example on the portal goes unpinned", () => {
