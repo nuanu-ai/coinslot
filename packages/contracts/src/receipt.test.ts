@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { OrderStatusSchema } from "./order-status.js";
+import { ORDER_STATUSES, OrderStatusSchema } from "./order-status.js";
 import { ReceiptOutcomeSchema, ReceiptSchema } from "./receipt.js";
 import { errorOf, expectMissingFieldRejected } from "./testing/expect-schema.js";
 
@@ -40,6 +40,26 @@ describe("what a receipt says became of the purchase", () => {
     expect(ReceiptOutcomeSchema.safeParse("pending").success).toBe(false);
   });
 
+  it("accounts for every order status, on one side of the line or the other", () => {
+    // The partition was argued in a comment and enforced nowhere: a status
+    // added to the machine slipped past without anybody deciding which side of
+    // the receipt line it fell on, and the argument went stale in silence.
+    // Naming the excluded ones here makes the next addition fail until someone
+    // decides.
+    const withoutAReceipt = [
+      "rejected",
+      "payment_unresolved",
+      "declined",
+      "expired",
+      "cancelled",
+      "delivered_unpaid",
+    ];
+
+    expect([...ReceiptOutcomeSchema.options, ...withoutAReceipt].sort()).toStrictEqual(
+      [...ORDER_STATUSES].sort(),
+    );
+  });
+
   it("has no value for a purchase whose money never moved", () => {
     // A refused, declined, expired or cancelled purchase leaves no receipt at
     // all: nothing moved, and there is nothing to be proof of. Neither does a
@@ -48,6 +68,7 @@ describe("what a receipt says became of the purchase", () => {
     // record of one to write.
     for (const outcome of [
       "rejected",
+      "payment_unresolved",
       "declined",
       "expired",
       "cancelled",

@@ -24,12 +24,24 @@ import { IdentifierSchema, SalePriceSchema, TimestampSchema } from "./primitives
  * happened to read would look like the whole truth.
  *
  * The set is narrower than the order's, and the reason is what a receipt is: a
- * record of a payment that executed. Work through the endings and five of the
- * nine cannot reach one. `rejected`, `declined` and `expired` all close before
+ * record of a payment that executed. Work through the endings and six of the
+ * ten cannot reach one. `rejected`, `declined` and `expired` all close before
  * any money moves. `cancelled` is the merchant leaving, which for a paid order
- * is a debt and arrives here as `refund_due` instead. And `delivered_unpaid`
- * is the case where the merchant produced the goods and the payment did not
- * execute — no payment, so no receipt to carry the outcome.
+ * is a debt and arrives here as `refund_due` instead. `delivered_unpaid` is
+ * the case where the merchant produced the goods and the charge came back
+ * failed — no payment, so no receipt to carry the outcome.
+ *
+ * `payment_unresolved` is the one worth arguing rather than asserting, because
+ * the purchase behind it can have a verified payment behind it and still end
+ * there. It is excluded, and the reason is the receipt's own job. That value
+ * means nobody can say whether the buyer was charged; a receipt is the
+ * evidence that they were. A receipt carrying it would be a proof of payment
+ * whose own outcome says it does not know there was a payment — the one
+ * artifact in this contract that cannot hold that sentence. So no receipt is
+ * written while the question is open. If the answer arrives and the money did
+ * move, the receipt is written then and carries whatever the delivery reached;
+ * if it did not, there was never anything to record. That is the same promise
+ * the portal makes to the buyer in words: we say so when we learn.
  *
  * That leaves four: paid and still running, paid and delivered, paid and owed
  * back, paid and paid back.

@@ -10,17 +10,33 @@ describe("the status an order can be in", () => {
   // the state machine keeps would win silently.
 
   it("names every state the machine can end an order in", () => {
-    expect([...ORDER_STATUSES]).toStrictEqual([
-      "in_progress",
-      "delivered",
-      "rejected",
-      "declined",
-      "expired",
-      "cancelled",
-      "refund_due",
-      "refunded",
-      "delivered_unpaid",
-    ]);
+    // Compared as a set, not a sequence. The same list lives in the state
+    // machine, and holding two files to one order would be a test failing over
+    // something neither side means.
+    expect([...ORDER_STATUSES].sort()).toStrictEqual(
+      [
+        "in_progress",
+        "delivered",
+        "rejected",
+        "payment_unresolved",
+        "declined",
+        "expired",
+        "cancelled",
+        "refund_due",
+        "refunded",
+        "delivered_unpaid",
+      ].sort(),
+    );
+  });
+
+  it("keeps an unanswered charge apart from a purchase that did not happen", () => {
+    // The distinction the fifth gate exists for. `rejected` says the buyer's
+    // money did not move; `payment_unresolved` says nobody can say whether it
+    // did. An agent told the first goes and buys the same thing elsewhere
+    // without checking its wallet — which is a claim we would be making on no
+    // evidence.
+    expect(OrderStatusSchema.options).toContain("payment_unresolved");
+    expect(OrderStatusSchema.options).toContain("rejected");
   });
 
   it("accepts each of them and nothing else", () => {
