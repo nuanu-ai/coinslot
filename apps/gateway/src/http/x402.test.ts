@@ -236,6 +236,21 @@ describe("one payment, one fingerprint", () => {
     ).not.toThrow();
   });
 
+  it("does not mistake something that is not hex for a canonical key", () => {
+    // The pair is a key only when it is written the way the chain writes one.
+    // Taken loosely, a scheme whose authorisation fields are words rather than
+    // hex would have those words used as the key — and two genuinely different
+    // payments, with different signatures, would come out as one.
+    const worded = (signature: string) => ({
+      ...signed({
+        signature,
+        authorization: { from: "alice", to: "bob", value: "1", nonce: "the-first-one" },
+      }),
+    });
+
+    expect(fingerprintOf(worded("0xaaaa"))).not.toBe(fingerprintOf(worded("0xbbbb")));
+  });
+
   it("falls back to the signature, canonicalised, and then to the whole payload", () => {
     // Not every scheme carries an authorisation under that name; whatever it
     // does carry, two spellings of one payment have to agree.

@@ -148,3 +148,58 @@ describe("an order whose next clock could not be started", () => {
     expect(after?.order.payment).toBe("none");
   });
 });
+
+describe("the payment on an order", () => {
+  /** An order that has been quoted and is waiting for a payment. */
+  const waiting = async (harnessed: Harness) => {
+    const published = await harnessed.gateway.publishCard({
+      merchant_item_id: "esim",
+      title: "A seven day eSIM",
+      description: "Seven days of data",
+      price: { amount: "12.00", currency: "USD" },
+      result: { activation_code: { type: "string" } },
+      fulfillment: "async",
+    });
+    if (!("ok" in published)) throw new Error("the card would not publish");
+    const offered = await harnessed.gateway.beginPurchase(published.ok.id, {});
+    if (offered.step !== "pay") throw new Error("no price was offered");
+    return offered.order.order.id;
+  };
+
+  it("is not replaced once the machine has an opinion about one", async () => {
+    // The payment on the record is what the machine's own payment stage speaks
+    // about. Replaced after a verification, the charge would execute an
+    // authorisation nothing had checked — a merchant paid with somebody else's
+    // failing payment while the buyer's good one was never charged.
+    open = await harness();
+    const orderId = await waiting(open);
+    await open.gateway.runner.presentPayment(orderId, "MINE", "fp-mine", "0xa", open.now());
+    await open.gateway.runner.apply(orderId, { kind: "payment_verified", at: open.now() });
+
+    await open.gateway.runner.apply(
+      orderId,
+      { kind: "purchase_repeated", at: open.now() },
+      { payment: "THEIRS", paidBy: "fp-theirs", paidFrom: "0xb" },
+    );
+
+    const after = await open.store.orderById(orderId);
+    expect(after?.payment).toBe("MINE");
+    expect(after?.paidBy).toBe("fp-mine");
+  });
+
+  it("cannot be presented at all once the machine has one", async () => {
+    // The same rule from the other door: a presentation that arrives while the
+    // machine is mid-payment is a defect in whoever called, not a case to be
+    // handled quietly.
+    open = await harness();
+    const orderId = await waiting(open);
+    await open.gateway.runner.presentPayment(orderId, "MINE", "fp-mine", "0xa", open.now());
+    await open.gateway.runner.apply(orderId, { kind: "payment_verified", at: open.now() });
+
+    await expect(
+      open.gateway.runner.presentPayment(orderId, "THEIRS", "fp-theirs", "0xb", open.now()),
+    ).rejects.toThrow(/whose own payment is already/);
+
+    expect((await open.store.orderById(orderId))?.payment).toBe("MINE");
+  });
+});
