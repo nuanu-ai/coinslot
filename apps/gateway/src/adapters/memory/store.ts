@@ -21,7 +21,7 @@
 
 import type { Card, Receipt } from "@coinslot/contracts";
 import { isOpen } from "@coinslot/core";
-import type { Ids } from "../../ports/clock.js";
+import type { Clock, Ids } from "../../ports/clock.js";
 import type {
   OrderChange,
   OrderLookup,
@@ -38,13 +38,15 @@ export class MemoryStore implements Store {
   readonly #orders = new Map<string, StoredOrder>();
   readonly #receipts = new Map<string, Receipt>();
   /** Which order owns which payment, so no payment is spent on two. */
-  readonly #paymentClaims = new Map<string, string>();
+  readonly #paymentClaims = new Map<string, { orderId: string; at: number }>();
   /** The tail of the queue of decisions waiting on each order. */
   readonly #locks = new Map<string, Promise<unknown>>();
   readonly #ids: Ids;
+  readonly #now: Clock;
 
-  constructor(ids: Ids) {
+  constructor(ids: Ids, now: Clock = () => Date.now()) {
     this.#ids = ids;
+    this.#now = now;
   }
 
   async publishCard(card: Card, at: number): Promise<StoredCard> {
@@ -118,12 +120,23 @@ export class MemoryStore implements Store {
   async claimPayment(fingerprint: string, orderId: string): Promise<PaymentClaim> {
     const held = this.#paymentClaims.get(fingerprint);
     if (held === undefined) {
-      this.#paymentClaims.set(fingerprint, orderId);
+      this.#paymentClaims.set(fingerprint, { orderId, at: this.#now() });
       return { claimed: true };
     }
     // The same order presenting the same payment again is the ordinary retry
     // the portal promises is safe, and it still owns it.
-    return held === orderId ? { claimed: true } : { claimed: false, heldBy: held };
+    return held.orderId === orderId ? { claimed: true } : { claimed: false, heldBy: held.orderId };
+  }
+
+  async forgetClaimsBefore(instant: number): Promise<number> {
+    let gone = 0;
+    for (const [fingerprint, claim] of [...this.#paymentClaims]) {
+      if (claim.at < instant) {
+        this.#paymentClaims.delete(fingerprint);
+        gone += 1;
+      }
+    }
+    return gone;
   }
 
   async putReceipt(receipt: Receipt): Promise<void> {

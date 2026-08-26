@@ -28,7 +28,7 @@
 
 import type { WorkerEnvelope } from "@coinslot/contracts";
 import { type Job, PgBoss } from "pg-boss";
-import type { DrawnEnvelope, Queue, Reminder } from "../../ports/queue.js";
+import type { DrawnEnvelope, Queue, Reminder, ReminderPatience } from "../../ports/queue.js";
 
 /**
  * The two queues, named the way pg-boss will accept.
@@ -52,6 +52,8 @@ export interface PgBossQueueOptions {
    * by this one wakes a parked poll immediately.
    */
   readonly pollIntervalMs: number;
+  /** How patient the queue is with a reminder whose handler threw. */
+  readonly reminders: ReminderPatience;
 }
 
 export class PgBossQueue implements Queue {
@@ -102,8 +104,12 @@ export class PgBossQueue implements Queue {
   }
 
   async remind(reminder: Reminder, afterMs: number): Promise<void> {
+    const { attempts, retryDelayMs } = this.#options.reminders;
     await this.#boss.send(REMINDERS, reminder as unknown as object, {
-      retryLimit: 0,
+      // The library's own retries, durably, rather than a handler catching its
+      // own failure and writing to the database that had just refused it.
+      retryLimit: Math.max(attempts - 1, 0),
+      retryDelay: Math.max(Math.round(retryDelayMs / 1_000), 1),
       startAfter: new Date(Date.now() + Math.max(afterMs, 0)),
     });
   }
@@ -113,6 +119,16 @@ export class PgBossQueue implements Queue {
       throw new Error("where reminders go is set before the queue is started, not after");
     }
     this.#fire = fire;
+  }
+
+  async everyDay(name: string, work: () => Promise<unknown>): Promise<void> {
+    await this.#boss.createQueue(name);
+    await this.#boss.work(name, { batchSize: 1 }, async () => {
+      await work();
+    });
+    // Registering the same name again replaces the schedule rather than adding
+    // one, so a restart does not accumulate them.
+    await this.#boss.schedule(name, "17 3 * * *");
   }
 
   async start(): Promise<void> {

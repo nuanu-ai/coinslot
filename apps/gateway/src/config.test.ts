@@ -35,7 +35,12 @@ describe("loadConfig", () => {
       defaultAsyncFulfillmentMs: 86_400_000,
       handlerAnswerMs: 3_000,
     });
-    expect(loadConfig(required).reminderAttempts).toBe(3);
+    const config = loadConfig(required);
+    expect(config.reminderAttempts).toBe(3);
+    expect(config.reminderRetryDelayMs).toBe(5_000);
+    expect(config.settleInFlightRetryMs).toBe(1_000);
+    expect(config.claimRetentionMs).toBe(30 * 24 * 60 * 60 * 1_000);
+    expect(config.paymentWordsKept).toBe(20);
 
     expect(redelivery).toStrictEqual({
       baseDelayMs: 500,

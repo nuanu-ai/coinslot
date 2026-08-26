@@ -178,45 +178,103 @@ export class PaymentEdge {
  * A fingerprint of one payment: the same for two presentations of the same
  * authorisation, and not something an agent can vary at will.
  *
- * The requirements beside the payload are no use for this — they are the
- * agent's own unsigned copy of what we asked for and can be rewritten freely —
- * so this reads the payload, and it reads as little of it as it can get away
- * with. What it wants is a value the agent cannot change without invalidating
- * the signature, and there are three of them in descending order of how sure
- * that is:
+ * This is the replay guard, so what it keys on has to match what the chain
+ * keys on, exactly and in both directions. An EIP-3009 token records
+ * `authorizationState[authorizer][nonce]`, so a payment is identified by the
+ * pair — the payer and the nonce — and neither half alone will do. The nonce
+ * alone makes the nonce space global: the first payer to use a nonce would
+ * block every other payer who ever picked the same one, permanently, and a
+ * client that counts from one picks exactly those. The payer alone identifies
+ * nothing.
  *
- * The authorisation's nonce is exact. It is the value the token contract itself
- * refuses to honour twice, so two payments with one nonce are one payment
- * whatever else differs, and one payment with two nonces is two.
+ * And it has to be canonical, because the signature is over decoded bytes and
+ * this is over text. `0xABCD` and `0xabcd` are one nonce to the token contract,
+ * to the facilitator and to the signature, and were two fingerprints here —
+ * which is a replay guard an attacker defeats by holding down the shift key.
+ * So every hex value is lowercased and required to carry its prefix, and every
+ * amount is put through BigInt, where `1000000`, `"1000000"` and `"0xF4240"`
+ * are one number rather than three strings.
  *
- * The signature is nearly as good and covers the schemes that carry one under
- * another name. Two presentations of one authorisation carry one signature.
- *
- * And where a scheme carries neither, the whole payload is fingerprinted. That
- * one is the weak case and it is worth saying why: a scheme could accept a
- * payload with a field added that its verifier ignores, and the addition would
- * change the fingerprint while leaving the payment perfectly valid. Reaching
- * into a payload at all is the protocol's business rather than ours, and this
- * reaches in exactly far enough to stop one signature buying two orders.
+ * Where a scheme carries no authorisation under that name the signature is used
+ * instead, canonicalised the same way; where it carries neither, the whole
+ * payload is, with the amounts inside it normalised. That last one is the weak
+ * case and is worth saying plainly: a scheme could accept a payload with a
+ * field its verifier ignores, and the addition would change the fingerprint
+ * while leaving the payment valid. Reaching into a payload at all is the
+ * protocol's business rather than ours, and this reaches in exactly far enough
+ * to stop one authorisation buying two orders.
  */
 export function paymentFingerprint(payload: PaymentPayload): string {
   const signed = payload.payload;
-  const authorization = signed.authorization;
-  const nonce =
-    typeof authorization === "object" && authorization !== null && "nonce" in authorization
-      ? (authorization as { nonce?: unknown }).nonce
-      : undefined;
+  const authorization = asRecord(signed.authorization);
 
-  const key =
-    typeof nonce === "string" && nonce !== ""
-      ? { by: "nonce", value: nonce }
-      : typeof signed.signature === "string" && signed.signature !== ""
-        ? { by: "signature", value: signed.signature }
-        : { by: "payload", value: stably(signed) };
+  const payer = asHex(authorization?.from);
+  const nonce = asHex(authorization?.nonce);
+  if (payer !== null && nonce !== null) {
+    return digestOf({ version: payload.x402Version, by: "authorization", payer, nonce });
+  }
 
-  return createHash("sha256")
-    .update(stably({ version: payload.x402Version, ...key }))
-    .digest("hex");
+  const signature = asHex(signed.signature);
+  if (signature !== null) {
+    return digestOf({ version: payload.x402Version, by: "signature", signature });
+  }
+
+  return digestOf({ version: payload.x402Version, by: "payload", payload: canonical(signed) });
+}
+
+/** The amounts a scheme writes, which are numbers however they are spelled. */
+const AMOUNTS = new Set(["value", "amount", "validAfter", "validBefore", "maxAmount"]);
+
+/**
+ * The payload with every value written one way.
+ *
+ * Hex is lowercased, numbers are put through BigInt, and everything else is
+ * left as it is. Two spellings of one payment come out identical; two payments
+ * do not.
+ */
+function canonical(value: unknown, key?: string): unknown {
+  if (Array.isArray(value)) {
+    return value.map((held) => canonical(held));
+  }
+  const record = asRecord(value);
+  if (record !== null) {
+    return Object.fromEntries(
+      Object.entries(record).map(([name, held]) => [name, canonical(held, name)]),
+    );
+  }
+  if (key !== undefined && AMOUNTS.has(key)) {
+    return asAmount(value) ?? value;
+  }
+  return asHex(value) ?? value;
+}
+
+function digestOf(value: unknown): string {
+  return createHash("sha256").update(stably(value)).digest("hex");
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+/** A hex string in one spelling, or nothing where the value is not one. */
+function asHex(value: unknown): string | null {
+  return typeof value === "string" && /^0x[0-9a-fA-F]+$/.test(value) ? value.toLowerCase() : null;
+}
+
+/** A whole number in one spelling, however it was written. */
+function asAmount(value: unknown): string | null {
+  if (typeof value === "bigint") {
+    return value.toString();
+  }
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) {
+    return BigInt(value).toString();
+  }
+  if (typeof value === "string" && /^(?:0x[0-9a-fA-F]+|\d+)$/.test(value)) {
+    return BigInt(value).toString();
+  }
+  return null;
 }
 
 /** JSON with its keys in a fixed order, so the same value has one text. */

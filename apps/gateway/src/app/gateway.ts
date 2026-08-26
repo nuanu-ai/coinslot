@@ -36,6 +36,7 @@ import {
   type QuoteAnswerAck,
   type QuoteResponse,
   type Refusal,
+  type WorkerEnvelope,
   type WorkerPollResponse,
 } from "@coinslot/contracts";
 import type { TransitionRejection } from "@coinslot/core";
@@ -79,7 +80,14 @@ export type PurchaseAttempt =
   | { readonly step: "params_rejected"; readonly problems: readonly PublishError[] }
   | { readonly step: "not_selling"; readonly message: string }
   /** This payment has already been presented for a different order. */
-  | { readonly step: "payment_already_spent"; readonly heldBy: string };
+  | {
+      readonly step: "payment_already_spent";
+      readonly heldBy: string;
+      /** Whether that order is still one an agent could collect anything from. */
+      readonly collectable: boolean;
+    }
+  /** The machine would not take this payment on this order, and said why. */
+  | { readonly step: "payment_not_taken"; readonly why: string; readonly retryable: boolean };
 
 export class Gateway {
   readonly runtime: Runtime;
@@ -104,26 +112,15 @@ export class Gateway {
       try {
         await this.#onReminder(reminder);
       } catch (thrown) {
-        // A reminder is the only thing that ever declares an overdue order, so
-        // one lost quietly is a paid order that is never marked for a refund and
-        // a silent charge that is never declared. It is said out loud, and it is
-        // asked for again — a store that was briefly unreachable should not cost
-        // a deadline. The attempts are counted so a defect that will never work
-        // stops complaining rather than looping forever.
-        const attempt = (reminder.attempt ?? 1) + 1;
-        const givingUp = attempt > this.runtime.config.reminderAttempts;
+        // Said out loud and then thrown on. A reminder is the only thing that
+        // ever declares an overdue order, and the queue is what delivers it
+        // again — catching it here and re-arming would mean writing to the very
+        // database whose unavailability had just thrown.
         console.error(
-          `[gateway] a reminder failed (${reminder.kind}, order ${reminder.orderId}, attempt ${
-            reminder.attempt ?? 1
-          })${givingUp ? " and will not be asked for again" : ""}`,
+          `[gateway] a reminder failed (${reminder.kind}, order ${reminder.orderId})`,
           thrown,
         );
-        if (!givingUp) {
-          await this.runtime.queue.remind(
-            { ...reminder, attempt },
-            this.runtime.config.redelivery.baseDelayMs,
-          );
-        }
+        throw thrown;
       }
     });
 
@@ -145,13 +142,33 @@ export class Gateway {
     // the order is waiting on: the merchant who answered the one he was given
     // must not be sent the order again for a reminder left against it.
     const record = await this.runtime.store.orderById(reminder.orderId);
-    if (record === null || record.openDeliveryId !== reminder.envelopeId) {
+    if (record === null || record.openDeliveryId !== reminder.handOver) {
       return;
     }
     await this.runner.apply(reminder.orderId, {
       kind: "handler_undelivered",
       at: this.runtime.clock(),
     });
+  }
+
+  /**
+   * Forgets the claims on payments too old to be guarding anything, and says
+   * how many went.
+   *
+   * A claim stops one signed authorisation from buying two orders, and what it
+   * has to cover is the window between a payment being verified and the charge
+   * being executed — after that the token itself refuses the same authorisation
+   * a second time. They cannot be kept forever: the route that makes them takes
+   * no key, so anybody may make as many as they like.
+   */
+  async forgetOldClaims(): Promise<number> {
+    const gone = await this.runtime.store.forgetClaimsBefore(
+      this.runtime.clock() - this.runtime.config.claimRetentionMs,
+    );
+    if (gone > 0) {
+      console.log(`[gateway] forgot ${gone} claims on payments older than the retention`);
+    }
+    return gone;
   }
 
   async stop(): Promise<void> {
@@ -236,6 +253,7 @@ export class Gateway {
       payment: null,
       settlement: null,
       paymentWords: [],
+      paymentWordsDropped: 0,
       openDeliveryId: null,
     };
     await this.runner.create(record, created.effects, at);
@@ -272,23 +290,22 @@ export class Gateway {
     // anything is verified and before any merchant is asked to do work.
     const claim = await this.runtime.store.claimPayment(fingerprint, orderId);
     if (!claim.claimed) {
-      return { step: "payment_already_spent", heldBy: claim.heldBy };
+      const holder = await this.runtime.store.orderById(claim.heldBy);
+      return {
+        step: "payment_already_spent",
+        heldBy: claim.heldBy,
+        // Whether pointing the agent at that order is any use to it. A claim
+        // held by an order that is over is a dead end, and saying "go and
+        // collect it" would send the agent somewhere with nothing to collect.
+        collectable: holder !== null && outcomeFor(holder.order) === "in_progress",
+      };
     }
 
-    // An agent presenting a payment for an order that already had one is
-    // repeating the purchase. That is a fact about what the agent did, not a
-    // decision about what it costs: the machine is what knows that a repeat
-    // collects goods already made, reopens a purchase closed on a silent charge,
-    // or means nothing at all in the state the order is actually in.
-    if (before.payment !== null) {
-      await this.runner.apply(orderId, { kind: "purchase_repeated", at: this.runtime.clock() });
-    }
-
-    // The place in the call to start waiting is here, before the payment is
-    // presented and not after it. A synchronous purchase can be over by the
-    // time verification comes back — a payment that did not check out closes it
-    // on the spot — and a call that parked afterwards would be parking for an
-    // answer that had already gone past.
+    // The place in the call to start waiting is here, before anything is
+    // presented. A synchronous purchase can be over by the time verification
+    // comes back — a payment that did not check out closes it on the spot — and
+    // a call that parked afterwards would be parking for an answer that had
+    // already gone past.
     //
     // The whole exchange, the goods and then the charge, is promised to the
     // agent inside one ceiling counted from the purchase itself. What is left
@@ -298,10 +315,10 @@ export class Gateway {
     const left = Math.max(this.runtime.config.deadlines.syncBudgetMs - spent, 0);
     const parked = waits ? this.runner.purchases.wait(orderId, left) : null;
 
-    const presented = await this.runner.presentPayment(orderId, payment, this.runtime.clock());
-    if (!presented) {
+    const presented = await this.#present(orderId, payment, before.payment !== null);
+    if (presented !== null) {
       this.runner.purchases.giveUp(orderId);
-      return { step: "no_such_item" };
+      return presented;
     }
 
     if (parked !== null) {
@@ -350,12 +367,17 @@ export class Gateway {
 
       const orderId = delivery.envelope.payload.id;
       const at = clock();
+      // A token for this hand-over rather than for the message. The envelope's
+      // own identifier names the order and stays the same however many times it
+      // goes out, which is what lets a worker tell a repeat from a new message;
+      // telling one hand-over from another is ours, and needs its own name.
+      const handOver = this.runtime.ids("dlv");
       let applied: Awaited<ReturnType<OrderRunner["apply"]>>;
       try {
         applied = await this.runner.apply(
           orderId,
           { kind: "order_dispatched", at },
-          { openDeliveryId: delivery.envelope.id },
+          { openDeliveryId: handOver },
         );
       } catch (thrown) {
         // Recording this one hand-over failed. The rest of the batch is not
@@ -364,7 +386,7 @@ export class Gateway {
         // seen again — and this one goes back on the stream rather than being
         // lost with it.
         console.error(`[gateway] could not record the hand-over of ${orderId}`, thrown);
-        await queue.publish(delivery.envelope, config.redelivery.baseDelayMs);
+        await queue.publish(sentNow(delivery.envelope, at), config.settleInFlightRetryMs);
         finished.push(delivery.handle);
         continue;
       }
@@ -375,7 +397,7 @@ export class Gateway {
         // reports. The order goes back on the stream rather than being dropped,
         // because dropping it is how an order that was paid for never reaches a
         // merchant at all.
-        await queue.publish(delivery.envelope, config.redelivery.baseDelayMs);
+        await queue.publish(sentNow(delivery.envelope, at), config.settleInFlightRetryMs);
         finished.push(delivery.handle);
         continue;
       }
@@ -387,7 +409,7 @@ export class Gateway {
         continue;
       }
 
-      await this.#remindMeIfNobodyAnswers(applied.order, delivery.envelope.id, at);
+      await this.#remindMeIfNobodyAnswers(applied.order, handOver, at);
       handing.push(delivery.envelope);
       finished.push(delivery.handle);
     }
@@ -536,6 +558,60 @@ export class Gateway {
   // --- the parts the flows above lean on ------------------------------------
 
   /**
+   * Hands the payment to the order, and tells the machine what kind of
+   * presentation it is. Answers with a refusal to give the agent, or nothing
+   * when the payment was taken.
+   *
+   * A payment on an order that already has one is a repeat of the purchase, and
+   * the two facts travel together: the machine is told the purchase was
+   * repeated and given the new authorisation in the same breath. Told first and
+   * given the payment after, the verification the machine asks for on a repeat
+   * would run against the authorisation that had just failed — charging the old
+   * one and throwing away the one the agent actually presented.
+   *
+   * And a repeat the machine will not take is not forced through. It refuses
+   * one on an order whose charge never reported back, because sending a second
+   * one would be spending the buyer's money on a guess about the first; writing
+   * the new payment down anyway would erase the record of which authorisation
+   * is unaccounted for, which is the only thing anybody could reconcile that
+   * order from.
+   */
+  async #present(
+    orderId: string,
+    payment: string,
+    isRepeat: boolean,
+  ): Promise<PurchaseAttempt | null> {
+    if (isRepeat) {
+      const repeated = await this.runner.apply(
+        orderId,
+        { kind: "purchase_repeated", at: this.runtime.clock() },
+        { payment },
+      );
+
+      if (repeated.outcome === "no_such_order") {
+        return { step: "no_such_item" };
+      }
+      if (repeated.outcome === "refused") {
+        return {
+          step: "payment_not_taken",
+          why: repeated.rejection.message,
+          retryable: repeated.rejection.retryable,
+        };
+      }
+      if (repeated.effects.some((effect) => effect.kind === "verify_payment")) {
+        // The machine asked for the new payment to be checked and the runner has
+        // already done it. Presenting it again would put a second question to
+        // the facilitator about the same authorisation.
+        return null;
+      }
+    }
+
+    return (await this.runner.presentPayment(orderId, payment, this.runtime.clock()))
+      ? null
+      : { step: "no_such_item" };
+  }
+
+  /**
    * Puts the price question to the merchant and waits out our own patience for
    * it. Whatever comes back — an answer, a refusal to sell, or nothing at all —
    * reaches the machine as an event, and what it costs the order is decided
@@ -603,11 +679,7 @@ export class Gateway {
    * a redelivery decided after the ending is a decision about a purchase that
    * is over.
    */
-  async #remindMeIfNobodyAnswers(
-    record: StoredOrder,
-    envelopeId: string,
-    at: number,
-  ): Promise<void> {
+  async #remindMeIfNobodyAnswers(record: StoredOrder, handOver: string, at: number): Promise<void> {
     const { config, queue } = this.runtime;
     const deadline = fulfillmentDeadline(record.order)[0];
     const untilDeadline = deadline === undefined ? Number.POSITIVE_INFINITY : deadline.at - at;
@@ -616,7 +688,7 @@ export class Gateway {
     if (wait <= 0) {
       return;
     }
-    await queue.remind({ kind: "delivery_unanswered", orderId: record.order.id, envelopeId }, wait);
+    await queue.remind({ kind: "delivery_unanswered", orderId: record.order.id, handOver }, wait);
   }
 
   async #wherePurchaseStands(orderId: string): Promise<PurchaseAttempt> {
@@ -690,6 +762,18 @@ function refusedCall(rejection: TransitionRejection): OrderCallError {
       : `this order is in ${rejection.state}: ${rejection.message}`,
     retryable: rejection.retryable,
   };
+}
+
+/**
+ * The same message, going out again now.
+ *
+ * The identifier names the message and does not change when it is delivered
+ * again; the instant names this delivery of it and does. A worker tells a
+ * repeat from a new message by exactly that pair, and one sent out again with
+ * its original stamp would look like the delivery that had already been.
+ */
+function sentNow(envelope: WorkerEnvelope, at: number): WorkerEnvelope {
+  return { ...envelope, sent_at: asTimestamp(at) };
 }
 
 /** Zod's account of what is wrong, in the shape the contract publishes. */

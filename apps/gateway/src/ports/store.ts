@@ -69,6 +69,16 @@ export interface StoredOrder {
    */
   readonly paymentWords: readonly PaymentWord[];
   /**
+   * How many of them fell off the end of that list.
+   *
+   * The list is bounded, because the route that fills it takes no key and
+   * anybody may present as many payments as they like against one order. What
+   * is dropped is counted rather than dropped quietly: a reader of the last
+   * twenty things the payment layer said needs to know whether there were
+   * twenty or two hundred.
+   */
+  readonly paymentWordsDropped: number;
+  /**
    * The delivery that is out with a worker and has not been answered.
    *
    * It is here so that a reminder about one delivery cannot undo the answer to
@@ -150,6 +160,19 @@ export interface Store {
    * before anything is verified or dispatched.
    */
   claimPayment(fingerprint: string, orderId: string): Promise<PaymentClaim>;
+
+  /**
+   * Forgets claims older than an instant, and says how many went.
+   *
+   * They cannot be kept forever. The route that makes them takes no key — the
+   * payment is what stands in for one — so anybody can make as many as they
+   * like, and a table that only grows under an open door is a table that fills
+   * up. What a claim actually guards is the window between a payment being
+   * verified and the charge being executed, because after that the token
+   * itself refuses the same authorisation twice; how long that window is worth
+   * keeping is configuration.
+   */
+  forgetClaimsBefore(instant: number): Promise<number>;
 
   putReceipt(receipt: Receipt): Promise<void>;
   receiptForOrder(orderId: string): Promise<Receipt | null>;

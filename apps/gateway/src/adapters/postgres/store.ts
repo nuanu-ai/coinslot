@@ -15,7 +15,7 @@
 
 import type { Card, Receipt } from "@coinslot/contracts";
 import { isOpen } from "@coinslot/core";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, lt, sql } from "drizzle-orm";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import type { Ids } from "../../ports/clock.js";
@@ -123,33 +123,36 @@ export class PostgresStore implements Store {
   }
 
   async claimPayment(fingerprint: string, orderId: string): Promise<PaymentClaim> {
-    // The insert is the check. Two requests presenting the same payment at the
-    // same instant both reach here and the primary key decides between them,
-    // which is the one place a decision like this can be made without a race.
-    const [taken] = await this.#db
+    // One statement, and the primary key is the decision. Two requests
+    // presenting the same payment at the same instant both arrive here and the
+    // database picks between them; the loser's conflict clause writes the
+    // holder's own identifier back over itself, so what comes out is the row
+    // that stands either way. Doing it as an insert and then a read would leave
+    // a gap between the two, and a branch for a row that vanished in it — a
+    // branch nothing could ever reach or test.
+    const [row] = await this.#db
       .insert(paymentClaims)
       .values({ fingerprint, orderId, claimedAt: new Date() })
-      .onConflictDoNothing({ target: paymentClaims.fingerprint })
+      .onConflictDoUpdate({
+        target: paymentClaims.fingerprint,
+        set: { orderId: sql`${paymentClaims.orderId}` },
+      })
       .returning();
 
-    if (taken !== undefined) {
-      return { claimed: true };
-    }
-
-    const [held] = await this.#db
-      .select()
-      .from(paymentClaims)
-      .where(eq(paymentClaims.fingerprint, fingerprint))
-      .limit(1);
-
-    if (held === undefined) {
-      // The row was there a moment ago and is not now. Nothing deletes these,
-      // so this is not a state this code knows how to be in.
-      throw new Error(`the claim on a payment for ${orderId} vanished between two queries`);
+    if (row === undefined) {
+      throw new Error(`claiming a payment for ${orderId} wrote and read no row`);
     }
     // The same order presenting the same payment again is the ordinary retry
     // the portal promises is safe, and it still owns it.
-    return held.orderId === orderId ? { claimed: true } : { claimed: false, heldBy: held.orderId };
+    return row.orderId === orderId ? { claimed: true } : { claimed: false, heldBy: row.orderId };
+  }
+
+  async forgetClaimsBefore(instant: number): Promise<number> {
+    const gone = await this.#db
+      .delete(paymentClaims)
+      .where(lt(paymentClaims.claimedAt, new Date(instant)))
+      .returning({ fingerprint: paymentClaims.fingerprint });
+    return gone.length;
   }
 
   async putReceipt(receipt: Receipt): Promise<void> {

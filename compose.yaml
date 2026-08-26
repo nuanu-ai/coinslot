@@ -9,6 +9,10 @@
 #   DATABASE_URL=postgres://coinslot:coinslot@localhost:5432/coinslot \
 #     pnpm --filter @coinslot/gateway db:migrate
 #
+# The volume outlives `docker compose down`, so the migrations are what bring an
+# existing database up to date; `docker compose down -v` is how to start from
+# nothing.
+#
 # The password is in the file and that is deliberate: this database holds
 # nothing but a developer's own test orders, and a secret that has to be found
 # somewhere else to bring up a sandbox is a secret people paste into chat.

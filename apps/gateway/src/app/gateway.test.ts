@@ -354,6 +354,81 @@ describe("an asynchronous purchase", () => {
     expect(repeated.delivery).toStrictEqual({ access_code: "SESAME" });
     // The merchant was asked for nothing the second time round.
     expect(harnessed.facilitator.settles).toHaveLength(2);
+    // And the charge that closed it was the payment the agent actually
+    // presented. Counting the charges says nothing about this: the first
+    // authorisation had already failed, and charging it again would have taken
+    // nothing while the one the agent sent was thrown away.
+    expect(harnessed.facilitator.settles.map((charge) => charge.payment)).toStrictEqual([
+      "FIRST",
+      "SECOND",
+    ]);
+    expect(harnessed.facilitator.verifies.at(-1)?.payment).toBe("SECOND");
+  });
+
+  it("keeps the last few things the payment layer said, and counts what it dropped", async () => {
+    // They are what an operator reconciles a silent charge from, and they
+    // arrive on a route that takes no key — so the list is bounded, and a
+    // reader of the last two needs to know whether there were two or twenty.
+    const harnessed = await started({ PAYMENT_WORDS_KEPT: "2" });
+    const itemId = await published(harnessed, asyncCard);
+    const offered = await harnessed.gateway.beginPurchase(itemId, {});
+    if (offered.step !== "pay") throw new Error("no price was offered");
+    const orderId = offered.order.order.id;
+
+    // A verification that could not be made writes a word and no event, so this
+    // is the cheapest way to say several things about one order.
+    harnessed.facilitator.willVerify({ verified: "unknown", message: "first" });
+    await harnessed.gateway.payPurchase(orderId, "A", "A");
+    harnessed.facilitator.willVerify({ verified: "unknown", message: "second" });
+    await harnessed.gateway.payPurchase(orderId, "B", "B");
+    harnessed.facilitator.willVerify({ verified: "unknown", message: "third" });
+    await harnessed.gateway.payPurchase(orderId, "C", "C");
+
+    const record = await harnessed.store.orderById(orderId);
+    expect(record?.paymentWords.map((word) => word.said)).toStrictEqual(["second", "third"]);
+    expect(record?.paymentWordsDropped).toBe(1);
+  });
+
+  it("does not take a second payment on an order whose first charge went quiet", async () => {
+    // The machine refuses a repeat there, because a second charge would be the
+    // buyer's money spent on a guess about the first. What must not happen is
+    // the refusal being ignored and the new payment written down anyway: the
+    // record of which authorisation is unaccounted for is the only thing
+    // anybody could ever reconcile that order from.
+    const harnessed = await started({
+      QUOTE_RESPONSE_MS: "50",
+      SYNC_RESPONSE_MS: "200",
+      SETTLE_RESPONSE_MS: "100",
+      SYNC_BUDGET_MS: "300",
+    });
+    const itemId = await published(harnessed, syncCard);
+    harnessed.facilitator.willSettle({ settled: "unknown", reason: "the facilitator timed out" });
+
+    const offered = await harnessed.gateway.beginPurchase(itemId, { nights: 1 });
+    if (offered.step !== "pay") throw new Error("no price was offered");
+    const orderId = offered.order.order.id;
+
+    const worker = workUntilStopped(harnessed, {
+      onOrder: () => ({ delivered: { access_code: "SESAME" } }),
+    });
+    // The purchase comes back when the promised ceiling runs out.
+    await harnessed.gateway.payPurchase(orderId, "FIRST", "FIRST");
+    await worker.stop();
+
+    const stuck = await harnessed.store.orderById(orderId);
+    expect(stuck?.order.payment).toBe("outcome_unknown");
+
+    const refused = await harnessed.gateway.payPurchase(orderId, "SECOND", "SECOND");
+
+    expect(refused.step).toBe("payment_not_taken");
+    if (refused.step !== "payment_not_taken") throw new Error("the second payment was taken");
+    expect(refused.retryable).toBe(true);
+
+    // Nothing was charged, and the record of the charge that went quiet is
+    // exactly as it was.
+    const after = await harnessed.store.orderById(orderId);
+    expect(after?.payment).toBe("FIRST");
+    expect(harnessed.facilitator.settles).toHaveLength(1);
   });
 
   it("answers a second delivery the same way as the first", async () => {

@@ -64,6 +64,7 @@ const order = (id: string, state: Order["state"]): StoredOrder => ({
   payment: null,
   settlement: null,
   paymentWords: [],
+  paymentWordsDropped: 0,
   openDeliveryId: null,
 });
 
@@ -226,6 +227,51 @@ describe("MemoryStore orders", () => {
       "ord_unpaid",
     ]);
     expect(await store.orders()).toHaveLength(4);
+  });
+});
+
+describe("MemoryStore payment claims", () => {
+  it("gives one payment to one order, and refuses it to any other", async () => {
+    // This is the replay guard. A signed payment says how much, to whom and on
+    // which chain, and nothing about which purchase it is for — so without
+    // this, two orders at the same price are payable with one signature, both
+    // reach a merchant, both are delivered, and only the second charge fails.
+    const store = new MemoryStore(counted());
+
+    expect(await store.claimPayment("fp-1", "ord_1")).toStrictEqual({ claimed: true });
+    expect(await store.claimPayment("fp-1", "ord_2")).toStrictEqual({
+      claimed: false,
+      heldBy: "ord_1",
+    });
+    // And a different payment is nobody's yet.
+    expect(await store.claimPayment("fp-2", "ord_2")).toStrictEqual({ claimed: true });
+  });
+
+  it("lets the order that owns a payment present it again", async () => {
+    // A dropped connection and a retry is the ordinary case, and the portal
+    // promises the merchant that repeating a call is safe.
+    const store = new MemoryStore(counted());
+    await store.claimPayment("fp-1", "ord_1");
+
+    expect(await store.claimPayment("fp-1", "ord_1")).toStrictEqual({ claimed: true });
+  });
+
+  it("forgets claims older than an instant, and says how many went", async () => {
+    // They cannot be kept forever: the route that makes them takes no key.
+    let now = 1_000;
+    const store = new MemoryStore(counted(), () => now);
+
+    await store.claimPayment("old", "ord_1");
+    now = 5_000;
+    await store.claimPayment("fresh", "ord_2");
+
+    expect(await store.forgetClaimsBefore(2_000)).toBe(1);
+    // The old one is free again; the fresh one still belongs to its order.
+    expect(await store.claimPayment("old", "ord_3")).toStrictEqual({ claimed: true });
+    expect(await store.claimPayment("fresh", "ord_3")).toStrictEqual({
+      claimed: false,
+      heldBy: "ord_2",
+    });
   });
 });
 

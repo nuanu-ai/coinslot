@@ -67,6 +67,7 @@ const impossible = (): StoredOrder => {
     payment: null,
     settlement: null,
     paymentWords: [],
+    paymentWordsDropped: 0,
     openDeliveryId: null,
   };
 };

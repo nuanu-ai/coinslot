@@ -20,7 +20,7 @@
  */
 
 import type { WorkerEnvelope } from "@coinslot/contracts";
-import type { DrawnEnvelope, Queue, Reminder } from "../../ports/queue.js";
+import type { DrawnEnvelope, Queue, Reminder, ReminderPatience } from "../../ports/queue.js";
 
 type Waiter = () => void;
 
@@ -33,6 +33,13 @@ export class MemoryQueue implements Queue {
   #fire: ((reminder: Reminder) => Promise<void>) | null = null;
   #running = false;
   #handles = 0;
+  readonly #patience: ReminderPatience;
+  /** What would run daily, by name, so a test can run it when it wants to. */
+  readonly daily = new Map<string, () => Promise<unknown>>();
+
+  constructor(patience: ReminderPatience = { attempts: 3, retryDelayMs: 5 }) {
+    this.#patience = patience;
+  }
 
   async publish(envelope: WorkerEnvelope, afterMs?: number): Promise<void> {
     if (afterMs === undefined || afterMs <= 0) {
@@ -60,16 +67,29 @@ export class MemoryQueue implements Queue {
   }
 
   async remind(reminder: Reminder, afterMs: number): Promise<void> {
-    this.#later(
-      () => {
-        const fire = this.#fire;
-        if (fire === null) {
-          return;
+    this.#deliver(reminder, Math.max(afterMs, 0), 1);
+  }
+
+  /**
+   * One delivery of a reminder, and another after it if the handler threw.
+   *
+   * pg-boss does this with its own retries and this does it with a timer, and
+   * the two have to come to the same thing: a reminder is the only thing that
+   * ever declares an overdue order, so a port that promised the retry and had
+   * one adapter keeping it would be a promise nobody could rely on.
+   */
+  #deliver(reminder: Reminder, afterMs: number, attempt: number): void {
+    this.#later(() => {
+      const fire = this.#fire;
+      if (fire === null) {
+        return;
+      }
+      void fire(reminder).catch(() => {
+        if (attempt < this.#patience.attempts) {
+          this.#deliver(reminder, this.#patience.retryDelayMs, attempt + 1);
         }
-        void fire(reminder).catch(() => undefined);
-      },
-      Math.max(afterMs, 0),
-    );
+      });
+    }, afterMs);
   }
 
   onReminder(fire: (reminder: Reminder) => Promise<void>): void {
@@ -77,6 +97,15 @@ export class MemoryQueue implements Queue {
       throw new Error("where reminders go is set before the queue is started, not after");
     }
     this.#fire = fire;
+  }
+
+  /**
+   * In memory this records what would be run and never runs it. Nothing in an
+   * offline suite waits a day, and a fake day would be a schedule that fires on
+   * a timer this adapter's tests then have to reason about.
+   */
+  async everyDay(name: string, work: () => Promise<unknown>): Promise<void> {
+    this.daily.set(name, work);
   }
 
   async start(): Promise<void> {

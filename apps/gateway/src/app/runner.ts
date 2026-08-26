@@ -107,39 +107,58 @@ export class OrderRunner {
    */
   async create(record: StoredOrder, effects: readonly Effect[], at: number): Promise<StoredOrder> {
     refuseToWriteAnImpossibleOrder(record.order);
-    await this.#runtime.store.addOrder(record);
+    // The clock is started before the order is written and not after it. Of the
+    // two ways that can go wrong, one is harmless and the other is not: a
+    // reminder for an order that was never written finds nothing and says so,
+    // while an order written with no clock on it is one nothing will ever close.
     await this.#arm([], deadlines(record.order), record.order.id);
+    await this.#runtime.store.addOrder(record);
     await this.#run(record, record.order, effects, at);
     return record;
   }
 
   /** Feeds one event to the machine and carries out whatever comes back. */
   async apply(orderId: string, event: OrderEvent, facts: OrderFacts = {}): Promise<Applied> {
-    const decided = await this.#runtime.store.withOrder(orderId, (found): OrderChange<Decided> => {
-      const known: StoredOrder = {
-        ...found,
-        ...(facts.delivery === undefined ? {} : { delivery: facts.delivery }),
-        ...(facts.settlement === undefined ? {} : { settlement: facts.settlement }),
-        ...(facts.paymentWord === undefined
-          ? {}
-          : { paymentWords: [...found.paymentWords, facts.paymentWord] }),
-        ...(facts.payment === undefined ? {} : { payment: facts.payment }),
-        ...(facts.priceId === undefined ? {} : { priceId: facts.priceId }),
-        ...(facts.openDeliveryId === undefined ? {} : { openDeliveryId: facts.openDeliveryId }),
-      };
+    const decided = await this.#runtime.store.withOrder(
+      orderId,
+      async (found): Promise<OrderChange<Decided>> => {
+        const known: StoredOrder = {
+          ...found,
+          ...(facts.delivery === undefined ? {} : { delivery: facts.delivery }),
+          ...(facts.settlement === undefined ? {} : { settlement: facts.settlement }),
+          ...(facts.paymentWord === undefined
+            ? {}
+            : { paymentWords: [...found.paymentWords, facts.paymentWord] }),
+          ...(facts.payment === undefined ? {} : { payment: facts.payment }),
+          ...(facts.priceId === undefined ? {} : { priceId: facts.priceId }),
+          ...(facts.openDeliveryId === undefined ? {} : { openDeliveryId: facts.openDeliveryId }),
+        };
 
-      const moved = transition(known.order, event);
-      if (!moved.ok) {
-        // Nothing is written for a refused event, not even the facts that came
-        // with it: an event the machine says has no meaning here should leave
-        // no trace of having been believed.
-        return { result: { moved, before: known.order, known } };
-      }
+        const moved = transition(known.order, event);
+        if (!moved.ok) {
+          // Nothing is written for a refused event, not even the facts that
+          // came with it: an event the machine says has no meaning here should
+          // leave no trace of having been believed.
+          return { result: { moved, before: known.order, known } };
+        }
 
-      refuseToWriteAnImpossibleOrder(moved.order);
-      const next: StoredOrder = { ...known, order: moved.order };
-      return { save: next, result: { moved, before: known.order, known: next } };
-    });
+        refuseToWriteAnImpossibleOrder(moved.order);
+        const next: StoredOrder = { ...known, order: moved.order };
+
+        // The clocks the order will be waiting on are started before the change
+        // to it is committed, and that ordering is the whole of the guarantee.
+        // Started afterwards, a failure here would leave an order that had
+        // moved and had no clock on it: the event would be delivered again,
+        // the machine would say it no longer applies, the delivery would be
+        // marked done, and the order would hang forever with nobody waiting on
+        // anything. Started first, a failure writes nothing and the event comes
+        // back; the other way round leaves a reminder for a change that did not
+        // happen, which the machine refuses as a deadline that is not running.
+        await this.#arm(deadlines(known.order), deadlines(next.order), orderId);
+
+        return { save: next, result: { moved, before: known.order, known: next } };
+      },
+    );
 
     if (!decided.found) {
       return { outcome: "no_such_order" };
@@ -150,7 +169,6 @@ export class OrderRunner {
       return { outcome: "refused", rejection: moved.rejection };
     }
 
-    await this.#arm(deadlines(before), deadlines(known.order), known.order.id);
     const answer = await this.#run(known, before, moved.effects, event.at);
     this.#wakeTheAgent(known);
 
@@ -411,9 +429,34 @@ export class OrderRunner {
   async #writeDown(orderId: string, word: PaymentWord): Promise<void> {
     console.error(`[gateway] ${orderId}: the payment layer ${word.about} — ${word.said}`);
     await this.#runtime.store.withOrder(orderId, (found): OrderChange<null> => {
-      const next: StoredOrder = { ...found, paymentWords: [...found.paymentWords, word] };
-      return { save: next, result: null };
+      return { save: { ...found, ...this.#alsoSaid(found, word) }, result: null };
     });
+  }
+
+  /**
+   * One more thing the payment layer said, kept alongside the last few, with a
+   * count of what fell off.
+   *
+   * Bounded because the route that fills it takes no key: an order's identifier
+   * is enough to present a payment against it, and every presentation appends
+   * here — into a document every later decision about that order has to read
+   * and write back under a lock. Unbounded, one order could be made too
+   * expensive to decide anything about. What is dropped is counted, because a
+   * reader of the last twenty needs to know whether there were twenty or two
+   * hundred.
+   */
+  #alsoSaid(
+    record: StoredOrder,
+    word: PaymentWord,
+  ): Pick<StoredOrder, "paymentWords" | "paymentWordsDropped"> {
+    const said = [...record.paymentWords, word];
+    const kept = this.#runtime.config.paymentWordsKept;
+    const dropped = Math.max(said.length - kept, 0);
+
+    return {
+      paymentWords: dropped === 0 ? said : said.slice(dropped),
+      paymentWordsDropped: record.paymentWordsDropped + dropped,
+    };
   }
 
   async #issueReceipt(record: StoredOrder, before: Order, at: number): Promise<void> {

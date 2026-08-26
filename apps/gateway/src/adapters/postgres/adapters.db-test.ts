@@ -15,6 +15,7 @@
  * happens twice.
  */
 
+import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Card } from "@coinslot/contracts";
@@ -79,10 +80,17 @@ if (databaseUrl === undefined || databaseUrl === "") {
       pool = connected.pool;
       // Every run starts from an empty catalog, or the counts below would be
       // reading somebody else's leftovers.
-      await pool.query("truncate table cards, orders, receipts");
+      // Every table, claims included. Left behind, a claim from the last run
+      // owns the fingerprint this run presents and every purchase below is
+      // refused — a suite that passes once and never again, on a volume that
+      // outlives it.
+      await pool.query("truncate table cards, orders, receipts, payment_claims");
 
       store = new PostgresStore(connected.db, countedIds());
-      queue = new PgBossQueue(new PgBoss(databaseUrl), { pollIntervalMs: 50 });
+      queue = new PgBossQueue(new PgBoss(databaseUrl), {
+        pollIntervalMs: 50,
+        reminders: { attempts: 3, retryDelayMs: 1_000 },
+      });
       facilitator = new ScriptedFacilitator();
 
       const runtime: Runtime = {
@@ -140,6 +148,36 @@ if (databaseUrl === undefined || databaseUrl === "") {
       expect((await store.orderById(orderId))?.order.dispatch.attempts).toBe(3);
     });
 
+    it("gives one payment to one order, in one statement, and refuses it to any other", async () => {
+      // The replay guard, against the primary key that actually enforces it.
+      // Two requests presenting the same payment at the same instant both reach
+      // the insert and the database picks between them; what comes back either
+      // way is the row that stands.
+      expect(await store.claimPayment("fp-db-1", "ord_a")).toStrictEqual({ claimed: true });
+      expect(await store.claimPayment("fp-db-1", "ord_b")).toStrictEqual({
+        claimed: false,
+        heldBy: "ord_a",
+      });
+      expect(await store.claimPayment("fp-db-1", "ord_a")).toStrictEqual({ claimed: true });
+    });
+
+    it("gives one payment to exactly one of two orders racing for it", async () => {
+      const [first, second] = await Promise.all([
+        store.claimPayment("fp-db-race", "ord_race_a"),
+        store.claimPayment("fp-db-race", "ord_race_b"),
+      ]);
+
+      const won = [first, second].filter((claim) => claim.claimed);
+      expect(won).toHaveLength(1);
+    });
+
+    it("forgets claims older than an instant, and says how many went", async () => {
+      await store.claimPayment("fp-db-old", "ord_old");
+
+      expect(await store.forgetClaimsBefore(Date.now() + 60_000)).toBeGreaterThan(0);
+      expect(await store.claimPayment("fp-db-old", "ord_new")).toStrictEqual({ claimed: true });
+    });
+
     it("says an order is not there rather than throwing", async () => {
       expect(await store.withOrder("ord_nope", () => ({ result: 1 }))).toStrictEqual({
         found: false,
@@ -184,7 +222,10 @@ if (databaseUrl === undefined || databaseUrl === "") {
         { gateway },
         { onOrder: () => ({ delivered: { access_code: "SESAME" } }) },
       );
-      const bought = await gateway.payPurchase(offered.order.order.id, "PAYMENT", "PAYMENT");
+      // A fingerprint of this run's own, so the claim left behind by a previous
+      // run — or by another test in this one — is never what decides it.
+      const paid = `walked-${randomUUID()}`;
+      const bought = await gateway.payPurchase(offered.order.order.id, paid, paid);
       await worker.stop();
 
       expect(bought.step).toBe("settled");

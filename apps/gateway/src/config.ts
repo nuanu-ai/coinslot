@@ -124,12 +124,35 @@ const environmentSchema = z.object({
   HANDLER_ANSWER_MS: durationMs(3_000),
 
   /**
-   * How many times a reminder that failed is asked for again. A reminder is the
+   * How many times a reminder that failed is delivered again. A reminder is the
    * only thing that ever declares an overdue order, so losing one to a store
-   * that was briefly unreachable costs a refund nobody marks; asking forever
-   * would turn a defect into a loop.
+   * that was briefly unreachable costs a refund nobody marks; delivering it
+   * forever would turn a defect into a loop.
    */
   REMINDER_ATTEMPTS: countAbove(3),
+  /** How long the queue waits before delivering a failed reminder again. */
+  REMINDER_RETRY_DELAY_MS: durationMs(5_000),
+  /**
+   * How long an order waits before it is offered to a worker again, when the
+   * machine turned the hand-over away because a charge on that order was being
+   * executed at the time. It is not the redelivery of a failed delivery — that
+   * one is the machine's own arithmetic — and it is not the reminder retry.
+   */
+  SETTLE_IN_FLIGHT_RETRY_MS: durationMs(1_000),
+  /**
+   * How long a claim on a payment is kept. What it guards is the window between
+   * a payment being verified and the charge being executed; after that the token
+   * itself refuses the same authorisation twice. The route that makes claims
+   * takes no key, so they cannot be kept forever.
+   */
+  CLAIM_RETENTION_MS: durationMs(30 * 24 * 60 * 60 * 1_000),
+  /**
+   * How many of the payment layer's own words are kept on one order. They are
+   * what an operator reconciles a silent charge from, and they arrive on an
+   * unauthenticated route, so the list is bounded and what fell off it is
+   * counted rather than dropped quietly.
+   */
+  PAYMENT_WORDS_KEPT: countAbove(20),
 
   /** How long the gateway holds a worker's poll open (ADR-0004 §1). */
   WORKER_POLL_WAIT_MS: durationMs(25_000),
@@ -214,8 +237,15 @@ export interface GatewayConfig {
   readonly port: number;
   readonly merchantApiKey: string;
   readonly publicBaseUrl: string;
-  /** How many times a reminder that failed is asked for again. */
+  /** How many times a reminder that failed is delivered again. */
   readonly reminderAttempts: number;
+  readonly reminderRetryDelayMs: number;
+  /** How long an order waits when a hand-over met a charge in flight. */
+  readonly settleInFlightRetryMs: number;
+  /** How long a claim on a payment is kept. */
+  readonly claimRetentionMs: number;
+  /** How many of the payment layer's own words one order keeps. */
+  readonly paymentWordsKept: number;
   readonly deadlines: DeadlineConfig;
   readonly redelivery: RedeliveryConfig;
   readonly worker: WorkerConfig;
@@ -315,6 +345,10 @@ export function loadConfig(environment: Record<string, string | undefined>): Gat
     merchantApiKey: environmentValues.MERCHANT_API_KEY,
     publicBaseUrl: environmentValues.PUBLIC_BASE_URL,
     reminderAttempts: environmentValues.REMINDER_ATTEMPTS,
+    reminderRetryDelayMs: environmentValues.REMINDER_RETRY_DELAY_MS,
+    settleInFlightRetryMs: environmentValues.SETTLE_IN_FLIGHT_RETRY_MS,
+    claimRetentionMs: environmentValues.CLAIM_RETENTION_MS,
+    paymentWordsKept: environmentValues.PAYMENT_WORDS_KEPT,
     deadlines,
     redelivery: {
       baseDelayMs: environmentValues.REDELIVERY_BASE_DELAY_MS,

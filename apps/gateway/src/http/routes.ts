@@ -298,16 +298,27 @@ async function answerPurchase(
     case "payment_already_spent":
       // The same signed payment was presented for a different order. It is not
       // a refusal of the payment — it may be perfectly good — it is a refusal to
-      // spend one authorisation on two purchases, and the agent is told which
-      // purchase already holds it so it can go and collect that one.
+      // spend one authorisation on two purchases. Whether the agent is sent to
+      // collect that other order depends on whether there is anything there to
+      // collect; a claim held by an order that is over is a dead end, and
+      // saying otherwise would send the agent looking for nothing.
       return written(
         response,
         CONFLICT,
         refusal(
           "payment_already_spent",
-          `this payment was already presented for order ${attempt.heldBy}, and one payment buys one order`,
+          attempt.collectable
+            ? `this payment was already presented for order ${attempt.heldBy}, which is still open; one payment buys one order`
+            : `this payment was already presented for order ${attempt.heldBy}, which is over; one payment buys one order, so this one needs a fresh payment`,
         ),
       );
+
+    case "payment_not_taken":
+      // The machine would not take a payment on this order and said why. The
+      // one way here today is an order whose charge never reported back: a
+      // second one would be the buyer's money spent on a guess about the first,
+      // and only the payment layer can end that.
+      return written(response, CONFLICT, refusal("payment_not_taken", attempt.why));
 
     case "pay": {
       const price = attempt.order.order.price;

@@ -177,10 +177,7 @@ describe("MemoryQueue reminders", () => {
       fired.push(reminder);
     });
 
-    await queue.remind(
-      { kind: "delivery_unanswered", orderId: "ord_1", envelopeId: "env_1" },
-      1_000,
-    );
+    await queue.remind({ kind: "delivery_unanswered", orderId: "ord_1", handOver: "dlv_1" }, 1_000);
     await queue.stop();
 
     await vi.advanceTimersByTimeAsync(5_000);

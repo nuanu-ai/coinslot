@@ -69,9 +69,18 @@ export const receipts = pgTable("receipts", {
  * payable with one signature unless something refuses the second. That refusal
  * is this row already existing.
  */
-export const paymentClaims = pgTable("payment_claims", {
-  /** A stable fingerprint of the part of the payment the agent actually signed. */
-  fingerprint: text("fingerprint").primaryKey(),
-  orderId: text("order_id").notNull(),
-  claimedAt: timestamp("claimed_at", { withTimezone: true, mode: "date" }).notNull(),
-});
+export const paymentClaims = pgTable(
+  "payment_claims",
+  {
+    /** A canonical fingerprint of the authorisation the agent actually signed. */
+    fingerprint: text("fingerprint").primaryKey(),
+    orderId: text("order_id").notNull(),
+    claimedAt: timestamp("claimed_at", { withTimezone: true, mode: "date" }).notNull(),
+  },
+  // Claims are swept by age, and read back by order when somebody is working
+  // out what an order was paid with.
+  (table) => [
+    index("payment_claims_swept_idx").on(table.claimedAt),
+    index("payment_claims_order_idx").on(table.orderId),
+  ],
+);

@@ -27,6 +27,13 @@
  * A reminder is not a decision either. It says a clock ran out; what that
  * means for the order is the machine's to say, and every reminder is fed to it
  * as an event rather than acted on here.
+ *
+ * A reminder whose handler throws is delivered again, a bounded number of
+ * times, and that is the queue's job rather than the handler's. A reminder is
+ * the only thing that ever declares an overdue order, so one dropped on a
+ * database that was briefly unreachable is a paid order nobody ever marks for a
+ * refund — and a handler that tried to re-arm it would be writing to the very
+ * thing whose unavailability had just thrown.
  */
 
 import type { WorkerEnvelope } from "@coinslot/contracts";
@@ -59,19 +66,15 @@ export type Reminder = (
     }
   | {
       readonly kind: "delivery_unanswered";
-      /** Which delivery went quiet, so a later answer to it is not undone. */
-      readonly envelopeId: string;
+      /**
+       * Which hand-over went quiet. It names one delivery rather than the
+       * message, so a merchant who answered the delivery he was given is not
+       * sent the order again by a reminder left against it.
+       */
+      readonly handOver: string;
     }
 ) & {
   readonly orderId: string;
-  /**
-   * How many times this reminder has been asked for. It is here because a
-   * reminder is the only thing that ever declares an overdue order, so one
-   * dropped on a transient failure is a paid order nobody ever marks for a
-   * refund; the count is what lets it be asked for again without asking
-   * forever.
-   */
-  readonly attempt?: number;
 };
 
 export interface Queue {
@@ -97,6 +100,20 @@ export interface Queue {
    */
   onReminder(fire: (reminder: Reminder) => Promise<void>): void;
 
+  /**
+   * Runs `work` about once a day, under `name`, for as long as the gateway is
+   * up — and once rather than once per process, so a second gateway does not
+   * double it. Registering the same name again replaces what was there.
+   */
+  everyDay(name: string, work: () => Promise<unknown>): Promise<void>;
+
   start(): Promise<void>;
   stop(): Promise<void>;
+}
+
+/** How patient a queue is with a reminder whose handler threw. */
+export interface ReminderPatience {
+  /** How many deliveries in all, the first one included. */
+  readonly attempts: number;
+  readonly retryDelayMs: number;
 }
