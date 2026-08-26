@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { CreateOrderInput } from "./create.js";
 import { createOrder } from "./create.js";
+import { deadlines } from "./deadlines.js";
 import { transition } from "./machine.js";
 import type { DeadlineKind, Effect, Order, OrderEvent, OrderPolicy, Price } from "./model.js";
 import { isOpen, modeOf, ORDER_EVENT_KINDS, ORDER_STATES } from "./model.js";
@@ -56,11 +57,24 @@ function pick<T>(next: () => number, items: readonly T[]): T {
   return item;
 }
 
+const WALK_STARTS_AT = 500_000;
+
 /**
- * The walk's clock moves five seconds a step, so these deadlines are short
- * enough that a walk actually runs past them and expiries are real choices
- * rather than events that are always refused as not yet due. They are test
- * values and say nothing about the pilot's numbers.
+ * How far the walk's clock moves between two events. Unevenly, and sometimes
+ * by a lot — real time does not arrive in equal ticks either, and a walk whose
+ * clock crept forward at a fixed rate could never leave a wait standing long
+ * enough for it to come due. Every deadline in the policy below fits inside
+ * the longest of these jumps.
+ */
+function tick(next: () => number, at: number): number {
+  return at + 1_000 + Math.floor(next() * 4) * 10_000;
+}
+
+/**
+ * Short enough that a walk of a couple of hundred steps runs past all of them
+ * and every expiry is a real choice rather than an event that is always
+ * refused as not yet due. They are test values and say nothing about the
+ * pilot's numbers.
  */
 const POLICY: OrderPolicy = {
   deadlines: {
@@ -119,23 +133,6 @@ function everyEvent(at: number): readonly OrderEvent[] {
 }
 
 /**
- * The next event of the walk, chosen out of three pools in order of
- * preference.
- *
- * Most of the time it is an event that both moves the order and leaves it
- * open. An order dies easily — a refusal or a departure ends it from almost
- * anywhere — and a walk that took those as readily as anything else would
- * spend its life in the first three states and call that coverage. Next in
- * preference is anything that moves the order at all, which is what closes it.
- * And a fifth of the time it is any event whatsoever, which is what turns up
- * the pairings nobody would have thought to write down.
- *
- * "Moves the order" means the machine changed something, not merely that the
- * name of the state changed: the settle of a purchase whose money moves first
- * leaves the order in `quoted`, and a walk that only chased new state names
- * would never get past it.
- */
-/**
  * The effects a walk has to reach if its effect checks are to mean anything:
  * money going out, goods going out, a debt being written down.
  */
@@ -146,6 +143,26 @@ const EFFECTS_WORTH_REACHING: readonly Effect["kind"][] = [
   "mark_refund_due",
 ];
 
+/**
+ * The next event of the walk, chosen out of five pools in order of preference,
+ * each of which exists because the walk without it was measured to be blind to
+ * something.
+ *
+ * Most of the time it is an event that both moves the order and leaves it
+ * open: an order dies easily, and a walk that took a departure as readily as
+ * anything else would spend its life in the first three states and call that
+ * coverage. Some of the time it is one that spends money or hands goods over,
+ * because those are what the effect checks are written about. Some of the time
+ * it is a wait, because otherwise no clock in the machine is ever left running
+ * long enough to come due. And a small share of the time it is any event
+ * whatsoever, which is what turns up the pairings nobody would have thought to
+ * write down.
+ *
+ * "Moves the order" means the machine changed something, not merely that the
+ * name of the state changed: the settle of a purchase whose money moves first
+ * leaves the order in `quoted`, and a walk that only chased new state names
+ * would never get past it.
+ */
 function anEvent(next: () => number, order: Order, at: number): OrderEvent {
   const all = everyEvent(at);
   const advancing = all.filter((event) => {
@@ -156,23 +173,36 @@ function anEvent(next: () => number, order: Order, at: number): OrderEvent {
     const result = transition(order, event);
     return result.ok && isOpen(result.order.state);
   });
-  // The fourth pool is the point of the whole exercise. Preferring events that
-  // keep an order alive is what gets the walk to the far side of the machine,
-  // but on its own it starves exactly the paying and closing events the effect
-  // checks below are written about — measured over six seeds, the goods went
-  // out once and a debt was written once. This pool is looked at first so that
-  // the walk actually spends money and hands goods over.
+  // Preferring events that keep an order alive is what gets the walk to the
+  // far side of the machine, but on its own it starves exactly the paying and
+  // closing events the effect checks below are written about — measured over
+  // six seeds, the goods went out once and a debt was written once.
   const spendsOrHandsOver = advancing.filter((event) => {
     const result = transition(order, event);
     return (
       result.ok && result.effects.some((effect) => EFFECTS_WORTH_REACHING.includes(effect.kind))
     );
   });
+  // And preferring those in turn starved every clock in the machine. In a
+  // settling state the only events that move the order at all are the settle's
+  // own two outcomes, so a walk that reaches for them takes them at once and
+  // no deadline is ever left long enough to come due: measured, zero accepted
+  // expiries across the seeds that carry the money assertions, and the
+  // double-charge check those assertions are for could not be reached from any
+  // of them. A walk that never lets time pass is only testing half the machine.
+  const timeDriven = advancing.filter((event) => event.kind === "deadline_expired");
+  // Waiting is a move too, and the only one that gets a deadline anywhere near
+  // coming due. These are the events the machine will refuse: taking one costs
+  // the order nothing and lets its clock run.
+  const idles = all.filter((event) => !transition(order, event).ok);
+  const waitingOnSomething = deadlines(order).length > 0;
 
   const die = next();
-  if (die < 0.35 && spendsOrHandsOver.length > 0) return pick(next, spendsOrHandsOver);
-  if (die < 0.7 && keepsItOpen.length > 0) return pick(next, keepsItOpen);
-  if (die < 0.85 && advancing.length > 0) return pick(next, advancing);
+  if (die < 0.2 && timeDriven.length > 0) return pick(next, timeDriven);
+  if (die < 0.4 && waitingOnSomething && idles.length > 0) return pick(next, idles);
+  if (die < 0.6 && spendsOrHandsOver.length > 0) return pick(next, spendsOrHandsOver);
+  if (die < 0.85 && keepsItOpen.length > 0) return pick(next, keepsItOpen);
+  if (die < 0.93 && advancing.length > 0) return pick(next, advancing);
   return pick(next, all);
 }
 
@@ -187,7 +217,7 @@ function takeAWalk(seed: number, steps: number): { order: Order; trace: readonly
   const next = generator(seed);
   const input: CreateOrderInput = {
     id: `ord_walk_${seed}`,
-    at: 500_000,
+    at: WALK_STARTS_AT,
     mode: modeOf(pick(next, ["sync", "async", "confirm"])),
     policy: POLICY,
     priceCheck: pick(next, ["none", "merchant"]),
@@ -200,10 +230,12 @@ function takeAWalk(seed: number, steps: number): { order: Order; trace: readonly
   if (!created.ok) throw new Error(`seed ${seed} could not create an order`);
 
   let order = created.order;
+  let at = WALK_STARTS_AT;
   const trace: Step[] = [];
 
   for (let step = 0; step < steps; step += 1) {
-    const event = anEvent(next, order, 500_000 + step * 5_000);
+    at = tick(next, at);
+    const event = anEvent(next, order, at);
     const result = transition(order, event);
     if (result.ok) order = result.order;
     trace.push({
@@ -231,7 +263,7 @@ describe("a long walk over the machine", () => {
       const next = generator(seed);
       const input: CreateOrderInput = {
         id: `ord_walk_${seed}`,
-        at: 500_000,
+        at: WALK_STARTS_AT,
         mode: modeOf(pick(next, ["sync", "async", "confirm"])),
         policy: POLICY,
         priceCheck: pick(next, ["none", "merchant"]),
@@ -244,6 +276,7 @@ describe("a long walk over the machine", () => {
       if (!created.ok) return;
 
       let order = created.order;
+      let at = WALK_STARTS_AT;
       // What the gateway would have been told to do, so far.
       let chargesInFlight = 0;
       let goodsReleased = 0;
@@ -252,7 +285,8 @@ describe("a long walk over the machine", () => {
       const reached = new Set<string>();
 
       for (let step = 0; step < 200; step += 1) {
-        const event = anEvent(next, order, 500_000 + step * 5_000);
+        at = tick(next, at);
+        const event = anEvent(next, order, at);
         const result = transition(order, event);
         if (!result.ok) continue;
 
@@ -321,6 +355,48 @@ describe("a long walk over the machine", () => {
       expect(reachedAcrossSeeds, `the walk never produced ${kind}`).toContain(kind);
     }
     expect(sawAChargeInFlight, "the walk never held a charge in flight").toBeGreaterThan(0);
+  });
+
+  it("lets time pass, which is half of what the machine does", () => {
+    // A generator steered toward events that move an order will resolve every
+    // wait the instant it can, and then no clock in the machine is ever
+    // reached. The money assertions above ran over four hundred and sixty
+    // accepted steps without a single accepted expiry among them, and the
+    // double-charge they guard was only reachable through one.
+    const takenFrom = new Map<string, number>();
+
+    for (const seed of seeds) {
+      let order = createOrder({
+        id: `ord_walk_${seed}`,
+        at: WALK_STARTS_AT,
+        mode: modeOf("async"),
+        policy: POLICY,
+        priceCheck: "merchant",
+        cardPrice: PRICE,
+        test: false,
+        selling: "open",
+      });
+      if (!order.ok) continue;
+      let current = order.order;
+      let at = WALK_STARTS_AT;
+      const next = generator(seed);
+      for (let step = 0; step < 200; step += 1) {
+        at = tick(next, at);
+        const event = anEvent(next, current, at);
+        const result = transition(current, event);
+        if (!result.ok) continue;
+        if (event.kind === "deadline_expired") {
+          takenFrom.set(event.deadline, (takenFrom.get(event.deadline) ?? 0) + 1);
+        }
+        current = result.order;
+      }
+      order = { ok: true, order: current, effects: [] };
+    }
+
+    expect(
+      [...takenFrom.keys()].sort().length,
+      `expiries taken: ${[...takenFrom]}`,
+    ).toBeGreaterThan(2);
   });
 
   it("produces the very same walk from the very same seed", () => {

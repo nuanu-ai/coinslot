@@ -400,12 +400,15 @@ function onDeadline(
  * a debt by `fromClosedWithoutMoney`, not thrown away.
  */
 function onSilentSettle(order: Order): TransitionResult {
-  const silent: Order = { ...order, payment: "settle_failed" };
+  // Not "the charge failed". The charge said nothing, and writing down the
+  // stronger of the two is what let a repeat of the purchase send a second
+  // charge on top of a first one nobody had heard from.
+  const silent: Order = { ...order, payment: "outcome_unknown" };
 
   if (order.state === "fulfilled") {
     // The merchant produced the goods and we cannot say the money arrived. He
     // is told, so that he does not have to find it by reconciling by hand.
-    return ok({ ...silent, state: "delivered_unpaid" }, [
+    return ok({ ...silent, state: "delivered_unpaid", closure: null }, [
       { kind: "emit_merchant_event", event: "order.payment_failed_after_delivery" },
     ]);
   }
@@ -675,7 +678,11 @@ function fromPaid(order: Order, event: StateEvent): TransitionResult {
         // of a call the machine just refused.
         return answer(order, { ok: false, error: "not_applicable_in_mode", retryable: false });
       }
-      return fromDispatched(handedOver(order), event);
+      // A call can be made from anywhere at any time and proves nothing about
+      // whether the order round ever reached his handler — in the confirm mode
+      // he knows about the order from the confirmation round. So it is
+      // answered where it lands, and the delivery counter is left alone.
+      return fromDispatched({ ...order, state: "dispatched" }, event);
     case "handler_accepted":
     case "handler_delivered":
     case "handler_refused":
@@ -714,11 +721,20 @@ function dispatchedOrder(order: Order, at: number): Order {
 }
 
 /**
- * The hand-over we learned about from the merchant answering, which is a
+ * The hand-over we learned about from his handler answering, which is a
  * different thing: we know it happened, and we do not know when. The instant
  * stays empty rather than being filled in with the moment his answer reached
  * us — a support view, a latency metric and a dispute all read that field, and
  * a made-up number there is worse than an absent one.
+ *
+ * Only a handler answer gets here. A `deliver` or `refuse` call can be made
+ * from anywhere and says nothing about whether this order round reached him.
+ *
+ * The counter this keeps can be one low: nothing on the wire ties a hand-over
+ * to the record of it, so when a record is lost the next one to arrive is
+ * taken for the one we inferred. That is the direction to be wrong in — it
+ * costs a merchant who is already failing one extra delivery rather than one
+ * fewer, and the alternative would cut his retries short.
  */
 function handedOver(order: Order): Order {
   return {
@@ -821,7 +837,7 @@ function fromFulfilled(order: Order, event: StateEvent): TransitionResult {
       // Rare, and possible only where the money is executed last: between the
       // verification and the execution the funds went somewhere else.
       return order.payment === "settling"
-        ? ok({ ...order, state: "delivered_unpaid", payment: "settle_failed" }, [
+        ? ok({ ...order, state: "delivered_unpaid", payment: "settle_failed", closure: null }, [
             { kind: "emit_merchant_event", event: "order.payment_failed_after_delivery" },
           ])
         : notApplicable(order, event);
@@ -833,7 +849,10 @@ function fromFulfilled(order: Order, event: StateEvent): TransitionResult {
       // by answering and there is no separate call at all.
       return answer(order, { ok: false, error: "not_applicable_in_mode", retryable: false });
     case "merchant_departed":
-      return onDeparture(order);
+      // His goods are already made and the money for them is mid-flight. His
+      // leaving settles nothing here, and closing the order as owing nobody
+      // anything would be the one wrong answer.
+      return ok(order);
     case "purchase_repeated":
       return ok(order);
     case "quote_answered":
@@ -890,18 +909,33 @@ function fromDeliveredUnpaid(order: Order, event: StateEvent): TransitionResult 
     case "purchase_repeated":
       // The repeat carries a fresh payment; the goods the merchant already
       // produced close the order, and he is asked for nothing more.
+      //
+      // Unless a charge is already out there unaccounted for. Then the repeat
+      // waits: sending a second one would be spending the buyer's money on a
+      // guess about the first, and only the payment layer can end that guess.
+      if (order.payment === "outcome_unknown") {
+        return reject(
+          order,
+          event,
+          "settle_in_flight",
+          "a charge on this order has not reported back, so no second one is sent",
+        );
+      }
       return ok({ ...order, payment: "none" }, [{ kind: "verify_payment" }]);
     case "payment_verified":
       return order.payment === "none" ? startSettle(order, event.at) : notApplicable(order, event);
     case "payment_settled":
-      return order.payment === "settling"
+      // The second of these is the payment layer finally answering about a
+      // charge we had given up on. The goods are made and the money did move
+      // after all, so the purchase is a success rather than a debt.
+      return order.payment === "settling" || order.payment === "outcome_unknown"
         ? ok({ ...order, state: "delivered", payment: "settled" }, [
             { kind: "release_goods_to_agent" },
             { kind: "issue_receipt" },
           ])
         : notApplicable(order, event);
     case "payment_settle_failed":
-      return order.payment === "settling"
+      return order.payment === "settling" || order.payment === "outcome_unknown"
         ? ok({ ...order, payment: "settle_failed" })
         : notApplicable(order, event);
     case "payment_verification_failed":
@@ -1143,7 +1177,7 @@ function fromClosedWithoutMoney(order: Order, event: StateEvent): TransitionResu
       // turns the guess into a fact, once: a second one finds the fact already
       // written and has nothing to add.
       return order.closure?.cause === "payment_outcome_unknown"
-        ? ok({ ...order, closure: { cause: "payment_not_settled" } })
+        ? ok({ ...order, payment: "settle_failed", closure: { cause: "payment_not_settled" } })
         : notApplicable(order, event);
     case "merchant_departed":
     case "purchase_repeated":

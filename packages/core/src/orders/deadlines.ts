@@ -8,11 +8,17 @@
  * of that very order is already on its way, or a timer that fired twice
  * closing an order whose merchant is still honestly inside his deadline.
  *
- * Every open state has exactly one clock on it, and the reason is
- * `docs/research/16-order-state-machine.md`: an overdue order does not hang,
- * it goes to an honest ending and the agent is told which. A state with no
- * clock would be an order waiting for an answer that may never come, reported
- * to the agent as "not yet" forever.
+ * Every open state in which the machine is waiting for somebody has exactly
+ * one clock on it, and the reason is `docs/research/16-order-state-machine.md`:
+ * an overdue order does not hang, it goes to an honest ending and the agent is
+ * told which.
+ *
+ * Three open states carry no clock, and each is a deliberate exception rather
+ * than a gap. `refund_due` and `delivered_unpaid` are the two the portal calls
+ * unclosed: the purchase is over and what is left is a debt in one direction
+ * or the other, which a deadline cannot settle. And an order whose charge
+ * never reported back waits for the payment layer to speak, because that is a
+ * fact only the payment layer has and another clock would only re-guess it.
  *
  * Three of the clocks start at instants worth naming out loud. The synchronous
  * budget is ours and it is the ceiling on how long the agent waits, so it runs

@@ -43,6 +43,16 @@ const MAY_BE_CHARGING: readonly OrderState[] = [
   "delivered_unpaid",
 ];
 
+/**
+ * The states in which a charge may legitimately be recorded as unaccounted
+ * for. Both of them are orders the machine has stopped moving and is waiting
+ * for the payment layer to speak about: `rejected` closed on the guess that
+ * the money did not move, `delivered_unpaid` with the goods already made.
+ * Anywhere else it would be an order carrying on with an open question about
+ * the buyer's money behind it.
+ */
+const MAY_BE_UNACCOUNTED: readonly OrderState[] = ["rejected", "delivered_unpaid"];
+
 /** The states that record a debt, and therefore require a charge behind them. */
 const RECORDS_A_DEBT: readonly OrderState[] = ["refund_due", "refunded"];
 
@@ -75,6 +85,13 @@ export function moneyInvariantViolations(order: Order): readonly string[] {
     violations.push(
       `the payment is being executed and the order has moved on to ${order.state}, ` +
         "so whatever happens to the money now happens to a decided order",
+    );
+  }
+
+  if (order.payment === "outcome_unknown" && !MAY_BE_UNACCOUNTED.includes(order.state)) {
+    violations.push(
+      `a charge on this order never reported back and the order is in ${order.state}, ` +
+        "which is not a place to wait in",
     );
   }
 

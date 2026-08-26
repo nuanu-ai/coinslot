@@ -175,7 +175,21 @@ export function modeOf(fulfillment: FulfillmentMode): OrderMode {
  * which a refusal, a departure or a timer would otherwise tell a buyer his
  * purchase never happened while his money was already on its way.
  */
-export const PAYMENT_STAGES = ["none", "verified", "settling", "settled", "settle_failed"] as const;
+export const PAYMENT_STAGES = [
+  "none",
+  "verified",
+  "settling",
+  /**
+   * The execution was asked for and never reported back. The money may have
+   * moved and may not, and the machine cannot tell — so it says so, and above
+   * all it does not send a second charge on top of a first one whose fate is
+   * unknown. Only the payment layer ends this stage, by finally answering; it
+   * owns that fact and the machine will not invent it.
+   */
+  "outcome_unknown",
+  "settled",
+  "settle_failed",
+] as const;
 
 export type PaymentStage = (typeof PAYMENT_STAGES)[number];
 
@@ -535,8 +549,9 @@ export type Order = {
  *   off `deadlines(order)` is the fix; re-sending the same expiry is not.
  * - `delivery_before_payment` — goods offered against a confirmation request,
  *   which nothing has been charged for.
- * - `settle_in_flight` — the payment is being executed and the machine does
- *   not yet know whether it went through. This is the one rejection that means
+ * - `settle_in_flight` — a charge is being executed, or the outcome of one
+ *   that was is still unknown. Either way the machine will not spend the
+ *   buyer's money again on top of it, and this is the one rejection that means
  *   "come back later" rather than "no".
  */
 export const TRANSITION_REJECTION_CODES = [
