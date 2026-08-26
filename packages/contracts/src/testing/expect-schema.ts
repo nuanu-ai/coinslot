@@ -39,6 +39,15 @@ export const expectMissingFieldRejected = (
 
   expect(result.success, `the schema accepted a value without "${field}"`).toBe(false);
   if (result.success) return;
+
+  // The complaint has to be about this field, not merely to mention its name.
+  // Checking the text alone would pass `id` against a message about
+  // `order_id`, and `Order` and `Receipt` carry both.
+  const issues = result.error.issues;
+  expect(
+    issues.some((issue) => issue.path[0] === field),
+    `nothing in the error points at "${field}": ${z.prettifyError(result.error)}`,
+  ).toBe(true);
   expect(z.prettifyError(result.error)).toContain(field);
 };
 

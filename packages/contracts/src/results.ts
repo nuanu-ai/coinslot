@@ -7,6 +7,13 @@
  * surprised by. That is a rule about the whole surface, which is why publishing
  * a card and failing to deliver an order share a file even though they belong
  * to different calls.
+ *
+ * One member of that family is missing on purpose. When a synchronous handler
+ * returns after its deadline the tools hand the merchant a typed result saying
+ * the purchase is already closed — again a value, not an exception. It is not
+ * here because it never crosses the wire: it is produced by the SDK, on the
+ * merchant's own machine, about a call that never left it. If it turns out
+ * that the gateway has to say it too, it moves here.
  */
 
 import { z } from "zod";

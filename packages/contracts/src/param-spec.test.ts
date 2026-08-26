@@ -117,7 +117,7 @@ describe("the compiler from a spec to a validator", () => {
 
   for (const [type, values] of typesOf(accepted)) {
     it(`accepts a ${type} where the spec declares a ${type}`, () => {
-      const validator = paramSpecToValidator({ field: { type, required: true } });
+      const validator = paramSpecToValidator({ field: { type, required: true } }, "purchase");
       for (const value of values) {
         expect(validator.safeParse({ field: value }).success, JSON.stringify(value)).toBe(true);
       }
@@ -126,25 +126,61 @@ describe("the compiler from a spec to a validator", () => {
 
   for (const [type, values] of typesOf(refused)) {
     it(`refuses what is not a ${type} and names the field`, () => {
-      const validator = paramSpecToValidator({ email: { type, required: true } });
+      const validator = paramSpecToValidator({ email: { type, required: true } }, "purchase");
       for (const value of values) {
         expect(errorOf(validator, { email: value }), JSON.stringify(value)).toContain("email");
       }
     });
   }
 
-  it("requires a field the spec marked required", () => {
-    const validator = paramSpecToValidator({ email: { type: "string", required: true } });
-    expect(errorOf(validator, {})).toContain("email");
+  it("requires a field the spec marked required, whichever way it is compiled", () => {
+    for (const direction of ["purchase", "delivery"] as const) {
+      const validator = paramSpecToValidator(
+        { email: { type: "string", required: true } },
+        direction,
+      );
+      expect(errorOf(validator, {}), direction).toContain("email");
+    }
   });
 
-  it("treats a field with no required flag as optional", () => {
+  it("lets a purchase leave out a field with no required flag", () => {
     // The portal writes `required: true` where it means it, so silence means
     // the other thing. A default of "required" would break every card whose
     // author left the flag off.
-    const validator = paramSpecToValidator({ note: { type: "string" } });
+    const validator = paramSpecToValidator({ note: { type: "string" } }, "purchase");
     expect(validator.safeParse({}).success).toBe(true);
     expect(validator.safeParse({ note: "for a friend" }).success).toBe(true);
+  });
+
+  it("holds a delivery to every field the card declared", () => {
+    // The other direction of the same flag. A card's result is what the agent
+    // reads before paying to decide what it is buying, so a declared field is
+    // one that arrives. Reading silence as "optional" here would let a
+    // merchant deliver an empty object against a card advertising three
+    // fields, and the promise the agent paid on would be unenforceable.
+    const validator = paramSpecToValidator(
+      { access_url: { type: "string" }, expires_at: { type: "string" } },
+      "delivery",
+    );
+
+    expect(validator.safeParse({}).success).toBe(false);
+    expect(errorOf(validator, { access_url: "https://example.com/a" })).toContain("expires_at");
+    expect(
+      validator.safeParse({
+        access_url: "https://example.com/a",
+        expires_at: "2026-09-25T10:00:00Z",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("lets a delivery field that may genuinely be absent say so", () => {
+    const validator = paramSpecToValidator(
+      { iccid: { type: "string" }, ios_tap_link: { type: "string", required: false } },
+      "delivery",
+    );
+
+    expect(validator.safeParse({ iccid: "89000000000000000000" }).success).toBe(true);
+    expect(validator.safeParse({ ios_tap_link: "https://example.com/e" }).success).toBe(false);
   });
 
   it("refuses a value the card never declared", () => {
@@ -155,28 +191,54 @@ describe("the compiler from a spec to a validator", () => {
     // card and a way to smuggle input into someone else's code. The same rule
     // holds for a delivery, where an undeclared field means the agent paid
     // for a result different from the one it read before paying.
-    const validator = paramSpecToValidator({ email: { type: "string", required: true } });
-    const message = errorOf(validator, { email: "buyer@example.com", coupon: "FREE" });
-    expect(message).toContain("coupon");
+    for (const direction of ["purchase", "delivery"] as const) {
+      const validator = paramSpecToValidator(
+        { email: { type: "string", required: true } },
+        direction,
+      );
+      const message = errorOf(validator, { email: "buyer@example.com", coupon: "FREE" });
+      expect(message, direction).toContain("coupon");
+    }
+  });
+
+  it("drops a delivered field named __proto__ instead of reporting it", () => {
+    // The portal promises that a delivery reaches the agent as the merchant
+    // wrote it. This is the one exception, and it is zod's: the key is removed
+    // before any check of ours runs, so it is neither delivered nor refused.
+    // Nothing in a card can declare such a field, so a merchant only reaches
+    // this by sending one nobody asked for — but the loss is silent, and this
+    // test is here so it stays known rather than surprising.
+    const validator = paramSpecToValidator({ access_url: { type: "string" } }, "delivery");
+    const delivered = validator.parse(
+      JSON.parse('{"access_url": "https://example.com/a", "__proto__": {"x": 1}}'),
+    );
+
+    expect(Object.keys(delivered as object)).toStrictEqual(["access_url"]);
   });
 
   it("compiles an empty spec into a check that accepts only an empty object", () => {
-    const validator = paramSpecToValidator({});
+    const validator = paramSpecToValidator({}, "purchase");
     expect(validator.safeParse({}).success).toBe(true);
     expect(validator.safeParse({ anything: 1 }).success).toBe(false);
   });
 
   it("gives back the values it was handed", () => {
-    const validator = paramSpecToValidator({
-      email: { type: "string", required: true },
-      seats: { type: "integer" },
-    });
+    const validator = paramSpecToValidator(
+      {
+        email: { type: "string", required: true },
+        seats: { type: "integer" },
+      },
+      "purchase",
+    );
     const instance = { email: "buyer@example.com", seats: 3 };
     expect(validator.parse(instance)).toStrictEqual(instance);
   });
 
   it("refuses an instance that is not an object at all", () => {
-    const validator = paramSpecToValidator({ email: { type: "string", required: true } });
+    const validator = paramSpecToValidator(
+      { email: { type: "string", required: true } },
+      "purchase",
+    );
     for (const instance of [null, "email=buyer@example.com", 1, []]) {
       expect(validator.safeParse(instance).success, JSON.stringify(instance)).toBe(false);
     }

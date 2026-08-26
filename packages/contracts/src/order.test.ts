@@ -71,7 +71,7 @@ describe("order", () => {
   it("refuses a field it does not know", () => {
     // An order that carries something the handler is meant to act on, and
     // which we never defined, is a promise we did not make.
-    expect(errorOf(OrderSchema, { ...order, deadline_seconds: 60 })).toContain("deadline_seconds");
+    expect(errorOf(OrderSchema, { ...order, discount_code: "FREE" })).toContain("discount_code");
   });
 
   it("refuses a purchase parameter whose name a card could never declare", () => {

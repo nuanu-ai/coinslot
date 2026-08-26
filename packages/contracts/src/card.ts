@@ -43,7 +43,12 @@ export const PriceCheckSchema = z.union(
   [
     z.literal("handler"),
     z.strictObject({
-      url: z.url({ protocol: /^https$/ }),
+      // The https rule is written twice on purpose. `protocol` is what zod
+      // checks; the pattern is what survives into the JSON Schema export,
+      // where zod renders a url as `format: "uri"` and drops everything else.
+      // An engineer generating code from the exported document would otherwise
+      // build a client that happily posts a merchant's prices over http.
+      url: z.url({ protocol: /^https$/ }).regex(/^https:\/\//, "a price hook is https"),
     }),
   ],
   { error: 'a price check is either "handler" or { url } naming an https address' },
@@ -75,11 +80,18 @@ const CardFieldsSchema = z.strictObject({
    * What the agent receives when the delivery goes through. Never empty: a
    * declaration with no fields satisfies the letter of "the card declares its
    * result" while telling the agent nothing about what it is paying for.
+   *
+   * The rule is written twice again. zod drops refinements when it renders
+   * JSON Schema, so the same constraint goes into the metadata as
+   * `minProperties`, where a generator can still see it.
    */
   result: ParamSpecSchema.refine(
     (spec) => Object.keys(spec).length > 0,
     "a card declares at least one field of what the agent receives",
-  ),
+  ).meta({
+    description: "What the agent receives on delivery. At least one field.",
+    minProperties: 1,
+  }),
 
   fulfillment: FulfillmentSchema,
 
@@ -123,6 +135,14 @@ export const CardSchema = CardFieldsSchema.superRefine((card, ctx) => {
         'a synchronous card delivers inside the system-wide response budget and sets no delivery deadline; "async" and "confirm" do',
     });
   }
+}).meta({
+  // JSON Schema has no way to say "this field only when that one has this
+  // value", and zod drops the rules above when it renders a document. Left at
+  // that, an engineer generating a client from the export would build one that
+  // sends deadlines a card cannot carry and only find out on the first publish.
+  // Saying it in words is weaker than checking it, and better than silence.
+  description:
+    'A product in the catalog, as the merchant publishes it. Two rules are enforced beyond the shape below: confirm_deadline_seconds is only allowed when fulfillment is "confirm", and fulfill_deadline_seconds only when fulfillment is "async" or "confirm" — a synchronous card delivers inside the system-wide response budget and names no deadline of its own.',
 });
 
 export type Fulfillment = z.infer<typeof FulfillmentSchema>;

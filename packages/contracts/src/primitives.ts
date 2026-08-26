@@ -42,12 +42,17 @@ export const AmountSchema = z
 /**
  * A currency code, upper case.
  *
- * The shape admits both a three-letter national code and a four-letter
- * stablecoin ticker, because a card is priced in one and settled in the other
- * and this contract does not yet say which one it carries. What it does not do
- * is check membership in any list: we hold no currency table, and a schema
- * that pretended to would be claiming knowledge the package does not have.
- * Which currencies the gateway accepts is a gateway question.
+ * Three to eight characters, starting with a letter, digits allowed after it.
+ * A card is priced in one currency and settled in another and this contract
+ * does not yet say which of the two it carries, so the shape has to admit
+ * both: a national code is three letters (`USD`), and a token ticker runs to
+ * eight and sometimes carries a digit (`USDC`, `USD1`). Eight is where the
+ * tickers in circulation stop; nothing longer is a currency anyone quotes in.
+ *
+ * What this does not do is check membership in any list. We hold no currency
+ * table, and a schema that pretended to would be claiming knowledge the
+ * package does not have. Which currencies the gateway accepts is a gateway
+ * question, and it is not answered here.
  */
 export const CurrencyCodeSchema = z
   .string()
@@ -73,13 +78,33 @@ export const TimestampSchema = z.iso.datetime({ offset: true });
 /**
  * An identifier — ours or the merchant's.
  *
- * The only thing asked of it is that it identifies something: a blank string
- * is what a missing value turns into on its way through a template, and an
- * order keyed by "" is an order nobody finds again. The shape is deliberately
- * left alone, because the merchant's own key is theirs and our own key formats
- * are ours to change.
+ * Three things are asked of it, and each one is a way an identifier stops
+ * identifying. It cannot be blank, because a blank string is what a missing
+ * value turns into on its way through a template and an order keyed by "" is
+ * an order nobody finds again. It cannot begin or end with whitespace: a
+ * merchant's key is what republishing a card matches on, and
+ * `"access-monthly "` would look identical to `"access-monthly"` in every log
+ * and every screen while quietly creating the second card the portal promises
+ * cannot appear. And it carries no control characters, which nothing means to
+ * type and which make a key unreadable wherever it is printed.
+ *
+ * The shape beyond that is deliberately left alone: the merchant's own key is
+ * theirs and our own key formats are ours to change. So is the length. A
+ * ceiling would be a policy number, and the numbers of this contract are named
+ * before the pilot rather than invented here; until then the bound on an
+ * identifier is whatever the transport carrying it allows.
  */
-export const IdentifierSchema = z.string().regex(/\S/, "an identifier must not be empty or blank");
+export const IdentifierSchema = z
+  .string()
+  .regex(/^\S(?:[\s\S]*\S)?$/, "an identifier must not be empty, blank or padded with whitespace")
+  .refine(
+    (id) =>
+      ![...id].some((character) => {
+        const code = character.codePointAt(0) ?? 0;
+        return code < 0x20 || code === 0x7f;
+      }),
+    "an identifier must not carry control characters",
+  );
 
 /**
  * The price a purchase actually went through at.

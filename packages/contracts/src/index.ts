@@ -135,18 +135,34 @@ export type SchemaName = keyof typeof schemas;
 /** One JSON Schema document, as zod renders it. */
 export type JsonSchemaDocument = z.core.JSONSchema.BaseSchema;
 
+/** The identifier a rendered document carries, so a reader knows what it holds. */
+export const jsonSchemaIdOf = (name: SchemaName): string =>
+  `urn:coinslot:contract:${CONTRACT_VERSION}:${name}`;
+
 /**
  * The whole contract as JSON Schema, one document per registry entry.
  *
  * A function rather than a constant: the conversion costs something, and a
  * consumer who only needs to validate a card in TypeScript should not pay for
  * a description of everything else at import time.
+ *
+ * What the documents carry and what they do not is worth saying plainly,
+ * because the difference is invisible from the outside. Structure crosses
+ * intact — fields, types, which are required, whether unknown keys are
+ * allowed, enumerations, patterns, the branches of a union. Rules that look at
+ * more than one field at a time do not: JSON Schema cannot say "this field
+ * only when that one has this value", and zod drops such a rule without a
+ * word. Every schema that has one says so in its own `description`, which does
+ * cross, so a reader of the document is told what it is not checking rather
+ * than left to assume it checks everything.
+ *
+ * Each document is stamped with the contract version it came from.
  */
 export const toJsonSchemas = (): Record<SchemaName, JsonSchemaDocument> => {
   const documents = {} as Record<SchemaName, JsonSchemaDocument>;
 
   for (const [name, schema] of Object.entries(schemas) as [SchemaName, ZodType][]) {
-    documents[name] = z.toJSONSchema(schema);
+    documents[name] = { $id: jsonSchemaIdOf(name), ...z.toJSONSchema(schema) };
   }
 
   return documents;

@@ -69,16 +69,56 @@ const fencesOf = (markdown: string, language: string): string[] => {
  */
 const jsonBodyOf = (fence: string): string => fence.slice(fence.indexOf("{"));
 
-/** Every name and every literal value of a transcription, for the drift check. */
-const tokensOf = (value: unknown): string[] => {
-  if (typeof value === "string") return [value];
-  if (typeof value === "number" || typeof value === "boolean") return [String(value)];
+interface Token {
+  kind: "key" | "text" | "literal";
+  text: string;
+}
+
+/**
+ * Every name and every literal value of a transcription, tagged by which it
+ * is, for the drift check below.
+ *
+ * The tag is what makes the check bite. Asking only that each token appear
+ * somewhere in the fence lets `'sync'` pass against `'async'` and `'5.00'`
+ * against `'15.00'`, which is not a hypothetical: both went through unnoticed
+ * before the tag was here.
+ */
+const tokensOf = (value: unknown): Token[] => {
+  if (typeof value === "string") return [{ kind: "text", text: value }];
+  if (typeof value === "number" || typeof value === "boolean") {
+    return [{ kind: "literal", text: String(value) }];
+  }
   if (Array.isArray(value)) return value.flatMap(tokensOf);
   if (value !== null && typeof value === "object") {
-    return Object.entries(value).flatMap(([name, child]) => [name, ...tokensOf(child)]);
+    return Object.entries(value).flatMap(([name, child]) => [
+      { kind: "key" as const, text: name },
+      ...tokensOf(child),
+    ]);
   }
   return [];
 };
+
+const escaped = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** Where in a TypeScript or JSON example a token of each kind has to appear. */
+const occursIn = (fence: string, token: Token): boolean => {
+  switch (token.kind) {
+    // `email:` or `"email":` — a name in the position of a name.
+    case "key":
+      return new RegExp(`["']?${escaped(token.text)}["']?\\s*:`).test(fence);
+    // `'sync'` or `"sync"` — a string, quotes and all, so one value cannot
+    // pass as the tail of a longer one.
+    case "text":
+      return fence.includes(`'${token.text}'`) || fence.includes(`"${token.text}"`);
+    // `60`, `true` — bounded, so 60 does not match inside 160.
+    case "literal":
+      return new RegExp(`(?<![\\w.])${escaped(token.text)}(?![\\w.])`).test(fence);
+  }
+};
+
+/** The names an example writes on a line of their own, for the reverse check. */
+const keysWrittenIn = (fence: string): string[] =>
+  [...fence.matchAll(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:/gm)].map((match) => match[1] ?? "");
 
 interface Fence {
   file: string;
@@ -86,9 +126,35 @@ interface Fence {
   index: number;
 }
 
+interface Common {
+  what: string;
+  fence: Fence;
+  schema: z.ZodType;
+  /**
+   * Why this example is known not to pass, when it does not. A pinned fixture
+   * with a reason is the honest form of a divergence between the portal and
+   * the schemas: it stays visible in every test run until someone settles it,
+   * where deleting the fixture would make it disappear.
+   */
+  divergence?: string;
+}
+
 type Fixture =
-  | { kind: "read"; what: string; fence: Fence; schema: z.ZodType }
-  | { kind: "transcribed"; what: string; fence: Fence; schema: z.ZodType; value: unknown };
+  | (Common & { kind: "read" })
+  | (Common & {
+      kind: "transcribed";
+      value: unknown;
+      /**
+       * Also demand that the example write no name the transcription lacks —
+       * only for fences that are a payload and nothing else. Turned on for the
+       * examples where a field added on the portal would silently go
+       * unchecked; left off where the fence is calling code and its own
+       * variables would trip it.
+       */
+      completeKeys?: boolean;
+      /** Names the fence writes around the payload rather than inside it. */
+      outerKeys?: string[];
+    });
 
 /**
  * The fixture map: which example on which page is held to which schema.
@@ -110,10 +176,19 @@ const fixtures: Fixture[] = [
     schema: QuoteResponseSchema,
   },
   {
+    kind: "read",
+    what: "the price answer a handler returns, as the quickstart writes it",
+    fence: { file: "portal/quickstart.md", language: "ts", index: 5 },
+    schema: QuoteResponseSchema,
+    divergence:
+      "The quickstart's onQuote example returns a price on every answer, including one where the item is not in stock. The schema refuses a price alongside available: false, because that answer says two things at once. The page has to be brought in line with portal/cards.md, which branches correctly; until it is, a merchant copying the quickstart produces answers we count as silence — and in the synchronous mode silence sells at the card price, for an item they have just said is gone.",
+  },
+  {
     kind: "transcribed",
     what: "the card of the first test sale",
     fence: { file: "portal/quickstart.md", language: "ts", index: 1 },
     schema: CardSchema,
+    completeKeys: true,
     value: {
       merchant_item_id: "access-monthly",
       title: "Доступ к сервису на один месяц",
@@ -133,6 +208,9 @@ const fixtures: Fixture[] = [
     what: "the delivery result a card declares",
     fence: { file: "portal/cards.md", language: "ts", index: 0 },
     schema: ParamSpecSchema,
+    completeKeys: true,
+    // The fence shows the declaration under the card field it sits in.
+    outerKeys: ["result"],
     value: {
       access_url: { type: "string", title: "Ссылка для входа" },
       expires_at: { type: "string", title: "До какого момента действует" },
@@ -173,18 +251,72 @@ const fenceTextOf = (fence: Fence): string => {
   return block ?? "";
 };
 
+describe("the drift check itself", () => {
+  // The promise this file makes is that a portal edit cannot pass unnoticed,
+  // and the whole promise rests on these few lines. An earlier version asked
+  // only that each token appear somewhere in the fence, and `'sync'` passed
+  // against a portal that said `'async'` while `'5.00'` passed against
+  // `'15.00'` — the guard was green and guarding nothing.
+
+  it("does not let one value pass as the tail of a longer one", () => {
+    expect(occursIn("fulfillment: 'async'", { kind: "text", text: "sync" })).toBe(false);
+    expect(occursIn("fulfillment: 'sync'", { kind: "text", text: "sync" })).toBe(true);
+
+    expect(occursIn("amount: '15.00'", { kind: "text", text: "5.00" })).toBe(false);
+    expect(occursIn("amount: '5.00'", { kind: "text", text: "5.00" })).toBe(true);
+
+    expect(occursIn("eta_seconds: 160", { kind: "literal", text: "60" })).toBe(false);
+    expect(occursIn("eta_seconds: 60 }", { kind: "literal", text: "60" })).toBe(true);
+  });
+
+  it("wants a name written where a name goes", () => {
+    expect(occursIn("const email = order.params.email", { kind: "key", text: "email" })).toBe(
+      false,
+    );
+    expect(occursIn("  email: { type: 'string' }", { kind: "key", text: "email" })).toBe(true);
+    expect(occursIn('  "email": "buyer@example.com"', { kind: "key", text: "email" })).toBe(true);
+  });
+
+  it("reads the names an example writes, for the other direction", () => {
+    expect(keysWrittenIn("  price: {\n    amount: '5.00',\n  }\n  title: 'x'")).toStrictEqual([
+      "price",
+      "amount",
+      "title",
+    ]);
+  });
+});
+
 describe("the portal's examples pass the schemas", () => {
   for (const fixture of fixtures) {
-    it(`${fixture.what} (${fixture.fence.file})`, () => {
+    const run = fixture.divergence === undefined ? it : it.skip;
+
+    run(`${fixture.what} (${fixture.fence.file})`, () => {
       const text = fenceTextOf(fixture.fence);
 
       if (fixture.kind === "transcribed") {
         // The transcription is only worth as much as its likeness to the page.
-        for (const token of new Set(tokensOf(fixture.value))) {
+        for (const token of tokensOf(fixture.value)) {
           expect(
-            text,
-            `the example no longer contains ${JSON.stringify(token)}; the transcription here has to be brought back in line with the portal`,
-          ).toContain(token);
+            occursIn(text, token),
+            `the example no longer writes the ${token.kind} ${JSON.stringify(token.text)}; the transcription here has to be brought back in line with the portal`,
+          ).toBe(true);
+        }
+
+        if (fixture.completeKeys === true) {
+          // And the other direction: a name the portal added and the
+          // transcription never heard of.
+          const known = new Set([
+            ...tokensOf(fixture.value)
+              .filter((token) => token.kind === "key")
+              .map((token) => token.text),
+            ...(fixture.outerKeys ?? []),
+          ]);
+          for (const name of keysWrittenIn(text)) {
+            expect(
+              known.has(name),
+              `the example now writes "${name}", which this fixture does not carry, so nothing holds it to a schema`,
+            ).toBe(true);
+          }
         }
       }
 
@@ -197,6 +329,19 @@ describe("the portal's examples pass the schemas", () => {
       ).toBe("");
     });
   }
+
+  it("names every example that is pinned and known not to pass", () => {
+    // A divergence between the portal and the schemas is a decision waiting to
+    // be taken, and it stays in the open until it is: the skipped tests above
+    // carry the reason, and this one keeps the list from growing unnoticed.
+    const diverging = fixtures
+      .filter((fixture) => fixture.divergence !== undefined)
+      .map((fixture) => `${fixture.fence.file}: ${fixture.what}`);
+
+    expect(diverging).toStrictEqual([
+      "portal/quickstart.md: the price answer a handler returns, as the quickstart writes it",
+    ]);
+  });
 });
 
 describe("no example on the portal goes unpinned", () => {

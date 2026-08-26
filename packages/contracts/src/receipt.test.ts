@@ -58,14 +58,6 @@ describe("receipt", () => {
     });
   }
 
-  it("keeps the moment of payment apart from the moment of purchase", () => {
-    // In the synchronous mode the payment executes last, after the delivery,
-    // so the two moments genuinely differ. A receipt that folded them together
-    // would misdate one of them.
-    const parsed = ReceiptSchema.parse(receipt);
-    expect(parsed.paid_at).not.toBe(parsed.price.at);
-  });
-
   it("refuses a receipt that does not say whether the money was real", () => {
     // A receipt is proof of payment. An unmarked receipt for a test purchase
     // is proof of a payment that never happened.

@@ -82,25 +82,45 @@ const checkFor = (type: ParamType): z.ZodType => {
 };
 
 /**
+ * Which of a card's two declarations is being compiled.
+ *
+ * It decides one thing: what silence about `required` means. In a purchase the
+ * agent is being asked for input, and the portal writes `required: true` only
+ * where it means it, so a field with no flag is one the agent may leave out.
+ * In a delivery the card is making a promise about what the agent receives
+ * before it pays, so a declared field is one that arrives — a flag-less field
+ * treated as optional would make the promise unenforceable, and a merchant
+ * could deliver an empty object against a card that advertised three fields.
+ *
+ * A delivery field that genuinely may be absent says so with `required: false`.
+ */
+export type ParamSpecDirection = "purchase" | "delivery";
+
+/**
  * Turns a declaration into the check that an instance of it is held to.
  *
- * Keys the declaration does not carry are refused. The two alternatives both
- * lie: stripping them is truncation that nobody is told about, and passing
- * them through hands the merchant's handler fields the card never declared —
- * a card that does not describe what arrives, and a way to push input into
- * someone else's code. The same rule holds in the other direction, where an
- * undeclared field in a delivery means the agent paid for something other
- * than the result it read before paying.
+ * Keys the declaration does not carry are refused, in both directions. The two
+ * alternatives both lie: stripping them is truncation that nobody is told
+ * about, and passing them through hands the merchant's handler fields the card
+ * never declared — a card that does not describe what arrives, and a way to
+ * push input into someone else's code. In a delivery an undeclared field means
+ * the agent paid for something other than the result it read before paying.
+ *
+ * One thing this cannot refuse is a key named `__proto__`: zod removes it
+ * while parsing, before any check of ours runs, so it is dropped rather than
+ * reported. The same note is on `ParamNameSchema` above, and a test holds that
+ * behaviour in place.
  *
  * The spec is expected to have been parsed by `ParamSpecSchema` already; that
  * is what the parameter type says.
  */
-export const paramSpecToValidator = (spec: ParamSpec): z.ZodType => {
+export const paramSpecToValidator = (spec: ParamSpec, direction: ParamSpecDirection): z.ZodType => {
   const shape: Record<string, z.ZodType> = {};
 
   for (const [name, field] of Object.entries(spec)) {
     const check = checkFor(field.type);
-    shape[name] = field.required === true ? check : check.optional();
+    const required = field.required ?? direction === "delivery";
+    shape[name] = required ? check : check.optional();
   }
 
   return z.strictObject(shape);

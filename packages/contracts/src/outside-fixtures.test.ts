@@ -3,12 +3,20 @@
  *
  * Every other test in this package works from the same example the
  * documentation works from, which is exactly the way a set of schemas can look
- * complete and still not fit anything real. The products below come from the
- * pilot merchant's own catalog as recorded in
- * `docs/research/11-freeland-api-facts.md`: a rented phone number sold
- * synchronously, an eSIM plan whose profile arrives later, and a VPN
- * subscription at a fixed price. The prices and the shapes of the results are
- * theirs, not invented here.
+ * complete and still not fit anything real. The products below are the pilot
+ * merchant's, as recorded in `docs/research/11-freeland-api-facts.md`: a
+ * rented phone number sold synchronously, an eSIM plan whose profile arrives
+ * later, and a VPN subscription at a fixed price.
+ *
+ * What comes from that record and what does not is worth separating, because
+ * this file's whole argument is that it is not working from invented material.
+ * From the record: the three products and their modes, the number's price of
+ * $8.75 (supplier cost plus a markup) and its documented limits, the VPN's $5
+ * a month, the eSIM delivery fields (ICCID, the LPA string, the iOS link) and
+ * the supplier running out of profiles. Not from the record, because it does
+ * not carry them: the eSIM plan's own price and identifier, and the phone
+ * number's result field — the same note lists the exact shape of a number
+ * offer among its own gaps. Those three are constructed to be plausible.
  *
  * The test walks one purchase end to end — the card, the price question, the
  * order, the handler's answer, the receipt, and the event that follows when a
@@ -17,6 +25,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import { CardSchema } from "./card.js";
 import { OrderEventSchema } from "./events.js";
 import { HandlerAnswerSchema } from "./handler.js";
@@ -25,8 +34,17 @@ import { ParamSpecSchema, paramSpecToValidator } from "./param-spec.js";
 import { QuoteRequestSchema, QuoteResponseSchema } from "./quote.js";
 import { ReceiptSchema } from "./receipt.js";
 
-const passes = (schema: { safeParse: (value: unknown) => { success: boolean } }, value: unknown) =>
-  schema.safeParse(value).success;
+/**
+ * Whether the schema accepts the value — and, when it does not, why.
+ *
+ * A boolean alone would report "expected false to be true" from the one test
+ * that runs a whole catalog through, leaving the reader to find the field
+ * themselves.
+ */
+const verdictOf = (schema: z.ZodType, value: unknown): string => {
+  const result = schema.safeParse(value);
+  return result.success ? "accepted" : `refused: ${z.prettifyError(result.error)}`;
+};
 
 describe("a rented phone number, sold synchronously", () => {
   // The merchant's price is their supplier's cost plus a markup, so it is
@@ -50,15 +68,24 @@ describe("a rented phone number, sold synchronously", () => {
   };
 
   it("is a card an agent can buy from", () => {
-    expect(passes(CardSchema, card)).toBe(true);
+    expect(verdictOf(CardSchema, card)).toBe("accepted");
   });
 
   it("checks a purchase against what the card declared", () => {
-    const check = paramSpecToValidator(ParamSpecSchema.parse(card.params));
+    const check = paramSpecToValidator(ParamSpecSchema.parse(card.params), "purchase");
 
-    expect(passes(check, { country: "GB", period: "MONTHLY" })).toBe(true);
-    expect(passes(check, { country: "GB" })).toBe(false);
-    expect(passes(check, { country: "GB", period: "MONTHLY", service: "telegram" })).toBe(false);
+    expect(verdictOf(check, { country: "GB", period: "MONTHLY" })).toBe("accepted");
+    expect(verdictOf(check, { country: "GB" })).not.toBe("accepted");
+    expect(verdictOf(check, { country: "GB", period: "MONTHLY", service: "telegram" })).not.toBe(
+      "accepted",
+    );
+  });
+
+  it("holds the delivery to the result the card advertised", () => {
+    const check = paramSpecToValidator(ParamSpecSchema.parse(card.result), "delivery");
+
+    expect(verdictOf(check, { phone_number: "+447700900123" })).toBe("accepted");
+    expect(verdictOf(check, {})).not.toBe("accepted");
   });
 
   it("asks for a price and gets one back", () => {
@@ -75,8 +102,8 @@ describe("a rented phone number, sold synchronously", () => {
       as_of: "2026-08-26T12:00:00Z",
     };
 
-    expect(passes(QuoteRequestSchema, question)).toBe(true);
-    expect(passes(QuoteResponseSchema, answer)).toBe(true);
+    expect(verdictOf(QuoteRequestSchema, question)).toBe("accepted");
+    expect(verdictOf(QuoteResponseSchema, answer)).toBe("accepted");
   });
 
   it("reaches the handler as an order and comes back as a delivery", () => {
@@ -94,18 +121,18 @@ describe("a rented phone number, sold synchronously", () => {
       test: false,
     };
 
-    expect(passes(OrderSchema, order)).toBe(true);
-    expect(passes(HandlerAnswerSchema, { delivered: { phone_number: "+447700900123" } })).toBe(
-      true,
+    expect(verdictOf(OrderSchema, order)).toBe("accepted");
+    expect(verdictOf(HandlerAnswerSchema, { delivered: { phone_number: "+447700900123" } })).toBe(
+      "accepted",
     );
 
     // Their supplier answering "no SIM" is a refusal, and in this mode the
     // buyer spends nothing.
     expect(
-      passes(HandlerAnswerSchema, {
+      verdictOf(HandlerAnswerSchema, {
         refused: { code: "out_of_stock", message: "Свободных номеров в этой стране нет" },
       }),
-    ).toBe(true);
+    ).toBe("accepted");
   });
 });
 
@@ -128,7 +155,7 @@ describe("an eSIM plan, whose profile arrives later", () => {
   };
 
   it("is a card with no purchase parameters and a delivery deadline of its own", () => {
-    expect(passes(CardSchema, card)).toBe(true);
+    expect(verdictOf(CardSchema, card)).toBe("accepted");
   });
 
   it("takes the order on first and delivers afterwards", () => {
@@ -146,8 +173,8 @@ describe("an eSIM plan, whose profile arrives later", () => {
       test: false,
     };
 
-    expect(passes(OrderSchema, order)).toBe(true);
-    expect(passes(HandlerAnswerSchema, { accepted: { eta_seconds: 120 } })).toBe(true);
+    expect(verdictOf(OrderSchema, order)).toBe("accepted");
+    expect(verdictOf(HandlerAnswerSchema, { accepted: { eta_seconds: 120 } })).toBe("accepted");
   });
 
   it("leaves a receipt from the moment the money moves, before the profile exists", () => {
@@ -167,7 +194,7 @@ describe("an eSIM plan, whose profile arrives later", () => {
       test: false,
     };
 
-    expect(passes(ReceiptSchema, receipt)).toBe(true);
+    expect(verdictOf(ReceiptSchema, receipt)).toBe("accepted");
   });
 
   it("turns into a refund owed when the supplier has no SIM left", () => {
@@ -175,20 +202,20 @@ describe("an eSIM plan, whose profile arrives later", () => {
     // here the money has already moved — so the merchant hears both the
     // refusal they sent and the debt it created.
     expect(
-      passes(HandlerAnswerSchema, {
+      verdictOf(HandlerAnswerSchema, {
         refused: { code: "out_of_stock", message: "У поставщика не осталось профилей этого плана" },
       }),
-    ).toBe(true);
+    ).toBe("accepted");
 
     expect(
-      passes(OrderEventSchema, {
+      verdictOf(OrderEventSchema, {
         type: "order.refund_due",
         order_id: "ord_88b3c1",
         at: "2026-08-26T12:11:30Z",
         price: { amount: "18.90", currency: "USD" },
         reason: "refused",
       }),
-    ).toBe(true);
+    ).toBe("accepted");
   });
 });
 
@@ -207,7 +234,7 @@ describe("a VPN subscription at a price that does not move", () => {
   };
 
   it("is a complete card without a price check", () => {
-    expect(passes(CardSchema, card)).toBe(true);
+    expect(verdictOf(CardSchema, card)).toBe("accepted");
   });
 
   it("produces an order with no price question behind it", () => {
@@ -226,7 +253,7 @@ describe("a VPN subscription at a price that does not move", () => {
       test: false,
     };
 
-    expect(passes(OrderSchema, order)).toBe(true);
+    expect(verdictOf(OrderSchema, order)).toBe("accepted");
   });
 
   it("closes with a receipt that says the delivery happened", () => {
@@ -245,6 +272,6 @@ describe("a VPN subscription at a price that does not move", () => {
       test: false,
     };
 
-    expect(passes(ReceiptSchema, receipt)).toBe(true);
+    expect(verdictOf(ReceiptSchema, receipt)).toBe("accepted");
   });
 });

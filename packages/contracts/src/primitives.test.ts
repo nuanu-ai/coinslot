@@ -128,6 +128,21 @@ describe("identifier", () => {
       expect(IdentifierSchema.safeParse(id).success, JSON.stringify(id)).toBe(false);
     }
   });
+
+  it("refuses an identifier padded with whitespace", () => {
+    // Republishing a card matches on the merchant's own key. A trailing space
+    // reads as the same key on every screen and in every log, and would
+    // quietly create the second card the portal promises cannot appear.
+    for (const id of [" access-monthly", "access-monthly ", "\taccess-monthly", "ord_7c1e05\n"]) {
+      expect(IdentifierSchema.safeParse(id).success, JSON.stringify(id)).toBe(false);
+    }
+  });
+
+  it("refuses an identifier carrying control characters", () => {
+    for (const id of ["a\u0000b", "a\u0007b", "a\u001fb", "a\u007fb"]) {
+      expect(IdentifierSchema.safeParse(id).success, JSON.stringify(id)).toBe(false);
+    }
+  });
 });
 
 describe("sale price", () => {
