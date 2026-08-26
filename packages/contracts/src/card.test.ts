@@ -46,6 +46,16 @@ describe("price check", () => {
     expect(PriceCheckSchema.safeParse({ url: "api.example.com/quote" }).success).toBe(false);
   });
 
+  it("refuses an address that names nowhere", () => {
+    // A card that declares the second transport and gives no address is a card
+    // whose price we would never manage to ask about, and the merchant would
+    // find out from the sales that quietly stopped rather than from publishing.
+    expect(errorOf(PriceCheckSchema, {})).toContain("url");
+    expect(errorOf(PriceCheckSchema, { address: "https://api.example.com/quote" })).toContain(
+      "url",
+    );
+  });
+
   it("refuses a transport it does not have", () => {
     const message = errorOf(PriceCheckSchema, "webhook");
     expect(message).toContain("handler");
