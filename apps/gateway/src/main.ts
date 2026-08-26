@@ -12,6 +12,13 @@
  * mounted from the contract's own table. There is no logic here to test,
  * because everything that could be got wrong lives behind one of those three
  * ports and is tested against the in-memory ones.
+ *
+ * It is run through a loader that compiles TypeScript on the way in rather than
+ * from compiled output, and that is a step not taken rather than a preference.
+ * The workspace packages this depends on publish their TypeScript sources, so
+ * compiling this one alone produces imports of files that are not there;
+ * building it properly means building those too, which is a change to how they
+ * are published and belongs with the deployment step rather than here.
  */
 
 import { HTTPFacilitatorClient } from "@x402/core/server";
@@ -68,7 +75,19 @@ const runtime: Runtime = {
 };
 
 const gateway = new Gateway(runtime);
-await gateway.start();
+
+try {
+  await gateway.start();
+} catch (thrown) {
+  // The first thing an engineer bringing this up sees. A stack trace out of the
+  // queue's own internals says "something about Postgres" and makes them go
+  // looking; this says which database was not there.
+  console.error(
+    `[gateway] cannot start: the queue and the store both live in ${config.databaseUrl.replace(/:[^:@/]*@/, ":***@")}, and it did not answer`,
+  );
+  console.error(thrown);
+  process.exit(1);
+}
 
 const server = buildApp(gateway).listen(config.port, () => {
   console.log(`[gateway] listening on ${config.port}, answering as ${config.publicBaseUrl}`);
