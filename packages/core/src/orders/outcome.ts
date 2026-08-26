@@ -2,7 +2,7 @@
  * What the agent is told an order came to.
  *
  * The vocabulary here is the portal's table of how an order can end, read from
- * the buyer's side: seven endings, plus the word for an order that has not
+ * the buyer's side: eight endings, plus the word for an order that has not
  * ended yet, plus the one for a debt that has been paid back. The projection is
  * separate from the state on purpose — the machine keeps distinctions the
  * merchant's own accounting needs, and the agent is told only what is true of
