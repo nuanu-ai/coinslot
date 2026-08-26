@@ -45,8 +45,9 @@ import { IdentifierSchema } from "./primitives.js";
  * for it. Both are true of the effect — nothing is delivered twice and nothing
  * is charged twice — but a merchant who reads that sentence and writes
  * `if (result === "delivered")` turns their own safe retry into a failure
- * branch. Until the pages and this list agree, a consumer branching on success
- * should test for membership in this enumeration rather than for one value.
+ * branch. The answer these words travel in is built so that nobody has to: a
+ * consumer branches on `ok` and records the word, which stays right when this
+ * list grows a sixth entry.
  * `debt_closed_by_delivery` says the delivery deadline had already passed and
  * the goods went out anyway, closing a debt instead of completing a sale; the
  * merchant may want to know that happened. `refused` is the refusal taking

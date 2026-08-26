@@ -294,30 +294,41 @@ const PublicCardFieldsSchema = z.strictObject({
   price_checked_at_purchase: z.boolean(),
 });
 
-export const PublicCardSchema = z.discriminatedUnion("fulfillment", [
-  // Synchronous: the product arrives in the answer to the purchase, inside our
-  // own response budget — one number for every product on the platform, which
-  // is why no card names it and no card may name a delivery deadline instead.
-  PublicCardFieldsSchema.extend({ fulfillment: z.literal("sync") }),
+export const PublicCardSchema = z
+  .discriminatedUnion("fulfillment", [
+    // Synchronous: the product arrives in the answer to the purchase, inside our
+    // own response budget — one number for every product on the platform, which
+    // is why no card names it and no card may name a delivery deadline instead.
+    PublicCardFieldsSchema.extend({ fulfillment: z.literal("sync") }),
 
-  // Asynchronous: the money moves at the purchase and the product comes later,
-  // within the merchant's own delivery deadline where they set one.
-  PublicCardFieldsSchema.extend({
-    fulfillment: z.literal("async"),
-    fulfill_deadline_seconds: z.int().positive().optional(),
-  }),
+    // Asynchronous: the money moves at the purchase and the product comes later,
+    // within the merchant's own delivery deadline where they set one.
+    PublicCardFieldsSchema.extend({
+      fulfillment: z.literal("async"),
+      fulfill_deadline_seconds: z.int().positive().optional(),
+    }),
 
-  // With confirmation: the merchant is asked first and the payment follows
-  // their yes, so both waits exist. No card can be published in this mode
-  // during the pilot; the branch is here because the mode is in the
-  // vocabulary, and a branch missing from a projection would be a second gate
-  // in a second place for whoever lifts the first one.
-  PublicCardFieldsSchema.extend({
-    fulfillment: z.literal("confirm"),
-    confirm_deadline_seconds: z.int().positive().optional(),
-    fulfill_deadline_seconds: z.int().positive().optional(),
-  }),
-]);
+    // With confirmation: the merchant is asked first and the payment follows
+    // their yes, so both waits exist. No card can be published in this mode
+    // during the pilot; the branch is here because the mode is in the
+    // vocabulary, and a branch missing from a projection would be a second gate
+    // in a second place for whoever lifts the first one.
+    PublicCardFieldsSchema.extend({
+      fulfillment: z.literal("confirm"),
+      confirm_deadline_seconds: z.int().positive().optional(),
+      fulfill_deadline_seconds: z.int().positive().optional(),
+    }),
+  ])
+  .meta({
+    // Everything below is written in prose above as well, and it has to be
+    // written twice: the reader this matters most to is the one holding the
+    // exported document and no TypeScript, and that reader is about to spend
+    // money on what this card claims. `as_of` in particular means something
+    // narrower here than the same name means elsewhere in this contract, and a
+    // reader who assumed otherwise would trust a stale number.
+    description:
+      "A product an agent can buy, projected from the card its merchant published. as_of is when the price shown here was published, and nothing more: on a card whose price is checked at purchase it says nothing about how fresh that check will be — elsewhere in this contract the same name means the moment a live answer was true. price_checked_at_purchase says the merchant is asked for a price at the moment of purchase, not that they answer; what happens when they are silent depends on the mode and belongs to the gateway. The number above is what an agent compares when choosing and may not be what the sale goes through at. Two rules hold beyond the shape: a synchronous product names no delivery deadline, because it is delivered inside a response budget that is the same for every product on the platform, and only a product whose merchant is asked to confirm names a confirmation deadline. No field here names who is selling: this contract has no shape for a merchant's public identity.",
+  });
 
 export type PublicCard = z.infer<typeof PublicCardSchema>;
 

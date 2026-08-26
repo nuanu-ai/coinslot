@@ -46,9 +46,18 @@ export const ORDER_STATUSES = Object.freeze([
    * The machine keeps a finer distinction behind this word: a purchase that
    * never reached the merchant and one the merchant refused are separate
    * states there, because the merchant's own accounting needs them apart. To
-   * the agent both are one sentence — a refusal with a reason — and the reason
-   * travels in the refusal code, so nothing is lost by the agent-facing word
-   * being the coarser one.
+   * the agent both are one sentence — a refusal — and folding them was argued
+   * on the grounds that the reason travels separately, in the refusal code.
+   *
+   * That argument does not stand up yet, and saying so is cheaper than leaving
+   * it to be found. Nothing in this contract carries a refusal's reason to an
+   * agent: the merchant sends one, and the shape an agent reads a status back
+   * in has no field for it. So an agent told `rejected` today cannot tell a
+   * product that was gone from a payment that failed its check from parameters
+   * that did not fit, and the three want different next moves. The word stays
+   * coarse because that is the agent's vocabulary; what is missing is the
+   * channel beside it, and inventing one here would answer a question about
+   * what an agent may be told that nobody has answered.
    */
   "rejected",
   /**

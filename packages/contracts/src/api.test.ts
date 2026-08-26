@@ -7,8 +7,7 @@ import {
   CatalogPageSchema,
   expandPath,
   HTTP_METHODS,
-  MAX_POLL_ENVELOPES,
-  MAX_POLL_WAIT_SECONDS,
+  mountableRoutes,
   OrderAcceptResponseSchema,
   OrderCallResponseSchema,
   OrderListQuerySchema,
@@ -22,7 +21,7 @@ import {
   WorkerPollResponseSchema,
 } from "./api.js";
 import { CardSchema, publicCardOf } from "./card.js";
-import { schemas } from "./index.js";
+import { CONTRACT_VERSION, type SchemaName, schemas } from "./index.js";
 import { ORDER_CALL_RESULTS } from "./results.js";
 import { errorOf, expectMissingFieldRejected } from "./testing/expect-schema.js";
 
@@ -165,34 +164,36 @@ describe("the poll a worker makes", () => {
   it("refuses a wait that is not a wait", () => {
     expect(WorkerPollRequestSchema.safeParse({ wait_seconds: -1 }).success).toBe(false);
     expect(WorkerPollRequestSchema.safeParse({ wait_seconds: 2.5 }).success).toBe(false);
-    expect(WorkerPollRequestSchema.safeParse({ wait_seconds: MAX_POLL_WAIT_SECONDS }).success).toBe(
-      true,
-    );
-    expect(
-      WorkerPollRequestSchema.safeParse({ wait_seconds: MAX_POLL_WAIT_SECONDS + 1 }).success,
-    ).toBe(false);
   });
 
-  it("refuses a batch of no envelopes and a batch that is a queue dump", () => {
+  it("refuses a batch of no envelopes", () => {
     // Asking for at most zero is asking for nothing, and the answer would look
     // exactly like a quiet queue forever.
     expect(WorkerPollRequestSchema.safeParse({ max: 0 }).success).toBe(false);
     expect(WorkerPollRequestSchema.safeParse({ max: 1 }).success).toBe(true);
-    expect(WorkerPollRequestSchema.safeParse({ max: MAX_POLL_ENVELOPES }).success).toBe(true);
-    expect(WorkerPollRequestSchema.safeParse({ max: MAX_POLL_ENVELOPES + 1 }).success).toBe(false);
+  });
+
+  it("puts no ceiling on either, because a ceiling would be the gateway's", () => {
+    // A first draft capped both and called the caps bounds on the format. They
+    // were policy numbers with no anchor outside this file, and a card is held
+    // to the opposite rule for the same kind of value — it takes any whole
+    // positive number of seconds rather than inventing a limit. Whatever is
+    // asked for, the gateway answers with its own window and its own batch.
+    expect(WorkerPollRequestSchema.safeParse({ wait_seconds: 86_400 }).success).toBe(true);
+    expect(WorkerPollRequestSchema.safeParse({ max: 1_000_000 }).success).toBe(true);
   });
 
   it("refuses a field it does not know", () => {
     expect(errorOf(WorkerPollRequestSchema, { cursor: "abc" })).toContain("cursor");
   });
 
-  it("says in the exported document what those two bounds are and are not", () => {
-    // They bound the format and not the policy: the gateway's own ceiling is
-    // lower and is the gateway's. A reader of the document alone would
-    // otherwise take our outer bound for the number they may ask for.
-    const description = JSON.stringify(schemas.worker_poll_request.meta() ?? {});
+  it("tells the reader of the document alone whose the limits are", () => {
+    // A reader with the export and no TypeScript would otherwise take the
+    // absence of a ceiling for a promise that any number will be honoured.
+    const description = schemas.worker_poll_request.meta()?.description ?? "";
 
     expect(description).toContain("gateway");
+    expect(description).toContain("ceiling");
   });
 });
 
@@ -200,11 +201,28 @@ describe("what a poll answers with", () => {
   it("accepts an empty batch, which is the answer to a quiet window", () => {
     // ADR-0004 makes this the ordinary case, not a failure. A worker that read
     // it as an error would restart its subscription every idle window.
-    expect(WorkerPollResponseSchema.parse({ envelopes: [] })).toStrictEqual({ envelopes: [] });
+    const quiet = { contract_version: CONTRACT_VERSION, envelopes: [] };
+
+    expect(WorkerPollResponseSchema.parse(quiet)).toStrictEqual(quiet);
+  });
+
+  it("names the contract version the gateway speaks, on every answer", () => {
+    // The SDK has a function for checking this and had nothing to feed it. A
+    // worker that starts against a gateway speaking another dialect should
+    // fail at startup, not on somebody's first order.
+    expectMissingFieldRejected(
+      WorkerPollResponseSchema,
+      { contract_version: CONTRACT_VERSION, envelopes: [] },
+      "contract_version",
+    );
+    expect(
+      WorkerPollResponseSchema.safeParse({ contract_version: "", envelopes: [] }).success,
+    ).toBe(false);
   });
 
   it("accepts a batch of envelopes of different kinds on one stream", () => {
     const batch = {
+      contract_version: CONTRACT_VERSION,
       envelopes: [
         orderEnvelope,
         {
@@ -227,8 +245,10 @@ describe("what a poll answers with", () => {
 
   it("refuses a batch with an envelope nobody can read", () => {
     expect(
-      WorkerPollResponseSchema.safeParse({ envelopes: [{ ...orderEnvelope, kind: "invoice" }] })
-        .success,
+      WorkerPollResponseSchema.safeParse({
+        contract_version: CONTRACT_VERSION,
+        envelopes: [{ ...orderEnvelope, kind: "invoice" }],
+      }).success,
     ).toBe(false);
   });
 
@@ -247,60 +267,91 @@ describe("what answering for an order comes back as", () => {
 
   for (const result of ORDER_CALL_RESULTS) {
     it(`carries "${result}" under the same marker of success as every other`, () => {
-      const answer = OrderCallResponseSchema.parse({ ok: { result } });
+      const answer = OrderCallResponseSchema.parse({ ok: true, result });
 
-      expect("ok" in answer).toBe(true);
-      expect(answer).toStrictEqual({ ok: { result } });
+      expect(answer.ok).toBe(true);
+      expect(answer).toStrictEqual({ ok: true, result });
     });
   }
 
+  it("marks success with something every language reads the same way", () => {
+    // The marker is a value and not a key, because a key whose payload can be
+    // empty reads as false in some of the languages a merchant writes in — and
+    // the export exists for exactly the engineer working outside TypeScript.
+    // Both answers of this family are truthy on `ok` and falsy on failure.
+    const delivered = OrderCallResponseSchema.parse({ ok: true, result: "delivered" });
+    const accepted = OrderAcceptResponseSchema.parse({ ok: true });
+    const failed = OrderCallResponseSchema.parse({ ok: false, error: callError });
+
+    expect([delivered.ok, accepted.ok, failed.ok]).toStrictEqual([true, true, false]);
+  });
+
   it("carries a failure that says whether calling again could change anything", () => {
-    expect(OrderCallResponseSchema.parse({ error: callError })).toStrictEqual({ error: callError });
+    expect(OrderCallResponseSchema.parse({ ok: false, error: callError })).toStrictEqual({
+      ok: false,
+      error: callError,
+    });
   });
 
   it("refuses an answer that is both, or neither", () => {
     // Both would be two answers at once, and whichever a merchant read first
     // would look like the whole truth.
     expect(
-      OrderCallResponseSchema.safeParse({ ok: { result: "delivered" }, error: callError }).success,
+      OrderCallResponseSchema.safeParse({ ok: true, result: "delivered", error: callError })
+        .success,
     ).toBe(false);
+    expect(OrderCallResponseSchema.safeParse({ ok: false, result: "delivered" }).success).toBe(
+      false,
+    );
     expect(OrderCallResponseSchema.safeParse({}).success).toBe(false);
   });
 
+  it("refuses a success with no word for which success it was", () => {
+    // Unlike taking an order on, delivering and refusing have words, and the
+    // merchant has to write down which one happened.
+    expect(OrderCallResponseSchema.safeParse({ ok: true }).success).toBe(false);
+  });
+
   it("refuses a success word that is not one of the five", () => {
-    expect(OrderCallResponseSchema.safeParse({ ok: { result: "accepted" } }).success).toBe(false);
-    expect(OrderCallResponseSchema.safeParse({ ok: { result: "ok" } }).success).toBe(false);
+    expect(OrderCallResponseSchema.safeParse({ ok: true, result: "accepted" }).success).toBe(false);
+    expect(OrderCallResponseSchema.safeParse({ ok: true, result: "ok" }).success).toBe(false);
   });
 
   it("refuses a failure with no flag about retrying", () => {
     const { retryable, ...withoutFlag } = callError;
     expect(retryable).toBeDefined();
-    expect(OrderCallResponseSchema.safeParse({ error: withoutFlag }).success).toBe(false);
+    expect(OrderCallResponseSchema.safeParse({ ok: false, error: withoutFlag }).success).toBe(
+      false,
+    );
   });
 });
 
 describe("what taking an order on comes back as", () => {
   it("succeeds without a word for what happened", () => {
     // None of the five published results names a successful acceptance, and
-    // inventing one here would be a wire value nobody decided. An empty
-    // success is also the only answer that cannot be got wrong when the same
-    // order is redelivered and taken on again.
-    expect(OrderAcceptResponseSchema.parse({ ok: {} })).toStrictEqual({ ok: {} });
+    // adding one would change a vocabulary the order machine is held to as
+    // well — a decision, not a detail of a route table. An answer with no word
+    // in it also has nothing to get wrong when the same order is redelivered
+    // and taken on again, which is ordinary here.
+    expect(OrderAcceptResponseSchema.parse({ ok: true })).toStrictEqual({ ok: true });
   });
 
   it("refuses a word smuggled into the success", () => {
-    expect(OrderAcceptResponseSchema.safeParse({ ok: { result: "delivered" } }).success).toBe(
+    expect(OrderAcceptResponseSchema.safeParse({ ok: true, result: "delivered" }).success).toBe(
       false,
     );
-    expect(OrderAcceptResponseSchema.safeParse({ ok: { result: "accepted" } }).success).toBe(false);
+    expect(OrderAcceptResponseSchema.safeParse({ ok: true, result: "accepted" }).success).toBe(
+      false,
+    );
   });
 
   it("fails the same way the other order calls do", () => {
-    expect(OrderAcceptResponseSchema.parse({ error: callError })).toStrictEqual({
+    expect(OrderAcceptResponseSchema.parse({ ok: false, error: callError })).toStrictEqual({
+      ok: false,
       error: callError,
     });
     expect(OrderAcceptResponseSchema.safeParse({}).success).toBe(false);
-    expect(OrderAcceptResponseSchema.safeParse({ ok: {}, error: callError }).success).toBe(false);
+    expect(OrderAcceptResponseSchema.safeParse({ ok: true, error: callError }).success).toBe(false);
   });
 });
 
@@ -405,28 +456,107 @@ describe("the route table", () => {
   // what this table exists to prevent, and every check below is about a way
   // the two could come apart.
 
-  /** The route table as it stands, so a change to the surface is a change here. */
-  const surface: [string, string, string, string][] = [
-    ["publish_card", "POST", "/v0/catalog/publish", "merchant_key"],
-    ["get_order", "GET", "/v0/orders/:order_id", "merchant_key"],
-    ["list_orders", "GET", "/v0/orders", "merchant_key"],
-    ["poll_worker", "POST", "/v0/worker/poll", "merchant_key"],
-    ["deliver_order", "POST", "/v0/orders/:order_id/deliver", "merchant_key"],
-    ["refuse_order", "POST", "/v0/orders/:order_id/refuse", "merchant_key"],
-    ["accept_order", "POST", "/v0/orders/:order_id/accept", "merchant_key"],
-    ["answer_quote", "POST", "/v0/quotes/:price_id/answer", "merchant_key"],
-    ["list_catalog", "GET", "/v0/catalog", "none"],
-    ["purchase_item", "POST", "/v0/items/:item_id/purchase", "none"],
-    ["get_order_status", "GET", "/v0/orders/:order_id/status", "undecided"],
+  /** The registry name of a schema, which is how the table is read back below. */
+  const nameOf = (schema: ZodType | undefined): string => {
+    if (schema === undefined) return "-";
+    const found = (Object.entries(schemas) as [SchemaName, ZodType][]).find(
+      ([, registered]) => registered === schema,
+    );
+    return found?.[0] ?? "NOT IN THE REGISTRY";
+  };
+
+  const responseOf = (route: RouteDefinition): string =>
+    "document" in route.response ? nameOf(route.response.document) : "not one document";
+
+  /**
+   * The whole surface as it stands, so a change to any of it is a change here.
+   *
+   * The documents are in the row and not merely checked for membership in the
+   * registry, because that is the half the table exists for. With only the
+   * addresses pinned, `get_order` could quietly answer with a plain order and
+   * lose the state a restarting worker reads it for, and nothing would say so.
+   */
+  const surface: [string, string, string, string, string, string, string][] = [
+    // name, method, path, auth, query, request, response
+    ["publish_card", "POST", "/v0/catalog/publish", "merchant_key", "-", "card", "publish_result"],
+    ["get_order", "GET", "/v0/orders/:order_id", "merchant_key", "-", "-", "order_with_status"],
+    ["list_orders", "GET", "/v0/orders", "merchant_key", "order_list_query", "-", "order_list"],
+    [
+      "poll_worker",
+      "POST",
+      "/v0/worker/poll",
+      "merchant_key",
+      "-",
+      "worker_poll_request",
+      "worker_poll_response",
+    ],
+    [
+      "deliver_order",
+      "POST",
+      "/v0/orders/:order_id/deliver",
+      "merchant_key",
+      "-",
+      "delivery",
+      "order_call_response",
+    ],
+    [
+      "refuse_order",
+      "POST",
+      "/v0/orders/:order_id/refuse",
+      "merchant_key",
+      "-",
+      "refusal",
+      "order_call_response",
+    ],
+    [
+      "accept_order",
+      "POST",
+      "/v0/orders/:order_id/accept",
+      "merchant_key",
+      "-",
+      "acceptance",
+      "order_accept_response",
+    ],
+    [
+      "answer_quote",
+      "POST",
+      "/v0/quotes/:price_id/answer",
+      "merchant_key",
+      "-",
+      "quote_response",
+      "quote_answer_ack",
+    ],
+    ["list_catalog", "GET", "/v0/catalog", "none", "-", "-", "catalog_page"],
+    [
+      "purchase_item",
+      "POST",
+      "/v0/items/:item_id/purchase",
+      "none",
+      "-",
+      "purchase_request",
+      "not one document",
+    ],
+    [
+      "get_order_status",
+      "GET",
+      "/v0/orders/:order_id/status",
+      "undecided",
+      "-",
+      "-",
+      "agent_order_status",
+    ],
   ];
 
-  it("carries exactly these calls, at these addresses, behind these doors", () => {
+  it("carries exactly these calls, at these addresses, with these documents", () => {
     expect(
-      Object.entries(API_ROUTES).map(([name, route]) => [
+      (Object.entries(API_ROUTES) as [string, RouteDefinition][]).map(([name, route]) => [
         name,
         route.method,
         route.path,
         route.auth,
+        nameOf(route.query),
+        nameOf(route.request),
+        responseOf(route),
       ]),
     ).toStrictEqual(surface);
   });
@@ -492,6 +622,51 @@ describe("the route table", () => {
     }
   });
 
+  it("holds every path parameter to a name its own reader can recover", () => {
+    // The reader is a regular expression with a grammar, and a name outside
+    // that grammar is not refused, it is truncated: a router would read
+    // ":productKey" as one parameter and this reads it as "product", leaving
+    // "Key" as a literal in the address. Every purchase would then go to the
+    // wrong URL. Comparing against a plain split of the path is what makes a
+    // name the parser cannot hold fail at our build instead of in a log.
+    for (const [name, route] of Object.entries(API_ROUTES)) {
+      const written = route.path
+        .split("/")
+        .filter((segment) => segment.startsWith(":"))
+        .map((segment) => segment.slice(1));
+
+      expect(pathParamsOf(route.path), name).toStrictEqual(written);
+    }
+  });
+
+  it("declares the extra methods an address must answer on as data, not as prose", () => {
+    // A gateway mounts from the table. The purchase address has to answer the
+    // payment challenge on GET as well, because the validators and crawlers
+    // that list a paid resource ask for it that way — a lesson already paid for
+    // once, when a paywall bound to one method made most of a catalog
+    // invisible. Written only in the description it would be mounted by nobody.
+    const purchase: RouteDefinition = API_ROUTES.purchase_item;
+    expect(purchase.also_answers_on).toStrictEqual(["GET"]);
+
+    for (const [name, route] of Object.entries(API_ROUTES) as [string, RouteDefinition][]) {
+      for (const method of route.also_answers_on ?? []) {
+        expect(HTTP_METHODS, name).toContain(method);
+        expect(method, name).not.toBe(route.method);
+      }
+    }
+  });
+
+  it("leaves a route whose door nobody has chosen out of what a gateway may serve", () => {
+    // The natural way to mount a table is to ask whether a route needs the key
+    // and treat the rest as open, which serves the undecided route to the whole
+    // world. Mounting from this list makes the safe reading the easy one.
+    const mountable = mountableRoutes().map(([name]) => name);
+
+    expect(mountable).not.toContain("get_order_status");
+    expect(mountable).toHaveLength(Object.keys(API_ROUTES).length - 1);
+    for (const [, route] of mountableRoutes()) expect(route.auth).not.toBe("undecided");
+  });
+
   it("says out loud that it does not know who may read an order's status", () => {
     // Not `none`: a route open to everyone would let anyone read anyone's
     // purchase. Not a scheme invented here either. "I do not know" and "I know
@@ -545,6 +720,32 @@ describe("the addresses in the table, expanded and read back", () => {
     // reads in a log as a route that exists and answers 404 for everyone.
     expect(() => expandPath("/v0/orders/:order_id", {})).toThrow(/order_id/);
     expect(() => expandPath("/v0/orders/:order_id", { order_id: "" })).toThrow(/order_id/);
+  });
+
+  it("finds a value only where the caller actually put one", () => {
+    // `constructor` is the one name on Object.prototype that fits the grammar
+    // of a path parameter. Looked up without asking whether the caller owns
+    // the key, it expands into the source of a function.
+    expect(() => expandPath("/v0/x/:constructor", {})).toThrow(/constructor/);
+  });
+
+  it("refuses a value that is a step through the path rather than a value in it", () => {
+    // ".." survives encoding untouched and a relative-URL resolver walks it,
+    // so the request lands at an address nobody asked for. An identifier in
+    // this contract is allowed to be "..".
+    expect(() => expandPath("/v0/orders/:order_id", { order_id: ".." })).toThrow(/order_id/);
+    expect(() => expandPath("/v0/orders/:order_id", { order_id: "." })).toThrow(/order_id/);
+  });
+
+  it("refuses a value that is not text, rather than spelling it out", () => {
+    // The SDK has the types; whatever calls the SDK may not. Stringified,
+    // `null` becomes the four letters that spell it and the request goes to a
+    // real-looking address for an order that never existed.
+    const wrong = { order_id: null } as unknown as Record<string, string>;
+    const alsoWrong = { order_id: 5 } as unknown as Record<string, string>;
+
+    expect(() => expandPath("/v0/orders/:order_id", wrong)).toThrow(/order_id/);
+    expect(() => expandPath("/v0/orders/:order_id", alsoWrong)).toThrow(/order_id/);
   });
 
   it("refuses a value for something the address does not take", () => {

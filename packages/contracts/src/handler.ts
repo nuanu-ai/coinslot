@@ -94,9 +94,14 @@ export const DeliverySchema = z.record(ParamNameSchema, z.unknown()).meta({
  * Named and exported for the same reason as the delivery above — it is both a
  * handler's answer and the body of a call.
  */
-export const AcceptanceSchema = z.strictObject({
-  eta_seconds: z.int().positive().optional(),
-});
+export const AcceptanceSchema = z
+  .strictObject({
+    eta_seconds: z.int().positive().optional(),
+  })
+  .meta({
+    description:
+      "Taking an order on: the merchant will deliver it. eta_seconds is how long they expect that to take, when they know; leaving it out is a complete answer and not a refusal to say. It is an expectation and not a commitment — what the merchant is actually held to is the delivery deadline on the card, and the two are different numbers.",
+  });
 
 export const HandlerAnswerSchema = z.union(
   [

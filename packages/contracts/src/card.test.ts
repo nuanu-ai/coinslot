@@ -486,6 +486,20 @@ describe("the card an agent reads", () => {
     expect(propertiesOf("confirm")).toContain("confirm_deadline_seconds");
   });
 
+  it("carries its own caveats into the exported document, where the reader has nothing else", () => {
+    // Everything below is argued in the file's prose, and the reader this
+    // matters most to has the document and no TypeScript — and is about to
+    // spend money on what the card claims. `as_of` is the sharp one: the same
+    // name means "the moment a live answer was true" elsewhere in this
+    // contract, and here it means only when the number shown was published.
+    const description = toJsonSchemas().public_card.description ?? "";
+
+    expect(description).toContain("as_of");
+    expect(description).toContain("price_checked_at_purchase");
+    expect(description).toContain("not that they answer");
+    expect(description).toContain("who is selling");
+  });
+
   it("projects every card of the pilot merchant's catalog into something an agent can read", () => {
     // The cross-check that keeps the two shapes in step. A card the merchant
     // may publish and whose projection this schema refuses is a product that

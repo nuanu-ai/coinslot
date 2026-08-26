@@ -49,6 +49,7 @@ import {
 import { CardSchema, deliveryCheckFor, publicCardOf, purchaseCheckFor } from "./card.js";
 import { OrderEventSchema } from "./events.js";
 import { AcceptanceSchema, DeliverySchema, HandlerAnswerSchema, RefusalSchema } from "./handler.js";
+import { CONTRACT_VERSION } from "./index.js";
 import { OrderSchema } from "./order.js";
 
 import { QuoteRequestSchema, QuoteResponseSchema } from "./quote.js";
@@ -66,26 +67,63 @@ const verdictOf = (schema: z.ZodType, value: unknown): string => {
   return result.success ? "accepted" : `refused: ${z.prettifyError(result.error)}`;
 };
 
+/**
+ * The three products, declared once.
+ *
+ * Each describe below reads the same object, and so does the section that
+ * walks them across the HTTP surface. Copied per section, a change to one
+ * would silently not be a change to the others, and the claim that the surface
+ * carries these products would quietly stop being true.
+ */
+
+const numberCard = {
+  merchant_item_id: "virtual-number-monthly",
+  title: "Виртуальный номер на месяц",
+  description:
+    "Номер в выбранной стране на 30 дней. Только входящие SMS; совместимость с одноразовыми кодами зависит от отправителя.",
+  price: { amount: "8.75", currency: "USD" },
+  params: {
+    country: { type: "string", required: true, title: "Страна номера, ISO 3166-1 alpha-2" },
+    period: { type: "string", required: true, title: "MONTHLY, 90, 180 или YEAR" },
+  },
+  result: {
+    phone_number: { type: "string", title: "Номер в формате E.164" },
+  },
+  fulfillment: "sync",
+  price_check: "handler",
+};
+
+const esimCard = {
+  merchant_item_id: "esim-europe-10gb-30d",
+  title: "eSIM: Европа, 10 ГБ на 30 дней",
+  description: "Профиль eSIM с покрытием в странах Европы. Активация после установки профиля.",
+  price: { amount: "18.90", currency: "USD" },
+  result: {
+    iccid: { type: "string", title: "ICCID профиля" },
+    qr_data: { type: "string", title: "Строка LPA для QR-кода" },
+    ios_tap_link: { type: "string", title: "Ссылка установки для iOS" },
+  },
+  fulfillment: "async",
+  price_check: "handler",
+  fulfill_deadline_seconds: 900,
+};
+
+const vpnCard = {
+  merchant_item_id: "vpn-monthly",
+  title: "VPN на месяц",
+  description: "Подписка на 30 дней. Выдаётся ссылка подписки, одна на все устройства.",
+  price: { amount: "5", currency: "USDT" },
+  result: {
+    subscription_url: { type: "string", title: "Ссылка подписки" },
+  },
+  fulfillment: "sync",
+};
+
 describe("a rented phone number, sold synchronously", () => {
   // The merchant's price is their supplier's cost plus a markup, so it is
   // asked for at the moment of purchase. Their "no SIM available" is a
   // refusal before any money moves, which is what the synchronous mode is for.
-  const card = {
-    merchant_item_id: "virtual-number-monthly",
-    title: "Виртуальный номер на месяц",
-    description:
-      "Номер в выбранной стране на 30 дней. Только входящие SMS; совместимость с одноразовыми кодами зависит от отправителя.",
-    price: { amount: "8.75", currency: "USD" },
-    params: {
-      country: { type: "string", required: true, title: "Страна номера, ISO 3166-1 alpha-2" },
-      period: { type: "string", required: true, title: "MONTHLY, 90, 180 или YEAR" },
-    },
-    result: {
-      phone_number: { type: "string", title: "Номер в формате E.164" },
-    },
-    fulfillment: "sync",
-    price_check: "handler",
-  };
+  const card = numberCard;
 
   it("is a card an agent can buy from", () => {
     expect(verdictOf(CardSchema, card)).toBe("accepted");
@@ -161,20 +199,7 @@ describe("a rented phone number, sold synchronously", () => {
 describe("an eSIM plan, whose profile arrives later", () => {
   // The purchase names a plan and nothing else, so the card takes no
   // parameters at all — the case the portal's own example never exercises.
-  const card = {
-    merchant_item_id: "esim-europe-10gb-30d",
-    title: "eSIM: Европа, 10 ГБ на 30 дней",
-    description: "Профиль eSIM с покрытием в странах Европы. Активация после установки профиля.",
-    price: { amount: "18.90", currency: "USD" },
-    result: {
-      iccid: { type: "string", title: "ICCID профиля" },
-      qr_data: { type: "string", title: "Строка LPA для QR-кода" },
-      ios_tap_link: { type: "string", title: "Ссылка установки для iOS" },
-    },
-    fulfillment: "async",
-    price_check: "handler",
-    fulfill_deadline_seconds: 900,
-  };
+  const card = esimCard;
 
   it("is a card with no purchase parameters and a delivery deadline of its own", () => {
     expect(verdictOf(CardSchema, card)).toBe("accepted");
@@ -244,16 +269,7 @@ describe("an eSIM plan, whose profile arrives later", () => {
 describe("a VPN subscription at a price that does not move", () => {
   // A fixed price and nothing to ask about: no price check, no deadlines, and
   // the order that follows carries no price_id because no question was asked.
-  const card = {
-    merchant_item_id: "vpn-monthly",
-    title: "VPN на месяц",
-    description: "Подписка на 30 дней. Выдаётся ссылка подписки, одна на все устройства.",
-    price: { amount: "5", currency: "USDT" },
-    result: {
-      subscription_url: { type: "string", title: "Ссылка подписки" },
-    },
-    fulfillment: "sync",
-  };
+  const card = vpnCard;
 
   it("is a complete card without a price check", () => {
     expect(verdictOf(CardSchema, card)).toBe("accepted");
@@ -305,44 +321,9 @@ describe("the HTTP surface, carrying this catalog rather than the portal's", () 
   // them: published, listed to an agent, drawn off the worker stream, answered
   // for.
 
-  const numberCard = CardSchema.parse({
-    merchant_item_id: "virtual-number-monthly",
-    title: "Виртуальный номер на месяц",
-    description:
-      "Номер в выбранной стране на 30 дней. Только входящие SMS; совместимость с одноразовыми кодами зависит от отправителя.",
-    price: { amount: "8.75", currency: "USD" },
-    params: {
-      country: { type: "string", required: true, title: "Страна номера, ISO 3166-1 alpha-2" },
-      period: { type: "string", required: true, title: "MONTHLY, 90, 180 или YEAR" },
-    },
-    result: { phone_number: { type: "string", title: "Номер в формате E.164" } },
-    fulfillment: "sync",
-    price_check: "handler",
-  });
-
-  const esimCard = CardSchema.parse({
-    merchant_item_id: "esim-europe-10gb-30d",
-    title: "eSIM: Европа, 10 ГБ на 30 дней",
-    description: "Профиль eSIM с покрытием в странах Европы. Активация после установки профиля.",
-    price: { amount: "18.90", currency: "USD" },
-    result: {
-      iccid: { type: "string", title: "ICCID профиля" },
-      qr_data: { type: "string", title: "Строка LPA для QR-кода" },
-      ios_tap_link: { type: "string", title: "Ссылка установки для iOS" },
-    },
-    fulfillment: "async",
-    price_check: "handler",
-    fulfill_deadline_seconds: 900,
-  });
-
-  const vpnCard = CardSchema.parse({
-    merchant_item_id: "vpn-monthly",
-    title: "VPN на месяц",
-    description: "Подписка на 30 дней. Выдаётся ссылка подписки, одна на все устройства.",
-    price: { amount: "5", currency: "USDT" },
-    result: { subscription_url: { type: "string", title: "Ссылка подписки" } },
-    fulfillment: "sync",
-  });
+  const number = CardSchema.parse(numberCard);
+  const esim = CardSchema.parse(esimCard);
+  const vpn = CardSchema.parse(vpnCard);
 
   const esimOrder = {
     id: "ord_88b3c1",
@@ -361,9 +342,9 @@ describe("the HTTP surface, carrying this catalog rather than the portal's", () 
   it("shows all three products to an agent without showing how the merchant is asked for a price", () => {
     const catalog = {
       items: [
-        publicCardOf(numberCard, { id: "itm_1a00b2", as_of: "2026-08-26T09:00:00Z" }),
-        publicCardOf(esimCard, { id: "itm_4d21bb", as_of: "2026-08-26T09:00:00Z" }),
-        publicCardOf(vpnCard, { id: "itm_6c0f39", as_of: "2026-08-20T09:00:00Z" }),
+        publicCardOf(number, { id: "itm_1a00b2", as_of: "2026-08-26T09:00:00Z" }),
+        publicCardOf(esim, { id: "itm_4d21bb", as_of: "2026-08-26T09:00:00Z" }),
+        publicCardOf(vpn, { id: "itm_6c0f39", as_of: "2026-08-20T09:00:00Z" }),
       ],
     };
 
@@ -387,6 +368,7 @@ describe("the HTTP surface, carrying this catalog rather than the portal's", () 
 
   it("carries an order, a price question and an event down one worker stream", () => {
     const batch = {
+      contract_version: CONTRACT_VERSION,
       envelopes: [
         {
           kind: "quote_request",
@@ -447,7 +429,7 @@ describe("the HTTP surface, carrying this catalog rather than the portal's", () 
     );
 
     expect(verdictOf(AcceptanceSchema, { eta_seconds: 120 })).toBe("accepted");
-    expect(verdictOf(OrderAcceptResponseSchema, { ok: {} })).toBe("accepted");
+    expect(verdictOf(OrderAcceptResponseSchema, { ok: true })).toBe("accepted");
 
     const delivered = {
       iccid: "8944500000000000000",
@@ -461,8 +443,8 @@ describe("the HTTP surface, carrying this catalog rather than the portal's", () 
     expect(verdictOf(API_ROUTES.deliver_order.request ?? DeliverySchema, delivered)).toBe(
       "accepted",
     );
-    expect(verdictOf(deliveryCheckFor(esimCard), delivered)).toBe("accepted");
-    expect(verdictOf(OrderCallResponseSchema, { ok: { result: "delivered" } })).toBe("accepted");
+    expect(verdictOf(deliveryCheckFor(esim), delivered)).toBe("accepted");
+    expect(verdictOf(OrderCallResponseSchema, { ok: true, result: "delivered" })).toBe("accepted");
   });
 
   it("refuses the supplier's empty stock as a failure the merchant can act on", () => {
@@ -476,9 +458,10 @@ describe("the HTTP surface, carrying this catalog rather than the portal's", () 
         message: "У поставщика не осталось профилей этого плана",
       }),
     ).toBe("accepted");
-    expect(verdictOf(OrderCallResponseSchema, { ok: { result: "refused" } })).toBe("accepted");
+    expect(verdictOf(OrderCallResponseSchema, { ok: true, result: "refused" })).toBe("accepted");
     expect(
       verdictOf(OrderCallResponseSchema, {
+        ok: false,
         error: {
           code: "refund_already_settled",
           message: "Возврат по этому заказу уже исполнен",
@@ -507,7 +490,7 @@ describe("the HTTP surface, carrying this catalog rather than the portal's", () 
     expect(address).toBe("/v0/items/itm_1a00b2/purchase");
     expect(verdictOf(PurchaseRequestSchema, purchase)).toBe("accepted");
     // The table's document holds the envelope; the card holds the contents.
-    expect(verdictOf(purchaseCheckFor(numberCard), purchase.params)).toBe("accepted");
-    expect(verdictOf(purchaseCheckFor(numberCard), { country: "GB" })).not.toBe("accepted");
+    expect(verdictOf(purchaseCheckFor(number), purchase.params)).toBe("accepted");
+    expect(verdictOf(purchaseCheckFor(number), { country: "GB" })).not.toBe("accepted");
   });
 });
