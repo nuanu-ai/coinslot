@@ -63,12 +63,9 @@ export const RefusalSchema = z.strictObject({
  * compiled from that card's `result` — one problem, one error message.
  *
  * The portal promises that a delivery reaches the agent as the merchant wrote
- * it. There is one exception and it is zod's: a key named `__proto__` is
- * removed while the record is parsed, before any check of ours runs, so it is
- * neither delivered nor refused. No card can declare such a field, so a
- * merchant only meets this by sending one nobody asked for — and the note is
- * here because the loss is silent. `param-spec.ts` carries the same note and a
- * test that holds the behaviour in place.
+ * it. There is one exception, and it is the one written down at
+ * `PROTOTYPE_KEY_IS_DROPPED` in `param-spec.ts` — of the four places that
+ * share it, this is where the loss would actually reach the agent.
  */
 const DeliveredSchema = z.record(ParamNameSchema, z.unknown());
 

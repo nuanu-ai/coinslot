@@ -36,6 +36,8 @@ export const QuoteRequestSchema = z.strictObject({
    * The purchase parameters, where the price depends on them. Absent for a
    * card that takes no input, and for a scheduled poll of such a card.
    */
+  // Same dropped key as everywhere this contract parses free-form names; see
+  // `PROTOTYPE_KEY_IS_DROPPED` in `param-spec.ts`.
   params: z.record(ParamNameSchema, z.unknown()).optional(),
 
   /**

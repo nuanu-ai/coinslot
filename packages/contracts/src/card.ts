@@ -13,7 +13,7 @@
  */
 
 import { z } from "zod";
-import { ParamSpecSchema } from "./param-spec.js";
+import { ParamSpecSchema, paramSpecToValidator } from "./param-spec.js";
 import { IdentifierSchema, MoneySchema } from "./primitives.js";
 
 /**
@@ -51,7 +51,12 @@ export const PriceCheckSchema = z.union(
       // where zod renders a url as `format: "uri"` and drops everything else.
       // An engineer generating code from the exported document would otherwise
       // build a client that happily posts a merchant's prices over http.
-      url: z.url({ protocol: /^https$/ }).regex(/^https:\/\//, "a price hook is https"),
+      //
+      // Both are case-insensitive because a URL scheme is (RFC 3986 §3.1), and
+      // for a while these two disagreed: zod accepted `HTTPS://` and the added
+      // pattern refused it, with a message saying an address was not https
+      // about an address that was.
+      url: z.url({ protocol: /^https$/i }).regex(/^https:\/\//i, "a price hook is https"),
     }),
   ],
   { error: 'a price check is either "handler" or { url } naming an https address' },
@@ -89,10 +94,14 @@ const CardFieldsSchema = z.strictObject({
    * `minProperties`, where a generator can still see it.
    */
   result: ParamSpecSchema.refine(
-    (spec) => Object.keys(spec).length > 0,
-    "a card declares at least one field of what the agent receives",
+    // Not merely non-empty: at least one field that actually arrives. A
+    // declaration of one field marked `required: false` satisfies "at least
+    // one" and promises the agent exactly as much as an empty one does.
+    (spec) => Object.values(spec).some((field) => field.required !== false),
+    "a card declares at least one field of what the agent receives, and at least one of them arrives every time",
   ).meta({
-    description: "What the agent receives on delivery. At least one field.",
+    description:
+      "What the agent receives on delivery. At least one field, and at least one of the fields is not marked required: false — a result that might be entirely absent promises nothing.",
     minProperties: 1,
   }),
 
@@ -177,3 +186,19 @@ export const CardSchema = CardFieldsSchema.superRefine((card, ctx) => {
 export type Fulfillment = z.infer<typeof FulfillmentSchema>;
 export type PriceCheck = z.infer<typeof PriceCheckSchema>;
 export type Card = z.infer<typeof CardSchema>;
+
+/**
+ * The check an agent's purchase parameters are held to, for this card.
+ *
+ * The compiler underneath takes a direction, and a direction is a string a
+ * caller can get backwards: compiling a card's result as a purchase silently
+ * restores the hole where a delivery promises nothing. These two take the card
+ * instead, so the only place that knows which declaration is which is the
+ * place that picks.
+ */
+export const purchaseCheckFor = (card: Card): z.ZodType =>
+  paramSpecToValidator(card.params ?? {}, "purchase");
+
+/** The check this card's delivery is held to. */
+export const deliveryCheckFor = (card: Card): z.ZodType =>
+  paramSpecToValidator(card.result, "delivery");

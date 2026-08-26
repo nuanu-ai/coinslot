@@ -35,10 +35,7 @@ export const ParamTypeSchema = z.enum(["string", "number", "integer", "boolean"]
  * the name unquotable in an error. Both `access_url` and `expiresAt` are fine:
  * which of the two a merchant writes is theirs to choose.
  *
- * One name never gets this far. A `__proto__` key is removed while the record
- * is parsed, before the name is checked at all, so a spec comes back without
- * it instead of being refused — zod's behaviour, and the reason the compiler
- * below cannot be handed a name that would set a prototype.
+ * One name never gets this far: see `PROTOTYPE_KEY_IS_DROPPED` below.
  */
 export const ParamNameSchema = z
   .string()
@@ -51,15 +48,37 @@ export const ParamNameSchema = z
  * One declared parameter: what type it holds, whether it has to be there, and
  * a line of human words explaining what it is for.
  *
- * `required` is absent far more often than it is present, and the portal
- * writes it only where it means it — so silence means optional. A default of
- * "required" would quietly break every card whose author left the flag off.
+ * What silence about `required` means depends on which of a card's two
+ * declarations this is, and the compiler below is where that is decided. In
+ * the purchase parameters a field with no flag is one the agent may leave out;
+ * in the delivery result it is one that arrives. Setting the flag says the
+ * same thing in both directions, and it is the only way to say the opposite.
  */
 export const FieldSpecSchema = z.strictObject({
   type: ParamTypeSchema,
   required: z.boolean().optional(),
   title: z.string().regex(/\S/, "a title must not be empty or blank").optional(),
 });
+
+/**
+ * The one silent loss in this contract, written down once because four places
+ * have it and a note on one of them was worse than none.
+ *
+ * A key named `__proto__` is removed by zod while a record is parsed, before
+ * any check of ours runs — so it is neither carried nor refused, and nobody is
+ * told. It applies wherever this contract parses a record of free-form names:
+ * a card's `params` and `result` here, the compiled check below, an order's
+ * `params`, a price question's `params`, and a delivery.
+ *
+ * Every one of those is a place the portal promises to pass values through
+ * unchanged, so the loss is worth knowing about even though nothing can
+ * legitimately reach it: no card can declare such a field, so a merchant only
+ * meets this by sending a name nobody asked for. The behaviour is zod's, not
+ * ours, and it is the reason the compiler below can never be handed a name
+ * that would set a prototype instead of declaring a field. A test holds it in
+ * place, so a change in zod is noticed here rather than in production.
+ */
+export const PROTOTYPE_KEY_IS_DROPPED = "__proto__";
 
 /** A whole declaration: the parameters of a purchase, or a delivery result. */
 export const ParamSpecSchema = z.record(ParamNameSchema, FieldSpecSchema);
@@ -106,10 +125,8 @@ export type ParamSpecDirection = "purchase" | "delivery";
  * push input into someone else's code. In a delivery an undeclared field means
  * the agent paid for something other than the result it read before paying.
  *
- * One thing this cannot refuse is a key named `__proto__`: zod removes it
- * while parsing, before any check of ours runs, so it is dropped rather than
- * reported. The same note is on `ParamNameSchema` above, and a test holds that
- * behaviour in place.
+ * One thing this cannot refuse is a key named `__proto__`; see
+ * `PROTOTYPE_KEY_IS_DROPPED` above.
  *
  * The spec is expected to have been parsed by `ParamSpecSchema` already; that
  * is what the parameter type says.

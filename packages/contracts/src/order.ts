@@ -46,6 +46,8 @@ export const OrderSchema = z.strictObject({
    * Always present, empty for a card that takes no input — a handler should
    * never have to tell "no parameters" from "the field did not arrive".
    */
+  // One key is dropped here rather than carried or refused; the reason is at
+  // `PROTOTYPE_KEY_IS_DROPPED` in `param-spec.ts`.
   params: z.record(ParamNameSchema, z.unknown()),
 
   /**

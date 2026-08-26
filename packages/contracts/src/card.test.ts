@@ -38,6 +38,16 @@ describe("price check", () => {
     });
   });
 
+  it("reads the scheme the way a URL scheme is read, without regard to case", () => {
+    // A scheme is case-insensitive, and for a while the two checks behind this
+    // field disagreed about that: one accepted `HTTPS://` and the other
+    // refused it, complaining that an address was not https about an address
+    // that was.
+    expect(PriceCheckSchema.safeParse({ url: "HTTPS://api.example.com/quote" }).success).toBe(true);
+    expect(PriceCheckSchema.safeParse({ url: "HtTpS://api.example.com/quote" }).success).toBe(true);
+    expect(PriceCheckSchema.safeParse({ url: "HTTP://api.example.com/quote" }).success).toBe(false);
+  });
+
   it("refuses a price hook that is not over https", () => {
     // The question and the answer carry a merchant's prices. Over plain http
     // they are readable and rewritable by anyone on the path, and the merchant
@@ -149,6 +159,27 @@ describe("card", () => {
     // buying. An empty declaration passes the letter of "result is required"
     // and tells the agent nothing at all.
     expect(errorOf(CardSchema, { ...syncCard, result: {} })).toContain("result");
+  });
+
+  it("refuses a card whose whole result might be absent", () => {
+    // The same nothing, spelled differently: a declaration of one field that
+    // the merchant has marked as possibly missing promises exactly as much as
+    // an empty one, and satisfies "at least one field" while doing it. At
+    // least one field of a result has to be a field that arrives.
+    expect(
+      errorOf(CardSchema, { ...syncCard, result: { maybe: { type: "string", required: false } } }),
+    ).toContain("result");
+
+    // One that arrives alongside one that might not is a real promise.
+    expect(
+      CardSchema.safeParse({
+        ...syncCard,
+        result: {
+          access_url: { type: "string" },
+          ios_tap_link: { type: "string", required: false },
+        },
+      }).success,
+    ).toBe(true);
   });
 });
 

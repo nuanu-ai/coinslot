@@ -10,13 +10,18 @@
  *
  * What comes from that record and what does not is worth separating, because
  * this file's whole argument is that it is not working from invented material.
+ *
  * From the record: the three products and their modes, the number's price of
  * $8.75 (supplier cost plus a markup) and its documented limits, the VPN's $5
- * a month, the eSIM delivery fields (ICCID, the LPA string, the iOS link) and
- * the supplier running out of profiles. Not from the record, because it does
- * not carry them: the eSIM plan's own price and identifier, and the phone
- * number's result field — the same note lists the exact shape of a number
- * offer among its own gaps. Those three are constructed to be plausible.
+ * a month and its single subscription link, the eSIM delivery fields (ICCID,
+ * the LPA string, the iOS link) and the supplier running out of profiles.
+ *
+ * Constructed, because the record does not carry them, and this list is the
+ * whole of it: the eSIM plan's price of $18.90, its identifier, its title and
+ * its description, and its delivery deadline of 900 seconds; the phone
+ * number's `phone_number` result field, whose exact shape the same note lists
+ * among its own gaps; and every identifier, timestamp and title on this page.
+ * They are built to be plausible and none of them is a quotation.
  *
  * The test walks one purchase end to end — the card, the price question, the
  * order, the handler's answer, the receipt, and the event that follows when a
@@ -26,11 +31,11 @@
 
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { CardSchema } from "./card.js";
+import { CardSchema, deliveryCheckFor, purchaseCheckFor } from "./card.js";
 import { OrderEventSchema } from "./events.js";
 import { HandlerAnswerSchema } from "./handler.js";
 import { OrderSchema } from "./order.js";
-import { ParamSpecSchema, paramSpecToValidator } from "./param-spec.js";
+
 import { QuoteRequestSchema, QuoteResponseSchema } from "./quote.js";
 import { ReceiptSchema } from "./receipt.js";
 
@@ -72,7 +77,9 @@ describe("a rented phone number, sold synchronously", () => {
   });
 
   it("checks a purchase against what the card declared", () => {
-    const check = paramSpecToValidator(ParamSpecSchema.parse(card.params), "purchase");
+    // Through the card rather than the raw compiler: the card is the only
+    // place that knows which of its two declarations is which.
+    const check = purchaseCheckFor(CardSchema.parse(card));
 
     expect(verdictOf(check, { country: "GB", period: "MONTHLY" })).toBe("accepted");
     expect(verdictOf(check, { country: "GB" })).not.toBe("accepted");
@@ -82,7 +89,7 @@ describe("a rented phone number, sold synchronously", () => {
   });
 
   it("holds the delivery to the result the card advertised", () => {
-    const check = paramSpecToValidator(ParamSpecSchema.parse(card.result), "delivery");
+    const check = deliveryCheckFor(CardSchema.parse(card));
 
     expect(verdictOf(check, { phone_number: "+447700900123" })).toBe("accepted");
     expect(verdictOf(check, {})).not.toBe("accepted");

@@ -45,9 +45,10 @@ export const AmountSchema = z
  * Three to eight characters, starting with a letter, digits allowed after it.
  * A card is priced in one currency and settled in another and this contract
  * does not yet say which of the two it carries, so the shape has to admit
- * both: a national code is three letters (`USD`), and a token ticker runs to
- * eight and sometimes carries a digit (`USDC`, `USD1`). Eight is where the
- * tickers in circulation stop; nothing longer is a currency anyone quotes in.
+ * both: a national code is three letters (`USD`), and a token ticker is longer
+ * and sometimes carries a digit (`USDC`, `USD1`). Eight admits every ticker
+ * this contract has had to carry; which currencies are accepted is the
+ * gateway's to decide.
  *
  * What this does not do is check membership in any list. We hold no currency
  * table, and a schema that pretended to would be claiming knowledge the

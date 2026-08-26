@@ -3,6 +3,7 @@ import {
   FieldSpecSchema,
   ParamSpecSchema,
   type ParamType,
+  PROTOTYPE_KEY_IS_DROPPED,
   paramSpecToValidator,
 } from "./param-spec.js";
 import { errorOf, expectMissingFieldRejected } from "./testing/expect-schema.js";
@@ -77,14 +78,17 @@ describe("param spec", () => {
     }
   });
 
-  it("cannot carry a parameter named __proto__", () => {
+  it("cannot carry the one name that is dropped rather than refused", () => {
     // The promise: nothing named `__proto__` reaches the compiler, where
     // assigning it would set a prototype instead of declaring a field. The
     // mechanism is zod's, not ours — it removes the key before the name check
-    // ever runs, so the spec comes back without it rather than refused. This
-    // test exists to notice if that ever stops being true.
+    // ever runs, so the spec comes back without it rather than refused, and
+    // the whole reason is written down at PROTOTYPE_KEY_IS_DROPPED. This test
+    // exists to notice if that ever stops being true.
     const spec = ParamSpecSchema.parse(
-      JSON.parse('{"email": {"type": "string"}, "__proto__": {"type": "string"}}'),
+      JSON.parse(
+        `{"email": {"type": "string"}, "${PROTOTYPE_KEY_IS_DROPPED}": {"type": "string"}}`,
+      ),
     );
     expect(Object.keys(spec)).toStrictEqual(["email"]);
   });
