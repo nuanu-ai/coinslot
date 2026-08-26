@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { deadlines, isArmed } from "./deadlines.js";
 import { newOrder, T0, TEST_POLICY, TEST_PRICE } from "./fixtures.js";
+import { transition } from "./machine.js";
 import type { Order } from "./model.js";
+import { moneyInvariantViolations } from "./money.js";
 
 /**
  * Deadlines are what keeps an order from hanging in the unknown. Every test
@@ -14,15 +16,43 @@ function at(order: Order, kind: string): number | undefined {
 }
 
 describe("the deadlines of an order", () => {
-  it("bounds the wait for a price the same way it bounds the price itself", () => {
-    // The price check has its own silence rules, but they are the gateway's.
-    // If the gateway itself falls over between asking and hearing back, this
-    // is what stops the order from waiting for an answer forever.
+  it("bounds the wait for the merchant to name a price, on its own budget", () => {
+    // Two different waitings and two different numbers. This one is how long
+    // we wait for him to answer at all, and running out of it is his silence;
+    // the life of a price he did name is `quote_expiry` and is longer. Using
+    // one number for both would let the price's life end a wait that ADR-0002
+    // §3 says must go on to a sale.
     const order = newOrder("sync", { priceCheck: "merchant" });
 
     expect(deadlines(order)).toStrictEqual([
-      { kind: "quote_expiry", at: T0 + TEST_POLICY.deadlines.quoteTtlMs },
+      { kind: "quote_response", at: T0 + TEST_POLICY.deadlines.quoteResponseMs },
     ]);
+    expect(TEST_POLICY.deadlines.quoteResponseMs).not.toBe(TEST_POLICY.deadlines.quoteTtlMs);
+  });
+
+  it("keeps a settling order on a clock even when it has lost its start time", () => {
+    // Such an order cannot come out of this package, but it can come out of a
+    // store — and it is the one order that must never lose its clock, because
+    // nothing but the settle's own outcome can move it and no clock means no
+    // outcome. Frozen and invisible is the combination to avoid; this makes it
+    // overdue and says so out loud.
+    const base = newOrder("async");
+    const stranded: Order = {
+      ...base,
+      payment: "settling",
+      timestamps: { ...base.timestamps, settleStartedAt: null },
+    };
+
+    expect(deadlines(stranded)).toStrictEqual([{ kind: "settle_response", at: T0 }]);
+    expect(moneyInvariantViolations(stranded).length).toBeGreaterThan(0);
+
+    const closed = transition(stranded, {
+      kind: "deadline_expired",
+      at: T0 + 1,
+      deadline: "settle_response",
+    });
+
+    expect(closed.ok).toBe(true);
   });
 
   it("gives a quoted price a life of its own", () => {

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { CreateOrderInput } from "./create.js";
 import { createOrder } from "./create.js";
 import { transition } from "./machine.js";
-import type { DeadlineKind, Order, OrderEvent, OrderPolicy, Price } from "./model.js";
+import type { DeadlineKind, Effect, Order, OrderEvent, OrderPolicy, Price } from "./model.js";
 import { isOpen, modeOf, ORDER_EVENT_KINDS, ORDER_STATES } from "./model.js";
 import { moneyInvariantViolations } from "./money.js";
 import { ORDER_OUTCOMES, outcomeFor } from "./outcome.js";
@@ -64,6 +64,7 @@ function pick<T>(next: () => number, items: readonly T[]): T {
  */
 const POLICY: OrderPolicy = {
   deadlines: {
+    quoteResponseMs: 6_000,
     quoteTtlMs: 10_000,
     settleResponseMs: 25_000,
     syncResponseMs: 8_000,
@@ -77,6 +78,7 @@ const POLICY: OrderPolicy = {
 const PRICE: Price = { amount: "12.00", currency: "USD", asOf: 500_000 };
 
 const DEADLINES: readonly DeadlineKind[] = [
+  "quote_response",
   "quote_expiry",
   "settle_response",
   "confirmation_response",
@@ -133,6 +135,17 @@ function everyEvent(at: number): readonly OrderEvent[] {
  * leaves the order in `quoted`, and a walk that only chased new state names
  * would never get past it.
  */
+/**
+ * The effects a walk has to reach if its effect checks are to mean anything:
+ * money going out, goods going out, a debt being written down.
+ */
+const EFFECTS_WORTH_REACHING: readonly Effect["kind"][] = [
+  "execute_payment",
+  "release_goods_to_agent",
+  "issue_receipt",
+  "mark_refund_due",
+];
+
 function anEvent(next: () => number, order: Order, at: number): OrderEvent {
   const all = everyEvent(at);
   const advancing = all.filter((event) => {
@@ -143,14 +156,32 @@ function anEvent(next: () => number, order: Order, at: number): OrderEvent {
     const result = transition(order, event);
     return result.ok && isOpen(result.order.state);
   });
+  // The fourth pool is the point of the whole exercise. Preferring events that
+  // keep an order alive is what gets the walk to the far side of the machine,
+  // but on its own it starves exactly the paying and closing events the effect
+  // checks below are written about — measured over six seeds, the goods went
+  // out once and a debt was written once. This pool is looked at first so that
+  // the walk actually spends money and hands goods over.
+  const spendsOrHandsOver = advancing.filter((event) => {
+    const result = transition(order, event);
+    return (
+      result.ok && result.effects.some((effect) => EFFECTS_WORTH_REACHING.includes(effect.kind))
+    );
+  });
 
   const die = next();
-  if (die < 0.6 && keepsItOpen.length > 0) return pick(next, keepsItOpen);
-  if (die < 0.8 && advancing.length > 0) return pick(next, advancing);
+  if (die < 0.35 && spendsOrHandsOver.length > 0) return pick(next, spendsOrHandsOver);
+  if (die < 0.7 && keepsItOpen.length > 0) return pick(next, keepsItOpen);
+  if (die < 0.85 && advancing.length > 0) return pick(next, advancing);
   return pick(next, all);
 }
 
-type Step = { readonly event: string; readonly accepted: boolean; readonly after: string };
+type Step = {
+  readonly event: string;
+  readonly accepted: boolean;
+  readonly after: string;
+  readonly effects: readonly string[];
+};
 
 function takeAWalk(seed: number, steps: number): { order: Order; trace: readonly Step[] } {
   const next = generator(seed);
@@ -179,6 +210,7 @@ function takeAWalk(seed: number, steps: number): { order: Order; trace: readonly
       event: event.kind,
       accepted: result.ok,
       after: `${order.state}/${order.payment}`,
+      effects: result.ok ? result.effects.map((effect) => effect.kind) : [],
     });
   }
 
@@ -186,7 +218,13 @@ function takeAWalk(seed: number, steps: number): { order: Order; trace: readonly
 }
 
 describe("a long walk over the machine", () => {
-  const seeds = [1, 7, 42, 1_337, 20_260_826, 999_983];
+  /**
+   * Three of these are here because they were measured to get somewhere the
+   * others do not: 3 hands the goods over and writes a receipt, 8 and 10 write
+   * a debt down. Without them the effect counters below run over walks that
+   * never produce the effects they count, which is a check that cannot fail.
+   */
+  const seeds = [1, 3, 7, 8, 10, 42, 1_337, 20_260_826, 999_983];
 
   for (const seed of seeds) {
     it(`keeps the money invariants over two hundred steps from seed ${seed}`, () => {
@@ -211,6 +249,7 @@ describe("a long walk over the machine", () => {
       let goodsReleased = 0;
       let receipts = 0;
       let accepted = 0;
+      const reached = new Set<string>();
 
       for (let step = 0; step < 200; step += 1) {
         const event = anEvent(next, order, 500_000 + step * 5_000);
@@ -233,13 +272,18 @@ describe("a long walk over the machine", () => {
             // A debt is a claim that the buyer's money is with the merchant.
             expect(order.payment, `${where}: a refund marked without a charge`).toBe("settled");
           }
+          reached.add(effect.kind);
         }
         if (event.kind === "payment_settled" || event.kind === "payment_settle_failed") {
           chargesInFlight -= 1;
         }
 
         // The buyer's money is sent for execution once at a time, and one
-        // order hands over its goods and writes its receipt exactly once.
+        // order hands over its goods and writes its receipt exactly once. The
+        // floor of nought matters as much as the ceiling of one: a counter
+        // driven negative by a run of settle outcomes on a closed order would
+        // leave room underneath it for a genuine second charge.
+        expect(chargesInFlight, `${where}: charges in flight`).toBeGreaterThanOrEqual(0);
         expect(chargesInFlight, `${where}: charges in flight`).toBeLessThanOrEqual(1);
         expect(goodsReleased, `${where}: the goods went out twice`).toBeLessThanOrEqual(1);
         expect(receipts, `${where}: two receipts for one order`).toBeLessThanOrEqual(1);
@@ -250,6 +294,34 @@ describe("a long walk over the machine", () => {
       expect(accepted, `seed ${seed}`).toBeGreaterThan(3);
     });
   }
+
+  it("actually reaches the effects those checks are written about", () => {
+    // The counters above are worth nothing if the walk never produces the
+    // effects they count. Measured over the same seeds and the same lengths as
+    // the checks themselves, so this number is the one they ran against.
+    const reachedAcrossSeeds = new Set<string>();
+    let sawAChargeInFlight = 0;
+
+    for (const seed of seeds) {
+      const walked = takeAWalk(seed, 200);
+      let inFlight = 0;
+      for (const step of walked.trace) {
+        for (const kind of step.effects) {
+          reachedAcrossSeeds.add(kind);
+          if (kind === "execute_payment") inFlight += 1;
+        }
+        if (step.event === "payment_settled" || step.event === "payment_settle_failed") {
+          inFlight = Math.max(inFlight - 1, 0);
+        }
+        if (inFlight > 0) sawAChargeInFlight += 1;
+      }
+    }
+
+    for (const kind of EFFECTS_WORTH_REACHING) {
+      expect(reachedAcrossSeeds, `the walk never produced ${kind}`).toContain(kind);
+    }
+    expect(sawAChargeInFlight, "the walk never held a charge in flight").toBeGreaterThan(0);
+  });
 
   it("produces the very same walk from the very same seed", () => {
     // Determinism is not a nicety here: an order is replayed from its events

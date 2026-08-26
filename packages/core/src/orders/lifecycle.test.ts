@@ -30,6 +30,7 @@ const HOUR = 60 * MINUTE;
 
 const POLICY: OrderPolicy = {
   deadlines: {
+    quoteResponseMs: 5 * SECOND,
     quoteTtlMs: 2 * MINUTE,
     settleResponseMs: 30 * SECOND,
     syncResponseMs: 10 * SECOND,
@@ -84,10 +85,11 @@ describe("one eSIM, bought and provisioned, with the provisioner down at first",
     expect(created.order.price).toBeNull();
     expect(created.effects).toStrictEqual([{ kind: "request_quote" }]);
     expect(outcomeFor(created.order)).toBe("in_progress");
-    // Even here the order is on a clock: if the price never comes back, it
-    // ends rather than waiting for an answer forever.
+    // Even here the order is on a clock, and it is the one that bounds how
+    // long we wait for the merchant to name a price — not the life of a price
+    // he has not named yet.
     expect(deadlines(created.order)).toStrictEqual([
-      { kind: "quote_expiry", at: NOON + 2 * MINUTE },
+      { kind: "quote_response", at: NOON + 5 * SECOND },
     ]);
 
     // The merchant answers. He has the eSIM and it costs fifty cents more than
@@ -230,7 +232,7 @@ describe("one eSIM, bought and provisioned, with the provisioner down at first",
         kind: "mark_refund_due",
         closure: { cause: "deadline_expired", deadline: "async_fulfillment" },
       },
-      { kind: "emit_merchant_event", event: "order_refund_due" },
+      { kind: "emit_merchant_event", event: "order.refund_due" },
     ]);
     expect(outcomeFor(late.order)).toBe("refund_due");
 

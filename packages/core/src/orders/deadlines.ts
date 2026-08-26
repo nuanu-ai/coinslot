@@ -30,26 +30,34 @@ export function deadlines(order: Order): readonly Deadline[] {
   // While the payment is being executed, that is the only thing the order is
   // waiting on, whichever state it is sitting in.
   if (order.payment === "settling") {
-    return order.timestamps.settleStartedAt === null
-      ? []
-      : [
-          {
-            kind: "settle_response",
-            at: order.timestamps.settleStartedAt + order.policy.deadlines.settleResponseMs,
-          },
-        ];
+    // A settling order with no start time cannot have come out of this
+    // package, but it can come out of a store, and it is the one order that
+    // must never lose its clock: nothing but the settle's own outcome can move
+    // it, and without a clock nothing will ever produce that outcome. So it is
+    // already overdue — we cannot say it is not — and `moneyInvariantViolations`
+    // says the same thing in words.
+    const startedAt = order.timestamps.settleStartedAt;
+    return [
+      {
+        kind: "settle_response",
+        at:
+          startedAt === null
+            ? order.timestamps.createdAt
+            : startedAt + order.policy.deadlines.settleResponseMs,
+      },
+    ];
   }
 
   switch (order.state) {
     case "created":
-      // The price has not come back yet. The price check has its own silence
-      // rules, but they are the gateway's; this is what stops the order from
-      // waiting forever if the gateway itself falls over between the question
-      // and the answer.
+      // The price has not come back yet. Running out of this one is the
+      // merchant's silence, and silence is answered by mode rather than by
+      // closing the order — which is why it is not the life of a price that
+      // was never quoted.
       return [
         {
-          kind: "quote_expiry",
-          at: order.timestamps.createdAt + order.policy.deadlines.quoteTtlMs,
+          kind: "quote_response",
+          at: order.timestamps.createdAt + order.policy.deadlines.quoteResponseMs,
         },
       ];
 

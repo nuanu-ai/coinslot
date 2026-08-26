@@ -75,6 +75,7 @@ export type {
   SettleTiming,
   StateEvent,
   TransitionRejection,
+  TransitionRejectionCode,
   TransitionResult,
 } from "./orders/model.js";
 export {
@@ -95,7 +96,7 @@ export {
   QUOTE_SOURCES,
   RECOMMENDED_REFUSAL_CODES,
   SETTLE_TIMINGS,
-  TRANSITION_REJECTIONS,
+  TRANSITION_REJECTION_CODES,
 } from "./orders/model.js";
 export { moneyInvariantViolations } from "./orders/money.js";
 export type { OrderOutcome } from "./orders/outcome.js";

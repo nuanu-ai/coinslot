@@ -78,5 +78,12 @@ export function moneyInvariantViolations(order: Order): readonly string[] {
     );
   }
 
+  if (order.payment === "settling" && order.timestamps.settleStartedAt === null) {
+    // Nothing but the settle's own outcome can move an order in this stage, so
+    // an order that has lost the instant its clock runs from is an order
+    // waiting for an answer nobody will ever be asked for.
+    violations.push("the payment is being executed and the order has no record of when that began");
+  }
+
   return violations;
 }

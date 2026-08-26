@@ -222,12 +222,18 @@ export const RECOMMENDED_REFUSAL_CODES = [
 /**
  * Every waiting has a deadline and an owner of that deadline.
  *
- * `quote_expiry`, `settle_response`, `sync_response` and
+ * `quote_response`, `quote_expiry`, `settle_response`, `sync_response` and
  * `payment_after_confirmation` are ours, one number each for the whole system.
  * `confirmation_response` and `async_fulfillment` are the merchant's, declared
  * on the card and visible to the agent before the purchase.
+ *
+ * The two about the price are not the same waiting. `quote_response` bounds
+ * how long we wait for the merchant to say what the goods cost; running out of
+ * it is his silence, and silence is answered by mode, not by closing the
+ * order. `quote_expiry` bounds how long an answer that did arrive stays good.
  */
 export const DEADLINE_KINDS = [
+  "quote_response",
   "quote_expiry",
   "settle_response",
   "confirmation_response",
@@ -239,15 +245,32 @@ export const DEADLINE_KINDS = [
 export type DeadlineKind = (typeof DEADLINE_KINDS)[number];
 
 export type DeadlinePolicy = {
-  /** Ours: how long a quoted price stays good. */
+  /**
+   * Ours: how long we wait for the merchant to answer what the goods cost and
+   * whether they exist. Running out of it is the silence of `portal/failures.md`
+   * and is answered by the per-mode policy of ADR-0002 §3, not by closing the
+   * order — which is why it is a different number from `quoteTtlMs` and a
+   * different deadline from `quote_expiry`.
+   */
+  readonly quoteResponseMs: number;
+  /** Ours: how long a price that has been answered stays good. */
   readonly quoteTtlMs: number;
   /**
    * Ours: how long the machine waits to be told whether the charge went
    * through. ADR-0002 §3 makes a silent decision about the charge a closed
    * failure, and a closed failure needs a moment at which it is declared.
+   *
+   * The composition matters and the gateway has to check it: in the
+   * synchronous mode the agent's real worst case is `syncResponseMs +
+   * settleResponseMs`, because the goods come back on the first clock and the
+   * money moves on the second. The portal promises the agent one ceiling, so
+   * the two numbers together must fit inside it.
    */
   readonly settleResponseMs: number;
-  /** Ours: the ceiling on how long an agent waits for a synchronous answer. */
+  /**
+   * Ours: how long the merchant has to answer with the goods themselves. See
+   * `settleResponseMs` for the sum the two of them have to stay under.
+   */
   readonly syncResponseMs: number;
   /** Ours: how long a confirmed order waits for the agent's payment. */
   readonly paymentAfterConfirmationMs: number;
@@ -285,7 +308,17 @@ export type Closure =
   | { readonly cause: "unavailable" }
   | { readonly cause: "quote_silent" }
   | { readonly cause: "payment_not_verified"; readonly reason: PaymentVerificationFailure }
+  /** The payment layer said the charge did not go through. */
   | { readonly cause: "payment_not_settled" }
+  /**
+   * The payment layer never said anything at all. The purchase is closed
+   * because a silent decision about the charge is a closed failure (ADR-0002
+   * §3), but that is a guess that the money did not move — and it has to be a
+   * different word from the case where the money is known not to have moved.
+   * The two carry very different odds, and a dispute, an error text and the
+   * merchant's reconciliation all read this field.
+   */
+  | { readonly cause: "payment_outcome_unknown" }
   | { readonly cause: "merchant_refused"; readonly code: string; readonly message: string }
   | { readonly cause: "deadline_expired"; readonly deadline: DeadlineKind }
   | { readonly cause: "merchant_departed" };
@@ -296,9 +329,9 @@ export type Closure =
  * only learn about by reconciling by hand.
  */
 export const MERCHANT_EVENTS = [
-  "order_refund_due",
-  "confirmed_order_unpaid",
-  "payment_not_settled_after_sync_delivery",
+  "order.refund_due",
+  "order.unpaid_after_confirmation",
+  "order.payment_failed_after_delivery",
 ] as const;
 
 export type MerchantEvent = (typeof MERCHANT_EVENTS)[number];
@@ -491,31 +524,49 @@ export type Order = {
   readonly timestamps: OrderTimestamps;
 };
 
-/** Why a transition did not happen. */
-export const TRANSITION_REJECTIONS = [
+/**
+ * Why a transition did not happen.
+ *
+ * - `event_not_applicable` — this event has no meaning in this state. A stale
+ *   message off the queue, or a bug. Sending it again changes nothing.
+ * - `deadline_not_armed` — a timer fired for a deadline that is not running.
+ *   The list to schedule from is `deadlines(order)`.
+ * - `deadline_not_yet_due` — a timer fired early, or fired twice. Rescheduling
+ *   off `deadlines(order)` is the fix; re-sending the same expiry is not.
+ * - `delivery_before_payment` — goods offered against a confirmation request,
+ *   which nothing has been charged for.
+ * - `settle_in_flight` — the payment is being executed and the machine does
+ *   not yet know whether it went through. This is the one rejection that means
+ *   "come back later" rather than "no".
+ */
+export const TRANSITION_REJECTION_CODES = [
   "event_not_applicable",
   "deadline_not_armed",
   "deadline_not_yet_due",
   "delivery_before_payment",
-  /**
-   * The payment is being executed and the machine does not yet know whether it
-   * went through. Nothing that would close the order, and nothing that would
-   * spend the money again, is answered until it does. The event can be sent
-   * again once the settle has reported.
-   */
   "settle_in_flight",
 ] as const;
 
-export type TransitionRejection = (typeof TRANSITION_REJECTIONS)[number];
+export type TransitionRejectionCode = (typeof TRANSITION_REJECTION_CODES)[number];
+
+/**
+ * A refusal, shaped like the answers the merchant's own calls get: returned,
+ * never thrown, and saying whether sending the event again could change
+ * anything.
+ *
+ * `retryable` is an instruction to the interpreter, and the interpreter is
+ * expected to follow it: a retryable rejection is re-sent once the thing it is
+ * waiting on has happened. Nothing else in this package keeps a queue of
+ * refused events, so an interpreter that drops them loses the event.
+ */
+export type TransitionRejection = {
+  readonly code: TransitionRejectionCode;
+  readonly retryable: boolean;
+  readonly state: OrderState;
+  readonly event: OrderEventKind;
+  readonly message: string;
+};
 
 export type TransitionResult =
   | { readonly ok: true; readonly order: Order; readonly effects: readonly Effect[] }
-  | {
-      readonly ok: false;
-      readonly rejection: {
-        readonly code: TransitionRejection;
-        readonly state: OrderState;
-        readonly event: OrderEventKind;
-        readonly message: string;
-      };
-    };
+  | { readonly ok: false; readonly rejection: TransitionRejection };

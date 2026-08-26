@@ -409,7 +409,7 @@ describe("when the time runs out", () => {
 
     expect(order.state).toBe("expired");
     expect(effects).toStrictEqual([
-      { kind: "emit_merchant_event", event: "confirmed_order_unpaid" },
+      { kind: "emit_merchant_event", event: "order.unpaid_after_confirmation" },
     ]);
   });
 
@@ -638,7 +638,7 @@ describe("goods handed over that were never paid for", () => {
 
     expect(order.state).toBe("delivered_unpaid");
     expect(effects).toStrictEqual([
-      { kind: "emit_merchant_event", event: "payment_not_settled_after_sync_delivery" },
+      { kind: "emit_merchant_event", event: "order.payment_failed_after_delivery" },
     ]);
   });
 
@@ -714,6 +714,42 @@ describe("while the settle is in flight", () => {
     expect(settling().payment).toBe("settling");
   });
 
+  it("still answers the merchant's own calls where he is holding the order", () => {
+    // The guard is about where the money is; it must not also decide who is
+    // allowed to speak. In `fulfilled` and `delivered_unpaid` the merchant is
+    // mid-conversation with us.
+    const held = reach("fulfilled");
+    const delivered = must(held, { kind: "deliver_called", at: T0 + 9 });
+    const refused = must(held, {
+      kind: "refuse_called",
+      at: T0 + 9,
+      code: "out_of_stock",
+      message: "none",
+    });
+
+    expect(delivered.effects).toStrictEqual([
+      { kind: "answer_merchant", answer: { ok: true, result: "already_delivered" } },
+    ]);
+    expect(refused.effects).toStrictEqual([
+      {
+        kind: "answer_merchant",
+        answer: { ok: false, error: "not_applicable_in_mode", retryable: false },
+      },
+    ]);
+    expect(delivered.order).toStrictEqual(held);
+    expect(refused.order).toStrictEqual(held);
+  });
+
+  it("keeps refusing them where he is holding nothing", () => {
+    // In `quoted` and `confirmed` the merchant has not been given the order at
+    // all, so his calling about it is not a retry of anything.
+    const result = transition(settling(), { kind: "deliver_called", at: T0 + 2 });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.rejection.code).toBe("settle_in_flight");
+  });
+
   it("refuses to close the order as free while it does not know", () => {
     // Every one of these would otherwise tell the buyer his purchase never
     // happened while his money was already on its way to the merchant.
@@ -773,7 +809,77 @@ describe("while the settle is in flight", () => {
     });
 
     expect(closed.state).toBe("rejected");
-    expect(closed.closure).toStrictEqual({ cause: "payment_not_settled" });
+    expect(closed.closure).toStrictEqual({ cause: "payment_outcome_unknown" });
+  });
+
+  it("does not write the same record for a guess as for a known failure", () => {
+    // The fifth gate. Both close the purchase and neither charges the buyer,
+    // but "the payment layer told us it failed" and "the payment layer never
+    // answered" carry very different odds that the money actually moved, and
+    // an error text, a dispute and the merchant's reconciliation all read this
+    // field.
+    const guessed = walk(settling(), [
+      { kind: "deadline_expired", at: T0 + 999_999, deadline: "settle_response" },
+    ]);
+    const known = walk(settling(), [{ kind: "payment_settle_failed", at: T0 + 2 }]);
+
+    expect(guessed.state).toBe(known.state);
+    expect(guessed.closure).toStrictEqual({ cause: "payment_outcome_unknown" });
+    expect(known.closure).toStrictEqual({ cause: "payment_not_settled" });
+  });
+
+  it("will not reopen a purchase the payment layer said it had failed", () => {
+    // Only the guess can be overturned by a late charge. A payment layer that
+    // reports a failure and then a success is contradicting itself, and this
+    // machine is not the place that resolves it.
+    const known = walk(settling(), [{ kind: "payment_settle_failed", at: T0 + 2 }]);
+    const late = transition(known, { kind: "payment_settled", at: T0 + 999 });
+
+    expect(late.ok).toBe(false);
+  });
+
+  it("turns the guess into a fact once, and no more than once", () => {
+    // The counter behind the double-charge check moves on every accepted
+    // settle outcome. An unbounded stream of them on a closed order would
+    // drive it below zero and disarm the check that guards a second charge.
+    const closed = walk(settling(), [
+      { kind: "deadline_expired", at: T0 + 999_999, deadline: "settle_response" },
+    ]);
+    const first = must(closed, { kind: "payment_settle_failed", at: T0 + 1_000_000 });
+
+    expect(first.order.closure).toStrictEqual({ cause: "payment_not_settled" });
+    expect(transition(first.order, { kind: "payment_settle_failed", at: T0 + 1_000_001 }).ok).toBe(
+      false,
+    );
+  });
+
+  it("answers the merchant's retry the same way wherever the settle happens to be", () => {
+    // He produced the goods and his connection broke; his retry must not get a
+    // raw rejection just because an internal charge is mid-flight at that
+    // instant. The portal promises him the same typed success every time.
+    const settlingNow = reach("fulfilled");
+    const notSettling = reach("delivered_unpaid");
+
+    expect(settlingNow.payment).toBe("settling");
+    expect(notSettling.payment).not.toBe("settling");
+
+    const whileSettling = must(settlingNow, { kind: "deliver_called", at: T0 + 9 });
+    const otherwise = must(notSettling, { kind: "deliver_called", at: T0 + 9 });
+
+    expect(whileSettling.effects).toStrictEqual(otherwise.effects);
+    // And the answer reads the order's current fact without changing it.
+    expect(whileSettling.order).toStrictEqual(settlingNow);
+  });
+
+  it("marks the refusal it gives during the charge as one to send again", () => {
+    // The interpreter has no queue of its own for refused events; the flag is
+    // how the machine asks for one.
+    const result = transition(settling(), { kind: "merchant_departed", at: T0 + 2 });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.rejection.code).toBe("settle_in_flight");
+    expect(result.rejection.retryable).toBe(true);
   });
 
   it("turns a charge that lands after that into a debt rather than losing it", () => {
@@ -805,7 +911,7 @@ describe("while the settle is in flight", () => {
 
     expect(order.state).toBe("delivered_unpaid");
     expect(effects).toStrictEqual([
-      { kind: "emit_merchant_event", event: "payment_not_settled_after_sync_delivery" },
+      { kind: "emit_merchant_event", event: "order.payment_failed_after_delivery" },
     ]);
   });
 });
@@ -827,6 +933,58 @@ describe("an answer that arrives before we recorded handing the order over", () 
 
     expect(order.state).toBe("delivered");
     expect(kinds(effects)).toContain("release_goods_to_agent");
+  });
+
+  it("writes no record of a hand-over on the strength of a call it refused", () => {
+    // A synchronous order has no separate deliver call at all. Answering that
+    // must not leave the order claiming it was handed to a merchant it was
+    // never handed to: a support view, a latency metric and a dispute all read
+    // those fields.
+    const paid = walk(newOrder("sync"), [{ kind: "payment_verified", at: T0 + 1 }]);
+    const { order, effects } = must(paid, { kind: "deliver_called", at: T0 + 2 });
+
+    expect(order).toStrictEqual(paid);
+    expect(effects).toStrictEqual([
+      {
+        kind: "answer_merchant",
+        answer: { ok: false, error: "not_applicable_in_mode", retryable: false },
+      },
+    ]);
+  });
+
+  it("does not invent the instant of a hand-over it only heard about", () => {
+    // That it happened is known, because the merchant is answering. When it
+    // happened is not, and a made-up number in that field is worse than an
+    // empty one.
+    const paid = walk(newOrder("async"), [
+      { kind: "payment_verified", at: T0 + 1 },
+      { kind: "payment_settled", at: T0 + 2 },
+    ]);
+    const { order } = must(paid, { kind: "handler_accepted", at: T0 + 3 });
+
+    expect(order.state).toBe("dispatched");
+    expect(order.timestamps.dispatchedAt).toBeNull();
+    expect(order.dispatch.attempts).toBe(1);
+  });
+
+  it("counts one hand-over once, however we learn of it", () => {
+    // Both the backoff exponent and the attempt cap read this counter, so
+    // counting the same hand-over twice costs the order a retry against a
+    // merchant who is already struggling.
+    const paid = walk(newOrder("async"), [
+      { kind: "payment_verified", at: T0 + 1 },
+      { kind: "payment_settled", at: T0 + 2 },
+    ]);
+    const heardOfIt = must(paid, { kind: "handler_accepted", at: T0 + 3 }).order;
+    const recorded = must(heardOfIt, { kind: "order_dispatched", at: T0 + 4 }).order;
+
+    expect(recorded.dispatch.attempts).toBe(1);
+    expect(recorded.timestamps.dispatchedAt).toBe(T0 + 4);
+
+    // A genuinely second hand-over still counts.
+    const again = must(recorded, { kind: "order_dispatched", at: T0 + 5 }).order;
+
+    expect(again.dispatch.attempts).toBe(2);
   });
 
   it("takes a refusal in that same gap", () => {

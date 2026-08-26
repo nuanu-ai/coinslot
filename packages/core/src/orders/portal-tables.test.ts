@@ -232,7 +232,7 @@ describe('portal/orders.md, "Время вышло"', () => {
 
     expect(outcomeFor(order)).toBe("expired");
     expect(effects).toStrictEqual([
-      { kind: "emit_merchant_event", event: "confirmed_order_unpaid" },
+      { kind: "emit_merchant_event", event: "order.unpaid_after_confirmation" },
     ]);
   });
 
@@ -287,9 +287,9 @@ const EVENTS = [
 describe('portal/orders.md, "События по той же подписке"', () => {
   it("emits exactly the three events the portal promises, and no others", () => {
     expect(MERCHANT_EVENTS).toStrictEqual([
-      "order_refund_due",
-      "confirmed_order_unpaid",
-      "payment_not_settled_after_sync_delivery",
+      "order.refund_due",
+      "order.unpaid_after_confirmation",
+      "order.payment_failed_after_delivery",
     ]);
   });
 
@@ -300,7 +300,7 @@ describe('portal/orders.md, "События по той же подписке"',
       deadline: "async_fulfillment",
     });
 
-    expect(effects).toContainEqual({ kind: "emit_merchant_event", event: "order_refund_due" });
+    expect(effects).toContainEqual({ kind: "emit_merchant_event", event: "order.refund_due" });
   });
 
   it(`${EVENTS[1]}: sent when the agent did not pay in his time`, () => {
@@ -312,7 +312,7 @@ describe('portal/orders.md, "События по той же подписке"',
 
     expect(effects).toContainEqual({
       kind: "emit_merchant_event",
-      event: "confirmed_order_unpaid",
+      event: "order.unpaid_after_confirmation",
     });
   });
 
@@ -321,7 +321,7 @@ describe('portal/orders.md, "События по той же подписке"',
 
     expect(effects).toContainEqual({
       kind: "emit_merchant_event",
-      event: "payment_not_settled_after_sync_delivery",
+      event: "order.payment_failed_after_delivery",
     });
   });
 });
