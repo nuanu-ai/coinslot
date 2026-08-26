@@ -474,6 +474,7 @@ export type Order = {
 export const TRANSITION_REJECTIONS = [
   "event_not_applicable",
   "deadline_not_armed",
+  "deadline_not_yet_due",
   "delivery_before_payment",
 ] as const;
 

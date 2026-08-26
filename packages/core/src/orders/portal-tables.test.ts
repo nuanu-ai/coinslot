@@ -197,7 +197,7 @@ describe('portal/orders.md, "Время вышло"', () => {
   it(`${TIMEOUTS[0]}: the price stops holding`, () => {
     const { order } = must(newOrder("sync"), {
       kind: "deadline_expired",
-      at: T0 + 999,
+      at: T0 + 999_999,
       deadline: "quote_expiry",
     });
 

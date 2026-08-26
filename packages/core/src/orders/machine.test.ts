@@ -21,7 +21,7 @@ function sampleEvent(kind: OrderEventKind): OrderEvent {
     case "payment_verification_failed":
       return { kind, at: T0 + 1, reason: "insufficient_funds" };
     case "deadline_expired":
-      return { kind, at: T0 + 1, deadline: "sync_response" };
+      return { kind, at: T0 + 1_000_000, deadline: "sync_response" };
     default:
       return { kind, at: T0 + 1 };
   }
@@ -358,7 +358,7 @@ describe("when the time runs out", () => {
   it("lets a price die of its own age", () => {
     const { order } = must(newOrder("sync"), {
       kind: "deadline_expired",
-      at: T0 + 999,
+      at: T0 + 999_999,
       deadline: "quote_expiry",
     });
 
@@ -432,6 +432,28 @@ describe("when the time runs out", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.rejection.code).toBe("deadline_not_armed");
+  });
+
+  it("refuses a deadline that has not come due yet", () => {
+    // A timer that fired early, or fired twice, must not close an order the
+    // merchant is still honestly inside his deadline of: in the asynchronous
+    // mode that would mark a refund due against somebody who is not late.
+    const dispatched = reach("dispatched");
+    const early = transition(dispatched, {
+      kind: "deadline_expired",
+      at: T0 + 1_000,
+      deadline: "sync_response",
+    });
+    const onTime = transition(dispatched, {
+      kind: "deadline_expired",
+      at: T0 + 10_000,
+      deadline: "sync_response",
+    });
+
+    expect(early.ok).toBe(false);
+    if (early.ok) return;
+    expect(early.rejection.code).toBe("deadline_not_yet_due");
+    expect(onTime.ok).toBe(true);
   });
 });
 

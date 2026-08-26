@@ -33,7 +33,7 @@ export const TEST_POLICY: OrderPolicy = {
     syncResponseMs: 10_000,
     paymentAfterConfirmationMs: 300_000,
     confirmationResponseMs: 600_000,
-    asyncFulfillmentMs: 86_400_000,
+    asyncFulfillmentMs: 900_000,
   },
   redelivery: {
     baseDelayMs: 1_000,

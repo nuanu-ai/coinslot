@@ -33,7 +33,7 @@ function sampleEvent(kind: (typeof ORDER_EVENT_KINDS)[number]): OrderEvent {
     case "payment_verification_failed":
       return { kind, at: T0 + 1, reason: "signature" };
     case "deadline_expired":
-      return { kind, at: T0 + 1, deadline: "sync_response" };
+      return { kind, at: T0 + 1_000_000, deadline: "sync_response" };
     default:
       return { kind, at: T0 + 1 };
   }

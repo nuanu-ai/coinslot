@@ -32,7 +32,7 @@
  */
 
 import { assertNever } from "../index.js";
-import { fulfillmentDeadline, isArmed } from "./deadlines.js";
+import { deadlines, fulfillmentDeadline } from "./deadlines.js";
 import type {
   Closure,
   Effect,
@@ -244,7 +244,9 @@ function onDeadline(
   order: Order,
   event: Extract<OrderEvent, { kind: "deadline_expired" }>,
 ): TransitionResult {
-  if (!isArmed(order, event.deadline)) {
+  const armed = deadlines(order).find((deadline) => deadline.kind === event.deadline);
+
+  if (armed === undefined) {
     // Closes a money hole that is easy to miss: a quote timing out while the
     // settle of that very order is already on its way.
     return reject(
@@ -252,6 +254,18 @@ function onDeadline(
       event,
       "deadline_not_armed",
       `the ${event.deadline} deadline is not running on an order in ${order.state}`,
+    );
+  }
+
+  if (event.at < armed.at) {
+    // A timer that fired early, or fired twice, must not close an order the
+    // merchant is still honestly inside the deadline of — in the asynchronous
+    // mode that would mark a refund due against somebody who is not late.
+    return reject(
+      order,
+      event,
+      "deadline_not_yet_due",
+      `the ${event.deadline} deadline runs until ${armed.at} and the expiry claims ${event.at}`,
     );
   }
 
