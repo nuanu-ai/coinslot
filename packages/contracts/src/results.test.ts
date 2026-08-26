@@ -110,24 +110,6 @@ describe("what delivering or refusing an order answers with", () => {
       expect(OrderCallResultSchema.safeParse(result).success, JSON.stringify(result)).toBe(false);
     }
   });
-
-  it("tells a first delivery from a repeat and from a debt closed late", () => {
-    // Three successes that a merchant reads differently: the first delivery is
-    // the sale closing, a repeat is their own retry landing twice and needs no
-    // second delivery, and a debt closed by a late delivery says the deadline
-    // had already passed and the goods went out anyway.
-    expect(new Set(["delivered", "already_delivered", "debt_closed_by_delivery"]).size).toBe(3);
-    for (const result of ["delivered", "already_delivered", "debt_closed_by_delivery"]) {
-      expect(OrderCallResultSchema.safeParse(result).success, result).toBe(true);
-    }
-  });
-
-  it("has a word for a synchronous handler that came back too late", () => {
-    // The case the portal describes as "покупка уже закрыта": not an error,
-    // because nothing went wrong on the merchant's side — the work is done and
-    // a repeat purchase will collect it.
-    expect(OrderCallResultSchema.safeParse("purchase_already_closed").success).toBe(true);
-  });
 });
 
 describe("the error codes those calls answer with", () => {

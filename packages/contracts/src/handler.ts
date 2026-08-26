@@ -42,7 +42,16 @@ export const RECOMMENDED_REFUSAL_CODES = Object.freeze({
  */
 export const RefusalCodeSchema = z
   .string()
-  .regex(/\S/, "a refusal carries a short code, even one of the merchant's own");
+  .regex(/\S/, "a refusal carries a short code, even one of the merchant's own")
+  .meta({
+    // The dictionary has to travel with the field. An engineer generating a
+    // client outside TypeScript is the only reader this export exists for, and
+    // a bare `{type: "string"}` tells them nothing about the three codes we
+    // promise to read the same way — least of all that `out_of_stock` is what
+    // feeds the availability measure their catalog is held to.
+    description:
+      'A short code for why a delivery cannot happen. The set is open — a merchant whose reason fits none of ours sends their own word rather than the nearest approximation. Three are understood the same way on both sides and should be preferred: "out_of_stock" (the product is gone: sold out, no seats, the supplier did not deliver), "invalid_params" (the purchase parameters do not work for this delivery), "cannot_fulfill" (it cannot be delivered for some other reason). Only "out_of_stock" feeds the share of purchases that ran into a missing product, which is a number we hold under a limit — the same refusal sent under a merchant\'s own code is invisible to it.',
+  });
 
 export const RefusalSchema = z.strictObject({
   code: RefusalCodeSchema,

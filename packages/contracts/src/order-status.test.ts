@@ -9,7 +9,7 @@ describe("the status an order can be in", () => {
   // vocabulary. Two lists would mean two answers to one question, and the one
   // the state machine keeps would win silently.
 
-  it("names every state the machine can end an order in", () => {
+  it("names every ending an agent can be told about", () => {
     // Compared as a set, not a sequence. The same list lives in the state
     // machine, and holding two files to one order would be a test failing over
     // something neither side means.
@@ -43,16 +43,20 @@ describe("the status an order can be in", () => {
     for (const status of ORDER_STATUSES) {
       expect(OrderStatusSchema.safeParse(status).success, status).toBe(true);
     }
-    for (const status of ["pending", "open", "paid", "failed", "IN_PROGRESS", ""]) {
+    for (const status of ["pending", "open", "paid", "IN_PROGRESS", ""]) {
       expect(OrderStatusSchema.safeParse(status).success, JSON.stringify(status)).toBe(false);
     }
   });
 
-  it("gives a purchase that is still running a name of its own", () => {
-    // The fifth gate in one value: a purchase still running has a name, and it
-    // is not the name of any ending. An agent that had to read silence as an
-    // answer would take an unfinished order for a refused one.
-    expect(OrderStatusSchema.safeParse("in_progress").success).toBe(true);
+  it("refuses the machine's own words where they are finer than the buyer's", () => {
+    // `failed` and `accepted` are states in the machine and not endings an
+    // agent is told about: the first is folded into `rejected`, the second
+    // into `in_progress`. Refusing them here is what keeps the two vocabularies
+    // from being used as one — a gateway reaching for the machine's word finds
+    // out at the boundary rather than shipping it to a buyer.
+    for (const status of ["failed", "accepted", "dispatched", "quoted"]) {
+      expect(OrderStatusSchema.safeParse(status).success, status).toBe(false);
+    }
   });
 });
 

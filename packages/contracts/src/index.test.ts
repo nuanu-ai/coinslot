@@ -385,6 +385,26 @@ describe("the contract as JSON Schema", () => {
     expect(blind).toStrictEqual([]);
   });
 
+  it("carries the open code dictionaries, which no structure can hold", () => {
+    // An open set has no `enum` to render, so the recommended codes reached
+    // the export as `{type: "string"}` and nothing else. `index.ts` claims
+    // this package owns the refusal codes as wire vocabulary; owning them and
+    // not shipping them to the one reader the export exists for is the fifth
+    // gate's truncation, unsaid.
+    const documents = toJsonSchemas();
+    const refusal = documents.refusal_code.description ?? "";
+
+    for (const code of Object.values(contracts.RECOMMENDED_REFUSAL_CODES)) {
+      expect(refusal, code).toContain(code);
+    }
+    expect(refusal).toContain("open");
+
+    const callError = nested(documents.order_call_error.properties?.code).description ?? "";
+    for (const code of contracts.ORDER_CALL_ERROR_CODES) {
+      expect(callError, code).toContain(code);
+    }
+  });
+
   it("carries the rules it cannot express as structure in words instead", () => {
     // The honest half of the export. JSON Schema cannot say "this field only
     // when that one has this value", and zod drops such a rule without a word;

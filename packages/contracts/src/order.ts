@@ -15,6 +15,15 @@
  * order, or every order still open — is a separate call, and the words it
  * answers with are `OrderStatusSchema` in `order-status.ts`.
  *
+ * A second thing an order does not carry is its deadline. The design canon
+ * says an order carries one and the portal says a synchronous order does, but
+ * the portal's own table of what an order consists of does not list it, and
+ * this schema follows the table. The consequence stands either way: this
+ * package is the whole of the SDK's dependency tree, so nothing in it lets a
+ * synchronous handler learn how long it has — and in that mode the budget is
+ * ours, not something the merchant set and could look up. Which of the two
+ * readings is right is a question for whoever settles the numbers.
+ *
  * One shape the documentation promises is still missing, and it is named here
  * rather than left to be found as an absence. In the mode where the merchant
  * is asked before the money moves, a confirmation request reaches the same

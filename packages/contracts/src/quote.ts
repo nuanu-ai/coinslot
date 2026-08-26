@@ -12,6 +12,15 @@
  * a timeout, a broken connection and an answer too old to trust are all the
  * same thing to the gateway, and what it does about them depends on the card's
  * mode rather than on the shape of anything on this page.
+ *
+ * One field an order has and this does not: a price question carries no test
+ * marker. The verification command sends test traffic through the live
+ * subscription, and for a card with a price check the question rides the same
+ * channel as the order — so a handler that routes test orders to a test
+ * environment, which the portal tells merchants they may do, cannot route the
+ * question that precedes them. Whether that wants a field here or is better
+ * answered by however the sandbox is eventually separated from live is not
+ * decided, and inventing the field ahead of that decision would answer it.
  */
 
 import { z } from "zod";

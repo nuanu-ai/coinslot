@@ -1,22 +1,36 @@
 /**
- * What our calls hand back when they do not succeed.
+ * What our calls hand back — the successes as well as the failures.
  *
- * None of these travel as exceptions. A merchant's integration code has to
- * read them, branch on them and write some of them down, and an exception is
+ * None of it travels as an exception. A merchant's integration code has to
+ * read these, branch on them and write some of them down, and an exception is
  * the wrong shape for something you are expected to handle rather than to be
  * surprised by. That is a rule about the whole surface, which is why publishing
- * a card and failing to deliver an order share a file even though they belong
- * to different calls.
+ * a card and answering for an order share a file even though they are
+ * different calls.
  *
  * The words below are wire names, not prose: a merchant's code branches on
  * them, so rewording one is changing the contract.
+ *
+ * The two calls are shaped differently and it is worth saying why rather than
+ * leaving it to be noticed. Publishing answers with one value, `{ok} | {errors}`,
+ * because a card is accepted or it is not. Answering for an order has a
+ * vocabulary of successes and a vocabulary of failures and no union tying them
+ * together, because the transport that carries those calls is not designed
+ * yet — the shape of a call's return belongs with the call, and the API
+ * surface lands here as its own step. Until then a merchant reads the two
+ * lists, which is less than they should have to do.
  */
 
 import { z } from "zod";
 import { IdentifierSchema } from "./primitives.js";
 
 /**
- * How delivering or refusing an order can succeed.
+ * How answering for an order can succeed.
+ *
+ * "Answering" rather than "delivering or refusing", because the last of the
+ * five belongs to a third surface: a synchronous handler's own return, where
+ * neither `deliver` nor `refuse` exists at all — as the error code
+ * `not_applicable_in_mode` says from the other direction.
  *
  * Five and not fewer, because each one is a different thing for the merchant
  * to do next. `delivered` is the sale closing. `already_delivered` is their
@@ -108,7 +122,12 @@ export const PublishResultSchema = z.union(
  * missing flag are expensive.
  */
 export const OrderCallErrorSchema = z.strictObject({
-  code: z.string().regex(/\S/, "an error carries a code"),
+  code: z.string().regex(/\S/, "an error carries a code").meta({
+    // Same reason as the refusal code: the dictionary travels with the field
+    // or it does not reach the reader the export exists for.
+    description:
+      'Why the call did not go through. The set is open, and three are promised to mean one thing: "refund_already_settled" (the debt was paid back, so there is nothing left to deliver against), "order_already_closed" (the order reached an ending that no call reopens), "not_applicable_in_mode" (the call does not exist for this card\'s mode — refusing separately does not, in the synchronous one, where the handler\'s own answer is the refusal).',
+  }),
   message: z.string().regex(/\S/, "an error carries an explanation a person can read"),
   retryable: z.boolean(),
 });

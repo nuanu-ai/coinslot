@@ -19,6 +19,16 @@
  * The word for a purchase still running exists on purpose: an agent that had
  * to read silence as an answer would take an unfinished order for a refused
  * one, and hold a budget against a sale that is still going to happen.
+ *
+ * Two of the machine's own distinctions are deliberately not here, and saying
+ * which is the point — a list that claims to name every ending has to admit
+ * what it folded. The machine separates a purchase that never reached the
+ * merchant from one the merchant refused, and it separates an order sent to
+ * the merchant from one the merchant has taken on. Both distinctions are the
+ * merchant's: the first their metrics need, the second their own record
+ * already holds. To the buyer each pair is one situation, and this vocabulary
+ * is the buyer's. A merchant reading it and expecting their own view of the
+ * order is reading the wrong list.
  */
 
 import { z } from "zod";
