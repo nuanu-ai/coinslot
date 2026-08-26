@@ -14,13 +14,15 @@ function at(order: Order, kind: string): number | undefined {
 }
 
 describe("the deadlines of an order", () => {
-  it("runs nothing while the price question is still out", () => {
-    // An order that has not been quoted yet is waiting on the price check, and
-    // that waiting is bounded by the price check's own silence rules, not by a
-    // deadline of the order.
+  it("bounds the wait for a price the same way it bounds the price itself", () => {
+    // The price check has its own silence rules, but they are the gateway's.
+    // If the gateway itself falls over between asking and hearing back, this
+    // is what stops the order from waiting for an answer forever.
     const order = newOrder("sync", { priceCheck: "merchant" });
 
-    expect(deadlines(order)).toStrictEqual([]);
+    expect(deadlines(order)).toStrictEqual([
+      { kind: "quote_expiry", at: T0 + TEST_POLICY.deadlines.quoteTtlMs },
+    ]);
   });
 
   it("gives a quoted price a life of its own", () => {
@@ -31,12 +33,21 @@ describe("the deadlines of an order", () => {
     expect(at(order, "quote_expiry")).toBe(T0 + TEST_POLICY.deadlines.quoteTtlMs);
   });
 
-  it("stops the quote's clock once the payment is in flight", () => {
-    // The money hole this closes: a quote expiring while the settle is on its
-    // way would close an order that is about to be paid for.
-    const order: Order = { ...newOrder("async"), payment: "verified" };
+  it("hands the clock from the price to the charge once the settle is away", () => {
+    // Two things at once. A quote expiring while the settle is on its way
+    // would close an order that is about to be paid for; and a settle with no
+    // clock on it at all would leave the order waiting for an answer that
+    // never comes, with the agent told "not yet" forever.
+    const base = newOrder("async");
+    const order: Order = {
+      ...base,
+      payment: "settling",
+      timestamps: { ...base.timestamps, settleStartedAt: T0 + 40 },
+    };
 
-    expect(deadlines(order)).toStrictEqual([]);
+    expect(deadlines(order)).toStrictEqual([
+      { kind: "settle_response", at: T0 + 40 + TEST_POLICY.deadlines.settleResponseMs },
+    ]);
   });
 
   it("holds the merchant to his own confirmation deadline", () => {
@@ -96,12 +107,22 @@ describe("the deadlines of an order", () => {
     expect(at(order, "sync_response")).toBeUndefined();
   });
 
-  it("stops every clock once the merchant has produced the goods", () => {
-    // In `fulfilled` the merchant has done his part and the settle is ours; a
-    // deadline firing here would punish him for our step.
-    const order: Order = { ...newOrder("sync"), state: "fulfilled", payment: "verified" };
+  it("holds our own step to a deadline once the merchant has done his", () => {
+    // In `fulfilled` the merchant has produced the goods and executing the
+    // payment is ours. None of his deadlines may punish him for our step, and
+    // ours may not run forever either: when it runs out he is told that the
+    // goods went out and the money did not arrive.
+    const base = newOrder("sync");
+    const order: Order = {
+      ...base,
+      state: "fulfilled",
+      payment: "settling",
+      timestamps: { ...base.timestamps, settleStartedAt: T0 + 4_000 },
+    };
 
-    expect(deadlines(order)).toStrictEqual([]);
+    expect(deadlines(order)).toStrictEqual([
+      { kind: "settle_response", at: T0 + 4_000 + TEST_POLICY.deadlines.settleResponseMs },
+    ]);
   });
 
   it("runs no deadline on a closed order or on an unpaid debt", () => {

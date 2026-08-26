@@ -34,8 +34,12 @@ function section(page: string, heading: string): string {
   return (end === -1 ? rest : rest.slice(0, end)).join("\n");
 }
 
-/** The first cell of every data row of the first table in a section. */
-function tableRows(page: string, heading: string): readonly string[] {
+/**
+ * One named cell of every data row of the first table in a section. The
+ * column is given by its position, counting from one: the first is what the
+ * row is about, and the ones after it are the promise the row makes.
+ */
+function tableRows(page: string, heading: string, column = 1): readonly string[] {
   const lines = section(page, heading).split("\n");
   const first = lines.findIndex((line) => line.startsWith("|"));
   if (first === -1) throw new Error(`the section "${heading}" has no table`);
@@ -43,7 +47,9 @@ function tableRows(page: string, heading: string): readonly string[] {
   const rows: string[] = [];
   for (const line of lines.slice(first)) {
     if (!line.startsWith("|")) break;
-    const cell = line.split("|")[1]?.trim() ?? "";
+    const cells = line.split("|");
+    const cell = cells[column]?.trim() ?? "";
+    if (cells.length <= column) throw new Error(`the table in "${heading}" has no column ${column}`);
     if (/^-+$/.test(cell)) continue;
     rows.push(cell);
   }
@@ -451,6 +457,21 @@ describe("portal/failures.md", () => {
 describe("the portal and this machine cannot drift apart quietly", () => {
   it('has exactly the encoded rows in "Чем заказ может закончиться"', () => {
     expect(tableRows(ORDERS_PAGE, "Чем заказ может закончиться")).toStrictEqual([...ENDINGS]);
+  });
+
+  it("still says where the money is in each of those endings", () => {
+    // The row label alone is not the promise. The middle column is where the
+    // page tells the merchant whose money it is, and that is the sentence the
+    // scenarios above are written against.
+    expect(tableRows(ORDERS_PAGE, "Чем заказ может закончиться", 2)).toStrictEqual([
+      "у вас",
+      "не двигались",
+      "не двигались",
+      "не двигались",
+      "по невыданному [возвращаете вы](/money)",
+      "у вас",
+      "не пришли",
+    ]);
   });
 
   it('has exactly the encoded rows in "Время вышло"', () => {

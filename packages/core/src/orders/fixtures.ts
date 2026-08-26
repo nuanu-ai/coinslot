@@ -30,6 +30,7 @@ export const T0 = 1_000_000;
 export const TEST_POLICY: OrderPolicy = {
   deadlines: {
     quoteTtlMs: 60_000,
+    settleResponseMs: 30_000,
     syncResponseMs: 10_000,
     paymentAfterConfirmationMs: 300_000,
     confirmationResponseMs: 600_000,

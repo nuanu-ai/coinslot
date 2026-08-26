@@ -14,10 +14,17 @@ import { ORDER_OUTCOMES, outcomeFor } from "./outcome.js";
  * here has to be reproducible from the seed printed in the message, or it is
  * not a finding, it is a rumour.
  *
- * What the walk checks at every single step is the money. The gateway will
- * feed this machine events off a queue that delivers at least once, in an
- * order nobody chose, and the promise is that no sequence of them can put an
- * order into a state where somebody's money is gone with nothing recording it.
+ * What the walk checks at every single step is the money — in the order and in
+ * the effects both. The gateway will feed this machine events off a queue that
+ * delivers at least once, in an order nobody chose, and the promise is that no
+ * sequence of them can put an order into a state where somebody's money is
+ * gone with nothing recording it, nor ask the gateway to spend that money or
+ * hand over the goods twice.
+ *
+ * The effects half of that is not optional. Money moves through effects, so a
+ * walk that only looked at the order would be blind to the double charge and
+ * the double fulfillment, which are the two mistakes a buyer would notice
+ * first.
  */
 
 /**
@@ -197,19 +204,48 @@ describe("a long walk over the machine", () => {
       if (!created.ok) return;
 
       let order = created.order;
+      // What the gateway would have been told to do, so far.
+      let chargesInFlight = 0;
+      let goodsReleased = 0;
+      let receipts = 0;
+      let accepted = 0;
+
       for (let step = 0; step < 200; step += 1) {
         const event = anEvent(next, order, 500_000 + step * 5_000);
         const result = transition(order, event);
         if (!result.ok) continue;
 
+        accepted += 1;
         order = result.order;
-        expect(
-          moneyInvariantViolations(order),
-          `seed ${seed}, step ${step}, ${event.kind} produced ${order.state}/${order.payment}`,
-        ).toStrictEqual([]);
-        expect(ORDER_STATES).toContain(order.state);
-        expect(ORDER_OUTCOMES).toContain(outcomeFor(order));
+        const where = `seed ${seed}, step ${step}, ${event.kind} -> ${order.state}/${order.payment}`;
+
+        expect(moneyInvariantViolations(order), where).toStrictEqual([]);
+        expect(ORDER_STATES, where).toContain(order.state);
+        expect(ORDER_OUTCOMES, where).toContain(outcomeFor(order));
+
+        for (const effect of result.effects) {
+          if (effect.kind === "execute_payment") chargesInFlight += 1;
+          if (effect.kind === "release_goods_to_agent") goodsReleased += 1;
+          if (effect.kind === "issue_receipt") receipts += 1;
+          if (effect.kind === "mark_refund_due") {
+            // A debt is a claim that the buyer's money is with the merchant.
+            expect(order.payment, `${where}: a refund marked without a charge`).toBe("settled");
+          }
+        }
+        if (event.kind === "payment_settled" || event.kind === "payment_settle_failed") {
+          chargesInFlight -= 1;
+        }
+
+        // The buyer's money is sent for execution once at a time, and one
+        // order hands over its goods and writes its receipt exactly once.
+        expect(chargesInFlight, `${where}: charges in flight`).toBeLessThanOrEqual(1);
+        expect(goodsReleased, `${where}: the goods went out twice`).toBeLessThanOrEqual(1);
+        expect(receipts, `${where}: two receipts for one order`).toBeLessThanOrEqual(1);
       }
+
+      // A floor under the loop: a machine that refused everything would sail
+      // through every check above.
+      expect(accepted, `seed ${seed}`).toBeGreaterThan(3);
     });
   }
 

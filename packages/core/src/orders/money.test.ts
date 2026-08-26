@@ -50,16 +50,21 @@ describe("the invariants of the order's money", () => {
     // The gateway will feed this machine pairings nobody planned. If a single
     // one of them produced an order where the money and the state disagree, a
     // buyer would be out of pocket with no record saying so.
+    let accepted = 0;
+
     for (const state of ORDER_STATES) {
       for (const kind of ORDER_EVENT_KINDS) {
         const result = transition(reach(state), sampleEvent(kind));
         if (!result.ok) continue;
+        accepted += 1;
         expect(
           moneyInvariantViolations(result.order),
           `${state} on ${kind} produced ${result.order.state}/${result.order.payment}`,
         ).toStrictEqual([]);
       }
     }
+
+    expect(accepted).toBeGreaterThan(60);
   });
 
   it("catches an order that claims a debt without a charge behind it", () => {
@@ -105,11 +110,13 @@ describe("money taken is always accounted for", () => {
     // check the one thing that must never happen: the buyer's money gone and
     // the order closed as though nothing was owed.
     const settledAndClosed: string[] = [];
+    let accepted = 0;
 
     for (const state of ORDER_STATES) {
       for (const kind of ORDER_EVENT_KINDS) {
         const result = transition(reach(state), sampleEvent(kind));
         if (!result.ok) continue;
+        accepted += 1;
 
         const after = result.order;
         const owedNothing: readonly OrderState[] = [
@@ -119,13 +126,18 @@ describe("money taken is always accounted for", () => {
           "cancelled",
           "failed",
         ];
-        if (after.payment === "settled" && owedNothing.includes(after.state)) {
-          settledAndClosed.push(`${state} on ${kind} -> ${after.state}`);
+        // "settling" belongs here too: it is the window in which the machine
+        // does not know whether the money moved, and closing an order as free
+        // on a guess is exactly the mistake this list exists to catch.
+        const moneyMayHaveMoved = after.payment === "settled" || after.payment === "settling";
+        if (moneyMayHaveMoved && owedNothing.includes(after.state)) {
+          settledAndClosed.push(`${state} on ${kind} -> ${after.state}/${after.payment}`);
         }
       }
     }
 
     expect(settledAndClosed).toStrictEqual([]);
+    expect(accepted).toBeGreaterThan(60);
   });
 
   it("turns the departure of a merchant who was already paid into a debt", () => {
