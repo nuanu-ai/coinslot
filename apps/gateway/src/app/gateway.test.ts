@@ -598,6 +598,38 @@ describe("the price question", () => {
     );
   });
 
+  it("tells a merchant his answer priced nothing when the machine would not take it", async () => {
+    // The other half of the same promise, and the one the wording exists for.
+    // Somebody is still parked on the question, so an acknowledgement built out
+    // of "was anybody listening" would say yes — while the order was closed a
+    // moment earlier and his price bought nothing.
+    const harnessed = await started({ QUOTE_RESPONSE_MS: "500" });
+    const itemId = await published(harnessed, livePriced(asyncCard));
+
+    const buying = harnessed.gateway.beginPurchase(itemId, {});
+    const drawn = await harnessed.gateway.poll(10, 200);
+    const question = drawn.envelopes.find((envelope) => envelope.kind === "quote_request");
+    if (question?.kind !== "quote_request") throw new Error("nobody was asked the price");
+
+    // The clock on our own patience gets there first and closes the order.
+    const orders = await harnessed.store.orders();
+    const orderId = orders[0]?.order.id ?? "";
+    await harnessed.gateway.runner.apply(orderId, {
+      kind: "quote_silent",
+      at: harnessed.now(),
+    });
+
+    const acknowledged = await harnessed.gateway.answerQuote(question.payload.price_id, {
+      available: true,
+      price: { amount: "9.00", currency: "USD" },
+      as_of: "2026-08-26T12:00:00.000Z",
+    });
+
+    expect(acknowledged).toStrictEqual({ used: false });
+    expect((await harnessed.store.orderById(orderId))?.order.state).toBe("rejected");
+    await buying;
+  });
+
   it("treats a price check it cannot make as a merchant who did not answer", async () => {
     // A card whose price lives at an address of the merchant's own asks over a
     // transport this stage does not serve. Saying so as a silence is honest —
@@ -693,10 +725,18 @@ describe("the worker's stream", () => {
   it("never hands out more than the gateway's own batch, whatever is asked for", async () => {
     const harnessed = await started({ WORKER_POLL_MAX_ENVELOPES: "1" });
     const itemId = await published(harnessed, asyncCard);
-    for (const _ of [0, 1, 2]) {
+    for (const nth of [0, 1, 2]) {
       const offered = await harnessed.gateway.beginPurchase(itemId, {});
       if (offered.step !== "pay") throw new Error("no price was offered");
-      await harnessed.gateway.payPurchase(offered.order.order.id, "PAYMENT", "PAYMENT");
+      // Three purchases means three payments. One payment buys one order, so
+      // reusing a fingerprint here would leave two of them unpaid and this test
+      // would pass for a reason that has nothing to do with batch size.
+      const bought = await harnessed.gateway.payPurchase(
+        offered.order.order.id,
+        `PAYMENT-${nth}`,
+        `PAYMENT-${nth}`,
+      );
+      expect(bought.step).toBe("under_way");
     }
 
     expect((await harnessed.gateway.poll(1_000, 0)).envelopes).toHaveLength(1);
