@@ -65,15 +65,16 @@ if (databaseUrl === undefined || databaseUrl === "") {
     let now = Date.parse("2026-08-26T12:00:00.000Z");
 
     beforeAll(async () => {
+      // The schema first, from the same checked-in migrations a deployment
+      // applies, so this suite fails on a migration that does not apply rather
+      // than on a table it happened to find.
       const here = dirname(fileURLToPath(import.meta.url));
       const migrating = new Pool({ connectionString: databaseUrl });
       await migrate(drizzle(migrating), {
         migrationsFolder: join(here, "..", "..", "..", "drizzle"),
       });
       await migrating.end();
-    }, 60_000);
 
-    beforeAll(async () => {
       const connected = connect(databaseUrl);
       pool = connected.pool;
       // Every run starts from an empty catalog, or the counts below would be
