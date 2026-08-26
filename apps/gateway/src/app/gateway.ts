@@ -350,11 +350,24 @@ export class Gateway {
 
       const orderId = delivery.envelope.payload.id;
       const at = clock();
-      const applied = await this.runner.apply(
-        orderId,
-        { kind: "order_dispatched", at },
-        { openDeliveryId: delivery.envelope.id },
-      );
+      let applied: Awaited<ReturnType<OrderRunner["apply"]>>;
+      try {
+        applied = await this.runner.apply(
+          orderId,
+          { kind: "order_dispatched", at },
+          { openDeliveryId: delivery.envelope.id },
+        );
+      } catch (thrown) {
+        // Recording this one hand-over failed. The rest of the batch is not
+        // taken down with it — an envelope already in this answer would
+        // otherwise be drawn, discarded with the failed response, and never
+        // seen again — and this one goes back on the stream rather than being
+        // lost with it.
+        console.error(`[gateway] could not record the hand-over of ${orderId}`, thrown);
+        await queue.publish(delivery.envelope, config.redelivery.baseDelayMs);
+        finished.push(delivery.handle);
+        continue;
+      }
 
       if (applied.outcome === "refused" && applied.rejection.retryable) {
         // The machine will take this hand-over, just not yet — a charge on this

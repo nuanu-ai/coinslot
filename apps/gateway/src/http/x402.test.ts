@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { bearerIn, keyMatches } from "./auth.js";
-import { atomicUnits, PaymentEdge } from "./x402.js";
+import { atomicUnits, PaymentEdge, paymentFingerprint } from "./x402.js";
 
 describe("a price in the token's own units", () => {
   it("writes an exact amount, whatever the price looked like", async () => {
@@ -93,5 +93,74 @@ describe("the merchant's key", () => {
     expect(bearerIn("Basic abc")).toBeNull();
     expect(bearerIn("Bearer")).toBeNull();
     expect(bearerIn(undefined)).toBeNull();
+  });
+});
+
+describe("one payment, one fingerprint", () => {
+  const signed = (payload: Record<string, unknown>) => ({
+    x402Version: 2,
+    accepted: {
+      scheme: "exact",
+      network: "eip155:84532" as const,
+      asset: "0x0",
+      amount: "1",
+      payTo: "0x0",
+      maxTimeoutSeconds: 300,
+      extra: {},
+    },
+    payload,
+  });
+
+  const authorised = (nonce: string) => ({
+    signature: "0xsigned",
+    authorization: { from: "0xa", to: "0xb", value: "1", nonce },
+  });
+
+  it("does not change when the agent rewrites everything it is allowed to rewrite", () => {
+    // The requirements beside the payload are the agent's own unsigned copy of
+    // what we asked for. If the fingerprint moved with them, one signature
+    // would buy as many orders as the agent cared to relabel it for.
+    const first = paymentFingerprint(signed(authorised("0x01")));
+    const relabelled = {
+      ...signed(authorised("0x01")),
+      accepted: {
+        scheme: "exact",
+        network: "eip155:84532" as const,
+        asset: "0xdifferent",
+        amount: "999",
+        payTo: "0xsomebody-else",
+        maxTimeoutSeconds: 1,
+        extra: { order_id: "another_order" },
+      },
+    };
+
+    expect(paymentFingerprint(relabelled)).toBe(first);
+  });
+
+  it("does not change when a field is added beside the signed authorisation", () => {
+    // A scheme that ignores an unknown field would otherwise hand an agent a
+    // way to make the same authorisation look like a different payment.
+    const first = paymentFingerprint(signed(authorised("0x01")));
+    const padded = signed({ ...authorised("0x01"), padding: "anything at all" });
+
+    expect(paymentFingerprint(padded)).toBe(first);
+  });
+
+  it("changes when the authorisation does", () => {
+    expect(paymentFingerprint(signed(authorised("0x02")))).not.toBe(
+      paymentFingerprint(signed(authorised("0x01"))),
+    );
+  });
+
+  it("falls back to the signature, and then to the whole payload", () => {
+    // Not every scheme carries an authorisation under that name; the point is
+    // that whatever it does carry, two presentations of one payment agree.
+    const bySignature = paymentFingerprint(signed({ signature: "0xonly" }));
+    expect(paymentFingerprint(signed({ signature: "0xonly" }))).toBe(bySignature);
+    expect(paymentFingerprint(signed({ signature: "0xother" }))).not.toBe(bySignature);
+
+    const byPayload = paymentFingerprint(signed({ proof: { b: 2, a: 1 } }));
+    // The same payload written in another order is the same payment.
+    expect(paymentFingerprint(signed({ proof: { a: 1, b: 2 } }))).toBe(byPayload);
   });
 });

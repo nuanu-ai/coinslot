@@ -175,21 +175,47 @@ export class PaymentEdge {
 }
 
 /**
- * A stable fingerprint of the part of a payment the agent actually signed.
+ * A fingerprint of one payment: the same for two presentations of the same
+ * authorisation, and not something an agent can vary at will.
  *
- * It is taken over the scheme's own payload — the signature and whatever it
- * covers — and deliberately not over the requirements beside it, because those
- * are the agent's unsigned copy of what we asked for and can be rewritten
- * freely. Two presentations of one authorisation have one fingerprint however
- * the rest of the envelope is edited, which is what makes a payment spendable
- * once.
+ * The requirements beside the payload are no use for this — they are the
+ * agent's own unsigned copy of what we asked for and can be rewritten freely —
+ * so this reads the payload, and it reads as little of it as it can get away
+ * with. What it wants is a value the agent cannot change without invalidating
+ * the signature, and there are three of them in descending order of how sure
+ * that is:
  *
- * The payload is not read, only serialised in an order that does not depend on
- * how it happened to be written. What is inside it belongs to the protocol.
+ * The authorisation's nonce is exact. It is the value the token contract itself
+ * refuses to honour twice, so two payments with one nonce are one payment
+ * whatever else differs, and one payment with two nonces is two.
+ *
+ * The signature is nearly as good and covers the schemes that carry one under
+ * another name. Two presentations of one authorisation carry one signature.
+ *
+ * And where a scheme carries neither, the whole payload is fingerprinted. That
+ * one is the weak case and it is worth saying why: a scheme could accept a
+ * payload with a field added that its verifier ignores, and the addition would
+ * change the fingerprint while leaving the payment perfectly valid. Reaching
+ * into a payload at all is the protocol's business rather than ours, and this
+ * reaches in exactly far enough to stop one signature buying two orders.
  */
 export function paymentFingerprint(payload: PaymentPayload): string {
+  const signed = payload.payload;
+  const authorization = signed.authorization;
+  const nonce =
+    typeof authorization === "object" && authorization !== null && "nonce" in authorization
+      ? (authorization as { nonce?: unknown }).nonce
+      : undefined;
+
+  const key =
+    typeof nonce === "string" && nonce !== ""
+      ? { by: "nonce", value: nonce }
+      : typeof signed.signature === "string" && signed.signature !== ""
+        ? { by: "signature", value: signed.signature }
+        : { by: "payload", value: stably(signed) };
+
   return createHash("sha256")
-    .update(stably({ version: payload.x402Version, signed: payload.payload }))
+    .update(stably({ version: payload.x402Version, ...key }))
     .digest("hex");
 }
 
