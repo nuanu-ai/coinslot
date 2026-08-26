@@ -1,0 +1,80 @@
+import { describe, expect, it } from "vitest";
+import { OrderSchema } from "./order.js";
+import { errorOf, expectMissingFieldRejected } from "./testing/expect-schema.js";
+
+const order = {
+  id: "ord_7c1e05",
+  merchant_item_id: "access-monthly",
+  params: { email: "buyer@example.com" },
+  price: {
+    amount: "5.00",
+    currency: "USD",
+    at: "2026-08-26T10:20:00Z",
+    as_of: "2026-08-26T10:15:00Z",
+  },
+  price_id: "prc_31a8c0",
+  test: false,
+};
+
+describe("order", () => {
+  // The promise: a handler holding one order can deliver it and write the sale
+  // down without asking us anything and without looking the card up.
+  it("accepts an order the way a handler receives it", () => {
+    expect(OrderSchema.parse(order)).toStrictEqual(order);
+  });
+
+  it("accepts an order for a card that takes no purchase parameters", () => {
+    expect(OrderSchema.safeParse({ ...order, params: {} }).success).toBe(true);
+  });
+
+  it("accepts an order sold from the card price, with no price question behind it", () => {
+    // A card with no price check is sold from its own price, so there was no
+    // question and there is no identifier for one. Requiring the field would
+    // make the gateway invent an identifier that names nothing.
+    const { price_id, ...withoutPriceId } = order;
+    expect(price_id).toBeDefined();
+    expect(OrderSchema.safeParse(withoutPriceId).success).toBe(true);
+  });
+
+  for (const field of ["id", "merchant_item_id", "params", "price", "test"]) {
+    it(`refuses an order without ${field} and names it`, () => {
+      expectMissingFieldRejected(OrderSchema, order, field);
+    });
+  }
+
+  it("refuses an order whose test flag is missing rather than treating it as live", () => {
+    // The flag is required, not defaulted, precisely because the safe reading
+    // of silence is not obvious: a test order taken for a live one is a real
+    // delivery against test money.
+    expect(errorOf(OrderSchema, { ...order, test: undefined })).toContain("test");
+    expect(OrderSchema.safeParse({ ...order, test: "false" }).success).toBe(false);
+  });
+
+  it("carries a sale price with both moments", () => {
+    // The price in the order is the price the sale went through at, which is
+    // not always the price in the card. `at` says when the purchase happened
+    // and `as_of` how fresh the price behind it was.
+    for (const field of ["amount", "currency", "at", "as_of"]) {
+      const price = Object.fromEntries(
+        Object.entries(order.price).filter(([name]) => name !== field),
+      );
+      expect(errorOf(OrderSchema, { ...order, price }), field).toContain(field);
+    }
+  });
+
+  it("refuses a price written as a number", () => {
+    expect(OrderSchema.safeParse({ ...order, price: { ...order.price, amount: 5 } }).success).toBe(
+      false,
+    );
+  });
+
+  it("refuses a field it does not know", () => {
+    // An order that carries something the handler is meant to act on, and
+    // which we never defined, is a promise we did not make.
+    expect(errorOf(OrderSchema, { ...order, deadline_seconds: 60 })).toContain("deadline_seconds");
+  });
+
+  it("refuses a purchase parameter whose name a card could never declare", () => {
+    expect(OrderSchema.safeParse({ ...order, params: { "not ok": 1 } }).success).toBe(false);
+  });
+});
