@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Схемы публичного контракта Coinslot — карточка, заказ, хук цены, квитанция",
+  "description": "Coinslot public contract schemas — card, order, price hook, receipt",
   "exports": {
     ".": "./src/index.ts"
   },
