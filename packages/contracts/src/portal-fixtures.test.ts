@@ -27,7 +27,7 @@ import { describe, expect, it } from "vitest";
 import type { z } from "zod";
 import { CardSchema } from "./card.js";
 import { HandlerAnswerSchema, RefusalSchema } from "./handler.js";
-import { ParamSpecSchema } from "./param-spec.js";
+import { ParamSpecSchema, paramSpecToValidator } from "./param-spec.js";
 import { QuoteRequestSchema, QuoteResponseSchema } from "./quote.js";
 
 const repoRoot = new URL("../../../", import.meta.url);
@@ -175,6 +175,16 @@ type Fixture =
     });
 
 /**
+ * The result declaration the cards page shows, transcribed once because two
+ * checks need it: the fixture that holds it to `ParamSpecSchema`, and the
+ * cross-page test further down that holds the orders page's delivery to it.
+ */
+const declaredResult = {
+  access_url: { type: "string", title: "Ссылка для входа" },
+  expires_at: { type: "string", title: "До какого момента действует" },
+};
+
+/**
  * The fixture map: which example on which page is held to which schema.
  *
  * Adding an example to the portal without adding it here is caught further
@@ -221,10 +231,7 @@ const fixtures: Fixture[] = [
     completeKeys: true,
     // The fence shows the declaration under the card field it sits in.
     outerKeys: ["result"],
-    value: {
-      access_url: { type: "string", title: "Ссылка для входа" },
-      expires_at: { type: "string", title: "До какого момента действует" },
-    },
+    value: declaredResult,
   },
   {
     kind: "transcribed",
@@ -409,6 +416,36 @@ describe("the portal's examples pass the schemas", () => {
       ).toBe("");
     });
   }
+});
+
+describe("the pages agree with each other", () => {
+  it("the delivery the orders page shows satisfies the result the cards page declares", () => {
+    // The promise, and it spans two pages: a merchant who declares a result on
+    // one page and copies the delivery call from the other must end up with a
+    // delivery that goes through. Before the portal stated that every declared
+    // field is delivered, the two pages disagreed — the declaration named two
+    // fields and the call sent one, which the compiled check now refuses.
+    const declared = ParamSpecSchema.parse(declaredResult);
+    const check = paramSpecToValidator(declared, "delivery");
+    const fence = fenceTextOf({ file: "portal/orders.md", language: "ts", index: 0 });
+
+    for (const name of Object.keys(declared)) {
+      expect(
+        occursIn(fence, { kind: "key", text: name, key: name }),
+        `the orders page delivers without "${name}", which the cards page declares`,
+      ).toBe(true);
+    }
+
+    // And a delivery of the shape that call produces passes the check, while
+    // one missing a declared field does not.
+    expect(
+      check.safeParse({
+        access_url: "https://example.com/a/9f2c4a",
+        expires_at: "2026-09-25T10:00:00Z",
+      }).success,
+    ).toBe(true);
+    expect(check.safeParse({ access_url: "https://example.com/a/9f2c4a" }).success).toBe(false);
+  });
 });
 
 describe("no example on the portal goes unpinned", () => {
