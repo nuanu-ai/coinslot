@@ -12,6 +12,8 @@
   },
   "dependencies": {
     "@coinbase/cdp-sdk": "1.55.0",
+    "@coinslot/contracts": "workspace:*",
+    "@coinslot/core": "workspace:*",
     "@x402/core": "2.23.0",
     "@x402/evm": "2.23.0",
     "@x402/express": "2.23.0",

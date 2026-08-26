@@ -1,0 +1,101 @@
+/**
+ * The store: everything the gateway remembers.
+ *
+ * It is a port because the thing behind it is one Postgres (ADR-0003 §6) and
+ * the whole of the application logic has to be testable without one. What is
+ * written here is therefore the smallest set of questions the flows actually
+ * ask, in the words of the domain, and nothing about tables.
+ *
+ * One method is not an accessor and is the reason this is an interface rather
+ * than three maps. `withOrder` holds an order still while a decision is made
+ * about it. Two events about the same order arrive from different places all
+ * the time — the agent's payment and a deadline, the merchant's answer and a
+ * redelivery — and without that hold both would read the same order, both
+ * would decide against it, and the second write would erase the first. Next to
+ * someone else's money that is not a race to lose politely: it is how an order
+ * gets charged twice.
+ */
+
+import type { Card, Delivery, Receipt } from "@coinslot/contracts";
+import type { Order } from "@coinslot/core";
+
+/** A card as its merchant published it, under the catalog identifier we issued. */
+export interface StoredCard {
+  readonly id: string;
+  readonly card: Card;
+  /** When this version of the card was published. */
+  readonly asOf: number;
+}
+
+/**
+ * One order: the machine's own order, and everything about the purchase the
+ * machine has no opinion about.
+ *
+ * The payment sits here as the opaque thing the agent presented rather than as
+ * anything this package understands. It is kept because the charge is executed
+ * later than it is verified — in the synchronous mode, after the goods come
+ * back — and by then the request that carried it is long over.
+ */
+export interface StoredOrder {
+  readonly order: Order;
+  /** Our catalog identifier for the product. */
+  readonly itemId: string;
+  /** The merchant's own identifier for it, so they need no mapping table. */
+  readonly merchantItemId: string;
+  readonly params: Readonly<Record<string, unknown>>;
+  /** The price question this order was priced by, where one was asked. */
+  readonly priceId: string | null;
+  /** What the merchant handed over, once they have. */
+  readonly delivery: Delivery | null;
+  /** What the agent presented to pay with, verbatim, until the charge is done. */
+  readonly payment: string | null;
+}
+
+/**
+ * What `withOrder` decided: the order to write back, if any, and the answer to
+ * give the caller. Leaving `save` out is how a read that changes nothing says
+ * so, rather than writing the order it just read.
+ */
+export interface OrderChange<T> {
+  readonly save?: StoredOrder;
+  readonly result: T;
+}
+
+/**
+ * An order that is not there. It is a value rather than a thrown error because
+ * an agent asking about an order that never existed is an ordinary thing that
+ * happens, and the caller has to answer it rather than crash on it.
+ */
+export type OrderLookup<T> =
+  | { readonly found: true; readonly result: T }
+  | { readonly found: false };
+
+export interface Store {
+  /**
+   * Publishes one card. Republishing under the same `merchant_item_id` changes
+   * the card that is there rather than adding a second one, which is what the
+   * portal promises, so the catalog identifier stays what it was.
+   */
+  publishCard(card: Card, at: number): Promise<StoredCard>;
+  cardById(id: string): Promise<StoredCard | null>;
+  cards(): Promise<readonly StoredCard[]>;
+
+  /** Writes an order that is not there yet. */
+  addOrder(record: StoredOrder): Promise<void>;
+  orderById(id: string): Promise<StoredOrder | null>;
+  /** Every order, or with `open` only the ones still owed work or money. */
+  orders(query?: { readonly open?: boolean }): Promise<readonly StoredOrder[]>;
+
+  /**
+   * Holds one order still, hands it to `change`, and writes back whatever
+   * `change` asks to be written. Nothing else touches that order in between.
+   */
+  withOrder<T>(
+    id: string,
+    change: (found: StoredOrder) => Promise<OrderChange<T>> | OrderChange<T>,
+  ): Promise<OrderLookup<T>>;
+
+  putReceipt(receipt: Receipt): Promise<void>;
+  receiptForOrder(orderId: string): Promise<Receipt | null>;
+  receipts(): Promise<readonly Receipt[]>;
+}

@@ -26,6 +26,12 @@ importers:
       '@coinbase/cdp-sdk':
         specifier: 1.55.0
         version: 1.55.0(@x402/core@2.23.0)(@x402/evm@2.23.0(typescript@7.0.2))(@x402/extensions@2.23.0(typescript@7.0.2))(typescript@7.0.2)
+      '@coinslot/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@coinslot/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@x402/core':
         specifier: 2.23.0
         version: 2.23.0
