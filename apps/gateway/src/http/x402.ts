@@ -172,6 +172,11 @@ export class PaymentEdge {
   #network(): `${string}:${string}` {
     return this.#config.network as `${string}:${string}`;
   }
+
+  /** The token this gateway charges in, for anything that has to name it. */
+  token(): TokenIdentity {
+    return { network: this.#config.network, asset: getDefaultAsset(this.#network()).asset };
+  }
 }
 
 /**
@@ -195,6 +200,19 @@ export class PaymentEdge {
  * amount is put through BigInt, where `1000000`, `"1000000"` and `"0xF4240"`
  * are one number rather than three strings.
  *
+ * Nothing else goes in, and two omissions are deliberate. The protocol version
+ * is a JSON field the agent types and nothing checks; digested, it would let an
+ * agent make as many fingerprints out of one authorisation as it liked by
+ * counting upwards. And the amount and the address are the agent's own copy of
+ * what we asked for — they are checked elsewhere, against our own order, and
+ * they are not what a token records.
+ *
+ * What does go in besides the pair is the token itself, and it comes from our
+ * configuration rather than from the payment. A token records that state in its
+ * own contract, so one payer and one nonce on two different assets are two
+ * payments; taking the asset from the agent would hand back the variation this
+ * whole function exists to remove.
+ *
  * Where a scheme carries no authorisation under that name the signature is used
  * instead, canonicalised the same way; where it carries neither, the whole
  * payload is, with the amounts inside it normalised. That last one is the weak
@@ -204,22 +222,47 @@ export class PaymentEdge {
  * protocol's business rather than ours, and this reaches in exactly far enough
  * to stop one authorisation buying two orders.
  */
-export function paymentFingerprint(payload: PaymentPayload): string {
-  const signed = payload.payload;
+export function paymentFingerprint(payload: PaymentPayload, token: TokenIdentity): string {
+  // The payload may be anything at all: the decoder is a base64 JSON parse with
+  // no schema behind it, so a header naming a known order and carrying nothing
+  // else reaches here.
+  const signed = asRecord(payload.payload) ?? {};
   const authorization = asRecord(signed.authorization);
 
+  const chain = { network: token.network.toLowerCase(), asset: token.asset.toLowerCase() };
   const payer = asHex(authorization?.from);
   const nonce = asHex(authorization?.nonce);
   if (payer !== null && nonce !== null) {
-    return digestOf({ version: payload.x402Version, by: "authorization", payer, nonce });
+    return digestOf({ ...chain, by: "authorization", payer, nonce });
   }
 
   const signature = asHex(signed.signature);
   if (signature !== null) {
-    return digestOf({ version: payload.x402Version, by: "signature", signature });
+    return digestOf({ ...chain, by: "signature", signature });
   }
 
-  return digestOf({ version: payload.x402Version, by: "payload", payload: canonical(signed) });
+  return digestOf({ ...chain, by: "payload", payload: canonical(signed) });
+}
+
+/**
+ * The address an authorisation says it is spending from.
+ *
+ * Anybody can write it, so on its own it proves nothing — but a payment whose
+ * `from` is not the address that signed it does not verify, so a claim to be
+ * somebody buys only a refusal. That makes it exactly good enough for what it
+ * is used for: telling a repeat of a purchase by the agent that made it from a
+ * stranger who saw the order's identifier and wants the goods it already
+ * produced.
+ */
+export function payerIn(payload: PaymentPayload): string | null {
+  const signed = asRecord(payload.payload) ?? {};
+  return asHex(asRecord(signed.authorization)?.from);
+}
+
+/** Which token an authorisation is spent on, as this gateway has configured it. */
+export interface TokenIdentity {
+  readonly network: string;
+  readonly asset: string;
 }
 
 /** The amounts a scheme writes, which are numbers however they are spelled. */

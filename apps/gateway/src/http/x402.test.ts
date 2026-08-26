@@ -97,6 +97,8 @@ describe("the merchant's key", () => {
 });
 
 describe("one payment, one fingerprint", () => {
+  const token = { network: "eip155:84532", asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e" };
+
   const signed = (payload: Record<string, unknown>) => ({
     x402Version: 2,
     accepted: {
@@ -110,6 +112,9 @@ describe("one payment, one fingerprint", () => {
     },
     payload,
   });
+
+  const fingerprintOf = (payload: Parameters<typeof paymentFingerprint>[0]) =>
+    paymentFingerprint(payload, token);
 
   const authorised = (fields: { from?: string; nonce?: string; value?: string | number } = {}) => ({
     signature: "0xdeadBEEF",
@@ -129,8 +134,8 @@ describe("one payment, one fingerprint", () => {
     // fingerprints here would be a replay guard an attacker defeats by holding
     // down the shift key: present the same authorisation twice, flip a case
     // bit, and both orders verify.
-    const shouted = paymentFingerprint(signed(authorised()));
-    const whispered = paymentFingerprint(
+    const shouted = fingerprintOf(signed(authorised()));
+    const whispered = fingerprintOf(
       signed(
         authorised({
           from: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -144,17 +149,17 @@ describe("one payment, one fingerprint", () => {
 
   it("is one fingerprint however the amounts are written", () => {
     // 1000000, "1000000" and "0xF4240" are one number to the chain.
-    const asText = paymentFingerprint(signed({ proof: { value: "1000000" } }));
-    expect(paymentFingerprint(signed({ proof: { value: 1_000_000 } }))).toBe(asText);
-    expect(paymentFingerprint(signed({ proof: { value: "0xF4240" } }))).toBe(asText);
+    const asText = fingerprintOf(signed({ proof: { value: "1000000" } }));
+    expect(fingerprintOf(signed({ proof: { value: 1_000_000 } }))).toBe(asText);
+    expect(fingerprintOf(signed({ proof: { value: "0xF4240" } }))).toBe(asText);
   });
 
   it("keys on the payer as well as the nonce, the way the token does", () => {
     // A token records authorizationState[authorizer][nonce]. Keyed on the nonce
     // alone, the first payer to use one would block every other payer who ever
     // picked the same — and a client that counts from one picks exactly those.
-    const mine = paymentFingerprint(signed(authorised()));
-    const yours = paymentFingerprint(
+    const mine = fingerprintOf(signed(authorised()));
+    const yours = fingerprintOf(
       signed(authorised({ from: "0xcccccccccccccccccccccccccccccccccccccccc" })),
     );
 
@@ -162,8 +167,8 @@ describe("one payment, one fingerprint", () => {
   });
 
   it("changes when the nonce does", () => {
-    expect(paymentFingerprint(signed(authorised({ nonce: "0x02" })))).not.toBe(
-      paymentFingerprint(signed(authorised({ nonce: "0x01" }))),
+    expect(fingerprintOf(signed(authorised({ nonce: "0x02" })))).not.toBe(
+      fingerprintOf(signed(authorised({ nonce: "0x01" }))),
     );
   });
 
@@ -171,7 +176,7 @@ describe("one payment, one fingerprint", () => {
     // The requirements beside the payload are the agent's own unsigned copy of
     // what we asked for. If the fingerprint moved with them, one signature
     // would buy as many orders as the agent cared to relabel it for.
-    const first = paymentFingerprint(signed(authorised()));
+    const first = fingerprintOf(signed(authorised()));
     const relabelled = {
       ...signed(authorised()),
       accepted: {
@@ -185,27 +190,63 @@ describe("one payment, one fingerprint", () => {
       },
     };
 
-    expect(paymentFingerprint(relabelled)).toBe(first);
+    expect(fingerprintOf(relabelled)).toBe(first);
   });
 
   it("does not change when a field is added beside the signed authorisation", () => {
-    const first = paymentFingerprint(signed(authorised()));
+    const first = fingerprintOf(signed(authorised()));
     const padded = signed({ ...authorised(), padding: "anything at all" });
 
-    expect(paymentFingerprint(padded)).toBe(first);
+    expect(fingerprintOf(padded)).toBe(first);
+  });
+
+  it("does not move with the protocol version the agent types", () => {
+    // Nothing checks that field: the decoder is a base64 JSON parse with no
+    // schema behind it. Digested, it would let an agent make as many
+    // fingerprints out of one authorisation as it liked by counting upwards,
+    // which is the two-orders-one-signature hole reopened by one integer.
+    const two = fingerprintOf(signed(authorised()));
+    for (const version of [1, 3, 0, 99]) {
+      expect(fingerprintOf({ ...signed(authorised()), x402Version: version })).toBe(two);
+    }
+  });
+
+  it("is a different payment on a different token", () => {
+    // A token records authorizationState[authorizer][nonce] in its own
+    // contract, so one payer and one nonce on two assets are two payments. The
+    // token comes from our configuration and never from the payment, or the
+    // agent would have its variation back.
+    const here = fingerprintOf(signed(authorised()));
+    const elsewhere = paymentFingerprint(signed(authorised()), {
+      network: "eip155:8453",
+      asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    });
+
+    expect(elsewhere).not.toBe(here);
+  });
+
+  it("reads a payment that is not one without falling over", () => {
+    // The decoder guarantees nothing about the payload, so a header naming a
+    // known order and carrying nothing else reaches this function.
+    expect(() =>
+      paymentFingerprint(
+        { x402Version: 2 } as unknown as Parameters<typeof paymentFingerprint>[0],
+        token,
+      ),
+    ).not.toThrow();
   });
 
   it("falls back to the signature, canonicalised, and then to the whole payload", () => {
     // Not every scheme carries an authorisation under that name; whatever it
     // does carry, two spellings of one payment have to agree.
-    const shouted = paymentFingerprint(signed({ signature: "0xDEADbeef" }));
-    expect(paymentFingerprint(signed({ signature: "0xdeadBEEF" }))).toBe(shouted);
-    expect(paymentFingerprint(signed({ signature: "0xdeadbeee" }))).not.toBe(shouted);
+    const shouted = fingerprintOf(signed({ signature: "0xDEADbeef" }));
+    expect(fingerprintOf(signed({ signature: "0xdeadBEEF" }))).toBe(shouted);
+    expect(fingerprintOf(signed({ signature: "0xdeadbeee" }))).not.toBe(shouted);
 
-    const byPayload = paymentFingerprint(signed({ proof: { b: "0xFF", a: 1 } }));
+    const byPayload = fingerprintOf(signed({ proof: { b: "0xFF", a: 1 } }));
     // The same payload written in another order, and in another case, is the
     // same payment.
-    expect(paymentFingerprint(signed({ proof: { a: 1, b: "0xff" } }))).toBe(byPayload);
-    expect(paymentFingerprint(signed({ proof: { a: 2, b: "0xff" } }))).not.toBe(byPayload);
+    expect(fingerprintOf(signed({ proof: { a: 1, b: "0xff" } }))).toBe(byPayload);
+    expect(fingerprintOf(signed({ proof: { a: 2, b: "0xff" } }))).not.toBe(byPayload);
   });
 });

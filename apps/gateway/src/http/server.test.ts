@@ -471,6 +471,130 @@ describe("what an agent is told when the money is not settled", () => {
   });
 });
 
+describe("whose purchase it is", () => {
+  /** A payment signed by one address, against a challenge that was issued. */
+  const paidBy = (challenge: string, from: string, nonce: string) => {
+    const accepted = decodePaymentRequiredHeader(challenge).accepts[0];
+    if (accepted === undefined) throw new Error("no payment option was offered");
+    return encodePaymentSignatureHeader({
+      x402Version: 2,
+      accepted,
+      payload: {
+        signature: "0xsigned",
+        authorization: { from, to: PAY_TO, value: "80000000", nonce },
+      },
+    });
+  };
+
+  const challengeFor = async (served: Served, itemId: string) => {
+    const priced = await served.call("POST", `/v0/items/${itemId}/purchase`, {
+      body: { params: {} },
+    });
+    expect(priced.status).toBe(402);
+    return priced.headers.get(PAYMENT_REQUIRED_HEADER) ?? "";
+  };
+
+  const BUYER = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const STRANGER = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+  it("does not give a stranger the goods the buyer paid for", async () => {
+    // An order's identifier is not a secret the way a password is: this gateway
+    // puts it in the challenge itself. In the synchronous mode the goods reach
+    // an agent through the call it is parked on and nowhere else, so a second
+    // call under the same order would have taken the first one's place — and
+    // the buyer, who paid, would have been told nothing happened.
+    const { served, harnessed } = await started();
+    const itemId = await publish(served, syncCard);
+    const challenge = await challengeFor(served, itemId);
+
+    const worker = workUntilStopped(harnessed, {
+      onOrder: () => ({ delivered: { access_code: "SESAME" } }),
+    });
+    const buying = served.call("POST", `/v0/items/${itemId}/purchase`, {
+      body: { params: {} },
+      headers: { [PAYMENT_SIGNATURE_HEADER]: paidBy(challenge, BUYER, "0x01") },
+    });
+    const stealing = await served.call("POST", `/v0/items/${itemId}/purchase`, {
+      body: { params: {} },
+      headers: { [PAYMENT_SIGNATURE_HEADER]: paidBy(challenge, STRANGER, "0x02") },
+    });
+    const bought = await buying;
+    await worker.stop();
+
+    expect(bought.status).toBe(200);
+    expect(bought.body).toMatchObject({ delivered: { access_code: "SESAME" } });
+
+    expect(stealing.status).toBe(409);
+    expect((stealing.body as { error: { code: string } }).error.code).toBe("not_this_purchase");
+    expect(JSON.stringify(stealing.body)).not.toContain("SESAME");
+  });
+
+  it("does not charge a payment the order was not bought with", async () => {
+    // Between a verification and a charge the order sits waiting, and a
+    // presentation landing in that window used to replace the authorisation
+    // that would be executed. The merchant then produced the goods and was paid
+    // with somebody else's failing payment, while the buyer's good one was
+    // never charged.
+    const { served, harnessed } = await started();
+    const itemId = await publish(served, syncCard);
+    const challenge = await challengeFor(served, itemId);
+
+    const worker = workUntilStopped(harnessed, {
+      onOrder: () => ({ delivered: { access_code: "SESAME" } }),
+    });
+    const buying = served.call("POST", `/v0/items/${itemId}/purchase`, {
+      body: { params: {} },
+      headers: { [PAYMENT_SIGNATURE_HEADER]: paidBy(challenge, BUYER, "0x01") },
+    });
+    await served.call("POST", `/v0/items/${itemId}/purchase`, {
+      body: { params: {} },
+      headers: { [PAYMENT_SIGNATURE_HEADER]: paidBy(challenge, STRANGER, "0x02") },
+    });
+    await buying;
+    await worker.stop();
+
+    const charged = harnessed.facilitator.settles.map((charge) => charge.payment);
+    expect(charged).toHaveLength(1);
+    expect(charged[0]).toBe(paidBy(challenge, BUYER, "0x01"));
+  });
+
+  it("does not let a stranger close somebody else's open purchase", async () => {
+    // A payment that fails its check closes the order it was presented for. A
+    // stranger's payment is not that order's payment, so it closes nothing —
+    // and the buyer is not told their purchase was refused for a payment they
+    // never made.
+    const { served, harnessed } = await started({
+      QUOTE_RESPONSE_MS: "50",
+      SYNC_RESPONSE_MS: "150",
+      SETTLE_RESPONSE_MS: "100",
+      SYNC_BUDGET_MS: "300",
+      QUOTE_TTL_MS: "60000",
+    });
+    const itemId = await publish(served, syncCard);
+    const challenge = await challengeFor(served, itemId);
+
+    // The buyer takes the order first, and their own payment cannot be checked
+    // yet because nothing is answering.
+    harnessed.facilitator.willVerify({ verified: "unknown", message: "not asked yet" });
+    await served.call("POST", `/v0/items/${itemId}/purchase`, {
+      body: { params: {} },
+      headers: { [PAYMENT_SIGNATURE_HEADER]: paidBy(challenge, BUYER, "0x01") },
+    });
+
+    harnessed.facilitator.willRefuseVerification("signature", "not a signature at all");
+    const meddling = await served.call("POST", `/v0/items/${itemId}/purchase`, {
+      body: { params: {} },
+      headers: { [PAYMENT_SIGNATURE_HEADER]: paidBy(challenge, STRANGER, "0x02") },
+    });
+
+    expect(meddling.status).toBe(409);
+    const orders = await harnessed.store.orders();
+    expect(orders).toHaveLength(1);
+    expect(orders[0]?.order.state).toBe("quoted");
+    expect(orders[0]?.order.closure).toBeNull();
+  });
+});
+
 describe("the worker's calls over HTTP", () => {
   it("draws the stream and answers an order through the routes the SDK uses", async () => {
     const { served, harnessed } = await started();

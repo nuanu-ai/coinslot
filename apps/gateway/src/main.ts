@@ -44,9 +44,6 @@ const edge = new PaymentEdge(config.payment, config.publicBaseUrl, config.paymen
  */
 const QUEUE_POLL_INTERVAL_MS = 250;
 
-/** The queue's name for the daily sweep of claims on payments. */
-const SWEEP = "coinslot_forget_old_claims";
-
 const queue = queueOn(config.databaseUrl, {
   pollIntervalMs: QUEUE_POLL_INTERVAL_MS,
   reminders: {
@@ -97,13 +94,6 @@ try {
   console.error(thrown);
   process.exit(1);
 }
-
-// The claims on payments are swept by the queue's own scheduler rather than by
-// a timer of ours: it survives a restart, it does not run twice when there are
-// two processes, and it is the component ADR-0003 §9 says to take rather than
-// build. The name is the queue's key for the schedule, so re-registering it on
-// every start replaces rather than duplicates.
-await queue.everyDay(SWEEP, () => gateway.forgetOldClaims());
 
 const server = buildApp(gateway).listen(config.port, () => {
   console.log(`[gateway] listening on ${config.port}, answering as ${config.publicBaseUrl}`);

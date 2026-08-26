@@ -101,9 +101,14 @@ export interface Queue {
   onReminder(fire: (reminder: Reminder) => Promise<void>): void;
 
   /**
-   * Runs `work` about once a day, under `name`, for as long as the gateway is
-   * up — and once rather than once per process, so a second gateway does not
-   * double it. Registering the same name again replaces what was there.
+   * Takes on `work` to be run about once a day, under `name`, once rather than
+   * once per process. Registering the same name again replaces what was there.
+   *
+   * A queue with no clock of its own may hold the work rather than run it, and
+   * the in-memory one does exactly that — nothing in an offline suite waits a
+   * day, and a fake day would be a schedule its own tests then had to reason
+   * about. So nothing may be put here that the gateway depends on happening:
+   * this is for keeping the place tidy, not for anything an order is waiting on.
    */
   everyDay(name: string, work: () => Promise<unknown>): Promise<void>;
 

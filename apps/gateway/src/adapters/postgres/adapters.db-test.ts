@@ -23,7 +23,7 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool } from "pg";
 import { PgBoss } from "pg-boss";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { Gateway } from "../../app/gateway.js";
 import type { Runtime } from "../../app/runtime.js";
 import { countedIds, testConfig, workUntilStopped } from "../../testing/harness.js";
@@ -61,6 +61,7 @@ if (databaseUrl === undefined || databaseUrl === "") {
     let pool: Pool;
     let store: PostgresStore;
     let queue: PgBossQueue;
+    let boss: PgBoss;
     let gateway: Gateway;
     let facilitator: ScriptedFacilitator;
     let now = Date.parse("2026-08-26T12:00:00.000Z");
@@ -87,7 +88,8 @@ if (databaseUrl === undefined || databaseUrl === "") {
       await pool.query("truncate table cards, orders, receipts, payment_claims");
 
       store = new PostgresStore(connected.db, countedIds());
-      queue = new PgBossQueue(new PgBoss(databaseUrl), {
+      boss = new PgBoss(databaseUrl);
+      queue = new PgBossQueue(boss, {
         pollIntervalMs: 50,
         reminders: { attempts: 3, retryDelayMs: 1_000 },
       });
@@ -103,6 +105,10 @@ if (databaseUrl === undefined || databaseUrl === "") {
       };
       gateway = new Gateway(runtime);
       await gateway.start();
+      // The queue keeps its own tables, and a job left in them by a previous
+      // run is drawn by this one — which would fail a test about an empty
+      // stream for a reason that has nothing to do with what it checks.
+      await boss.deleteAllJobs();
     }, 60_000);
 
     afterAll(async () => {
@@ -177,6 +183,51 @@ if (databaseUrl === undefined || databaseUrl === "") {
       expect(await store.forgetClaimsBefore(Date.now() + 60_000)).toBeGreaterThan(0);
       expect(await store.claimPayment("fp-db-old", "ord_new")).toStrictEqual({ claimed: true });
     });
+
+    it("delivers a reminder, and delivers it again when the handler throws", async () => {
+      // A reminder is the only thing that ever declares an overdue order, and
+      // the whole of that path — the schedule, the delivery, the retry — is
+      // pg-boss doing it. Nothing offline can watch that.
+      const seen: string[] = [];
+      let failures = 0;
+      const watching = new PgBoss(databaseUrl);
+      const own = new PgBossQueue(watching, {
+        pollIntervalMs: 50,
+        reminders: { attempts: 3, retryDelayMs: 1_000 },
+      });
+      own.onReminder(async (reminder) => {
+        seen.push(reminder.kind);
+        if (failures < 1) {
+          failures += 1;
+          throw new Error("the handler was briefly unhappy");
+        }
+      });
+      await own.start();
+
+      try {
+        await own.remind(
+          { kind: "deadline", orderId: "ord_r", deadline: "quote_expiry", at: 1 },
+          0,
+        );
+        await vi.waitFor(() => expect(seen.length).toBeGreaterThan(1), {
+          timeout: 20_000,
+          interval: 200,
+        });
+      } finally {
+        await own.stop();
+      }
+
+      expect(failures).toBe(1);
+    }, 40_000);
+
+    it("takes on work to run every day without complaining", async () => {
+      // The sweep of claims on payments is registered through this on every
+      // start. It is unexecuted everywhere else, and a schedule pg-boss refuses
+      // would take the gateway's start down with it.
+      await expect(
+        queue.everyDay("coinslot_a_daily_sweep", async () => undefined),
+      ).resolves.toBeUndefined();
+    }, 30_000);
 
     it("says an order is not there rather than throwing", async () => {
       expect(await store.withOrder("ord_nope", () => ({ result: 1 }))).toStrictEqual({

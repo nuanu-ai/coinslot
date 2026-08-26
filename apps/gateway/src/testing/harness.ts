@@ -60,13 +60,20 @@ export async function harness(overrides: Record<string, string> = {}): Promise<H
   // would move everything except the one thing it was moving it for.
   let now = Date.parse("2026-08-26T12:00:00.000Z");
 
+  const config = testConfig(overrides);
   const store = new MemoryStore(countedIds(), () => now);
-  const queue = new MemoryQueue();
+  // The queue's patience with a failing reminder comes from the configuration,
+  // not from a default beside it — or a test that sets the number would be
+  // asserting against something else entirely.
+  const queue = new MemoryQueue({
+    attempts: config.reminderAttempts,
+    retryDelayMs: config.reminderRetryDelayMs,
+  });
   const facilitator = new ScriptedFacilitator();
   const ids = countedIds();
 
   const runtime: Runtime = {
-    config: testConfig(overrides),
+    config,
     store,
     queue,
     facilitator,

@@ -69,13 +69,20 @@ export class PgBossQueue implements Queue {
   }
 
   async publish(envelope: WorkerEnvelope, afterMs?: number): Promise<void> {
-    await this.#boss.send(ENVELOPES, envelope as unknown as object, {
+    const sent = await this.#boss.send(ENVELOPES, envelope as unknown as object, {
       // Retries are the machine's to decide, so the queue keeps none of its own.
       retryLimit: 0,
       ...(afterMs === undefined || afterMs <= 0
         ? {}
         : { startAfter: new Date(Date.now() + afterMs) }),
     });
+
+    // The library answers with the job's identifier, or with nothing when it
+    // did not make one. Nothing is what an order never reaching a merchant
+    // looks like from here, and swallowing it would make that silent.
+    if (sent === null) {
+      throw new Error(`the queue would not take the envelope ${envelope.id}`);
+    }
 
     if (afterMs === undefined || afterMs <= 0) {
       this.#wakeEverybody();
@@ -105,13 +112,21 @@ export class PgBossQueue implements Queue {
 
   async remind(reminder: Reminder, afterMs: number): Promise<void> {
     const { attempts, retryDelayMs } = this.#options.reminders;
-    await this.#boss.send(REMINDERS, reminder as unknown as object, {
+    const sent = await this.#boss.send(REMINDERS, reminder as unknown as object, {
       // The library's own retries, durably, rather than a handler catching its
       // own failure and writing to the database that had just refused it.
       retryLimit: Math.max(attempts - 1, 0),
       retryDelay: Math.max(Math.round(retryDelayMs / 1_000), 1),
       startAfter: new Date(Date.now() + Math.max(afterMs, 0)),
     });
+
+    // A reminder that was not written down is a deadline that will never fire,
+    // and the deadline is the only thing that ever closes an overdue order.
+    if (sent === null) {
+      throw new Error(
+        `the queue would not take the ${reminder.kind} reminder for ${reminder.orderId}`,
+      );
+    }
   }
 
   onReminder(fire: (reminder: Reminder) => Promise<void>): void {

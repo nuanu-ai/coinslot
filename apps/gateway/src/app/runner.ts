@@ -52,7 +52,7 @@ import { asTimestamp } from "../ports/clock.js";
 import type { Reminder } from "../ports/queue.js";
 import type { OrderChange, PaymentWord, StoredOrder } from "../ports/store.js";
 import type { Runtime } from "./runtime.js";
-import { Waiting } from "./waiting.js";
+import { purchaseOf, Waiting } from "./waiting.js";
 
 /**
  * What is written down about the purchase alongside the machine's own order.
@@ -62,6 +62,10 @@ import { Waiting } from "./waiting.js";
  */
 export interface OrderFacts {
   readonly delivery?: Delivery;
+  /** Who this order is now being fulfilled against, where that has changed. */
+  readonly paidBy?: string;
+  /** The address that payment spends from. */
+  readonly paidFrom?: string | null;
   readonly settlement?: { readonly transaction: string };
   /** Something the payment layer said, appended to what it has said before. */
   readonly paymentWord?: PaymentWord;
@@ -129,7 +133,7 @@ export class OrderRunner {
           ...(facts.paymentWord === undefined
             ? {}
             : { paymentWords: [...found.paymentWords, facts.paymentWord] }),
-          ...(facts.payment === undefined ? {} : { payment: facts.payment }),
+
           ...(facts.priceId === undefined ? {} : { priceId: facts.priceId }),
           ...(facts.openDeliveryId === undefined ? {} : { openDeliveryId: facts.openDeliveryId }),
         };
@@ -143,17 +147,36 @@ export class OrderRunner {
         }
 
         refuseToWriteAnImpossibleOrder(moved.order);
-        const next: StoredOrder = { ...known, order: moved.order };
+
+        // The payment on the record is the one the machine's stage speaks
+        // about, so it may only be replaced when the machine has no opinion
+        // about a payment: before the first one, or after a repeat has reset
+        // it. Written at any other moment, a later presentation would swap the
+        // authorisation under a verification that had already happened, and the
+        // charge would execute something nothing had checked.
+        const takesIt =
+          facts.payment !== undefined && (known.payment === null || moved.order.payment === "none");
+        const next: StoredOrder = {
+          ...known,
+          order: moved.order,
+          ...(takesIt
+            ? {
+                payment: facts.payment,
+                ...(facts.paidBy === undefined ? {} : { paidBy: facts.paidBy }),
+                ...(facts.paidFrom === undefined ? {} : { paidFrom: facts.paidFrom }),
+              }
+            : {}),
+        };
 
         // The clocks the order will be waiting on are started before the change
-        // to it is committed, and that ordering is the whole of the guarantee.
-        // Started afterwards, a failure here would leave an order that had
-        // moved and had no clock on it: the event would be delivered again,
-        // the machine would say it no longer applies, the delivery would be
-        // marked done, and the order would hang forever with nobody waiting on
-        // anything. Started first, a failure writes nothing and the event comes
-        // back; the other way round leaves a reminder for a change that did not
-        // happen, which the machine refuses as a deadline that is not running.
+        // to it is committed, because of which way the two failures fall.
+        // Arming first and failing writes nothing, and the event comes back;
+        // arming first and having the write fail afterwards leaves a reminder
+        // for a change that did not happen, which the machine refuses as a
+        // deadline that is not running. Arming after the write and failing is
+        // the one that cannot be repaired: the order has moved, no clock is on
+        // it, the event comes back to a machine that says it no longer applies,
+        // and the order hangs with nobody waiting on anything.
         await this.#arm(deadlines(known.order), deadlines(next.order), orderId);
 
         return { save: next, result: { moved, before: known.order, known: next } };
@@ -185,9 +208,23 @@ export class OrderRunner {
    * the state the order is actually in is still the machine's to say, from the
    * event this produces.
    */
-  async presentPayment(orderId: string, payment: string, at: number): Promise<boolean> {
+  async presentPayment(
+    orderId: string,
+    payment: string,
+    paidBy: string,
+    paidFrom: string | null,
+    at: number,
+  ): Promise<boolean> {
     const held = await this.#runtime.store.withOrder(orderId, (found): OrderChange<StoredOrder> => {
-      const next: StoredOrder = { ...found, payment };
+      if (found.order.payment !== "none") {
+        // The machine already has an opinion about a payment on this order, and
+        // the one on the record is what that opinion is about. Replacing it now
+        // would hand the charge an authorisation nothing had verified.
+        throw new Error(
+          `a payment was presented for ${orderId}, whose own payment is already ${found.order.payment}`,
+        );
+      }
+      const next: StoredOrder = { ...found, payment, paidBy, paidFrom };
       refuseToWriteAnImpossibleOrder(next.order);
       return { save: next, result: next };
     });
@@ -544,8 +581,8 @@ export class OrderRunner {
    * purchase that is still going through into one he reads as finished.
    */
   #wakeTheAgent(record: StoredOrder): void {
-    if (outcomeFor(record.order) !== "in_progress") {
-      this.purchases.answer(record.order.id, record);
+    if (record.paidBy !== null && outcomeFor(record.order) !== "in_progress") {
+      this.purchases.answer(purchaseOf(record.order.id, record.paidBy), record);
     }
   }
 }

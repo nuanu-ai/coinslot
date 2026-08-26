@@ -29,6 +29,7 @@ import {
   PAYMENT_REQUIRED_HEADER,
   PAYMENT_RESPONSE_HEADER,
   PaymentEdge,
+  payerIn,
   paymentFingerprint,
   presentedPayment,
 } from "./x402.js";
@@ -255,7 +256,8 @@ async function purchase(
         await gateway.payPurchase(
           presented.orderId,
           presented.raw,
-          paymentFingerprint(presented.payload),
+          paymentFingerprint(presented.payload, edge.token()),
+          payerIn(presented.payload),
         ),
       );
     }
@@ -310,6 +312,20 @@ async function answerPurchase(
           attempt.collectable
             ? `this payment was already presented for order ${attempt.heldBy}, which is still open; one payment buys one order`
             : `this payment was already presented for order ${attempt.heldBy}, which is over; one payment buys one order, so this one needs a fresh payment`,
+        ),
+      );
+
+    case "not_this_purchase":
+      // Somebody is already buying this order with a payment of their own. An
+      // order's identifier travels — in a challenge, on the merchant's stream,
+      // in a receipt — and holding one is not the same as being the agent whose
+      // purchase it is.
+      return written(
+        response,
+        CONFLICT,
+        refusal(
+          "not_this_purchase",
+          "this order is already being bought with a payment of its own, and this is not that payment",
         ),
       );
 

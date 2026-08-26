@@ -65,6 +65,8 @@ const impossible = (): StoredOrder => {
     priceId: null,
     delivery: null,
     payment: null,
+    paidBy: null,
+    paidFrom: null,
     settlement: null,
     paymentWords: [],
     paymentWordsDropped: 0,
@@ -105,5 +107,44 @@ describe("an order that cannot be true", () => {
     );
 
     expect(await open.store.orderById("ord_impossible")).toBeNull();
+  });
+});
+
+describe("an order whose next clock could not be started", () => {
+  it("is not written down at all", async () => {
+    // Of the two ways this can fail, one is repairable and one is not. Written
+    // first and then failing to arm, the order has moved, no clock is on it,
+    // and the event that would come back is one the machine says no longer
+    // applies — so the delivery is marked done and the order hangs with nobody
+    // waiting on anything. Armed first and failing, nothing is written and the
+    // event comes back to an order that has not moved.
+    open = await harness();
+    const published = await open.gateway.publishCard({
+      merchant_item_id: "esim",
+      title: "A seven day eSIM",
+      description: "Seven days of data",
+      price: { amount: "12.00", currency: "USD" },
+      result: { activation_code: { type: "string" } },
+      fulfillment: "async",
+    });
+    if (!("ok" in published)) throw new Error("the card would not publish");
+
+    const offered = await open.gateway.beginPurchase(published.ok.id, {});
+    if (offered.step !== "pay") throw new Error("no price was offered");
+    const orderId = offered.order.order.id;
+
+    // From here the queue will not take a reminder.
+    open.queue.remind = async () => {
+      throw new Error("the queue was briefly unreachable");
+    };
+
+    await expect(
+      open.gateway.runner.apply(orderId, { kind: "payment_verified", at: open.now() }),
+    ).rejects.toThrow("the queue was briefly unreachable");
+
+    // The order is exactly where it was, so the event can simply be sent again.
+    const after = await open.store.orderById(orderId);
+    expect(after?.order.state).toBe("quoted");
+    expect(after?.order.payment).toBe("none");
   });
 });

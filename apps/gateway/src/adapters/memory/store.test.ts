@@ -62,6 +62,8 @@ const order = (id: string, state: Order["state"]): StoredOrder => ({
   priceId: null,
   delivery: null,
   payment: null,
+  paidBy: null,
+  paidFrom: null,
   settlement: null,
   paymentWords: [],
   paymentWordsDropped: 0,

@@ -264,6 +264,9 @@ describe("a reminder that could not be carried out", () => {
       DEFAULT_ASYNC_FULFILLMENT_MS: "20",
       REDELIVERY_BASE_DELAY_MS: "5",
       REMINDER_ATTEMPTS: "3",
+      // The queue takes both of these from the configuration, so a test that
+      // set one and watched the other would be asserting against a default.
+      REMINDER_RETRY_DELAY_MS: "5",
     });
     const orderId = await bought(harnessed, asyncCard);
     await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");

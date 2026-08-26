@@ -78,3 +78,16 @@ export class Waiting<T> {
     }
   }
 }
+
+/**
+ * The name a purchase is parked under: the order, and the payment it belongs to.
+ *
+ * Two people holding one order identifier are not two people waiting on one
+ * purchase. Parked under the order's own name, the second to arrive would take
+ * the first one's place — and in the synchronous mode the goods reach an agent
+ * through that park and nowhere else, so the one who paid would be told nothing
+ * happened while the other collected.
+ */
+export function purchaseOf(orderId: string, fingerprint: string): string {
+  return `${orderId}#${fingerprint}`;
+}

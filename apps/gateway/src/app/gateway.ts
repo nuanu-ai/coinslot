@@ -53,7 +53,7 @@ import {
   quoteReachesTheMerchant,
   type Runtime,
 } from "./runtime.js";
-import { Waiting } from "./waiting.js";
+import { purchaseOf, Waiting } from "./waiting.js";
 
 /**
  * Stage one sells nothing for real money: the separation of the sandbox from
@@ -67,6 +67,9 @@ const STAGE_ONE_ORDERS_ARE_TESTS = true;
  * until there is somewhere for a merchant to say otherwise.
  */
 const STAGE_ONE_MERCHANT_IS_SELLING = "open" as const;
+
+/** The queue's name for the daily sweep of claims on payments. */
+export const SWEEP_CLAIMS = "coinslot_forget_old_claims";
 
 /** What a purchase attempt came to. */
 export type PurchaseAttempt =
@@ -87,7 +90,9 @@ export type PurchaseAttempt =
       readonly collectable: boolean;
     }
   /** The machine would not take this payment on this order, and said why. */
-  | { readonly step: "payment_not_taken"; readonly why: string; readonly retryable: boolean };
+  | { readonly step: "payment_not_taken"; readonly why: string; readonly retryable: boolean }
+  /** This order is somebody else's purchase, and this payment is not its own. */
+  | { readonly step: "not_this_purchase" };
 
 export class Gateway {
   readonly runtime: Runtime;
@@ -125,6 +130,12 @@ export class Gateway {
     });
 
     await this.runtime.queue.start();
+
+    // Claims on payments are swept by the queue's own scheduler rather than by
+    // a timer of ours: it survives a restart and does not run twice when there
+    // are two processes. Registering the same name replaces what was there, so
+    // a restart does not accumulate schedules.
+    await this.runtime.queue.everyDay(SWEEP_CLAIMS, () => this.forgetOldClaims());
   }
 
   /** One reminder, turned into one event and nothing more. */
@@ -251,6 +262,8 @@ export class Gateway {
       priceId: null,
       delivery: null,
       payment: null,
+      paidBy: null,
+      paidFrom: null,
       settlement: null,
       paymentWords: [],
       paymentWordsDropped: 0,
@@ -275,6 +288,7 @@ export class Gateway {
     orderId: string,
     payment: string,
     fingerprint: string,
+    payer: string | null = null,
   ): Promise<PurchaseAttempt> {
     const before = await this.runtime.store.orderById(orderId);
     if (before === null) {
@@ -301,11 +315,20 @@ export class Gateway {
       };
     }
 
-    // The place in the call to start waiting is here, before anything is
-    // presented. A synchronous purchase can be over by the time verification
-    // comes back — a payment that did not check out closes it on the spot — and
-    // a call that parked afterwards would be parking for an answer that had
-    // already gone past.
+    // Whose purchase this is. An order's identifier travels — in the challenge,
+    // on the merchant's stream, in a receipt — and the route that takes a
+    // payment takes no key, so without this anybody holding one could act as
+    // the buyer of somebody else's order. The first payment presented owns it.
+    const taken = await this.#present(orderId, payment, fingerprint, payer, before);
+    if (taken !== null) {
+      return taken;
+    }
+
+    // The place in the call to start waiting is here, and the key is the
+    // purchase rather than the order. In the synchronous mode the goods reach
+    // the agent through this park and nowhere else, so a second call parking
+    // under the order's own identifier would take them from whoever was already
+    // waiting — and the buyer, who paid, would be told nothing happened.
     //
     // The whole exchange, the goods and then the charge, is promised to the
     // agent inside one ceiling counted from the purchase itself. What is left
@@ -313,20 +336,16 @@ export class Gateway {
     const waits = before.order.mode.settle === "after_fulfillment";
     const spent = this.runtime.clock() - before.order.timestamps.createdAt;
     const left = Math.max(this.runtime.config.deadlines.syncBudgetMs - spent, 0);
-    const parked = waits ? this.runner.purchases.wait(orderId, left) : null;
-
-    const presented = await this.#present(orderId, payment, before.payment !== null);
-    if (presented !== null) {
-      this.runner.purchases.giveUp(orderId);
-      return presented;
-    }
+    const parked = waits
+      ? this.runner.purchases.wait(purchaseOf(orderId, fingerprint), left)
+      : null;
 
     if (parked !== null) {
       const settled = await this.runtime.store.orderById(orderId);
       if (settled !== null && outcomeFor(settled.order) !== "in_progress") {
         // It is already answered — an order that was over before this payment
         // arrived, for instance. There is nothing left to wait for.
-        this.runner.purchases.giveUp(orderId);
+        this.runner.purchases.giveUp(purchaseOf(orderId, fingerprint));
       }
       await parked;
     }
@@ -403,8 +422,12 @@ export class Gateway {
       }
 
       if (applied.outcome !== "moved") {
-        // The order moved on since it was queued. Handing it to a handler would
-        // ask a merchant to work on a purchase that is over.
+        // The machine will not record the hand-over, so nobody is given the
+        // order. Not every ending refuses it — an order that is delivered or
+        // owes a refund is handed over again and answered from where it stands,
+        // which is what makes a repeat safe — but where the machine says the
+        // hand-over has no meaning, passing it on would ask a merchant to work
+        // on a purchase that is over.
         finished.push(delivery.handle);
         continue;
       }
@@ -579,36 +602,71 @@ export class Gateway {
   async #present(
     orderId: string,
     payment: string,
-    isRepeat: boolean,
+    fingerprint: string,
+    payer: string | null,
+    before: StoredOrder,
   ): Promise<PurchaseAttempt | null> {
-    if (isRepeat) {
-      const repeated = await this.runner.apply(
-        orderId,
-        { kind: "purchase_repeated", at: this.runtime.clock() },
-        { payment },
-      );
+    const take = async (): Promise<PurchaseAttempt | null> =>
+      (await this.runner.presentPayment(orderId, payment, fingerprint, payer, this.runtime.clock()))
+        ? null
+        : { step: "no_such_item" };
 
-      if (repeated.outcome === "no_such_order") {
-        return { step: "no_such_item" };
-      }
-      if (repeated.outcome === "refused") {
-        return {
-          step: "payment_not_taken",
-          why: repeated.rejection.message,
-          retryable: repeated.rejection.retryable,
-        };
-      }
-      if (repeated.effects.some((effect) => effect.kind === "verify_payment")) {
-        // The machine asked for the new payment to be checked and the runner has
-        // already done it. Presenting it again would put a second question to
-        // the facilitator about the same authorisation.
-        return null;
-      }
+    if (before.paidBy === null) {
+      // Nobody owns this order yet, so this presentation does.
+      return take();
     }
 
-    return (await this.runner.presentPayment(orderId, payment, this.runtime.clock()))
-      ? null
-      : { step: "no_such_item" };
+    if (before.paidBy === fingerprint) {
+      // The owner, asking again. Still waiting for a payment means a dropped
+      // connection and a retry, which the portal promises is safe; anything
+      // else means the purchase is already under way and there is nothing to
+      // present — the answer is whatever it has come to.
+      return before.order.payment === "none" ? take() : null;
+    }
+
+    // A payment that is not the one this order took. The one way another can
+    // take over is a repeat of the purchase, and two things have to hold for
+    // that. It has to come from the agent who bought — a repeat carries a fresh
+    // authorisation, so the fingerprint cannot say that and the address it
+    // spends from is what does — and the machine has to agree that a repeat
+    // means anything here at all: it knows that one collects goods already
+    // made, that it must not send a second charge on top of one whose fate is
+    // unknown, and that in most states it means nothing.
+    if (before.paidFrom !== null && before.paidFrom !== payer) {
+      return { step: "not_this_purchase" };
+    }
+
+    // The new authorisation travels with the event, so the verification the
+    // machine asks for runs against the payment the agent actually presented
+    // rather than the one before it.
+    const repeated = await this.runner.apply(
+      orderId,
+      { kind: "purchase_repeated", at: this.runtime.clock() },
+      { payment, paidBy: fingerprint, paidFrom: payer },
+    );
+
+    if (repeated.outcome === "no_such_order") {
+      return { step: "no_such_item" };
+    }
+    if (repeated.outcome === "refused") {
+      return {
+        step: "payment_not_taken",
+        why: repeated.rejection.message,
+        retryable: repeated.rejection.retryable,
+      };
+    }
+    if (repeated.order.paidBy !== fingerprint) {
+      // The machine did not reopen the order, so it is still being fulfilled
+      // against the payment it took and nothing about it changed.
+      return { step: "not_this_purchase" };
+    }
+
+    return repeated.effects.some((effect) => effect.kind === "verify_payment")
+      ? // The machine asked for the new payment to be checked and the runner
+        // has already done it. Presenting it again would put a second question
+        // to the facilitator about the same authorisation.
+        null
+      : take();
   }
 
   /**

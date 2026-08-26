@@ -50,6 +50,33 @@ export interface StoredOrder {
   /** What the agent presented to pay with, verbatim, until the charge is done. */
   readonly payment: string | null;
   /**
+   * The fingerprint of the payment this order is being fulfilled against, and
+   * with it the answer to who this purchase belongs to.
+   *
+   * An order's identifier is not a secret the way a password is: it travels in
+   * the challenge, on the merchant's stream and in a receipt. The route that
+   * takes a payment takes no key — the payment is what stands in for one — so
+   * without this, anybody holding an identifier could present a payment against
+   * somebody else's purchase, and the gateway would treat them as its buyer:
+   * swapping the authorisation that gets charged, taking the goods when they
+   * came back, and closing the order on a verification that failed. The first
+   * payment presented owns the order, and only the machine reopening it — a
+   * repeat, on an order that takes one — lets another take over.
+   */
+  readonly paidBy: string | null;
+  /**
+   * The address the payment that owns this order says it spends from.
+   *
+   * It is what tells a repeat of a purchase from a stranger. A repeat carries a
+   * fresh authorisation and therefore a different fingerprint, so the
+   * fingerprint alone cannot say whether the agent asking is the one who bought
+   * — and the two endings that a repeat exists for are exactly the ones where
+   * goods have already been made. Anybody may write an address into a payment,
+   * and a payment whose address is not the one that signed it does not verify,
+   * so claiming to be somebody else buys only a refusal.
+   */
+  readonly paidFrom: string | null;
+  /**
    * What the payment layer said when the charge went through, kept because the
    * agent's own client reads it off the answer to its purchase. It is the
    * payment layer's word and not ours: the order's own record of the money is
