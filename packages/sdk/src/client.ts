@@ -46,7 +46,6 @@ import {
   type QuoteHandler,
   type Subscription,
   startWorker,
-  type WorkerClock,
   type WorkerProblem,
 } from "./worker.js";
 
@@ -217,12 +216,7 @@ const addressOf = (baseUrl: string | undefined): string => {
   return baseUrl;
 };
 
-/**
- * `clock` is not part of what a merchant passes. It is here so the tests can
- * assert which delays the worker asks for without waiting through them, and it
- * is left off `ClientOptions` so that it is not part of anything published.
- */
-export const createClient = (options: ClientOptions, clock?: WorkerClock): CoinslotClient => {
+export const createClient = (options: ClientOptions): CoinslotClient => {
   const gateway: Gateway = {
     apiKey: keyOf(options.apiKey),
     baseUrl: addressOf(options.baseUrl),
@@ -232,7 +226,7 @@ export const createClient = (options: ClientOptions, clock?: WorkerClock): Coins
   let worker: Subscription | undefined;
 
   const workerStarted = (): Subscription => {
-    worker ??= startWorker(gateway, registry, clock);
+    worker ??= startWorker(gateway, registry);
     return worker;
   };
 
