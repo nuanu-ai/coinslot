@@ -224,6 +224,30 @@ describe("the portal's TypeScript examples", () => {
     expect(examplesOf(page)).toHaveLength(page.fences);
   });
 
+  it("compiles the pages' own code and not a blank stand-in for it", () => {
+    // Everything above also passes if the fences arrive empty, because empty
+    // files compile. What is asserted here is that the text reaching the
+    // compiler is the merchant's whole promised surface, method by method: it
+    // fails if the harness stops reading the pages, and equally if the pages
+    // stop documenting one of these calls.
+    const everything = PAGES.flatMap((page) => examplesOf(page))
+      .map((example) => example.source)
+      .join("\n");
+
+    for (const promised of [
+      "createClient",
+      "coinslot.catalog.publish",
+      "coinslot.orders.subscribe",
+      "coinslot.orders.deliver",
+      "coinslot.orders.refuse",
+      "coinslot.orders.get",
+      "coinslot.orders.list",
+      "coinslot.pricing.onQuote",
+    ]) {
+      expect(everything).toContain(promised);
+    }
+  });
+
   it("would notice a method this SDK does not have", () => {
     // The negative control for the harness itself. Everything above passes
     // just as well if the compiler is never really seeing the SDK, or if the

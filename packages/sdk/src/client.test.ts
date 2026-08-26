@@ -101,6 +101,18 @@ describe("publishing a card", () => {
 
     await expect(coinslot.catalog.publish(card)).rejects.toThrow(/publish_card/);
   });
+
+  it("treats a well-formed answer that is not the document as no answer at all", async () => {
+    // The dangerous shape is not the broken one: it is valid JSON, under a
+    // 200, that is not what the route promises — a proxy's own body, a
+    // gateway of another version, an error envelope somebody added. Read
+    // without checking, it becomes a published card that was never published.
+    const coinslot = await gatewayServing({
+      publish_card: () => ({ status: 200, text: JSON.stringify({ accepted: true }) }),
+    });
+
+    await expect(coinslot.catalog.publish(card)).rejects.toThrow(/document it promises/);
+  });
 });
 
 describe("reading orders back", () => {
@@ -200,6 +212,20 @@ describe("closing an order the merchant took on", () => {
     expect(result.ok).toBe(false);
     expect(result.ok === false && result.error.retryable).toBe(true);
     expect(result.ok === false && result.error.message).toMatch(/refuse_order/);
+  });
+
+  it("does not read an order call's answer out of a document that is not one", async () => {
+    // The same trap on the branch that returns rather than throws: a body
+    // that parses and is not the answer would otherwise become a delivery
+    // the merchant believes went through.
+    const coinslot = await gatewayServing({
+      deliver_order: () => ({ text: JSON.stringify({ ok: "yes", result: "delivered" }) }),
+    });
+
+    const result = await coinslot.orders.deliver("order-1", { access_url: "https://a.example" });
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.error.retryable).toBe(true);
   });
 
   it("takes an order on, with and without an expected time", async () => {
