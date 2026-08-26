@@ -133,6 +133,26 @@ const keysWrittenIn = (fence: string): string[] =>
 const namesTheFixtureLacks = (fence: string, known: Set<string>): string[] =>
   keysWrittenIn(fence).filter((name) => !known.has(name));
 
+/**
+ * What the drift check makes of one token of a transcription.
+ *
+ * `missing` — the example no longer writes it. `written after all` — the
+ * fixture claims the example works this value out, and the example writes it
+ * literally; that is the escape hatch checking itself, so a stale entry in a
+ * `computed` list cannot quietly turn the drift check off for that field.
+ */
+const driftVerdictOf = (
+  fence: string,
+  token: Token,
+  computed: Set<string>,
+): "ok" | "missing" | "written after all" => {
+  const standsIn = token.kind !== "key" && token.key !== null && computed.has(token.key);
+  const occurs = occursIn(fence, token);
+
+  if (standsIn) return occurs ? "written after all" : "ok";
+  return occurs ? "ok" : "missing";
+};
+
 interface Fence {
   file: string;
   language: string;
@@ -352,6 +372,27 @@ describe("the drift check itself", () => {
     expect(tokens.find((token) => token.kind === "literal")?.key).toBe("available");
   });
 
+  it("lets a fixture stand in for a value the example works out, and checks it still has to", () => {
+    // A fixture can say "the example computes this one" for a timestamp off a
+    // clock or an amount off a lookup — there is no literal to compare a
+    // stand-in against. The hatch checks itself: name a field there whose
+    // value the example does write, and the test says to take it off the list.
+    // Without that, a stale entry would switch the drift check off for a field
+    // and nothing would say so.
+    const asOf = token("text", "2026-08-26T10:15:00Z", "as_of");
+    const computed = new Set(["as_of"]);
+
+    expect(driftVerdictOf("as_of: new Date().toISOString()", asOf, computed)).toBe("ok");
+    expect(driftVerdictOf("as_of: '2026-08-26T10:15:00Z'", asOf, computed)).toBe(
+      "written after all",
+    );
+    expect(driftVerdictOf("as_of: '2026-08-26T10:15:00Z'", asOf, new Set())).toBe("ok");
+    expect(driftVerdictOf("as_of: new Date().toISOString()", asOf, new Set())).toBe("missing");
+
+    // A name is always checked, computed value or not.
+    expect(driftVerdictOf("price: {}", token("key", "as_of", "as_of"), computed)).toBe("missing");
+  });
+
   it("notices a name the example grew and the transcription never heard of", () => {
     // The case the forward check cannot see: every token of the transcription
     // still occurs, and the example has gained a field nothing holds to a
@@ -375,21 +416,13 @@ describe("the portal's examples pass the schemas", () => {
 
         // The transcription is only worth as much as its likeness to the page.
         for (const token of tokensOf(fixture.value)) {
-          if (token.kind !== "key" && token.key !== null && computed.has(token.key)) {
-            // The example works this value out rather than writing it, so the
-            // transcription's stand-in has nothing to be compared against —
-            // but it does have to still be a stand-in.
-            expect(
-              occursIn(text, token),
-              `the example now writes ${JSON.stringify(token.text)} for "${token.key}" literally, so it no longer belongs in this fixture's computed list`,
-            ).toBe(false);
-            continue;
-          }
+          const verdict = driftVerdictOf(text, token, computed);
+          const complaint =
+            verdict === "missing"
+              ? `the example no longer writes the ${token.kind} ${JSON.stringify(token.text)}; the transcription here has to be brought back in line with the portal`
+              : `the example now writes ${JSON.stringify(token.text)} for "${token.key}" literally, so it no longer belongs in this fixture's computed list`;
 
-          expect(
-            occursIn(text, token),
-            `the example no longer writes the ${token.kind} ${JSON.stringify(token.text)}; the transcription here has to be brought back in line with the portal`,
-          ).toBe(true);
+          expect(verdict, complaint).toBe("ok");
         }
 
         if (fixture.completeKeys === true) {
