@@ -13,6 +13,10 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# The jobs run on the org's own comino build pool: GitHub-hosted runners are
+# unavailable on this org's Actions billing. The repo is private, so
+# pull_request jobs only ever run code from people who already have write
+# access to this repository.
 jobs:
   # The three monorepo checks walk the same install path, so they are described
   # once as a matrix: there is simply nowhere here for the Node versions or the
@@ -20,7 +24,7 @@ jobs:
   # still three separate jobs — check, typecheck and test.
   monorepo:
     name: ${{ matrix.task }}
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, comino]
     strategy:
       fail-fast: false
       matrix:
@@ -50,7 +54,7 @@ jobs:
   # The decision log needs neither Node nor dependencies — only bash and files.
   decisions:
     name: decisions
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, comino]
     steps:
       - uses: actions/checkout@v4
       - run: ./scripts/check-decisions.sh
