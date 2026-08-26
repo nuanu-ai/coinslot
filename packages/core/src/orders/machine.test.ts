@@ -997,6 +997,26 @@ describe("while the settle is in flight", () => {
     expect(kinds(effects)).toStrictEqual(["release_goods_to_agent", "issue_receipt"]);
   });
 
+  it("does not let a failed verification wipe the charge it knows nothing about", () => {
+    // The way round the guard that the widened walk found: a payment that did
+    // not check out never became a charge, but clearing the record on it left
+    // the order looking as though nothing were outstanding, and the next
+    // repeat sent a second charge over the first.
+    const silent = walk(reach("fulfilled"), [
+      { kind: "deadline_expired", at: T0 + 999_999, deadline: "settle_response" },
+    ]);
+    const after = must(silent, {
+      kind: "payment_verification_failed",
+      at: T0 + 1_000_000,
+      reason: "signature",
+    });
+
+    expect(after.order.payment).toBe("outcome_unknown");
+    expect(transition(after.order, { kind: "purchase_repeated", at: T0 + 1_000_001 }).ok).toBe(
+      false,
+    );
+  });
+
   it("lets the repeat through once the answer is in", () => {
     const known = walk(reach("fulfilled"), [
       { kind: "deadline_expired", at: T0 + 999_999, deadline: "settle_response" },

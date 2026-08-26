@@ -434,8 +434,32 @@ describe("a long walk over the machine", () => {
     const visited = new Set<string>();
     for (let seed = 1; seed <= 400; seed += 1) {
       const walked = takeAWalk(seed, 200);
+      // The same accounting the nine seeds above carry, over four hundred
+      // more. Nine orders is not many to look for a double charge in, and the
+      // one this file failed to reach was found by hand instead.
+      let chargesInFlight = 0;
+      let goodsReleased = 0;
+      let receipts = 0;
+
       for (const step of walked.trace) {
         visited.add(step.after.split("/")[0] ?? "");
+        // Only what the machine actually accepted counts. A refused event
+        // changed nothing, and taking it for a settle that reported would
+        // drive the counter below zero on nothing at all.
+        if (!step.accepted) continue;
+        for (const kind of step.effects) {
+          if (kind === "execute_payment") chargesInFlight += 1;
+          if (kind === "release_goods_to_agent") goodsReleased += 1;
+          if (kind === "issue_receipt") receipts += 1;
+        }
+        if (step.event === "payment_settled" || step.event === "payment_settle_failed") {
+          chargesInFlight -= 1;
+        }
+        const where = `seed ${seed}, ${step.event} -> ${step.after}`;
+        expect(chargesInFlight, where).toBeGreaterThanOrEqual(0);
+        expect(chargesInFlight, where).toBeLessThanOrEqual(1);
+        expect(goodsReleased, where).toBeLessThanOrEqual(1);
+        expect(receipts, where).toBeLessThanOrEqual(1);
       }
       expect(moneyInvariantViolations(walked.order), `seed ${seed}`).toStrictEqual([]);
     }

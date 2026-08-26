@@ -87,6 +87,16 @@ describe("the invariants of the order's money", () => {
     expect(moneyInvariantViolations(impossible).length).toBeGreaterThan(0);
   });
 
+  it("catches an order carrying on with an unaccounted charge behind it", () => {
+    // There are two places to wait for a payment layer that went quiet, and
+    // both are orders the machine has stopped moving. Anywhere else is an
+    // order going about its business with an open question about the buyer's
+    // money behind it.
+    const impossible: Order = { ...reach("dispatched"), payment: "outcome_unknown" };
+
+    expect(moneyInvariantViolations(impossible).length).toBeGreaterThan(0);
+  });
+
   it("catches an order that moved on while its charge was still being executed", () => {
     // The machine will not produce this, and that is exactly why the rule is
     // here: it is the shape the gateway's own records have to be checked

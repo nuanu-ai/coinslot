@@ -939,7 +939,11 @@ function fromDeliveredUnpaid(order: Order, event: StateEvent): TransitionResult 
         ? ok({ ...order, payment: "settle_failed" })
         : notApplicable(order, event);
     case "payment_verification_failed":
-      return ok({ ...order, payment: "none" });
+      // A payment that did not check out never became a charge, so there is
+      // nothing here to write down. In particular it does not clear the record
+      // of a charge that IS out there unaccounted for: doing that let a repeat
+      // walk straight past the guard above and send a second one.
+      return ok(order);
     case "deliver_called":
     case "handler_delivered":
       return answer(order, { ok: true, result: "already_delivered" });
