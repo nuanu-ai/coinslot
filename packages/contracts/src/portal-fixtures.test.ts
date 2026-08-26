@@ -130,13 +130,6 @@ interface Common {
   what: string;
   fence: Fence;
   schema: z.ZodType;
-  /**
-   * Why this example is known not to pass, when it does not. A pinned fixture
-   * with a reason is the honest form of a divergence between the portal and
-   * the schemas: it stays visible in every test run until someone settles it,
-   * where deleting the fixture would make it disappear.
-   */
-  divergence?: string;
 }
 
 type Fixture =
@@ -174,14 +167,6 @@ const fixtures: Fixture[] = [
     what: "the price answer, in full",
     fence: { file: "portal/cards.md", language: "json", index: 0 },
     schema: QuoteResponseSchema,
-  },
-  {
-    kind: "read",
-    what: "the price answer a handler returns, as the quickstart writes it",
-    fence: { file: "portal/quickstart.md", language: "ts", index: 5 },
-    schema: QuoteResponseSchema,
-    divergence:
-      "The quickstart's onQuote example returns a price on every answer, including one where the item is not in stock. The schema refuses a price alongside available: false, because that answer says two things at once. The page has to be brought in line with portal/cards.md, which branches correctly; until it is, a merchant copying the quickstart produces answers we count as silence — and in the synchronous mode silence sells at the card price, for an item they have just said is gone.",
   },
   {
     kind: "transcribed",
@@ -237,6 +222,13 @@ const fixtures: Fixture[] = [
     schema: RefusalSchema,
     value: { code: "out_of_stock", message: "Поставщик не подтвердил номер" },
   },
+  {
+    kind: "transcribed",
+    what: "the same refusal, as the quickstart writes it",
+    fence: { file: "portal/quickstart.md", language: "ts", index: 4 },
+    schema: RefusalSchema,
+    value: { code: "out_of_stock", message: "Поставщик не подтвердил номер" },
+  },
 ];
 
 const fenceTextOf = (fence: Fence): string => {
@@ -288,9 +280,7 @@ describe("the drift check itself", () => {
 
 describe("the portal's examples pass the schemas", () => {
   for (const fixture of fixtures) {
-    const run = fixture.divergence === undefined ? it : it.skip;
-
-    run(`${fixture.what} (${fixture.fence.file})`, () => {
+    it(`${fixture.what} (${fixture.fence.file})`, () => {
       const text = fenceTextOf(fixture.fence);
 
       if (fixture.kind === "transcribed") {
@@ -329,18 +319,39 @@ describe("the portal's examples pass the schemas", () => {
       ).toBe("");
     });
   }
+});
 
-  it("names every example that is pinned and known not to pass", () => {
-    // A divergence between the portal and the schemas is a decision waiting to
-    // be taken, and it stays in the open until it is: the skipped tests above
-    // carry the reason, and this one keeps the list from growing unnoticed.
-    const diverging = fixtures
-      .filter((fixture) => fixture.divergence !== undefined)
-      .map((fixture) => `${fixture.fence.file}: ${fixture.what}`);
+describe("where the portal and the schemas disagree", () => {
+  // One example on the portal cannot be pinned above, because it does not
+  // pass. Deleting it from the map would make the disagreement disappear; a
+  // skipped test would report nothing either. So it is written as a test that
+  // holds today and fails on the day the portal is fixed, at which point this
+  // whole block goes.
 
-    expect(diverging).toStrictEqual([
-      "portal/quickstart.md: the price answer a handler returns, as the quickstart writes it",
-    ]);
+  it("the quickstart's price handler answers with a price even when the item is gone", () => {
+    // The example builds one object for both answers: `available` comes from a
+    // stock lookup while `price` is filled in regardless. When the lookup says
+    // no, the shape it produces is this one.
+    const asWritten = {
+      available: false,
+      price: { amount: "5.00", currency: "USD" },
+      as_of: "2026-08-26T10:15:00Z",
+    };
+
+    expect(QuoteResponseSchema.safeParse(asWritten).success).toBe(false);
+
+    // What makes it more than a style question: an answer that does not parse
+    // counts as silence, and in the synchronous mode silence sells at the price
+    // in the card — for an item the merchant has just said they do not have.
+    // The same page's sibling on portal/cards.md branches and is correct.
+    const text = fenceTextOf({ file: "portal/quickstart.md", language: "ts", index: 5 });
+
+    expect(text).toContain("available: await inStock");
+    expect(text).toContain("price: {");
+    expect(
+      text.includes("if ("),
+      "the quickstart's price handler now branches; the portal has been fixed and this block can go",
+    ).toBe(false);
   });
 });
 
