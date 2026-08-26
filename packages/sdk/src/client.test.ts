@@ -2,6 +2,7 @@ import type { Card, Order } from "@coinslot/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 import { ANSWER_NOT_UNDERSTOOD, CALL_DID_NOT_REACH_US, createClient } from "./index.js";
 import { type FakeGateway, startFakeGateway } from "./testing/fake-gateway.js";
+import { REACH, reachOf } from "./transport.js";
 
 const API_KEY = "merchant-key-for-the-tests";
 
@@ -292,5 +293,27 @@ describe("the door on every call", () => {
     await coinslot.orders.list();
 
     expect(gateway?.callsTo("list_orders")[0]?.apiKey).toBe(API_KEY);
+  });
+});
+
+describe("what a failed call says about whether it arrived", () => {
+  it("claims nothing was sent only when every address tried says so", () => {
+    // A name that resolves to more than one address is tried at each of them,
+    // and what comes back is one error holding the others. If one of those
+    // attempts got as far as a connection, nothing was refused outright and
+    // the honest answer is that we do not know — read the other way, a
+    // merchant would be told their delivery certainly never arrived on the
+    // strength of one address out of two.
+    const failing = (...codes: string[]): unknown => ({
+      cause: codes.length === 1 ? { code: codes[0] } : { errors: codes.map((code) => ({ code })) },
+    });
+
+    expect(reachOf(failing("ECONNREFUSED"))).toBe(REACH.NOT_RECEIVED);
+    expect(reachOf(failing("ECONNREFUSED", "ENOTFOUND"))).toBe(REACH.NOT_RECEIVED);
+    expect(reachOf(failing("ECONNREFUSED", "ECONNRESET"))).toBe(REACH.UNKNOWN);
+    expect(reachOf(failing("ECONNRESET"))).toBe(REACH.UNKNOWN);
+    expect(reachOf(failing())).toBe(REACH.UNKNOWN);
+    expect(reachOf(new Error("something with no cause at all"))).toBe(REACH.UNKNOWN);
+    expect(reachOf(undefined)).toBe(REACH.UNKNOWN);
   });
 });

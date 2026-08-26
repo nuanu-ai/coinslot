@@ -378,6 +378,36 @@ describe("a price question off the same stream", () => {
 });
 
 describe("an event off the same stream", () => {
+  it("arrives with the identity of the message it travelled in", async () => {
+    // An order is answered against its own identifier and a price question
+    // against its price_id, so a repeat of either is harmless by
+    // construction. An event has neither, and the contract gives every
+    // envelope an identifier and a delivery time precisely so that a repeat
+    // can be recognised. Withheld, the merchant has no way to recognise one.
+    const delivered: { id: string; sent_at: string }[] = [];
+
+    gateway = await startFakeGateway({
+      apiKey: API_KEY,
+      routes: { poll_worker: polling(batch(envelopes.event)) },
+    });
+
+    running = startWorker(
+      { apiKey: API_KEY, baseUrl: gateway.url },
+      {
+        event: (_arrived, identity) => {
+          delivered.push(identity);
+        },
+        problem: () => {},
+      },
+    );
+
+    await waitUntil(() => delivered.length === 1, "the event to arrive");
+    expect(delivered[0]).toStrictEqual({
+      id: envelopes.event.id,
+      sent_at: envelopes.event.sent_at,
+    });
+  });
+
   it("is handed over and acknowledged with nothing", async () => {
     // An event notifies, it does not ask for work. A call back to the gateway
     // would be a fourth way of naming a message three surfaces already name.
@@ -943,6 +973,11 @@ describe("shutting down a subscription the merchant built", () => {
     const subscription = coinslot.orders.subscribe(async () => {
       inTheHandler?.();
       await handlerMayFinish;
+      // A turn of the event loop between being released and being done, so
+      // that a stop() which returned without waiting would be observed
+      // returning early rather than being saved by the order microtasks
+      // happen to run in.
+      await new Promise((resolve) => setTimeout(resolve, 0));
       handlerFinished = true;
       return { delivered: { access_url: "https://a.example" } };
     });
@@ -953,9 +988,13 @@ describe("shutting down a subscription the merchant built", () => {
     const second = subscription.stop();
 
     releaseHandler?.();
-    await Promise.all([first, second]);
 
+    // The second caller is awaited on its own: waiting for both would pass
+    // even if this one had returned at once, which is the failure being
+    // looked for.
+    await second;
     expect(handlerFinished).toBe(true);
+    await first;
   });
 
   it("refuses to register a handler while a stop is still in flight", async () => {
@@ -992,6 +1031,7 @@ describe("shutting down a subscription the merchant built", () => {
     expect(() => coinslot.pricing.onQuote(() => ({ available: false, as_of: AT }))).toThrow(
       /being stopped/,
     );
+    expect(() => coinslot.orders.subscribe(() => ({ accepted: {} }))).toThrow(/being stopped/);
 
     releaseHandler?.();
     await stopping;
@@ -1018,25 +1058,35 @@ describe("registering twice", () => {
     gateway = await startFakeGateway({
       apiKey: API_KEY,
       routes: {
-        poll_worker: (_call, index) =>
-          index === 0 ? new Promise<GatewayAnswer>(() => {}) : batch(envelopes.order),
+        poll_worker: () => batch(envelopes.order),
         answer_order: () => ({ body: { ok: true, result: "delivered" } }),
       },
     });
 
     const coinslot = createClient({ apiKey: API_KEY, baseUrl: gateway.url });
-    const first = coinslot.orders.subscribe(() => ({ accepted: {} }));
 
-    await waitUntil(() => (gateway?.callsTo("poll_worker").length ?? 0) === 1, "the first poll");
-    await first.stop();
-
-    let handled = 0;
-    running = coinslot.orders.subscribe(() => {
-      handled += 1;
+    let toTheFirst = 0;
+    const first = coinslot.orders.subscribe(() => {
+      toTheFirst += 1;
       return { delivered: { access_url: "https://a.example" } };
     });
 
-    await waitUntil(() => handled === 1, "the second subscription to receive an order");
+    await waitUntil(() => toTheFirst > 0, "the first subscription to receive an order");
+    await first.stop();
+
+    const afterStopping = toTheFirst;
+    let toTheSecond = 0;
+
+    running = coinslot.orders.subscribe(() => {
+      toTheSecond += 1;
+      return { delivered: { access_url: "https://a.example" } };
+    });
+
+    await waitUntil(() => toTheSecond > 0, "the second subscription to receive an order");
+
+    // And the handler of the subscription that was stopped receives nothing
+    // more, which is the other half of what stopping means.
+    expect(toTheFirst).toBe(afterStopping);
   });
 
   it("lets a process that answers only prices choose where problems go", async () => {

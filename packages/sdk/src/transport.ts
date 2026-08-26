@@ -121,7 +121,15 @@ const codesUnder = (cause: unknown): string[] => {
   return typeof code === "string" ? [code] : [];
 };
 
-const reachFrom = (cause: unknown): Reach => {
+/**
+ * What a failed `fetch` says about whether anything was handed over.
+ *
+ * Exported for its own test rather than only through a socket: the rule that
+ * every address tried has to say nothing was sent — not merely one of them —
+ * is not reachable from a test that can only produce one address at a time,
+ * and a rule nothing checks is a rule that will be relaxed by accident.
+ */
+export const reachOf = (cause: unknown): Reach => {
   const codes = codesUnder(cause);
 
   return codes.length > 0 && codes.every((code) => NOTHING_WAS_SENT.has(code))
@@ -248,7 +256,7 @@ export const callRoute = async <N extends RouteName>(
     return failure(
       name,
       `${name} at ${url.href} could not be reached: ${String(cause)}`,
-      reachFrom(cause),
+      reachOf(cause),
     );
   }
 

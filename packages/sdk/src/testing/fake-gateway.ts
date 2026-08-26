@@ -236,7 +236,24 @@ export const startFakeGateway = async (options: FakeGatewayOptions): Promise<Fak
       return;
     }
 
-    const answer = await responder(call, index);
+    // A caller that goes away — a worker stopping abandons its parked poll —
+    // ends the exchange here too. A real gateway notices the connection has
+    // gone and drops the work it was holding; a double that kept the request
+    // open would leave the server unable to answer anything else on that
+    // connection, which is a state no gateway would be in and which no test
+    // should have to reason about.
+    const clientLeft = Symbol("the caller went away");
+    const gone = new Promise<typeof clientLeft>((resolve) => {
+      response.on("close", () => resolve(clientLeft));
+    });
+
+    const answer = await Promise.race([responder(call, index), gone]);
+
+    if (answer === clientLeft) {
+      response.destroy();
+      return;
+    }
+
     const status = answer.status ?? 200;
 
     if (answer.text !== undefined) {
