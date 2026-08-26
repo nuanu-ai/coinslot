@@ -103,14 +103,16 @@ describe("npx coinslot verify", () => {
     expect(said).toMatch(/again/i);
   });
 
-  it("asks for the card files rather than guessing where a merchant keeps them", async () => {
-    // Nothing in this package or in the contract says where a merchant's
-    // cards live, and a command that searched for them would be inventing a
-    // convention nobody agreed to.
+  it("stops rather than scolds when it is given no card files", async () => {
+    // The documentation shows the bare command, and the bare command cannot
+    // work: it would check the cards the merchant has already published, and
+    // no call hands those back. That is a check that did not run — the same
+    // answer as the idempotency half — and not a merchant who typed it wrong.
     const { code, said } = await verifying("verify");
 
-    expect(said).toMatch(/card/i);
-    expect(code).toBe(VERIFY_EXIT.USAGE);
+    expect(said).toMatch(/no call returns a merchant's own published cards/);
+    expect(said).toMatch(/Name the card files instead/);
+    expect(code).toBe(VERIFY_EXIT.COULD_NOT_RUN);
   });
 
   it("says which file it could not find", async () => {
@@ -127,10 +129,19 @@ describe("npx coinslot verify", () => {
     expect(code).toBe(VERIFY_EXIT.USAGE);
   });
 
-  it("keeps its four answers apart", async () => {
-    // A caller wiring this into their build branches on the number, so the
-    // four must never collide.
-    expect(new Set(Object.values(VERIFY_EXIT)).size).toBe(4);
-    expect(VERIFY_EXIT.PASSED).toBe(0);
+  it("never answers with success while a check cannot be run", async () => {
+    // The one answer a build must not receive from this command today. Zero
+    // means every check passed, the idempotency run passes nothing because it
+    // never happens, and a merchant wiring `coinslot verify` into their
+    // pipeline would take a zero as a green light for both halves.
+    const answers = await Promise.all([
+      verifying("verify"),
+      verifying("verify", fileHolding("good.json", validCard)),
+      verifying("verify", fileHolding("bad.json", { ...validCard, result: {} })),
+      verifying("verify", join(tmpdir(), "no-such-card-file.json")),
+      verifying("publish"),
+    ]);
+
+    expect(answers.map((answer) => answer.code)).not.toContain(VERIFY_EXIT.PASSED);
   });
 });

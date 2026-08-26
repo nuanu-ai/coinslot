@@ -22,6 +22,7 @@
 
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
+import type { PublishError } from "@coinslot/contracts";
 import { checkCard } from "./check-card.js";
 import { describeProblems } from "./schema.js";
 
@@ -86,6 +87,9 @@ export const IDEMPOTENCY_IS_NOT_BUILDABLE = [
   "route or a field here would be answering it.",
 ].join("\n");
 
+/** The code a finding carries when the file held no card to check at all. */
+export const NOT_JSON = "not_json";
+
 interface CardFile {
   readonly path: string;
   /**
@@ -98,7 +102,7 @@ interface CardFile {
    * other by hand across a directory of cards.
    */
   readonly name: string;
-  readonly problems: readonly { readonly path: string[]; readonly message: string }[];
+  readonly problems: readonly PublishError[];
 }
 
 const nameOf = (file: string, card: unknown): string => {
@@ -114,11 +118,37 @@ const USAGE = [
   "Usage: coinslot verify <card.json> [more-cards.json ...]",
   "",
   "Checks each card against the published contract before it is published.",
-  "The cards are named on the command line: nothing here knows where a",
-  "merchant keeps them, and guessing would invent a convention nobody agreed to.",
   "",
-  "Answers: 0 every check passed, 1 a check found something,",
-  "2 called with something it cannot work from, 3 a check could not be run.",
+  "Answers: 1 a check found something, 2 called with something it cannot work",
+  "from, 3 a check could not be run. Zero, which means every check passed, is",
+  "not reachable today: the idempotency run cannot be built, and this command",
+  "will not report success for a check that never happened.",
+].join("\n");
+
+/**
+ * Why the bare command the documentation shows cannot work yet.
+ *
+ * `coinslot verify` with nothing after it would check the cards the merchant
+ * has already published, which is where that step of the documentation sits —
+ * after publishing, before the test purchase. There is no call that hands a
+ * merchant their own published cards back. The one route that lists a catalog
+ * shows what an agent sees, which by that point in the documentation is
+ * exactly what these cards are not: published and not yet in any catalog.
+ *
+ * So this is a stop and not a scolding, and it is answered with the code that
+ * means "did not run". The way through it is to name the card files, which
+ * checks the same cards from the source the merchant edits.
+ */
+const NOTHING_TO_CHECK = [
+  "coinslot verify was given no card files, and it cannot find them on its own:",
+  "  - no call returns a merchant's own published cards; the one route that",
+  "    lists a catalog returns what an agent sees, and a card that is published",
+  "    but not yet in a catalog is not in it",
+  "  - nothing in this package or in the contract says where a merchant keeps",
+  "    the cards they publish from, and looking for a file name or a directory",
+  "    would invent a convention nobody agreed to",
+  "Name the card files instead, and the same cards are checked from the source",
+  "you edit.",
 ].join("\n");
 
 const checkFile = (path: string): CardFile => {
@@ -143,6 +173,7 @@ const checkFile = (path: string): CardFile => {
       problems: [
         {
           path: [],
+          code: NOT_JSON,
           message: `${name} is not JSON, so there is no card in it to check: ${String(cause)}`,
         },
       ],
@@ -163,8 +194,10 @@ export const runVerify = async (argv: readonly string[], say: Say): Promise<numb
   }
 
   if (files.length === 0) {
-    say(`coinslot verify needs at least one card file.\n\n${USAGE}`);
-    return VERIFY_EXIT.USAGE;
+    say(NOTHING_TO_CHECK);
+    say("");
+    say(USAGE);
+    return VERIFY_EXIT.COULD_NOT_RUN;
   }
 
   const checked: CardFile[] = [];
@@ -187,7 +220,7 @@ export const runVerify = async (argv: readonly string[], say: Say): Promise<numb
     }
 
     say(`  ${card.name}: ${card.problems.length} finding${card.problems.length === 1 ? "" : "s"}`);
-    say(describeProblems(card.problems as Parameters<typeof describeProblems>[0]));
+    say(describeProblems(card.problems));
   }
 
   const faulted = checked.filter((card) => card.problems.length > 0);

@@ -53,11 +53,21 @@ describe("creating a client", () => {
     );
   });
 
-  it("says the gateway address is not decided rather than guessing one", () => {
-    // "I do not know" has to be distinguishable from "there is none". Nothing
-    // in the contract or in any decision names where the gateway lives, so a
-    // client built without an address says exactly that.
-    expect(() => createClient({ apiKey: API_KEY })).toThrow(/baseUrl/);
+  it("is built without an address, and says so at the first call that needs one", async () => {
+    // The quickstart builds a client from a key alone and calls that step
+    // done, so building one has to work. Where it cannot work is the call, and
+    // the documentation says as much: the first call is what finds out whether
+    // this side can reach us. Nothing in the contract or in any decision names
+    // where the gateway lives, so the call says that rather than reaching for
+    // a hostname nobody chose.
+    const coinslot = createClient({ apiKey: API_KEY });
+
+    await expect(coinslot.catalog.publish(card)).rejects.toThrow(/baseUrl/);
+    await expect(coinslot.orders.get("order-1")).rejects.toThrow(/baseUrl/);
+    await expect(
+      coinslot.orders.deliver("order-1", { access_url: "https://a.example" }),
+    ).rejects.toThrow(/baseUrl/);
+    expect(() => coinslot.orders.subscribe(() => ({ accepted: {} }))).toThrow(/baseUrl/);
   });
 
   it("refuses an address that is not one", () => {

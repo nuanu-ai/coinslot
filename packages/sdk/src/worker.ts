@@ -35,7 +35,10 @@
  * first time one of them restarted. The same holds for a handler that answers
  * with something the contract refuses, and for an envelope that arrives with
  * no handler registered for its kind: the merchant is told through the problem
- * channel, and the envelope comes back later.
+ * channel, and an order or a price question comes back on its own. An event is
+ * the exception and it is worth knowing about — it carries no acknowledgement,
+ * so nothing here can ask for one again, and whether the gateway sends it a
+ * second time is the gateway's business and not something this SDK knows.
  *
  * The transport failures are the one thing this loop does retry, because there
  * is nothing else to do with them: a poll that did not reach the gateway
@@ -48,8 +51,10 @@ import {
   HandlerAnswerSchema,
   type Order,
   type OrderEvent,
+  PROTOTYPE_KEY_IS_DROPPED,
   type QuoteRequest,
   type QuoteResponse,
+  QuoteResponseSchema,
   type WorkerEnvelope,
 } from "@coinslot/contracts";
 import { retryDelayMs } from "./backoff.js";
@@ -91,6 +96,10 @@ export const WORKER_PROBLEM_KINDS = Object.freeze({
   ANSWER_REFUSED: "answer_refused",
   /** A price answer arrived too late to price the purchase it was asked for. */
   QUOTE_ANSWER_UNUSED: "quote_answer_unused",
+  /** The worker stopped part-way through a batch and the rest went unread. */
+  BATCH_ABANDONED: "batch_abandoned",
+  /** A delivery carried the one field name this contract removes in silence. */
+  DELIVERY_FIELD_DROPPED: "delivery_field_dropped",
 } as const);
 
 export type WorkerProblemKind = (typeof WORKER_PROBLEM_KINDS)[keyof typeof WORKER_PROBLEM_KINDS];
@@ -140,10 +149,19 @@ export interface WorkerClock {
 }
 
 export const systemClock: WorkerClock = {
-  now: () => Date.now(),
+  // Monotonic rather than the wall clock. The only thing this clock is asked
+  // is how long something took, and a wall clock stepped backwards by an hour
+  // — which is what a machine does when it corrects its time — would turn that
+  // question into an hour-long sleep.
+  now: () => performance.now(),
   random: () => Math.random(),
   sleep: (ms, signal) =>
     new Promise<void>((resolve) => {
+      if (signal.aborted) {
+        resolve();
+        return;
+      }
+
       const timer = setTimeout(() => {
         signal.removeEventListener("abort", onAbort);
         resolve();
@@ -173,29 +191,103 @@ export const systemClock: WorkerClock = {
  */
 export const QUIET_POLL_FLOOR_MS = 1_000;
 
+/**
+ * The contract version named inside something the SDK could not parse.
+ *
+ * The version gate would otherwise only fire on a gateway whose answer differs
+ * in nothing but the version string — which is the one difference that is not
+ * a difference of dialect. A gateway that added an envelope kind, or a field,
+ * answers with a document this SDK refuses, and without this it would look
+ * like a broken gateway forever. One field is read, and only when it is a
+ * string; anything else here is a body that has nothing to say about versions.
+ */
+const versionSpokenIn = (body: unknown): string | undefined => {
+  if (typeof body !== "object" || body === null) return undefined;
+
+  const named = (body as { contract_version?: unknown }).contract_version;
+
+  return typeof named === "string" && named !== "" ? named : undefined;
+};
+
+/** Refuses to compile if a kind is added to the contract and not handled here. */
+const assertEveryKindIsHandled = (envelope: never): never => {
+  throw new TypeError(
+    `the worker was handed an envelope of a kind it does not know: ${JSON.stringify(envelope)}`,
+  );
+};
+
+/**
+ * How long the worker asks the gateway to hold a poll open, per ADR-0004 §1.
+ *
+ * It is a request and not an expectation. The gateway holds it for its own
+ * window at most, and the contract says as much, so a shorter answer is
+ * ordinary rather than a fault. Asking is what makes the number visible on the
+ * wire, where a gateway that wanted to answer sooner can see it.
+ */
+export const POLL_WAIT_SECONDS = 25;
+
 export interface Subscription {
   /**
-   * Stops the loop and waits for it to finish. Safe to call twice, and safe to
-   * call while a poll is parked at the gateway — that request is abandoned,
-   * and whatever it would have carried is redelivered.
+   * Stops the loop and waits for it to finish. Safe to call twice.
+   *
+   * Two things are abandoned rather than finished, and both come back on their
+   * own. A poll parked at the gateway is dropped, and whatever it would have
+   * carried is redelivered. An answer already on its way — a delivery the
+   * handler produced a moment ago — is dropped too, and its order is
+   * redelivered; the merchant is told through the problem channel, because on
+   * their side the work happened and only the answer was lost.
+   *
+   * Stopping does not drain. The contract has a word for a poll that asks for
+   * whatever is queued right now and comes straight back, and it is not what a
+   * worker shutting down wants: draining pulls more work into a process that
+   * is going away.
    */
   stop(): Promise<void>;
+}
+
+/** What `startWorker` hands its caller, which is a little more than a merchant sees. */
+export interface RunningWorker extends Subscription {
+  /** Whether the loop is still going. False once it has stopped for any reason. */
+  running(): boolean;
 }
 
 export const startWorker = (
   gateway: Gateway,
   handlers: HandlerRegistry,
   clock: WorkerClock = systemClock,
-): Subscription => {
+): RunningWorker => {
   const controller = new AbortController();
   let stopping = false;
+  let ended = false;
 
+  /**
+   * Reporting must not be able to end the worker. A merchant's reporter is
+   * their code — a logger over a stream that closed during shutdown, a client
+   * that was never configured — and an exception out of it would otherwise
+   * unwind the loop and, from the loop's own last-resort handler, escape as an
+   * unhandled rejection and take the host process down with it. There is
+   * nowhere left to report a reporter that throws, so it is swallowed.
+   */
   const report = (problem: WorkerProblem): void => {
-    handlers.problem(problem);
+    try {
+      handlers.problem(problem);
+    } catch {
+      // Nowhere to say it. See above.
+    }
   };
 
   const rest = async (ms: number): Promise<void> => {
     if (ms > 0) await clock.sleep(ms, controller.signal);
+  };
+
+  const reportTheMismatch = (spoken: string): void => {
+    report({
+      kind: WORKER_PROBLEM_KINDS.CONTRACT_VERSION_MISMATCH,
+      fatal: true,
+      // Both numbers are in the sentence: a merchant reading only one of them
+      // cannot tell which of the two ends needs upgrading.
+      message: `the gateway speaks contract version ${spoken} and this SDK speaks ${contractVersion}; the worker stopped rather than handle orders in a dialect it may be reading wrong`,
+    });
   };
 
   const answerOrder = async (order: Order, answer: HandlerAnswer): Promise<void> => {
@@ -205,14 +297,16 @@ export const startWorker = (
       signal: controller.signal,
     });
 
-    if (stopping) return;
-
     if (!sent.ok) {
+      // Reported even when the worker is stopping, and especially then. The
+      // handler has already run: goods may have been issued, and a merchant
+      // reconciling a shutdown is entitled to know that an answer for this
+      // order went nowhere.
       report({
         kind: WORKER_PROBLEM_KINDS.ANSWER_FAILED,
         fatal: false,
         subject: order.id,
-        message: `the answer for order ${order.id} did not reach us, and the order will be delivered again: ${sent.failure.reason}`,
+        message: `the answer for order ${order.id} did not reach us, and the order will be delivered again${stopping ? " after this worker stopped" : ""}: ${sent.failure.reason}`,
       });
       return;
     }
@@ -223,6 +317,32 @@ export const startWorker = (
         fatal: false,
         subject: order.id,
         message: `the answer for order ${order.id} was not accepted (${sent.document.error.code}): ${sent.document.error.message}`,
+      });
+    }
+  };
+
+  /**
+   * The one loss in this contract that nobody is told about, said out loud
+   * here because this is the place it would reach the agent.
+   *
+   * A field named `__proto__` is removed while a delivery is parsed, before
+   * any check runs — it is neither carried nor refused, and the merchant's
+   * handler has no way to know that what it returned is not what went out.
+   * `PROTOTYPE_KEY_IS_DROPPED` in the contracts package names this file as
+   * where the loss actually costs something, so this file says it.
+   *
+   * No card can declare such a field, so nothing legitimate reaches here; a
+   * merchant only meets it by delivering a name nobody asked for.
+   */
+  const warnAboutTheDroppedKey = (order: Order, answer: HandlerAnswer): void => {
+    const delivered = "delivered" in answer ? answer.delivered : undefined;
+
+    if (delivered !== undefined && Object.hasOwn(delivered, PROTOTYPE_KEY_IS_DROPPED)) {
+      report({
+        kind: WORKER_PROBLEM_KINDS.DELIVERY_FIELD_DROPPED,
+        fatal: false,
+        subject: order.id,
+        message: `the delivery for order ${order.id} carried a field named ${PROTOTYPE_KEY_IS_DROPPED}, which is removed before anything can check it: the agent will not receive it, and no card can declare it`,
       });
     }
   };
@@ -267,6 +387,8 @@ export const startWorker = (
       return;
     }
 
+    warnAboutTheDroppedKey(order, answer);
+
     await answerOrder(order, checked.data);
   };
 
@@ -298,20 +420,35 @@ export const startWorker = (
       return;
     }
 
+    // Held to the contract before it is sent, for the same reason an order's
+    // answer is: an amount written as a number instead of text is the easiest
+    // mistake there is to make here, and sent out it would come back as the
+    // gateway's complaint about a document, which reads as our fault and
+    // names the merchant's field only inside a quoted blob.
+    const checked = QuoteResponseSchema.safeParse(answer);
+
+    if (!checked.success) {
+      report({
+        kind: WORKER_PROBLEM_KINDS.HANDLER_ANSWER_REFUSED,
+        fatal: false,
+        subject: question.price_id,
+        message: `the price handler's answer for question ${question.price_id} is not one the contract carries, so no price was sent:\n${describeProblems(problemsOf(checked.error.issues))}`,
+      });
+      return;
+    }
+
     const sent = await callRoute(gateway, "answer_quote", {
       path: { price_id: question.price_id },
-      body: answer,
+      body: checked.data,
       signal: controller.signal,
     });
-
-    if (stopping) return;
 
     if (!sent.ok) {
       report({
         kind: WORKER_PROBLEM_KINDS.ANSWER_FAILED,
         fatal: false,
         subject: question.price_id,
-        message: `the price for question ${question.price_id} did not reach us: ${sent.failure.reason}`,
+        message: `the price for question ${question.price_id} did not reach us${stopping ? " because this worker stopped" : ""}: ${sent.failure.reason}`,
       });
       return;
     }
@@ -347,7 +484,15 @@ export const startWorker = (
         fatal: false,
         cause,
         subject: event.order_id,
-        message: `the event handler threw on ${event.type} for order ${event.order_id}; an event is not delivered again, so this one is lost: ${String(cause)}`,
+        // Nothing here can ask for the event again — an event carries no
+        // acknowledgement, so there is no call that says "send that one
+        // once more". Whether the gateway sends it again anyway is the
+        // gateway's, and this SDK does not know: the contract gives every
+        // envelope an identifier and a delivery time precisely so that a
+        // repeat can be recognised, which only means something if repeats
+        // happen. So the honest thing to tell a merchant is that we cannot
+        // get it back, not that it is gone.
+        message: `the event handler threw on ${event.type} for order ${event.order_id}; nothing here can ask for that event again, and whether it is sent again is not something this SDK knows: ${String(cause)}`,
       });
     }
   };
@@ -363,6 +508,11 @@ export const startWorker = (
       case "order_event":
         await handleEvent(envelope.payload);
         return;
+      default:
+        // Unreachable while the contract carries three kinds, and here so
+        // that a fourth added there stops this file compiling rather than
+        // being dropped in silence by a switch with nothing to say about it.
+        return assertEveryKindIsHandled(envelope);
     }
   };
 
@@ -376,13 +526,25 @@ export const startWorker = (
     while (!stopping) {
       const startedAt = clock.now();
       const answer = await callRoute(gateway, "poll_worker", {
-        body: {},
+        body: { wait_seconds: POLL_WAIT_SECONDS },
         signal: controller.signal,
       });
 
       if (stopping) break;
 
       if (!answer.ok) {
+        // Before blaming the transport: a gateway of another dialect answers
+        // with a document this SDK cannot parse, which arrives here as an
+        // ordinary failure and would otherwise be retried forever under a
+        // message about a broken gateway. Its version is the one field we can
+        // still read out of what it sent.
+        const spoken = versionSpokenIn(answer.failure.body);
+
+        if (spoken !== undefined && !speaksContract(spoken)) {
+          reportTheMismatch(spoken);
+          return;
+        }
+
         failures += 1;
         report({
           kind: WORKER_PROBLEM_KINDS.POLL_FAILED,
@@ -396,19 +558,35 @@ export const startWorker = (
       failures = 0;
 
       if (!speaksContract(answer.document.contract_version)) {
-        report({
-          kind: WORKER_PROBLEM_KINDS.CONTRACT_VERSION_MISMATCH,
-          fatal: true,
-          // Both numbers are in the sentence: a merchant reading only one of
-          // them cannot tell which of the two ends needs upgrading.
-          message: `the gateway speaks contract version ${answer.document.contract_version} and this SDK speaks ${contractVersion}; the worker stopped rather than handle orders in a dialect it may be reading wrong`,
-        });
+        reportTheMismatch(answer.document.contract_version);
         return;
       }
 
-      for (const envelope of answer.document.envelopes) {
+      const batch = answer.document.envelopes;
+      let handled = 0;
+
+      for (const envelope of batch) {
         if (stopping) break;
         await dispatch(envelope);
+        handled += 1;
+      }
+
+      if (handled < batch.length) {
+        // Said rather than left as a silence. An order or a price question
+        // left in the batch comes back on its own; an event carries no
+        // acknowledgement, so nothing here can ask for that one again, and a
+        // merchant who stopped a worker mid-batch is entitled to know which
+        // kinds went unread.
+        report({
+          kind: WORKER_PROBLEM_KINDS.BATCH_ABANDONED,
+          fatal: false,
+          message: `the worker stopped with ${batch.length - handled} of this batch's ${batch.length} messages unread (${batch
+            .slice(handled)
+            .map((envelope) => envelope.kind)
+            .join(
+              ", ",
+            )}); orders and price questions come back on their own, and nothing here can ask for an event again`,
+        });
       }
 
       if (answer.document.envelopes.length === 0) {
@@ -417,16 +595,24 @@ export const startWorker = (
     }
   };
 
-  const finished = run().catch((cause: unknown) => {
-    report({
-      kind: WORKER_PROBLEM_KINDS.POLL_FAILED,
-      fatal: true,
-      cause,
-      message: `the worker stopped on an error it did not expect: ${String(cause)}`,
+  const finished = run()
+    .catch((cause: unknown) => {
+      report({
+        kind: WORKER_PROBLEM_KINDS.POLL_FAILED,
+        fatal: true,
+        cause,
+        message: `the worker stopped on an error it did not expect: ${String(cause)}`,
+      });
+    })
+    .finally(() => {
+      // However the loop ended — stopped, or fatally — it is over, and both
+      // this worker and whoever is holding it should agree about that.
+      ended = true;
+      stopping = true;
     });
-  });
 
   return {
+    running: () => !ended,
     stop: async () => {
       stopping = true;
       controller.abort();

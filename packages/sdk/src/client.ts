@@ -18,11 +18,12 @@
  * route promises where the route has nowhere to put one.
  *
  * The one place that rule needed a decision rather than a reading is a
- * `deliver` or a `refuse` that never reached the gateway at all. The contract
- * has a branch for it — an error with a retryable flag is exactly the shape of
- * "the connection dropped, call again, the call is idempotent" — so it comes
- * back through that branch, under a code this package produces and the gateway
- * never sends. It is written down beside the code below.
+ * `deliver` or a `refuse` whose answer never arrived, or arrived in words this
+ * package cannot read. The contract has a branch for it — an error with a flag
+ * saying whether calling again could change the outcome is exactly the shape
+ * of "the connection dropped, call again" — so it comes back through that
+ * branch, under a code this package produces and the gateway never sends. The
+ * two codes and what separates them are written down beside them below.
  */
 
 import type {
@@ -44,6 +45,7 @@ import {
   type OrderHandler,
   type ProblemReporter,
   type QuoteHandler,
+  type RunningWorker,
   type Subscription,
   startWorker,
   type WorkerProblem,
@@ -66,11 +68,19 @@ export interface ClientOptions {
   /**
    * Where the gateway is.
    *
-   * Optional in the type and required in fact. Nothing in the contract or in
-   * any decision says where the gateway lives — the portal lists it among the
-   * things not yet settled — so this package has no default to fall back on,
-   * and a client built without an address says that rather than pretending to
-   * a hostname nobody chose.
+   * Optional, and there is no default behind it. Nothing in the contract or in
+   * any decision says where the gateway lives — the documentation lists it
+   * among the things not yet settled — so this package has no address to fall
+   * back on and will not invent one.
+   *
+   * Leaving it out builds a client, exactly as the quickstart's first step
+   * says it does, and every call that would have to reach the gateway fails
+   * with a sentence naming what is missing. That is where the failure belongs:
+   * the documentation tells the merchant that the first call is what checks
+   * whether they can reach us, and an address nobody has chosen yet is one of
+   * the things such a call finds out. Giving a wrong address, on the other
+   * hand, is refused here and now — a value that is not an address at all
+   * cannot become one later.
    */
   readonly baseUrl?: string | undefined;
 }
@@ -137,6 +147,16 @@ export interface OrdersNamespace {
   list(query?: { readonly open?: boolean }): Promise<OrderList>;
 }
 
+/**
+ * What a process that answers only price questions can still ask for.
+ *
+ * The order subscription is where the events live, so there is nothing here
+ * about them; what is here is the one thing such a process would otherwise
+ * have no way to set, and would then be given the error console whether it
+ * wanted it or not.
+ */
+export type QuoteOptions = Pick<SubscribeOptions, "onProblem">;
+
 export interface PricingNamespace {
   /**
    * Answers "how much is this and is it there" for the cards whose price is
@@ -145,7 +165,7 @@ export interface PricingNamespace {
    * It runs on the same subscription as the orders, so a merchant answering
    * price questions this way hosts nothing.
    */
-  onQuote(handler: QuoteHandler): Subscription;
+  onQuote(handler: QuoteHandler, options?: QuoteOptions): Subscription;
 }
 
 export interface CoinslotClient {
@@ -155,19 +175,41 @@ export interface CoinslotClient {
 }
 
 /**
- * The code an order call comes back under when it never reached the gateway.
+ * The two codes an order call comes back under when the gateway produced no
+ * answer this package can read.
  *
  * The contract's list of error codes is open exactly so that a case nobody
  * anticipated reaches the merchant in its own words instead of being flattened
- * into the nearest of three. This is one of those, and it is produced here
- * rather than on the wire — the gateway does not send it, because a gateway
- * that could send it would have answered.
+ * into the nearest of three. These are two of those, and they are produced
+ * here rather than on the wire.
+ *
+ * They are two and not one because the difference is the whole of what a
+ * merchant needs at that moment. A call that never arrived certainly changed
+ * nothing on our side. A call that was answered in words we could not read —
+ * a proxy's own page, a gateway of another version, an error envelope somebody
+ * added — reached us, and may well have done its work; what is unknown is what
+ * it said. Told the first when the second happened, a merchant reasons about
+ * their books from a fact that is not one.
  */
 export const CALL_DID_NOT_REACH_US = "call_did_not_reach_us";
+export const ANSWER_NOT_UNDERSTOOD = "answer_not_understood";
 
-const failedCall = (failure: TransportFailure): OrderCallError => ({
-  code: CALL_DID_NOT_REACH_US,
-  message: `${failure.reason} — the call is idempotent, so repeating it is safe`,
+/**
+ * Whether calling again could change the outcome, which is what the contract's
+ * flag actually asks. It could, in both cases: neither of them is a state of
+ * the order, and neither will still be true in a minute if a network settled
+ * or a proxy went away.
+ *
+ * The sentence about repeating safely is only added where the contract says
+ * the call may be repeated: delivering is idempotent by the order's
+ * identifier, and taking an order on happens again on every redelivery.
+ * Refusing is documented as neither, so nothing is claimed about it.
+ */
+const failedCall = (repeatIsSafe: boolean, failure: TransportFailure): OrderCallError => ({
+  code: failure.answered ? ANSWER_NOT_UNDERSTOOD : CALL_DID_NOT_REACH_US,
+  message: repeatIsSafe
+    ? `${failure.reason} — this call may be made again without doing its work twice`
+    : failure.reason,
   retryable: true,
 });
 
@@ -192,12 +234,16 @@ const keyOf = (apiKey: string | undefined): string => {
   return apiKey;
 };
 
+/**
+ * The address as given, checked as far as it can be checked without using it.
+ *
+ * A value that is not an address is refused at once: it will not become one
+ * later, and the line that produced it is the line to fix. An address that was
+ * not given at all is a different matter, and it is kept as the sentence that
+ * will be raised by the first call that needs it — see `baseUrl` above.
+ */
 const addressOf = (baseUrl: string | undefined): string => {
-  if (baseUrl === undefined) {
-    throw new TypeError(
-      "createClient needs baseUrl, the address of the gateway — this package has no default to fall back on, because where the gateway lives is not settled yet",
-    );
-  }
+  if (baseUrl === undefined) return "";
 
   let parsed: URL;
 
@@ -222,12 +268,47 @@ export const createClient = (options: ClientOptions): CoinslotClient => {
     baseUrl: addressOf(options.baseUrl),
   };
 
+  const reachable = (): void => {
+    if (gateway.baseUrl === "") {
+      throw new TypeError(
+        "this client has no gateway address: pass baseUrl to createClient. There is no default — where the gateway lives is not settled yet, and this package will not invent a hostname",
+      );
+    }
+  };
+
   const registry: HandlerRegistry = { problem: reportToConsole };
-  let worker: Subscription | undefined;
+  let worker: RunningWorker | undefined;
+
+  /**
+   * One subscription object for the life of the client, whatever loop is
+   * behind it at the time.
+   *
+   * Stopping tears down the registrations as well as the loop, so a merchant
+   * who stopped and then registers again gets a working subscription rather
+   * than a handle on a loop that ended. Handing back the dead one is the
+   * failure this shape exists to prevent: nothing arrives, nothing is said,
+   * and everything looks registered.
+   */
+  const subscription: Subscription = {
+    stop: async () => {
+      const running = worker;
+
+      worker = undefined;
+      registry.order = undefined;
+      registry.quote = undefined;
+      registry.event = undefined;
+      registry.problem = reportToConsole;
+
+      await running?.stop();
+    },
+  };
 
   const workerStarted = (): Subscription => {
-    worker ??= startWorker(gateway, registry);
-    return worker;
+    reachable();
+
+    if (worker === undefined || !worker.running()) worker = startWorker(gateway, registry);
+
+    return subscription;
   };
 
   const orderCall = async (
@@ -235,15 +316,21 @@ export const createClient = (options: ClientOptions): CoinslotClient => {
     orderId: string,
     body: unknown,
   ): Promise<OrderCallResponse> => {
+    reachable();
+
     const answer = await callRoute(gateway, route, { path: { order_id: orderId }, body });
 
-    return answer.ok ? answer.document : { ok: false, error: failedCall(answer.failure) };
+    return answer.ok
+      ? answer.document
+      : { ok: false, error: failedCall(route === "deliver_order", answer.failure) };
   };
 
   const document = async <Name extends "publish_card" | "get_order" | "list_orders">(
     route: Name,
     options_: Parameters<typeof callRoute<Name>>[2],
   ) => {
+    reachable();
+
     const answer = await callRoute(gateway, route, options_);
 
     if (!answer.ok) throw new Error(answer.failure.reason);
@@ -277,12 +364,16 @@ export const createClient = (options: ClientOptions): CoinslotClient => {
       refuse: (orderId, refusal) => orderCall("refuse_order", orderId, refusal),
 
       accept: async (orderId, acceptance) => {
+        reachable();
+
         const answer = await callRoute(gateway, "accept_order", {
           path: { order_id: orderId },
           body: acceptance ?? {},
         });
 
-        return answer.ok ? answer.document : { ok: false, error: failedCall(answer.failure) };
+        // Accepting the same order again is ordinary: an order is taken on
+        // afresh on every redelivery, so a repeat does no work twice.
+        return answer.ok ? answer.document : { ok: false, error: failedCall(true, answer.failure) };
       },
 
       get: (orderId) => document("get_order", { path: { order_id: orderId } }),
@@ -297,7 +388,7 @@ export const createClient = (options: ClientOptions): CoinslotClient => {
     },
 
     pricing: {
-      onQuote: (handler) => {
+      onQuote: (handler, quoteOptions) => {
         if (registry.quote !== undefined) {
           throw new TypeError(
             "pricing.onQuote was called twice on one client: the second handler would silently replace the first",
@@ -305,6 +396,7 @@ export const createClient = (options: ClientOptions): CoinslotClient => {
         }
 
         registry.quote = handler;
+        if (quoteOptions?.onProblem !== undefined) registry.problem = quoteOptions.onProblem;
 
         return workerStarted();
       },

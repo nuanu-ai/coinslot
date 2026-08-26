@@ -26,6 +26,7 @@ export type {
   Card,
   Delivery,
   Fulfillment,
+  HandlerAnswer,
   Money,
   Order,
   OrderCallError,
@@ -53,9 +54,10 @@ export type {
   CoinslotClient,
   OrdersNamespace,
   PricingNamespace,
+  QuoteOptions,
   SubscribeOptions,
 } from "./client.js";
-export { CALL_DID_NOT_REACH_US, createClient } from "./client.js";
+export { ANSWER_NOT_UNDERSTOOD, CALL_DID_NOT_REACH_US, createClient } from "./client.js";
 export { contractVersion, speaksContract } from "./contract.js";
 export type {
   EventHandler,

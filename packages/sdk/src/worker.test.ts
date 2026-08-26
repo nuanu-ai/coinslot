@@ -11,6 +11,7 @@ import { createClient } from "./client.js";
 import { contractVersion } from "./contract.js";
 import { type FakeGateway, type GatewayAnswer, startFakeGateway } from "./testing/fake-gateway.js";
 import {
+  POLL_WAIT_SECONDS,
   QUIET_POLL_FLOOR_MS,
   startWorker,
   systemClock,
@@ -316,6 +317,39 @@ describe("a price question off the same stream", () => {
     });
   });
 
+  it("holds the price handler's answer to the contract before sending it", async () => {
+    // The same treatment the order handler's answer gets, and for the same
+    // reason. An amount written as a number rather than as text is the easiest
+    // mistake to make here; sent out, it comes back as the gateway complaining
+    // about a document, which reads as our fault and buries the merchant's own
+    // field inside a quoted blob.
+    const problems: WorkerProblem[] = [];
+
+    gateway = await startFakeGateway({
+      apiKey: API_KEY,
+      routes: {
+        poll_worker: polling(batch(envelopes.quote)),
+        answer_quote: () => ({ body: { used: true } }),
+      },
+    });
+
+    running = startWorker(
+      { apiKey: API_KEY, baseUrl: gateway.url },
+      {
+        quote: () =>
+          ({ available: true, price: { amount: 6.5, currency: "USD" }, as_of: AT }) as never,
+        problem: (problem) => problems.push(problem),
+      },
+    );
+
+    await waitUntil(() => problems.length > 0, "the problem to be reported");
+
+    expect(problems[0]?.kind).toBe(WORKER_PROBLEM_KINDS.HANDLER_ANSWER_REFUSED);
+    expect(problems[0]?.subject).toBe("price-1");
+    expect(problems[0]?.message).toMatch(/price\.amount/);
+    expect(gateway.callsTo("answer_quote")).toHaveLength(0);
+  });
+
   it("tells the merchant when their price arrived too late to be used", async () => {
     // A merchant who set stock aside against the question can release it, and
     // the acknowledgement is the only notice they get.
@@ -389,6 +423,83 @@ describe("a gateway speaking another dialect", () => {
     const pollsWhenItStopped = gateway.callsTo("poll_worker").length;
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(gateway.callsTo("poll_worker")).toHaveLength(pollsWhenItStopped);
+  });
+
+  it("recognises the dialect even when the answer is one it cannot read", async () => {
+    // The case the gate exists for, and the one it is easiest to miss. A
+    // gateway of another version does not differ from ours in the version
+    // string alone — it answers with a document this SDK refuses, which
+    // arrives as an ordinary parse failure. Read only from a document that
+    // parsed, the gate would never fire on a real difference, and the worker
+    // would retry a version mismatch forever while blaming the network.
+    const problems: WorkerProblem[] = [];
+
+    gateway = await startFakeGateway({
+      apiKey: API_KEY,
+      routes: {
+        poll_worker: () => ({
+          text: JSON.stringify({
+            contract_version: "99",
+            envelopes: [{ kind: "refund_request", id: "env-9", sent_at: AT, payload: {} }],
+          }),
+        }),
+      },
+    });
+
+    running = startWorker(
+      { apiKey: API_KEY, baseUrl: gateway.url },
+      { problem: (problem) => problems.push(problem) },
+    );
+
+    await waitUntil(() => problems.length > 0, "the mismatch to be reported");
+
+    expect(problems[0]?.kind).toBe(WORKER_PROBLEM_KINDS.CONTRACT_VERSION_MISMATCH);
+    expect(problems[0]?.fatal).toBe(true);
+    expect(problems[0]?.message).toContain("99");
+
+    const pollsWhenItStopped = gateway.callsTo("poll_worker").length;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(gateway.callsTo("poll_worker")).toHaveLength(pollsWhenItStopped);
+  });
+
+  it("still blames the transport for an answer that names no version", async () => {
+    // The other half of the same rule: a proxy's error page is not a dialect,
+    // and reading it as one would stop a worker that only needed to wait.
+    const problems: WorkerProblem[] = [];
+
+    gateway = await startFakeGateway({
+      apiKey: API_KEY,
+      routes: { poll_worker: () => ({ status: 502, text: "<html>bad gateway</html>" }) },
+    });
+
+    running = startWorker(
+      { apiKey: API_KEY, baseUrl: gateway.url },
+      { problem: (problem) => problems.push(problem) },
+      { ...recordingClock() },
+    );
+
+    await waitUntil(() => problems.length > 0, "the problem to be reported");
+
+    expect(problems[0]?.kind).toBe(WORKER_PROBLEM_KINDS.POLL_FAILED);
+    expect(problems[0]?.fatal).toBe(false);
+  });
+});
+
+describe("what the worker asks of a poll", () => {
+  it("names the wait window the decision gave it", async () => {
+    // ADR-0004 §1 says the worker asks for a window of about twenty-five
+    // seconds. Asking for nothing would leave the field the contract argues
+    // over with no sender, and a gateway that wanted to answer sooner with no
+    // way to see what we expected.
+    gateway = await startFakeGateway({ apiKey: API_KEY, routes: { poll_worker: polling() } });
+
+    running = startWorker({ apiKey: API_KEY, baseUrl: gateway.url }, { problem: () => {} });
+
+    await waitUntil(() => (gateway?.callsTo("poll_worker").length ?? 0) === 1, "the first poll");
+
+    expect(gateway.callsTo("poll_worker")[0]?.body).toStrictEqual({
+      wait_seconds: POLL_WAIT_SECONDS,
+    });
   });
 });
 
@@ -501,7 +612,148 @@ describe("a quiet stream", () => {
   });
 });
 
+describe("a delivery carrying the field this contract removes", () => {
+  it("tells the merchant it will not reach the agent", async () => {
+    // The one silent loss the contract documents, and this is the place it
+    // named as where the loss would actually cost something. Removed before
+    // any check runs, the field goes out of the merchant's handler and does
+    // not arrive, and without this nobody is told.
+    const problems: WorkerProblem[] = [];
+
+    gateway = await startFakeGateway({
+      apiKey: API_KEY,
+      routes: {
+        poll_worker: polling(batch(envelopes.order)),
+        answer_order: () => ({ body: { ok: true, result: "delivered" } }),
+      },
+    });
+
+    running = startWorker(
+      { apiKey: API_KEY, baseUrl: gateway.url },
+      {
+        order: () => ({
+          delivered: JSON.parse('{"access_url": "https://a.example", "__proto__": "gone"}'),
+        }),
+        problem: (problem) => problems.push(problem),
+      },
+    );
+
+    await waitUntil(() => (gateway?.callsTo("answer_order").length ?? 0) === 1, "the answer");
+
+    expect(problems[0]?.kind).toBe(WORKER_PROBLEM_KINDS.DELIVERY_FIELD_DROPPED);
+    expect(problems[0]?.subject).toBe(order.id);
+    expect(gateway.callsTo("answer_order")[0]?.body).toStrictEqual({
+      delivered: { access_url: "https://a.example" },
+    });
+  });
+});
+
+describe("a reporter that itself fails", () => {
+  it("does not take the worker, or the merchant's process, down with it", async () => {
+    // The reporter is the merchant's code — a logger over a stream that
+    // closed during shutdown, a client that was never configured. An
+    // exception out of it would otherwise unwind the loop and escape as an
+    // unhandled rejection, which under Node's default ends their process.
+    gateway = await startFakeGateway({
+      apiKey: API_KEY,
+      routes: { poll_worker: polling(batch(envelopes.order), batch(envelopes.order)) },
+    });
+
+    let reported = 0;
+    const worker = startWorker(
+      { apiKey: API_KEY, baseUrl: gateway.url },
+      {
+        problem: () => {
+          reported += 1;
+          throw new Error("the merchant's logger was not configured");
+        },
+      },
+    );
+
+    await waitUntil(() => reported >= 2, "the worker to keep going past a failing reporter");
+    await expect(worker.stop()).resolves.toBeUndefined();
+  });
+});
+
 describe("stopping", () => {
+  it("says so when an answer the handler produced did not get through", async () => {
+    // The handler has already run: goods may have been issued. Redelivery
+    // makes the system right and leaves the merchant uninformed, and a
+    // merchant reconciling a shutdown is owed the fact that an answer for
+    // this order went nowhere.
+    const problems: WorkerProblem[] = [];
+    let answering: (() => void) | undefined;
+    const held = new Promise<void>((resolve) => {
+      answering = resolve;
+    });
+
+    gateway = await startFakeGateway({
+      apiKey: API_KEY,
+      routes: {
+        poll_worker: polling(batch(envelopes.order)),
+        answer_order: () => {
+          answering?.();
+          return new Promise<never>(() => {});
+        },
+      },
+    });
+
+    const worker = startWorker(
+      { apiKey: API_KEY, baseUrl: gateway.url },
+      {
+        order: () => ({ delivered: { access_url: "https://a.example" } }),
+        problem: (problem) => problems.push(problem),
+      },
+    );
+
+    await held;
+    await worker.stop();
+
+    expect(problems.map((problem) => problem.kind)).toContain(WORKER_PROBLEM_KINDS.ANSWER_FAILED);
+    expect(problems[0]?.subject).toBe(order.id);
+    expect(problems[0]?.message).toMatch(/delivered again/);
+  });
+
+  it("says how much of a batch it left unread", async () => {
+    // Orders and price questions come back on their own; an event does not,
+    // because nothing here can ask for one again. Either way a merchant who
+    // stopped mid-batch should not have to guess what went unread.
+    const problems: WorkerProblem[] = [];
+    let handling: (() => void) | undefined;
+    const inTheHandler = new Promise<void>((resolve) => {
+      handling = resolve;
+    });
+
+    gateway = await startFakeGateway({
+      apiKey: API_KEY,
+      routes: {
+        poll_worker: polling(batch(envelopes.order, envelopes.quote, envelopes.event)),
+        answer_order: () => ({ body: { ok: true, result: "delivered" } }),
+      },
+    });
+
+    const worker = startWorker(
+      { apiKey: API_KEY, baseUrl: gateway.url },
+      {
+        order: () => {
+          handling?.();
+          return { delivered: { access_url: "https://a.example" } };
+        },
+        problem: (problem) => problems.push(problem),
+      },
+    );
+
+    await inTheHandler;
+    await worker.stop();
+
+    const abandoned = problems.find(
+      (problem) => problem.kind === WORKER_PROBLEM_KINDS.BATCH_ABANDONED,
+    );
+
+    expect(abandoned?.message).toMatch(/2 of this batch's 3/);
+    expect(abandoned?.message).toMatch(/quote_request, order_event/);
+  });
+
   it("abandons the parked poll and asks for nothing more", async () => {
     gateway = await startFakeGateway({ apiKey: API_KEY, routes: { poll_worker: polling() } });
 
@@ -524,6 +776,55 @@ describe("registering twice", () => {
     running = coinslot.orders.subscribe(() => ({ accepted: {} }));
 
     expect(() => coinslot.orders.subscribe(() => ({ accepted: {} }))).toThrow(/twice/);
+  });
+
+  it("gives a working subscription back after one was stopped", async () => {
+    // A merchant who stopped a subscription and registers again must not be
+    // handed the loop that ended: nothing would arrive, nothing would be
+    // said, and everything would look registered.
+    gateway = await startFakeGateway({
+      apiKey: API_KEY,
+      routes: {
+        poll_worker: (_call, index) =>
+          index === 0 ? new Promise<GatewayAnswer>(() => {}) : batch(envelopes.order),
+        answer_order: () => ({ body: { ok: true, result: "delivered" } }),
+      },
+    });
+
+    const coinslot = createClient({ apiKey: API_KEY, baseUrl: gateway.url });
+    const first = coinslot.orders.subscribe(() => ({ accepted: {} }));
+
+    await waitUntil(() => (gateway?.callsTo("poll_worker").length ?? 0) === 1, "the first poll");
+    await first.stop();
+
+    let handled = 0;
+    running = coinslot.orders.subscribe(() => {
+      handled += 1;
+      return { delivered: { access_url: "https://a.example" } };
+    });
+
+    await waitUntil(() => handled === 1, "the second subscription to receive an order");
+  });
+
+  it("lets a process that answers only prices choose where problems go", async () => {
+    // Without it, such a process is given the error console whether it wants
+    // it or not, because the only place to pass a reporter is the order
+    // subscription it never opens.
+    const problems: WorkerProblem[] = [];
+
+    gateway = await startFakeGateway({
+      apiKey: API_KEY,
+      routes: { poll_worker: polling(batch(envelopes.order)) },
+    });
+
+    const coinslot = createClient({ apiKey: API_KEY, baseUrl: gateway.url });
+
+    running = coinslot.pricing.onQuote(() => ({ available: false, as_of: AT }), {
+      onProblem: (problem) => problems.push(problem),
+    });
+
+    await waitUntil(() => problems.length > 0, "the problem to reach the merchant's reporter");
+    expect(problems[0]?.kind).toBe(WORKER_PROBLEM_KINDS.NO_HANDLER);
   });
 
   it("refuses a second price handler for the same reason", async () => {
