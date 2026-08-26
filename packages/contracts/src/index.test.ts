@@ -372,8 +372,12 @@ describe("the contract as JSON Schema", () => {
       ["union", z.union([hidden, z.number()])],
       ["tuple", z.tuple([hidden])],
       ["tuple rest", z.tuple([z.string()], hidden)],
-      ["intersection", z.intersection(hidden, z.string())],
-      ["pipe", z.string().pipe(hidden)],
+      ["intersection left", z.intersection(hidden, z.string())],
+      ["intersection right", z.intersection(z.string(), hidden)],
+      // A pipe holds one on each side, and testing only one of them let the
+      // other's key be dropped from the walk without a failure.
+      ["pipe out", z.string().pipe(hidden)],
+      ["pipe in", hidden.pipe(z.string())],
       ["lazy", z.lazy(() => hidden)],
       ["catchall", z.object({}).catchall(hidden)],
     ];
