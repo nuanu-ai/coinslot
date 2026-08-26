@@ -8,16 +8,54 @@
  * a card and failing to deliver an order share a file even though they belong
  * to different calls.
  *
- * One member of that family is missing on purpose. When a synchronous handler
- * returns after its deadline the tools hand the merchant a typed result saying
- * the purchase is already closed — again a value, not an exception. It is not
- * here because it never crosses the wire: it is produced by the SDK, on the
- * merchant's own machine, about a call that never left it. If it turns out
- * that the gateway has to say it too, it moves here.
+ * The words below are wire names, not prose: a merchant's code branches on
+ * them, so rewording one is changing the contract.
  */
 
 import { z } from "zod";
 import { IdentifierSchema } from "./primitives.js";
+
+/**
+ * How delivering or refusing an order can succeed.
+ *
+ * Five and not fewer, because each one is a different thing for the merchant
+ * to do next. `delivered` is the sale closing. `already_delivered` is their
+ * own retry landing twice — safe, and no second delivery is wanted.
+ * `debt_closed_by_delivery` says the delivery deadline had already passed and
+ * the goods went out anyway, closing a debt instead of completing a sale; the
+ * merchant may want to know that happened. `refused` is the refusal taking
+ * effect. `purchase_already_closed` is the synchronous handler that came back
+ * after its deadline: not an error, because nothing went wrong on their side —
+ * the work exists and a repeat purchase will collect it, and the only thing to
+ * do is write the case down.
+ */
+export const ORDER_CALL_RESULTS = Object.freeze([
+  "delivered",
+  "already_delivered",
+  "debt_closed_by_delivery",
+  "refused",
+  "purchase_already_closed",
+] as const);
+
+export const OrderCallResultSchema = z.enum(ORDER_CALL_RESULTS);
+
+/**
+ * The error codes those calls answer with.
+ *
+ * A list of what we promise to mean the same way, not a gate: the code below
+ * stays an open string, because an error nobody anticipated has to reach the
+ * merchant in its own words rather than be flattened into the nearest of
+ * three. `refund_already_settled` — the debt was paid back, so there is
+ * nothing left to deliver against. `order_already_closed` — the order reached
+ * an ending that no call reopens. `not_applicable_in_mode` — the call does not
+ * exist for this card's mode, as refusing separately does not in the
+ * synchronous one, where the handler's own answer is the refusal.
+ */
+export const ORDER_CALL_ERROR_CODES = Object.freeze([
+  "refund_already_settled",
+  "order_already_closed",
+  "not_applicable_in_mode",
+] as const);
 
 /** One thing wrong with a card, in a place, in a code and in words. */
 export const PublishErrorSchema = z.strictObject({
@@ -77,4 +115,5 @@ export const OrderCallErrorSchema = z.strictObject({
 
 export type PublishError = z.infer<typeof PublishErrorSchema>;
 export type PublishResult = z.infer<typeof PublishResultSchema>;
+export type OrderCallResult = z.infer<typeof OrderCallResultSchema>;
 export type OrderCallError = z.infer<typeof OrderCallErrorSchema>;

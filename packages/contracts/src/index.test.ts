@@ -97,9 +97,10 @@ describe("the contract as JSON Schema", () => {
   it("describes an enumeration as its values and nothing else", () => {
     expect(toJsonSchemas().fulfillment.enum).toStrictEqual(["sync", "async", "confirm"]);
     expect(toJsonSchemas().receipt_outcome.enum).toStrictEqual([
-      "pending",
+      "in_progress",
       "delivered",
       "refund_due",
+      "refunded",
     ]);
   });
 

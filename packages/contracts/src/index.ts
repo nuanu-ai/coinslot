@@ -27,6 +27,7 @@ import { CardSchema, FulfillmentSchema, PriceCheckSchema } from "./card.js";
 import { OrderEventSchema, RefundDueReasonSchema } from "./events.js";
 import { HandlerAnswerSchema, RefusalCodeSchema, RefusalSchema } from "./handler.js";
 import { OrderSchema } from "./order.js";
+import { OrderStatusSchema } from "./order-status.js";
 import {
   FieldSpecSchema,
   ParamNameSchema,
@@ -43,7 +44,12 @@ import {
 } from "./primitives.js";
 import { QuotePurposeSchema, QuoteRequestSchema, QuoteResponseSchema } from "./quote.js";
 import { ReceiptOutcomeSchema, ReceiptSchema } from "./receipt.js";
-import { OrderCallErrorSchema, PublishErrorSchema, PublishResultSchema } from "./results.js";
+import {
+  OrderCallErrorSchema,
+  OrderCallResultSchema,
+  PublishErrorSchema,
+  PublishResultSchema,
+} from "./results.js";
 
 export type { Card, Fulfillment, PriceCheck } from "./card.js";
 export { CardSchema, FulfillmentSchema, PriceCheckSchema } from "./card.js";
@@ -120,7 +126,9 @@ export const schemas = Object.freeze({
   money: MoneySchema,
   order: OrderSchema,
   order_call_error: OrderCallErrorSchema,
+  order_call_result: OrderCallResultSchema,
   order_event: OrderEventSchema,
+  order_status: OrderStatusSchema,
   param_name: ParamNameSchema,
   param_spec: ParamSpecSchema,
   param_type: ParamTypeSchema,

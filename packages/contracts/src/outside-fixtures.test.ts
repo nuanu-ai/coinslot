@@ -190,7 +190,7 @@ describe("an eSIM plan, whose profile arrives later", () => {
       },
       price_id: "prc_77aa04",
       paid_at: "2026-08-26T12:10:01Z",
-      outcome: "pending",
+      outcome: "in_progress",
       test: false,
     };
 

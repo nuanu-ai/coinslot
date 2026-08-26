@@ -11,23 +11,18 @@
  * us: what to deliver, to whom, under which of its own keys, at what price,
  * and whether the money behind it is real.
  *
- * Two things the merchant-facing documentation promises have no shape yet, and
- * they are named here rather than left to be discovered as an absence.
+ * What state an order is in is not a field here. Reading state back — one
+ * order, or every order still open — is a separate call, and the words it
+ * answers with are `OrderStatusSchema` in `order-status.ts`.
  *
- * The first is the confirmation request. In the mode where the merchant is
- * asked before the money moves, a request reaches the same subscription as the
- * orders and is marked as a request rather than an order — no payment has
- * happened, and delivering against one is not allowed. Nothing in this package
- * carries that mark, so today the two are indistinguishable on the wire. The
- * mode is deliberately outside the pilot, and giving it a shape means changing
- * what every order looks like, so it waits for the decision that turns it on.
- *
- * The second is the state of an order. Reading state back — one order, or
- * every order still open — is promised from the pilot onwards, and the status
- * it answers with is vocabulary an agent and a merchant both see, so it
- * belongs in this package. It is not written here yet because the order state
- * machine is being built alongside this, and a status set invented in advance
- * of it would be two answers to one question.
+ * One shape the documentation promises is still missing, and it is named here
+ * rather than left to be found as an absence. In the mode where the merchant
+ * is asked before the money moves, a confirmation request reaches the same
+ * subscription as the orders and is marked as a request rather than an order —
+ * no payment has happened, and delivering against one is not allowed. Nothing
+ * in this package carries that mark, so the two would be indistinguishable on
+ * the wire. Rather than leave that as a trap, the card refuses to publish in
+ * that mode at all until the request has a shape; see `card.ts`.
  */
 
 import { z } from "zod";
