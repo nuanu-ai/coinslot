@@ -1,0 +1,22 @@
+{
+  "name": "@coinslot/slice",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Coinslot vertical slice — a sandbox buyer walks a full purchase through the real gateway against a mock merchant on the real SDK, offline and deterministic",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@coinslot/contracts": "workspace:*",
+    "@coinslot/core": "workspace:*",
+    "@coinslot/gateway": "workspace:*",
+    "@coinslot/sdk": "workspace:*",
+    "@x402/core": "2.23.0",
+    "@x402/evm": "2.23.0",
+    "@x402/fetch": "2.23.0",
+    "tsx": "^4.23.12",
+    "viem": "2.47.0",
+    "vitest": "^4.1.11"
+  }
+}
