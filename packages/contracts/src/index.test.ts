@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import * as contracts from "./index.js";
@@ -123,6 +123,34 @@ describe("the registry of schemas", () => {
       .map(([name]) => name);
 
     expect(missing).toStrictEqual([]);
+  });
+
+  it("is reachable from outside this package, every bit of it", async () => {
+    // The direction nothing was checking, and it hid a whole round's work:
+    // `order_status`, `order_call_result` and the two card helpers existed,
+    // were registered, and were re-exported by nobody — so the JSON Schema
+    // reader could see them and the SDK could not. The package exposes one
+    // entry point, so anything not named here does not exist for a consumer.
+    //
+    // Walking the modules rather than listing them is the point: the next
+    // schema added to a file nobody remembers to re-export fails here.
+    const publicModules = readdirSync(new URL(".", import.meta.url))
+      .filter((file) => file.endsWith(".ts") && !file.endsWith(".test.ts") && file !== "index.ts")
+      .sort();
+
+    expect(publicModules.length).toBeGreaterThan(5);
+
+    const exported = new Set(Object.keys(contracts));
+    const unreachable: string[] = [];
+
+    for (const file of publicModules) {
+      const module = (await import(`./${file.replace(/\.ts$/, ".js")}`)) as Record<string, unknown>;
+      for (const name of Object.keys(module)) {
+        if (!exported.has(name)) unreachable.push(`${file}: ${name}`);
+      }
+    }
+
+    expect(unreachable).toStrictEqual([]);
   });
 
   it("registers nothing under a name that is not written the way the wire is", () => {
