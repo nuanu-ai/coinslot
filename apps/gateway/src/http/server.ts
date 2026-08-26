@@ -24,6 +24,7 @@
 
 import {
   type AuthMode,
+  MERCHANT_KEY_HEADER,
   mountableRoutes,
   type RouteDefinition,
   type RouteName,
@@ -239,7 +240,7 @@ function allowedThrough(auth: AuthMode, request: Request, gateway: Gateway): boo
   if (auth !== "merchant_key") {
     return true;
   }
-  const presented = bearerIn(request.header("authorization") ?? undefined);
+  const presented = bearerIn(request.header(MERCHANT_KEY_HEADER) ?? undefined);
   return presented !== null && keyMatches(presented, gateway.runtime.config.merchantApiKey);
 }
 

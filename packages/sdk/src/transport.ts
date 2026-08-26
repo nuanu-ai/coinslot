@@ -14,10 +14,12 @@
  *
  * The first is the header the merchant's key travels in. The table says which
  * door a call is behind and not how the door is built, so the choice is the
- * gateway's and ours to match. This package sends
- * `Authorization: Bearer <key>`; if the gateway reads the key somewhere else,
- * every call behind that door fails with an authorisation error and nothing in
- * either repository says why.
+ * gateway's and ours to match — and matching it by each writing the same two
+ * strings down was agreement by luck, where a call behind that door fails with
+ * an authorisation error and nothing in either repository says why. So the name
+ * and the scheme live in `@coinslot/contracts`, in the one place both sides
+ * already import: `merchantKeyHeaderValue` builds the value this package sends,
+ * and `merchantKeyFrom` is what the gateway reads it back with.
  *
  * The second is the status code, about which the table says nothing either.
  * Some of the answers this surface gives are refusals that are still documents
@@ -38,7 +40,13 @@
  * genuine difference of dialects is told apart from a broken gateway.
  */
 
-import { API_ROUTES, expandPath, type RouteName } from "@coinslot/contracts";
+import {
+  API_ROUTES,
+  expandPath,
+  MERCHANT_KEY_HEADER,
+  merchantKeyHeaderValue,
+  type RouteName,
+} from "@coinslot/contracts";
 
 /** Where the gateway is and which key opens its doors. */
 export interface Gateway {
@@ -246,7 +254,7 @@ export const callRoute = async <N extends RouteName>(
       method: route.method,
       headers: {
         accept: "application/json",
-        authorization: `Bearer ${gateway.apiKey}`,
+        [MERCHANT_KEY_HEADER]: merchantKeyHeaderValue(gateway.apiKey),
         ...(hasBody ? { "content-type": "application/json" } : {}),
       },
       ...(hasBody ? { body: JSON.stringify(options.body ?? {}) } : {}),

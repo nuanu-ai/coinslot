@@ -353,6 +353,59 @@ export const AUTH_MODES = Object.freeze(["merchant_key", "none", "undecided"] as
 export type AuthMode = (typeof AUTH_MODES)[number];
 
 /**
+ * The header the merchant's key travels in, and the two helpers that put a key
+ * into it and read one back out.
+ *
+ * `auth` above says which door a call is behind and not how the door is built,
+ * and that omission is deliberate — but how the door is built is still a thing
+ * the gateway and the SDK have to agree on exactly, because a mismatch is a call
+ * that fails with an authorisation error while both repositories look correct.
+ * They had agreed, by each writing the same two strings down apart from the
+ * other: the gateway parsed an `Authorization: Bearer` header and the SDK sent
+ * one. That is agreement by luck, and it is the very thing this table exists to
+ * remove for the addresses and the documents. So the strings live here now, in
+ * the one place both sides already import, and a change to either is a change in
+ * one file rather than a silent drift between two.
+ *
+ * The name is `authorization` and the scheme is `Bearer`: the stage-one minimum
+ * of the pilot plan, one merchant with one key sent as a bearer token. The name
+ * is lower-case because that is how a client writes a header and how the wire
+ * carries it; a reader on the gateway matches it without regard to case anyway.
+ */
+export const MERCHANT_KEY_HEADER = "authorization";
+
+/** The scheme the merchant's key travels under. */
+const MERCHANT_KEY_SCHEME = "Bearer";
+
+/**
+ * The value of the {@link MERCHANT_KEY_HEADER} header for a given key — what the
+ * SDK sends, so that what the gateway parses is never guessed at.
+ */
+export const merchantKeyHeaderValue = (key: string): string => `${MERCHANT_KEY_SCHEME} ${key}`;
+
+// Built once and matched case-insensitively: an auth scheme is case-insensitive
+// (RFC 7235 §2.1), so a client that wrote "bearer" holds a key that is correct,
+// and rejecting it would cost that merchant an afternoon on a key that works.
+const MERCHANT_KEY_PATTERN = new RegExp(`^${MERCHANT_KEY_SCHEME}[ \\t]+(\\S+)$`, "i");
+
+/**
+ * The key inside a merchant-key header value, or null where there is not one.
+ *
+ * Null is every way the value is not a bearer token this contract issued: no
+ * header at all, another scheme, or the scheme with nothing after it. The caller
+ * is handed a key it can compare or nothing to compare, and never a half-parsed
+ * string that a constant-time comparison would then match against a prefix of
+ * the real key.
+ */
+export const merchantKeyFrom = (headerValue: string | undefined): string | null => {
+  if (headerValue === undefined) {
+    return null;
+  }
+  const match = MERCHANT_KEY_PATTERN.exec(headerValue.trim());
+  return match?.[1] ?? null;
+};
+
+/**
  * What a call answers with: one document, or a contract this table cannot
  * hold.
  *

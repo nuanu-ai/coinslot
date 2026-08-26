@@ -15,6 +15,7 @@
  */
 
 import { createHash, timingSafeEqual } from "node:crypto";
+import { merchantKeyFrom } from "@coinslot/contracts";
 
 const digest = (value: string): Buffer => createHash("sha256").update(value, "utf8").digest();
 
@@ -24,16 +25,14 @@ export function keyMatches(presented: string, expected: string): boolean {
 }
 
 /**
- * The key inside an Authorization header, or nothing.
+ * The key inside the merchant-key header value, or nothing.
  *
- * The scheme is matched without regard to case because that is what the HTTP
- * specification says it is, and a merchant whose client wrote "bearer" would
- * otherwise spend an afternoon on a key that is perfectly correct.
+ * The parse itself lives in `@coinslot/contracts`, because the header the key
+ * arrives in is the one thing the gateway and the SDK have to agree on and the
+ * route table does not carry — so it is held in the one place both import
+ * rather than written out here and, identically but separately, in the SDK.
+ * This name stays because it is the gateway's own word for the step, and the
+ * comparison below it — constant-time, over digests — is the gateway's alone
+ * and no contract's business.
  */
-export function bearerIn(header: string | undefined): string | null {
-  if (header === undefined) {
-    return null;
-  }
-  const match = /^Bearer[ \t]+(\S+)$/i.exec(header.trim());
-  return match?.[1] ?? null;
-}
+export const bearerIn = merchantKeyFrom;
