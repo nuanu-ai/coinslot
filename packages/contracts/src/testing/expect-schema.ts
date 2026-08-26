@@ -34,9 +34,7 @@ export const expectMissingFieldRejected = (
 ): void => {
   expect(Object.hasOwn(valid, field), `${field} is not present in the valid value`).toBe(true);
 
-  const withoutField = Object.fromEntries(
-    Object.entries(valid).filter(([name]) => name !== field),
-  );
+  const withoutField = Object.fromEntries(Object.entries(valid).filter(([name]) => name !== field));
   const result = schema.safeParse(withoutField);
 
   expect(result.success, `the schema accepted a value without "${field}"`).toBe(false);
