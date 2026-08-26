@@ -32,8 +32,13 @@
  */
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { type AddressInfo } from "node:net";
-import { API_ROUTES, mountableRoutes, type RouteDefinition, type RouteName } from "@coinslot/contracts";
+import type { AddressInfo } from "node:net";
+import {
+  API_ROUTES,
+  mountableRoutes,
+  type RouteDefinition,
+  type RouteName,
+} from "@coinslot/contracts";
 
 /** One request that reached the gateway, after it was matched and read. */
 export interface GatewayCall {
@@ -60,7 +65,10 @@ export interface GatewayAnswer {
 }
 
 /** How a test answers one route, given the call and how many came before it. */
-export type Responder = (call: GatewayCall, index: number) => GatewayAnswer | Promise<GatewayAnswer>;
+export type Responder = (
+  call: GatewayCall,
+  index: number,
+) => GatewayAnswer | Promise<GatewayAnswer>;
 
 export interface FakeGatewayOptions {
   /** The key the gateway accepts on the routes that are behind the merchant's door. */
@@ -143,7 +151,9 @@ const complain = (response: ServerResponse, status: number, message: string): vo
  * back. They are read by a person debugging a test, never by the SDK.
  */
 const findingsOf = (issues: readonly { path: readonly PropertyKey[]; message: string }[]): string =>
-  issues.map((issue) => `${issue.path.map(String).join(".") || "(whole document)"}: ${issue.message}`).join("; ");
+  issues
+    .map((issue) => `${issue.path.map(String).join(".") || "(whole document)"}: ${issue.message}`)
+    .join("; ");
 
 export const startFakeGateway = async (options: FakeGatewayOptions): Promise<FakeGateway> => {
   const calls: GatewayCall[] = [];
@@ -165,12 +175,17 @@ export const startFakeGateway = async (options: FakeGatewayOptions): Promise<Fak
     const { candidate, params } = hit;
 
     if (!answersOn(candidate.route, method)) {
-      complain(response, 405, `${candidate.name} answers on ${candidate.route.method}, not ${method}`);
+      complain(
+        response,
+        405,
+        `${candidate.name} answers on ${candidate.route.method}, not ${method}`,
+      );
       return;
     }
 
     const authorization = request.headers.authorization;
-    const apiKey = authorization?.startsWith("Bearer ") === true ? authorization.slice(7) : undefined;
+    const apiKey =
+      authorization?.startsWith("Bearer ") === true ? authorization.slice(7) : undefined;
 
     if (candidate.route.auth === "merchant_key" && apiKey !== options.apiKey) {
       complain(response, 401, `${candidate.name} is behind the merchant's key`);
@@ -194,7 +209,11 @@ export const startFakeGateway = async (options: FakeGatewayOptions): Promise<Fak
     if (candidate.route.query !== undefined) {
       const checked = candidate.route.query.safeParse(query);
       if (!checked.success) {
-        complain(response, 400, `the query string is not what ${candidate.name} takes: ${findingsOf(checked.error.issues)}`);
+        complain(
+          response,
+          400,
+          `the query string is not what ${candidate.name} takes: ${findingsOf(checked.error.issues)}`,
+        );
         return;
       }
     }
@@ -202,7 +221,11 @@ export const startFakeGateway = async (options: FakeGatewayOptions): Promise<Fak
     if (candidate.route.request !== undefined && method === candidate.route.method) {
       const checked = candidate.route.request.safeParse(body);
       if (!checked.success) {
-        complain(response, 422, `the body is not what ${candidate.name} takes: ${findingsOf(checked.error.issues)}`);
+        complain(
+          response,
+          422,
+          `the body is not what ${candidate.name} takes: ${findingsOf(checked.error.issues)}`,
+        );
         return;
       }
     }
@@ -227,12 +250,17 @@ export const startFakeGateway = async (options: FakeGatewayOptions): Promise<Fak
       return;
     }
 
-    const document = "document" in candidate.route.response ? candidate.route.response.document : undefined;
+    const document =
+      "document" in candidate.route.response ? candidate.route.response.document : undefined;
 
     if (document !== undefined && status >= 200 && status < 300) {
       const checked = document.safeParse(answer.body);
       if (!checked.success) {
-        complain(response, 500, `the test scripted an answer ${candidate.name} could never send: ${findingsOf(checked.error.issues)}`);
+        complain(
+          response,
+          500,
+          `the test scripted an answer ${candidate.name} could never send: ${findingsOf(checked.error.issues)}`,
+        );
         return;
       }
     }

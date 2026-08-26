@@ -82,7 +82,9 @@ describe("publishing a card", () => {
     // The portal's promise about the edit cycle: an invalid card does not
     // throw, it comes back as a list of findings the merchant can print.
     const errors = [{ path: ["price", "currency"], code: "unsupported", message: "not settled" }];
-    const coinslot = await gatewayServing({ publish_card: () => ({ status: 400, body: { errors } }) });
+    const coinslot = await gatewayServing({
+      publish_card: () => ({ status: 400, body: { errors } }),
+    });
 
     const published = await coinslot.catalog.publish(card);
 
@@ -117,7 +119,9 @@ describe("reading orders back", () => {
     // The contract accepts "SKU 100/1" as an identifier, and pasted into an
     // address unencoded it becomes two segments and a different route.
     const coinslot = await gatewayServing({
-      get_order: (call) => ({ body: { ...order, id: call.params.order_id ?? "", status: "delivered" } }),
+      get_order: (call) => ({
+        body: { ...order, id: call.params.order_id ?? "", status: "delivered" },
+      }),
     });
 
     await coinslot.orders.get("SKU 100/1");
@@ -150,7 +154,9 @@ describe("closing an order the merchant took on", () => {
       deliver_order: () => ({ body: { ok: true, result: "delivered" } }),
     });
 
-    const result = await coinslot.orders.deliver("order-1", { access_url: "https://example.com/a" });
+    const result = await coinslot.orders.deliver("order-1", {
+      access_url: "https://example.com/a",
+    });
 
     expect(result).toStrictEqual({ ok: true, result: "delivered" });
     expect(gateway?.callsTo("deliver_order")[0]?.body).toStrictEqual({
@@ -162,10 +168,18 @@ describe("closing an order the merchant took on", () => {
     // The portal promises that these errors are returned and carry whether a
     // repeat could help. A merchant who had to catch them would write a retry
     // loop around a case that no repeat changes.
-    const error = { code: "refund_already_settled", message: "the debt was paid back", retryable: false };
-    const coinslot = await gatewayServing({ deliver_order: () => ({ status: 409, body: { ok: false, error } }) });
+    const error = {
+      code: "refund_already_settled",
+      message: "the debt was paid back",
+      retryable: false,
+    };
+    const coinslot = await gatewayServing({
+      deliver_order: () => ({ status: 409, body: { ok: false, error } }),
+    });
 
-    const result = await coinslot.orders.deliver("order-1", { access_url: "https://example.com/a" });
+    const result = await coinslot.orders.deliver("order-1", {
+      access_url: "https://example.com/a",
+    });
 
     expect(result).toStrictEqual({ ok: false, error });
   });
@@ -174,7 +188,9 @@ describe("closing an order the merchant took on", () => {
     // Same promise, one layer down: a dropped connection is the case the
     // retryable flag exists for, and it must reach the merchant through the
     // same branch as everything else these calls answer with.
-    const coinslot = await gatewayServing({ refuse_order: () => ({ status: 502, text: "bad gateway" }) });
+    const coinslot = await gatewayServing({
+      refuse_order: () => ({ status: 502, text: "bad gateway" }),
+    });
 
     const result = await coinslot.orders.refuse("order-1", {
       code: "out_of_stock",
@@ -189,7 +205,9 @@ describe("closing an order the merchant took on", () => {
   it("takes an order on, with and without an expected time", async () => {
     const coinslot = await gatewayServing({ accept_order: () => ({ body: { ok: true } }) });
 
-    expect(await coinslot.orders.accept("order-1", { eta_seconds: 60 })).toStrictEqual({ ok: true });
+    expect(await coinslot.orders.accept("order-1", { eta_seconds: 60 })).toStrictEqual({
+      ok: true,
+    });
     expect(await coinslot.orders.accept("order-1")).toStrictEqual({ ok: true });
 
     expect(gateway?.callsTo("accept_order").map((call) => call.body)).toStrictEqual([
