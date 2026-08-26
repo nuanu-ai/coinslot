@@ -7,7 +7,12 @@
   "engines": {
     "node": ">=24"
   },
+  "scripts": {
+    "check": "biome check .",
+    "check:fix": "biome check --write ."
+  },
   "devDependencies": {
+    "@biomejs/biome": "2.5.10",
     "@types/node": "^26.3.0",
     "typescript": "7.0.2"
   }
