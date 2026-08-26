@@ -403,11 +403,12 @@ function fromCreated(order: Order, event: StateEvent): TransitionResult {
 function fromQuoted(order: Order, event: StateEvent): TransitionResult {
   switch (event.kind) {
     case "payment_verified":
-      if (order.mode.needsConfirmation || order.payment !== "none") {
-        // Two refusals in one. The merchant of a card that needs confirming
-        // has not said he will fulfill it yet, and until he does nothing may
-        // touch the buyer's money. And a verification arriving twice off the
-        // queue must not send the same money for execution twice.
+      if (order.mode.needsConfirmation) {
+        // The merchant of a card that needs confirming has not said he will
+        // fulfill it yet, and until he does nothing may touch the buyer's
+        // money. (A verification arriving twice off the queue is stopped
+        // earlier, by the settle-in-flight guard: the first one is still being
+        // executed when the second lands.)
         return notApplicable(order, event);
       }
       return order.mode.settle === "after_fulfillment"
@@ -541,7 +542,6 @@ function fromAwaitingConfirmation(order: Order, event: StateEvent): TransitionRe
 function fromConfirmed(order: Order, event: StateEvent): TransitionResult {
   switch (event.kind) {
     case "payment_verified":
-      if (order.payment !== "none") return notApplicable(order, event);
       return order.mode.settle === "after_fulfillment"
         ? enterPaid(order, event.at, "verified")
         : startSettle(order, event.at);

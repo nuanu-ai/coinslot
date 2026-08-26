@@ -86,6 +86,15 @@ describe("the invariants of the order's money", () => {
 
     expect(moneyInvariantViolations(impossible).length).toBeGreaterThan(0);
   });
+
+  it("catches an order that moved on while its charge was still being executed", () => {
+    // The machine will not produce this, and that is exactly why the rule is
+    // here: it is the shape the gateway's own records have to be checked
+    // against. Whatever the charge does now, it happens to a decided order.
+    const impossible: Order = { ...reach("dispatched"), state: "cancelled", payment: "settling" };
+
+    expect(moneyInvariantViolations(impossible).length).toBeGreaterThan(0);
+  });
 });
 
 describe("a refusal before the charge never creates a debt", () => {
