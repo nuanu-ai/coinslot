@@ -6,8 +6,9 @@
 .vscode/
 *.swp
 
-# Claude Code — локальные настройки не коммитим
+# Claude Code — локальные настройки и рабочие копии агентов не коммитим
 .claude/settings.local.json
+.claude/worktrees/
 
 # Секреты и окружение
 .env

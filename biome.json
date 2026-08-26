@@ -6,7 +6,15 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**", "!**/node_modules", "!**/dist", "!portal", "!spikes", "!pnpm-lock.yaml"]
+    "includes": [
+      "**",
+      "!**/node_modules",
+      "!**/dist",
+      "!**/.claude",
+      "!portal",
+      "!spikes",
+      "!pnpm-lock.yaml"
+    ]
   },
   "formatter": {
     "enabled": true,
