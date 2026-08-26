@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CardSchema, FulfillmentSchema, PriceCheckSchema } from "./card.js";
+import { toJsonSchemas } from "./index.js";
 import { errorOf, expectMissingFieldRejected } from "./testing/expect-schema.js";
 
 const syncCard = {
@@ -78,14 +79,35 @@ describe("card", () => {
     expect(CardSchema.parse(card)).toStrictEqual(card);
   });
 
-  it("accepts a card with confirmation and both of the merchant's deadlines", () => {
-    const card = {
+  it("refuses to publish in the mode whose request the wire cannot carry", () => {
+    // The promise this keeps: a merchant never publishes a card that cannot be
+    // sold. In the confirmation mode a request arrives before any money moves
+    // and must be answered without delivering — but nothing on the wire marks
+    // it, so a handler could not tell it from a paid order. Naming that in a
+    // comment somewhere is not enough: the merchant, and the engineer
+    // generating a client from the exported document, learn about it here or
+    // they learn about it from a request they mishandle.
+    const message = errorOf(CardSchema, { ...syncCard, fulfillment: "confirm" });
+
+    expect(message).toContain("confirm");
+    expect(message).toContain("pilot");
+  });
+
+  it("complains about the mode and not about the deadlines that go with it", () => {
+    // The rules about which card carries which deadline are unchanged and
+    // still correct for the confirmation mode; they are simply unreachable
+    // while the gate is down. If this card drew a deadline complaint too, the
+    // gate would be hiding a second problem behind it — and lifting the gate
+    // later would uncover it.
+    const message = errorOf(CardSchema, {
       ...syncCard,
       fulfillment: "confirm",
       confirm_deadline_seconds: 3_600,
       fulfill_deadline_seconds: 86_400,
-    };
-    expect(CardSchema.parse(card)).toStrictEqual(card);
+    });
+
+    expect(message).not.toContain("confirm_deadline_seconds");
+    expect(message).not.toContain("fulfill_deadline_seconds");
   });
 
   it("accepts a card that takes no purchase parameters", () => {
@@ -170,6 +192,33 @@ describe("the merchant's two deadlines", () => {
     // The default values are among the numbers named before the pilot, so a
     // card is allowed to leave both out and take ours.
     expect(CardSchema.safeParse({ ...syncCard, fulfillment: "async" }).success).toBe(true);
-    expect(CardSchema.safeParse({ ...syncCard, fulfillment: "confirm" }).success).toBe(true);
+  });
+});
+
+describe("what the exported document says about the mode", () => {
+  // An engineer generating a client from the JSON Schema never reads the
+  // TypeScript. If the gate lived only in a refinement, their generated card
+  // would offer a mode that fails on the first publish, and the reason would
+  // be nowhere in the document they were working from.
+
+  it("keeps all three modes in the enumeration", () => {
+    // The value is not removed: the mode exists in the model, the machine
+    // knows it, and taking it out of the vocabulary would be a different and
+    // larger claim than "not yet".
+    expect(toJsonSchemas().fulfillment.enum).toStrictEqual(["sync", "async", "confirm"]);
+  });
+
+  it("says in the fulfillment document that one of them cannot be published", () => {
+    const description = toJsonSchemas().fulfillment.description ?? "";
+
+    expect(description).toContain("confirm");
+    expect(description).toContain("pilot");
+  });
+
+  it("says the same in the card document", () => {
+    const description = toJsonSchemas().card.description ?? "";
+
+    expect(description).toContain("confirm");
+    expect(description).toContain("pilot");
   });
 });
