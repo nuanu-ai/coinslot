@@ -1,7 +1,9 @@
+import type { AddressInfo } from "node:net";
 import type { Card } from "@coinslot/contracts";
 import { API_ROUTES, mountableRoutes } from "@coinslot/contracts";
 import { decodePaymentRequiredHeader, encodePaymentSignatureHeader } from "@x402/core/http";
 import { afterEach, describe, expect, it } from "vitest";
+import { z } from "zod";
 import { type Harness, harness, type Served, serve, workUntilStopped } from "../testing/harness.js";
 import { buildApp } from "./server.js";
 import { ORDER_ID_IN_EXTRA, PAYMENT_REQUIRED_HEADER, PAYMENT_SIGNATURE_HEADER } from "./x402.js";
@@ -89,6 +91,40 @@ describe("the surface is the table", () => {
     expect(() =>
       buildApp(harnessed.gateway, [["get_order_status" as never, API_ROUTES.get_order_status]]),
     ).toThrow(/nothing to serve it with/);
+  });
+});
+
+describe("what a call answers with", () => {
+  it("refuses to send a document the contract would not recognise", async () => {
+    // The answer goes out held to the same schema the SDK holds it to. A
+    // response that does not match is a lie the other side would reject anyway,
+    // and failing here is how it is found before somebody's integration finds
+    // it. The route below is the catalog with a different document named
+    // against it, which is what a drift between the two sides would look like.
+    const { harnessed } = await started();
+
+    const app = buildApp(harnessed.gateway, [
+      [
+        "list_catalog" as never,
+        {
+          ...API_ROUTES.list_catalog,
+          response: { document: z.strictObject({ nothing_like_a_catalog: z.string() }) },
+        },
+      ],
+    ]);
+    const server = app.listen(0);
+    await new Promise<void>((resolve) => server.once("listening", resolve));
+    const { port } = server.address() as AddressInfo;
+
+    try {
+      const answered = await fetch(`http://127.0.0.1:${port}/v0/catalog`);
+      expect(answered.status).toBe(500);
+      expect((await answered.json()) as { error: { code: string } }).toMatchObject({
+        error: { code: "gateway_failed" },
+      });
+    } finally {
+      server.close();
+    }
   });
 });
 

@@ -241,6 +241,27 @@ describe("an asynchronous purchase", () => {
     );
   });
 
+  it("stamps the receipt with the moment the money moved, not the moment it was written", async () => {
+    // The charge goes through at the purchase and the goods come hours later.
+    // A receipt stamped with the delivery would tell the merchant their buyer
+    // was charged at a moment when nothing had happened yet, and reconciling
+    // against it would come out wrong by exactly that gap.
+    const harnessed = await started();
+    const itemId = await published(harnessed, asyncCard);
+    const offered = await harnessed.gateway.beginPurchase(itemId, {});
+    if (offered.step !== "pay") throw new Error("no price was offered");
+    const orderId = offered.order.order.id;
+
+    await harnessed.gateway.payPurchase(orderId, "PAYMENT");
+    const whenTheMoneyMoved = harnessed.now();
+
+    harnessed.advance(6 * 60 * 60 * 1_000);
+    await harnessed.gateway.deliverOrder(orderId, { activation_code: "A" });
+
+    const receipt = await harnessed.store.receiptForOrder(orderId);
+    expect(receipt?.paid_at).toBe(new Date(whenTheMoneyMoved).toISOString());
+  });
+
   it("answers a second delivery the same way as the first", async () => {
     // The portal's promise: called again after a dropped connection, deliver
     // delivers nothing twice and charges nothing twice.
@@ -430,6 +451,23 @@ describe("the price question", () => {
       as_of: "2026-08-26T12:00:00.000Z",
     });
     expect(late).toStrictEqual({ used: false });
+  });
+
+  it("reports the silence itself when there is no reminder to fall back on", async () => {
+    // Two things notice that a price never came: the wait inside the purchase,
+    // and the clock the machine armed when the order was created. They carry
+    // the same fact and normally race, so this test takes the second one away
+    // — the queue is told to forget its reminders — and holds the first one to
+    // the same answer on its own.
+    const harnessed = await started({ QUOTE_RESPONSE_MS: "10" });
+    harnessed.queue.remind = async () => undefined;
+    const itemId = await published(harnessed, livePriced(asyncCard));
+
+    const offered = await harnessed.gateway.beginPurchase(itemId, {});
+
+    expect(offered.step).toBe("settled");
+    if (offered.step !== "settled") throw new Error("the order was not closed");
+    expect(offered.order.order.closure).toStrictEqual({ cause: "quote_silent" });
   });
 
   it("treats a price check it cannot make as a merchant who did not answer", async () => {

@@ -190,6 +190,9 @@ describe("when a delivery goes unanswered", () => {
     // would be handed the same order every window until his deadline.
     const harnessed = await started({
       HANDLER_ANSWER_MS: "10",
+      // Short enough that a redelivery, if one were decided on, would be drawn
+      // well inside the wait below rather than after the test had finished.
+      REDELIVERY_BASE_DELAY_MS: "5",
       DEFAULT_ASYNC_FULFILLMENT_MS: "3000",
     });
     const orderId = await bought(harnessed, asyncCard);
@@ -203,8 +206,9 @@ describe("when a delivery goes unanswered", () => {
       { timeout: 2_000, interval: 5 },
     );
 
-    // Long enough for the reminder against that delivery to have fired.
-    await new Promise((resolve) => setTimeout(resolve, 60));
+    // Long enough for the reminder against that delivery to have fired and for
+    // any redelivery it decided on to have been drawn.
+    await new Promise((resolve) => setTimeout(resolve, 150));
     await taking.stop();
 
     expect((await state(harnessed, orderId))?.dispatch.attempts).toBe(1);
