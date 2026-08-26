@@ -4,6 +4,8 @@ import {
   deliveryCheckFor,
   FulfillmentSchema,
   PriceCheckSchema,
+  PublicCardSchema,
+  publicCardOf,
   purchaseCheckFor,
 } from "./card.js";
 import { toJsonSchemas } from "./index.js";
@@ -310,5 +312,199 @@ describe("what the exported document says about the mode", () => {
 
     expect(description).toContain("confirm");
     expect(description).toContain("pilot");
+  });
+});
+
+describe("the card an agent reads", () => {
+  // The promise: an agent choosing between products sees everything it needs
+  // to choose and to buy, and nothing about how the merchant runs their shop.
+  // Every field here is a claim we make to somebody spending money on it, so
+  // the projection names what it copies rather than removing what it must not.
+
+  const published = CardSchema.parse({ ...syncCard, price_check: "handler" });
+  const issued = { id: "itm_4d21bb", as_of: "2026-08-26T09:00:00Z" };
+  const publicCard = publicCardOf(published, issued);
+
+  it("is a document an agent can buy from", () => {
+    expect(PublicCardSchema.safeParse(publicCard).success).toBe(true);
+  });
+
+  it("carries these fields and no others", () => {
+    // Written out rather than checked field by field, because the failure this
+    // guards against is a field appearing: a card gains something the merchant
+    // considers internal, the projection copies it because it copies broadly,
+    // and it reaches every agent before anybody notices.
+    expect(Object.keys(publicCard).sort()).toStrictEqual([
+      "as_of",
+      "description",
+      "fulfillment",
+      "id",
+      "params",
+      "price",
+      "price_checked_at_purchase",
+      "result",
+      "title",
+    ]);
+  });
+
+  it("hands the agent our catalog identifier and not the merchant's own key", () => {
+    // Our identifier is what a purchase, a receipt and a status all use. The
+    // merchant's key is theirs, it is unique only inside their own catalog,
+    // and an agent given both would use the wrong one some of the time.
+    expect(publicCard.id).toBe("itm_4d21bb");
+    expect(Object.keys(publicCard)).not.toContain("merchant_item_id");
+    expect(PublicCardSchema.safeParse({ ...publicCard, merchant_item_id: "access-monthly" }).success).toBe(false);
+  });
+
+  it("says the price will be asked again without saying where", () => {
+    // The address of a merchant's pricing service is infrastructure of theirs
+    // that no agent calls and that publishing would expose to everyone. That
+    // the price is asked again is the part an agent acts on: the catalog price
+    // is what it compares, and the sale can go through at another.
+    expect(publicCard.price_checked_at_purchase).toBe(true);
+    expect(JSON.stringify(publicCard)).not.toContain("price_check");
+    expect(PublicCardSchema.safeParse({ ...publicCard, price_check: "handler" }).success).toBe(false);
+    expect(
+      PublicCardSchema.safeParse({ ...publicCard, price_check: { url: "https://pricing.internal/quote" } }).success,
+    ).toBe(false);
+  });
+
+  it("says the price is firm when the card has no price check at all", () => {
+    const fixed = publicCardOf(CardSchema.parse(syncCard), issued);
+
+    expect(fixed.price_checked_at_purchase).toBe(false);
+  });
+
+  it("refuses a card whose flag about the price is missing rather than reading silence", () => {
+    // Both readings are expensive. Read as false, an agent budgets against a
+    // price that is about to move; read as true, it distrusts a price that
+    // never moves and walks away from a sale.
+    expectMissingFieldRejected(PublicCardSchema, publicCard, "price_checked_at_purchase");
+    expect(
+      PublicCardSchema.safeParse({ ...publicCard, price_checked_at_purchase: "yes" }).success,
+    ).toBe(false);
+  });
+
+  for (const field of [
+    "id",
+    "title",
+    "description",
+    "price",
+    "as_of",
+    "result",
+    "fulfillment",
+    "price_checked_at_purchase",
+  ]) {
+    it(`refuses a public card without ${field} and names it`, () => {
+      expectMissingFieldRejected(PublicCardSchema, publicCard, field);
+    });
+  }
+
+  it("accepts a product that needs no input from the agent", () => {
+    const noInput = publicCardOf(CardSchema.parse({ ...syncCard, params: undefined }), issued);
+
+    expect(Object.keys(noInput)).not.toContain("params");
+    expect(PublicCardSchema.safeParse(noInput).success).toBe(true);
+  });
+
+  it("carries the moment the price it shows was published", () => {
+    // A price with no moment behind it cannot be judged stale, and this is the
+    // catalog's only freshness claim: the same `as_of` an order carries when
+    // it is sold from the card price rather than from a live answer.
+    expect(publicCard.as_of).toBe("2026-08-26T09:00:00Z");
+    expect(PublicCardSchema.safeParse({ ...publicCard, as_of: "2026-08-26" }).success).toBe(false);
+  });
+
+  it("holds the declared result to the same rule the published card is held to", () => {
+    // The agent reads this before paying, so it has to promise the same thing
+    // the card promised: at least one field, and at least one that arrives.
+    expect(PublicCardSchema.safeParse({ ...publicCard, result: {} }).success).toBe(false);
+    expect(
+      PublicCardSchema.safeParse({
+        ...publicCard,
+        result: { access_url: { type: "string", required: false } },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("advertises a delivery deadline on the mode that has one", () => {
+    const async = publicCardOf(
+      CardSchema.parse({ ...syncCard, fulfillment: "async", fulfill_deadline_seconds: 900 }),
+      issued,
+    );
+
+    expect(async.fulfillment === "async" && async.fulfill_deadline_seconds).toBe(900);
+    expect(PublicCardSchema.safeParse(async).success).toBe(true);
+  });
+
+  it("cannot advertise a wait that the mode never has", () => {
+    // A synchronous card delivers inside our own response budget, one number
+    // for every product; a delivery deadline on it would be a promise about a
+    // wait that does not happen. The published card is already held to this,
+    // and holding the projection to it too is what keeps a bug in whoever
+    // builds the projection from reaching an agent as a false claim.
+    expect(
+      PublicCardSchema.safeParse({ ...publicCard, fulfill_deadline_seconds: 900 }).success,
+    ).toBe(false);
+    expect(
+      PublicCardSchema.safeParse({ ...publicCard, confirm_deadline_seconds: 60 }).success,
+    ).toBe(false);
+
+    const async = publicCardOf(
+      CardSchema.parse({ ...syncCard, fulfillment: "async", fulfill_deadline_seconds: 900 }),
+      issued,
+    );
+    expect(
+      PublicCardSchema.safeParse({ ...async, confirm_deadline_seconds: 60 }).success,
+    ).toBe(false);
+  });
+
+  it("says the deadline rule as structure, so it survives into the exported document", () => {
+    // The reason the shape is a union over the mode rather than one object
+    // with a rule attached: JSON Schema cannot hold "this field only when that
+    // one has this value", and zod drops such a rule without a word. As
+    // branches it crosses whole, and a generated client refuses what we refuse.
+    const document = toJsonSchemas().public_card;
+    const branches = document.anyOf ?? document.oneOf ?? [];
+    const modeOf = (branch: (typeof branches)[number]) =>
+      ((branch as { properties?: Record<string, { const?: unknown }> }).properties?.fulfillment ?? {})
+        .const;
+    const branchFor = (mode: string) => branches.find((branch) => modeOf(branch) === mode);
+    const propertiesOf = (mode: string) =>
+      Object.keys(
+        (branchFor(mode) as { properties?: Record<string, unknown> } | undefined)?.properties ?? {},
+      );
+
+    expect(branches).toHaveLength(3);
+    expect(propertiesOf("sync")).not.toContain("fulfill_deadline_seconds");
+    expect(propertiesOf("sync")).not.toContain("confirm_deadline_seconds");
+    expect(propertiesOf("async")).toContain("fulfill_deadline_seconds");
+    expect(propertiesOf("async")).not.toContain("confirm_deadline_seconds");
+    expect(propertiesOf("confirm")).toContain("confirm_deadline_seconds");
+  });
+
+  it("projects every card of the pilot merchant's catalog into something an agent can read", () => {
+    // The cross-check that keeps the two shapes in step. A card the merchant
+    // may publish and whose projection this schema refuses is a product that
+    // cannot be shown for sale, and the first anyone would hear of it is an
+    // empty catalog.
+    const catalog = [
+      syncCard,
+      { ...syncCard, price_check: "handler" },
+      { ...syncCard, params: undefined },
+      { ...syncCard, fulfillment: "async" },
+      { ...syncCard, fulfillment: "async", fulfill_deadline_seconds: 900 },
+      { ...syncCard, price_check: { url: "https://api.example.com/quote" } },
+    ];
+
+    for (const card of catalog) {
+      const projected = publicCardOf(CardSchema.parse(card), issued);
+      const verdict = PublicCardSchema.safeParse(projected);
+
+      expect(
+        verdict.success ? "" : JSON.stringify(verdict.error?.issues),
+        JSON.stringify(card),
+      ).toBe("");
+    }
   });
 });
