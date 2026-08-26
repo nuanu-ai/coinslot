@@ -25,6 +25,32 @@ interface ZodInternals {
   _zod?: { def?: Record<string, unknown> };
 }
 
+/**
+ * The keys under which zod stores one schema inside another, as of zod 4.
+ *
+ * `shape` and `options` hold several; the rest hold one. `getter` is `z.lazy`,
+ * which has to be called to yield anything.
+ */
+const WAYS_A_SCHEMA_HOLDS_ANOTHER = [
+  "shape",
+  "options",
+  "valueType",
+  "keyType",
+  "innerType",
+  "element",
+  "items",
+  "rest",
+  "left",
+  "right",
+  "in",
+  "out",
+  "catchall",
+  "getter",
+] as const;
+
+const callGetter = (getter: unknown): unknown =>
+  typeof getter === "function" ? (getter as () => unknown)() : undefined;
+
 const isRefined = (schema: unknown): boolean =>
   (((schema as ZodInternals)._zod?.def?.checks as unknown[]) ?? []).some(
     (check) => (check as ZodInternals)._zod?.def?.check === "custom",
@@ -57,8 +83,12 @@ const walkRefined = (
     found.push({ path, described: (meta?.description ?? "").length > 0 });
   }
 
-  for (const key of ["shape", "options", "valueType", "keyType", "innerType", "element"]) {
-    const child = def[key];
+  // Every way zod holds one schema inside another. The list was short once and
+  // a refinement inside a tuple went unseen — which is the failure this whole
+  // invariant exists to prevent, so the walk is tested against each of these
+  // rather than trusted to be complete.
+  for (const key of WAYS_A_SCHEMA_HOLDS_ANOTHER) {
+    const child = key === "getter" ? callGetter(def[key]) : def[key];
     if (child === undefined) continue;
 
     if (Array.isArray(child)) {
@@ -322,6 +352,37 @@ describe("the contract as JSON Schema", () => {
 
     // And a schema with no refinement at all contributes nothing.
     expect(refinementsIn(z.string(), "plain")).toStrictEqual([]);
+  });
+
+  it("reaches inside every way zod holds one schema in another", () => {
+    // The companion test above pins what the walk finds in the registry, which
+    // is not the guard it looks like: a container the walk cannot enter simply
+    // contributes nothing, and the found set stays exactly as expected. A
+    // refinement inside a tuple went unseen that way — and unseen means its
+    // rule vanishes from the export in silence, the defect this file has now
+    // paid for three times.
+    const hidden = z.string().refine(() => true);
+    const containers: [string, z.ZodType][] = [
+      ["object", z.strictObject({ field: hidden })],
+      ["record value", z.record(z.string(), hidden)],
+      ["array", z.array(hidden)],
+      ["optional", hidden.optional()],
+      ["nullable", hidden.nullable()],
+      ["default", hidden.default("x")],
+      ["union", z.union([hidden, z.number()])],
+      ["tuple", z.tuple([hidden])],
+      ["tuple rest", z.tuple([z.string()], hidden)],
+      ["intersection", z.intersection(hidden, z.string())],
+      ["pipe", z.string().pipe(hidden)],
+      ["lazy", z.lazy(() => hidden)],
+      ["catchall", z.object({}).catchall(hidden)],
+    ];
+
+    const blind = containers
+      .filter(([, container]) => refinementsIn(container, "held").length === 0)
+      .map(([name]) => name);
+
+    expect(blind).toStrictEqual([]);
   });
 
   it("carries the rules it cannot express as structure in words instead", () => {
