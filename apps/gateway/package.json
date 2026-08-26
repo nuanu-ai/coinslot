@@ -11,6 +11,14 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@coinbase/cdp-sdk": "1.55.0",
+    "@x402/core": "2.23.0",
+    "@x402/evm": "2.23.0",
+    "@x402/express": "2.23.0",
+    "drizzle-orm": "0.45.2",
+    "express": "5.2.1",
+    "pg": "8.23.0",
+    "pg-boss": "12.28.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
