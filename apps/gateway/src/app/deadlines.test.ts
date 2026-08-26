@@ -71,7 +71,7 @@ describe("when the time runs out", () => {
     const harnessed = await started();
     const orderId = await bought(harnessed, syncCard);
 
-    const settled = await harnessed.gateway.payPurchase(orderId, "PAYMENT");
+    const settled = await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
 
     expect(settled.step).toBe("settled");
     if (settled.step !== "settled") throw new Error("the purchase did not settle");
@@ -91,7 +91,7 @@ describe("when the time runs out", () => {
     // system claiming otherwise.
     const harnessed = await started();
     const orderId = await bought(harnessed, asyncCard);
-    await harnessed.gateway.payPurchase(orderId, "PAYMENT");
+    await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
 
     await vi.waitFor(
       async () => expect((await state(harnessed, orderId))?.state).toBe("refund_due"),
@@ -144,7 +144,7 @@ describe("when a delivery goes unanswered", () => {
       DEFAULT_ASYNC_FULFILLMENT_MS: "3000",
     });
     const orderId = await bought(harnessed, asyncCard);
-    await harnessed.gateway.payPurchase(orderId, "PAYMENT");
+    await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
 
     // A worker that draws its stream and never answers anything.
     const silent = workUntilStopped(harnessed, {});
@@ -170,7 +170,7 @@ describe("when a delivery goes unanswered", () => {
       DEFAULT_ASYNC_FULFILLMENT_MS: "60000",
     });
     const orderId = await bought(harnessed, asyncCard);
-    await harnessed.gateway.payPurchase(orderId, "PAYMENT");
+    await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
 
     const silent = workUntilStopped(harnessed, {});
     await vi.waitFor(
@@ -196,7 +196,7 @@ describe("when a delivery goes unanswered", () => {
       DEFAULT_ASYNC_FULFILLMENT_MS: "3000",
     });
     const orderId = await bought(harnessed, asyncCard);
-    await harnessed.gateway.payPurchase(orderId, "PAYMENT");
+    await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
 
     const taking = workUntilStopped(harnessed, {
       onOrder: () => ({ accepted: { eta_seconds: 60 } }),
@@ -221,7 +221,7 @@ describe("a timer that fires at the wrong moment", () => {
     // Closing an order on it would refund a buyer whose merchant is not late.
     const harnessed = await started();
     const orderId = await bought(harnessed, asyncCard);
-    await harnessed.gateway.payPurchase(orderId, "PAYMENT");
+    await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
     await harnessed.gateway.deliverOrder(orderId, { activation_code: "A" });
 
     const refused = await harnessed.gateway.runner.apply(orderId, {
@@ -239,7 +239,7 @@ describe("a timer that fires at the wrong moment", () => {
   it("cannot close an order before its deadline has actually run out", async () => {
     const harnessed = await started({ DEFAULT_ASYNC_FULFILLMENT_MS: "3000" });
     const orderId = await bought(harnessed, asyncCard);
-    await harnessed.gateway.payPurchase(orderId, "PAYMENT");
+    await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
 
     const early = await harnessed.gateway.runner.apply(orderId, {
       kind: "deadline_expired",
@@ -251,5 +251,41 @@ describe("a timer that fires at the wrong moment", () => {
     if (early.outcome !== "refused") throw new Error("the early timer was taken");
     expect(early.rejection.code).toBe("deadline_not_yet_due");
     expect((await state(harnessed, orderId))?.state).toBe("paid");
+  });
+});
+
+describe("a reminder that could not be carried out", () => {
+  it("is asked for again rather than lost in silence", async () => {
+    // A reminder is the only thing that ever declares an overdue order, so one
+    // dropped on a store that was briefly unreachable is a paid order nobody
+    // ever marks for a refund. It is asked for again, and a defect that will
+    // never work stops rather than looping.
+    const harnessed = await started({
+      DEFAULT_ASYNC_FULFILLMENT_MS: "20",
+      REDELIVERY_BASE_DELAY_MS: "5",
+      REMINDER_ATTEMPTS: "3",
+    });
+    const orderId = await bought(harnessed, asyncCard);
+    await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
+
+    // The store fails the first two times the reminder tries to move the order.
+    const deciding = harnessed.store.withOrder.bind(harnessed.store);
+    let failures = 0;
+    harnessed.store.withOrder = (async (id: string, change: never) => {
+      if (failures < 2) {
+        failures += 1;
+        throw new Error("the store was briefly unreachable");
+      }
+      return deciding(id, change);
+    }) as typeof harnessed.store.withOrder;
+
+    await vi.waitFor(
+      async () => expect((await state(harnessed, orderId))?.state).toBe("refund_due"),
+      {
+        timeout: 2_000,
+        interval: 5,
+      },
+    );
+    expect(failures).toBe(2);
   });
 });

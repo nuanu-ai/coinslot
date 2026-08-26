@@ -7,15 +7,22 @@
  * backoff and delayed jobs, and the hand-rolled mechanism on SKIP LOCKED that
  * a reader might expect here is the thing that rule exists to forbid.
  *
- * Two facts about delivery are worth reading before either method is used.
+ * Three facts about delivery are worth reading before either method is used,
+ * and the first of them is a limit rather than a promise.
  *
- * Delivery is at least once and an envelope is finished by hand. A delivery
- * that is drawn and never answered comes back — that is what makes a worker
- * that died mid-order harmless — and the merchant's own idempotency by the
- * order's identifier is what makes the repeat safe. Nothing here decides how
- * often that happens: the reminder below is what tells the gateway a delivery
- * went unanswered, and the order machine decides whether there is another
- * attempt and how long the wait before it is.
+ * A drawn envelope does not come back on its own. It is finished when it has
+ * been handed over, and nothing in this port returns it to the stream after a
+ * visibility window. That is deliberate for orders: an unanswered delivery
+ * reaches the order machine as the reminder below, and the machine is the one
+ * thing that knows how many attempts are left and whether another could still
+ * land inside the deadline, so a queue with its own patience would be a second
+ * opinion over the top of it.
+ *
+ * It is a real gap for events. An order event is acknowledged by nobody — the
+ * contract gives it no reply of any kind — so an event drawn into a poll
+ * response that never reached its worker is simply lost, and the merchant is
+ * never told the thing it carried. Nothing here can close that; it needs an
+ * acknowledgement the contract does not have.
  *
  * A reminder is not a decision either. It says a clock ran out; what that
  * means for the order is the machine's to say, and every reminder is fed to it
@@ -44,19 +51,28 @@ export interface DrawnEnvelope {
  * against its own arithmetic: a timer that fired early or twice must not close
  * an order whose merchant is still honestly inside his deadline.
  */
-export type Reminder =
+export type Reminder = (
   | {
       readonly kind: "deadline";
-      readonly orderId: string;
       readonly deadline: DeadlineKind;
       readonly at: number;
     }
   | {
       readonly kind: "delivery_unanswered";
-      readonly orderId: string;
       /** Which delivery went quiet, so a later answer to it is not undone. */
       readonly envelopeId: string;
-    };
+    }
+) & {
+  readonly orderId: string;
+  /**
+   * How many times this reminder has been asked for. It is here because a
+   * reminder is the only thing that ever declares an overdue order, so one
+   * dropped on a transient failure is a paid order nobody ever marks for a
+   * refund; the count is what lets it be asked for again without asking
+   * forever.
+   */
+  readonly attempt?: number;
+};
 
 export interface Queue {
   /** Puts one envelope on the merchant's stream, now or after a wait. */

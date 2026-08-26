@@ -95,8 +95,6 @@ if (databaseUrl === undefined || databaseUrl === "") {
       };
       gateway = new Gateway(runtime);
       await gateway.start();
-      await queue.stop();
-      await queue.start();
     }, 60_000);
 
     afterAll(async () => {
@@ -186,7 +184,7 @@ if (databaseUrl === undefined || databaseUrl === "") {
         { gateway },
         { onOrder: () => ({ delivered: { access_code: "SESAME" } }) },
       );
-      const bought = await gateway.payPurchase(offered.order.order.id, "PAYMENT");
+      const bought = await gateway.payPurchase(offered.order.order.id, "PAYMENT", "PAYMENT");
       await worker.stop();
 
       expect(bought.step).toBe("settled");

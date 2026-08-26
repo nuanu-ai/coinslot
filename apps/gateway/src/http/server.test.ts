@@ -400,6 +400,77 @@ describe("a purchase over HTTP, from the catalog to the goods", () => {
   });
 });
 
+describe("what an agent is told when the money is not settled", () => {
+  it("does not answer a synchronous purchase with a success it has no goods for", async () => {
+    // The one way here is the case that most needs saying: a charge that went
+    // out and never reported back. Answered 200, an agent reads "your purchase
+    // is being worked on" for an order nothing is working on, while holding
+    // nothing and not knowing whether it was charged.
+    const { served, harnessed } = await started({
+      QUOTE_RESPONSE_MS: "50",
+      SYNC_RESPONSE_MS: "200",
+      SETTLE_RESPONSE_MS: "100",
+      SYNC_BUDGET_MS: "300",
+    });
+    harnessed.facilitator.willSettle({ settled: "unknown", reason: "the facilitator timed out" });
+    const itemId = await publish(served, syncCard);
+
+    const priced = await served.call("POST", `/v0/items/${itemId}/purchase`, {
+      body: { params: {} },
+    });
+    const requirements = decodePaymentRequiredHeader(
+      priced.headers.get(PAYMENT_REQUIRED_HEADER) ?? "",
+    ).accepts[0];
+    if (requirements === undefined) throw new Error("no payment option was offered");
+
+    const worker = workUntilStopped(harnessed, {
+      onOrder: () => ({ delivered: { access_code: "SESAME" } }),
+    });
+    const answered = await served.call("POST", `/v0/items/${itemId}/purchase`, {
+      body: { params: {} },
+      headers: {
+        [PAYMENT_SIGNATURE_HEADER]: encodePaymentSignatureHeader({
+          x402Version: 2,
+          accepted: requirements,
+          payload: { signature: "0xsigned" },
+        }),
+      },
+    });
+    await worker.stop();
+
+    expect(answered.status).toBe(409);
+    expect(answered.body).toMatchObject({ status: "in_progress" });
+  });
+
+  it("says an order closed before it was priced is closed, not still waiting", async () => {
+    // The document this call answers in carries a sale price, and an order the
+    // merchant said was out of stock never got one. Saying it is "still waiting
+    // for its price" would be a positive false statement about a purchase that
+    // is over.
+    const { served, harnessed } = await started({ QUOTE_RESPONSE_MS: "10" });
+    const itemId = await publish(served, {
+      ...syncCard,
+      merchant_item_id: "gone",
+      fulfillment: "async",
+      price_check: "handler",
+    });
+
+    const offered = await harnessed.gateway.beginPurchase(itemId, {});
+    if (offered.step !== "settled") throw new Error("the silent async card sold anyway");
+
+    const read = await served.call(
+      "GET",
+      `/v0/orders/${encodeURIComponent(offered.order.order.id)}`,
+      { headers: asMerchant },
+    );
+
+    expect(read.status).toBe(409);
+    expect(read.body).toMatchObject({
+      error: { code: "order_closed_before_it_was_priced", status: "rejected" },
+    });
+  });
+});
+
 describe("the worker's calls over HTTP", () => {
   it("draws the stream and answers an order through the routes the SDK uses", async () => {
     const { served, harnessed } = await started();
@@ -412,7 +483,7 @@ describe("the worker's calls over HTTP", () => {
     const offered = await harnessed.gateway.beginPurchase(itemId, {});
     if (offered.step !== "pay") throw new Error("no price was offered");
     const orderId = offered.order.order.id;
-    await harnessed.gateway.payPurchase(orderId, "PAYMENT");
+    await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
 
     const drawn = await served.call("POST", "/v0/worker/poll", {
       body: { wait_seconds: 0 },
@@ -433,6 +504,58 @@ describe("the worker's calls over HTTP", () => {
 
     expect(answered.status).toBe(200);
     expect(answered.body).toStrictEqual({ ok: true, result: "delivered" });
+  });
+
+  it("does not answer a recorded acceptance under a status meaning the call failed", async () => {
+    // The body says ok:false because the contract has no word for a successful
+    // acceptance. An SDK branching on the status as well would turn a landed
+    // acceptance into a retry loop, which is what the message inside is trying
+    // to talk it out of.
+    const { served, harnessed } = await started();
+    const itemId = await publish(served, {
+      ...syncCard,
+      merchant_item_id: "esim-accept",
+      fulfillment: "async",
+    });
+    const offered = await harnessed.gateway.beginPurchase(itemId, {});
+    if (offered.step !== "pay") throw new Error("no price was offered");
+    const orderId = offered.order.order.id;
+    await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
+
+    const answered = await served.call("POST", `/v0/orders/${orderId}/answer`, {
+      body: { accepted: { eta_seconds: 30 } },
+      headers: asMerchant,
+    });
+
+    expect(answered.status).toBe(200);
+    expect(answered.body).toMatchObject({
+      ok: false,
+      error: { code: "acceptance_has_no_word_in_this_contract" },
+    });
+    expect((await harnessed.store.orderById(orderId))?.order.dispatch.accepted).toBe(true);
+  });
+
+  it("refuses a body that is not JSON in the shape everything else refuses in", async () => {
+    // The parser turns it away before any route runs, so without an answer of
+    // our own it comes back as express's HTML page — from a surface whose every
+    // other refusal is a document, to a client that only reads documents.
+    const { served } = await started();
+
+    const answered = await served.call("POST", "/v0/quotes/prc_1/answer", {
+      headers: { ...asMerchant, "content-type": "application/json" },
+      body: undefined,
+    });
+    const raw = await fetch(`${served.url}/v0/quotes/prc_1/answer`, {
+      method: "POST",
+      headers: { ...asMerchant, "content-type": "application/json" },
+      body: "{ this is not json",
+    });
+
+    expect(raw.status).toBe(400);
+    expect((await raw.json()) as { error: { code: string } }).toMatchObject({
+      error: { code: "malformed_body" },
+    });
+    expect(answered.status).toBe(400);
   });
 
   it("answers a call about an order nobody made with a plain not found", async () => {

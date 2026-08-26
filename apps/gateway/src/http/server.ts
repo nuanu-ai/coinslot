@@ -109,6 +109,32 @@ export function buildApp(
     response.status(404).json(refusal("no_such_route", "there is no call at this address"));
   });
 
+  // A body that is not JSON at all is refused by the parser above, before any
+  // route runs, so nothing in the mounting loop ever sees it. Without this it
+  // comes back as express's own HTML page — from a surface whose every other
+  // refusal is a document, to a client that only reads documents.
+  app.use(
+    (thrown: unknown, _request: Request, response: Response, next: (error?: unknown) => void) => {
+      if (response.headersSent) {
+        next(thrown);
+        return;
+      }
+      const fromTheParser =
+        typeof thrown === "object" && thrown !== null && "type" in thrown && "status" in thrown;
+
+      if (fromTheParser) {
+        response
+          .status(400)
+          .json(refusal("malformed_body", "this call's body could not be read as JSON"));
+        return;
+      }
+      console.error("[gateway] a request failed before it reached a route", thrown);
+      response
+        .status(500)
+        .json(refusal("gateway_failed", "this call did not complete and nothing was decided"));
+    },
+  );
+
   return app;
 }
 

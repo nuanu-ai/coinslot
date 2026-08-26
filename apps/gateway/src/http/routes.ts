@@ -20,6 +20,7 @@ import type {
   WorkerPollRequest,
 } from "@coinslot/contracts";
 import { outcomeFor } from "@coinslot/core";
+import { ACCEPTANCE_HAS_NO_WORD } from "../app/answers.js";
 import type { Gateway, PurchaseAttempt } from "../app/gateway.js";
 import { orderDocumentOf } from "../app/runner.js";
 import type { MountedRoute, RouteAnswer, RouteCall } from "./server.js";
@@ -28,6 +29,7 @@ import {
   PAYMENT_REQUIRED_HEADER,
   PAYMENT_RESPONSE_HEADER,
   PaymentEdge,
+  paymentFingerprint,
   presentedPayment,
 } from "./x402.js";
 
@@ -73,14 +75,24 @@ export function handlersFor(gateway: Gateway): Partial<Record<RouteName, Mounted
           return written(response, NOT_FOUND, refusal("no_such_order", "there is no such order"));
         }
         if (record.order.price === null) {
-          // An order still waiting for its price has no sale price, and the shape
-          // this call answers in requires one. Standing the card's number in for
-          // it would be a claim about a sale that has not been priced.
-          return written(
-            response,
-            CONFLICT,
-            refusal("order_not_priced_yet", "this order is still waiting for its price"),
-          );
+          // The shape this call answers in carries a sale price and this order
+          // has none: standing the card's number in for it would be a claim
+          // about a sale that was never priced. Which of the two silences it is
+          // matters to the merchant, so both are said, along with where the
+          // order ended — one closed before it was priced is not waiting for
+          // anything, and saying it was would be a positive false statement
+          // about a purchase that is over.
+          const status = outcomeFor(record.order);
+          const open = status === "in_progress";
+          return written(response, CONFLICT, {
+            error: {
+              code: open ? "order_not_priced_yet" : "order_closed_before_it_was_priced",
+              message: open
+                ? "this order is still waiting for its price, and until it has one there is no sale to describe"
+                : `this order ended as ${status} before anybody named a price for it, so there is no sale to describe`,
+              status,
+            },
+          });
         }
         const document: OrderWithStatus = {
           ...orderDocumentOf(record),
@@ -90,6 +102,12 @@ export function handlersFor(gateway: Gateway): Partial<Record<RouteName, Mounted
       },
     },
 
+    // Worth knowing before this list is reconciled against: it cannot show an
+    // order that was closed before anybody named a price for it — a product the
+    // merchant said was gone, or a price check he never answered on a card whose
+    // money moves at the purchase. The document every row is written in carries
+    // a sale price and those orders have none. They are readable one at a time
+    // by identifier, where the refusal says what became of them.
     list_orders: {
       serve: async ({ query }) => {
         // Only "true" narrows the list. Anything else asks for everything, which
@@ -124,8 +142,20 @@ export function handlersFor(gateway: Gateway): Partial<Record<RouteName, Mounted
     },
 
     answer_order: {
-      serve: async ({ params, body, response }) =>
-        answeredOrder(response, await gateway.answerOrder(params.order_id ?? "", body as never)),
+      serve: async ({ params, body, response }) => {
+        const answered = await gateway.answerOrder(params.order_id ?? "", body as never);
+        if (answered === null) {
+          return written(response, NOT_FOUND, refusal("no_such_order", "there is no such order"));
+        }
+        // An acceptance landed here comes back as ok:false because the contract
+        // has no word for a successful one, and that shape must not arrive under
+        // a status meaning the call failed as well. An SDK that branched on the
+        // status would turn a recorded acceptance into a retry loop, which is
+        // exactly what the message inside is trying to prevent.
+        const understood =
+          answered.ok || answered.error.code === ACCEPTANCE_HAS_NO_WORD.code ? OK : CONFLICT;
+        return { status: understood, document: answered };
+      },
     },
 
     deliver_order: {
@@ -222,7 +252,11 @@ async function purchase(
         edge,
         response,
         path,
-        await gateway.payPurchase(presented.orderId, presented.raw),
+        await gateway.payPurchase(
+          presented.orderId,
+          presented.raw,
+          paymentFingerprint(presented.payload),
+        ),
       );
     }
   }
@@ -261,6 +295,20 @@ async function answerPurchase(
     case "not_selling":
       return written(response, CONFLICT, refusal("not_selling", attempt.message));
 
+    case "payment_already_spent":
+      // The same signed payment was presented for a different order. It is not
+      // a refusal of the payment — it may be perfectly good — it is a refusal to
+      // spend one authorisation on two purchases, and the agent is told which
+      // purchase already holds it so it can go and collect that one.
+      return written(
+        response,
+        CONFLICT,
+        refusal(
+          "payment_already_spent",
+          `this payment was already presented for order ${attempt.heldBy}, and one payment buys one order`,
+        ),
+      );
+
     case "pay": {
       const price = attempt.order.order.price;
       if (price === null) {
@@ -273,7 +321,21 @@ async function answerPurchase(
       return written(response, PAYMENT_REQUIRED, {});
     }
 
-    case "under_way":
+    case "under_way": {
+      if (attempt.order.order.mode.settle === "after_fulfillment") {
+        // A synchronous purchase promises the agent the goods themselves inside
+        // one ceiling. Coming back from that ceiling with no goods is not a
+        // success, however the order is getting on internally — and the one way
+        // to arrive here is the case that most needs saying: a charge that was
+        // sent and never reported back. Answered 200, an agent would read "your
+        // purchase is being worked on" for an order nothing is working on,
+        // while holding nothing and not knowing whether it was charged.
+        return written(response, CONFLICT, {
+          order_id: attempt.order.order.id,
+          status: outcomeFor(attempt.order.order),
+        });
+      }
+
       // The money moved at the purchase and the goods come later. The receipt
       // is written when the order reaches an ending, so at this moment there is
       // none — and the answer says so rather than leaving the field out, which
@@ -282,6 +344,7 @@ async function answerPurchase(
         order: orderDocumentOf(attempt.order),
         receipt: await gateway.runtime.store.receiptForOrder(attempt.order.order.id),
       });
+    }
 
     case "settled": {
       const outcome = outcomeFor(attempt.order.order);

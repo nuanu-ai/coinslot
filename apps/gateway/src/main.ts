@@ -15,8 +15,7 @@
  */
 
 import { HTTPFacilitatorClient } from "@x402/core/server";
-import { PgBoss } from "pg-boss";
-import { PgBossQueue } from "./adapters/pgboss/queue.js";
+import { queueOn } from "./adapters/pgboss/queue.js";
 import { connect, PostgresStore } from "./adapters/postgres/store.js";
 import { X402Facilitator } from "./adapters/x402/facilitator.js";
 import { Gateway } from "./app/gateway.js";
@@ -38,9 +37,7 @@ const edge = new PaymentEdge(config.payment, config.publicBaseUrl, config.paymen
  */
 const QUEUE_POLL_INTERVAL_MS = 250;
 
-const queue = new PgBossQueue(new PgBoss(config.databaseUrl), {
-  pollIntervalMs: QUEUE_POLL_INTERVAL_MS,
-});
+const queue = queueOn(config.databaseUrl, { pollIntervalMs: QUEUE_POLL_INTERVAL_MS });
 
 const runtime: Runtime = {
   config,

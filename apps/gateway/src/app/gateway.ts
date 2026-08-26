@@ -27,6 +27,7 @@ import {
   type Delivery,
   type HandlerAnswer,
   type OrderAcceptResponse,
+  type OrderCallError,
   type OrderCallResponse,
   type PublishError,
   type PublishResult,
@@ -37,8 +38,10 @@ import {
   type Refusal,
   type WorkerPollResponse,
 } from "@coinslot/contracts";
-import { createOrder, fulfillmentDeadline, outcomeFor } from "@coinslot/core";
+import type { TransitionRejection } from "@coinslot/core";
+import { createOrder, fulfillmentDeadline, isOpen, outcomeFor } from "@coinslot/core";
 import { asTimestamp } from "../ports/clock.js";
+import type { Reminder } from "../ports/queue.js";
 import type { StoredCard, StoredOrder } from "../ports/store.js";
 import { ACCEPTANCE_HAS_NO_WORD, orderCallResponseOf } from "./answers.js";
 import { OrderRunner, orderDocumentOf } from "./runner.js";
@@ -74,13 +77,17 @@ export type PurchaseAttempt =
   | { readonly step: "under_way"; readonly order: StoredOrder }
   | { readonly step: "no_such_item" }
   | { readonly step: "params_rejected"; readonly problems: readonly PublishError[] }
-  | { readonly step: "not_selling"; readonly message: string };
+  | { readonly step: "not_selling"; readonly message: string }
+  /** This payment has already been presented for a different order. */
+  | { readonly step: "payment_already_spent"; readonly heldBy: string };
 
 export class Gateway {
   readonly runtime: Runtime;
   readonly runner: OrderRunner;
-  /** Merchants' answers to price questions, by the identifier of the question. */
+  /** Purchases parked on a price question, by the identifier of the question. */
   readonly quotes = new Waiting<QuoteResponse>();
+  /** Which order each open price question belongs to. */
+  readonly #questions = new Map<string, string>();
 
   constructor(runtime: Runtime) {
     this.runtime = runtime;
@@ -94,29 +101,57 @@ export class Gateway {
    */
   async start(): Promise<void> {
     this.runtime.queue.onReminder(async (reminder) => {
-      if (reminder.kind === "deadline") {
-        await this.runner.apply(reminder.orderId, {
-          kind: "deadline_expired",
-          at: reminder.at,
-          deadline: reminder.deadline,
-        });
-        return;
+      try {
+        await this.#onReminder(reminder);
+      } catch (thrown) {
+        // A reminder is the only thing that ever declares an overdue order, so
+        // one lost quietly is a paid order that is never marked for a refund and
+        // a silent charge that is never declared. It is said out loud, and it is
+        // asked for again — a store that was briefly unreachable should not cost
+        // a deadline. The attempts are counted so a defect that will never work
+        // stops complaining rather than looping forever.
+        const attempt = (reminder.attempt ?? 1) + 1;
+        const givingUp = attempt > this.runtime.config.reminderAttempts;
+        console.error(
+          `[gateway] a reminder failed (${reminder.kind}, order ${reminder.orderId}, attempt ${
+            reminder.attempt ?? 1
+          })${givingUp ? " and will not be asked for again" : ""}`,
+          thrown,
+        );
+        if (!givingUp) {
+          await this.runtime.queue.remind(
+            { ...reminder, attempt },
+            this.runtime.config.redelivery.baseDelayMs,
+          );
+        }
       }
-
-      // A delivery went unanswered. It only counts if it is still the delivery
-      // the order is waiting on: the merchant who answered the one he was given
-      // must not be sent the order again for a reminder left against it.
-      const record = await this.runtime.store.orderById(reminder.orderId);
-      if (record === null || record.openDeliveryId !== reminder.envelopeId) {
-        return;
-      }
-      await this.runner.apply(reminder.orderId, {
-        kind: "handler_undelivered",
-        at: this.runtime.clock(),
-      });
     });
 
     await this.runtime.queue.start();
+  }
+
+  /** One reminder, turned into one event and nothing more. */
+  async #onReminder(reminder: Reminder): Promise<void> {
+    if (reminder.kind === "deadline") {
+      await this.runner.apply(reminder.orderId, {
+        kind: "deadline_expired",
+        at: reminder.at,
+        deadline: reminder.deadline,
+      });
+      return;
+    }
+
+    // A delivery went unanswered. It only counts if it is still the delivery
+    // the order is waiting on: the merchant who answered the one he was given
+    // must not be sent the order again for a reminder left against it.
+    const record = await this.runtime.store.orderById(reminder.orderId);
+    if (record === null || record.openDeliveryId !== reminder.envelopeId) {
+      return;
+    }
+    await this.runner.apply(reminder.orderId, {
+      kind: "handler_undelivered",
+      at: this.runtime.clock(),
+    });
   }
 
   async stop(): Promise<void> {
@@ -200,6 +235,7 @@ export class Gateway {
       delivery: null,
       payment: null,
       settlement: null,
+      paymentWords: [],
       openDeliveryId: null,
     };
     await this.runner.create(record, created.effects, at);
@@ -217,10 +253,35 @@ export class Gateway {
    * purchase is answered with the goods, so the agent stays on the call until
    * the order has an answer or the promised ceiling runs out.
    */
-  async payPurchase(orderId: string, payment: string): Promise<PurchaseAttempt> {
+  async payPurchase(
+    orderId: string,
+    payment: string,
+    fingerprint: string,
+  ): Promise<PurchaseAttempt> {
     const before = await this.runtime.store.orderById(orderId);
     if (before === null) {
       return { step: "no_such_item" };
+    }
+
+    // A signed payment says how much, to whom and on which chain, and nothing
+    // at all about which purchase it is for. Two orders at the same price are
+    // therefore payable with one signature: both would verify, both would go to
+    // a merchant, both would be delivered, and only the second charge would
+    // fail — leaving a merchant who handed over goods for nothing. The first
+    // order to present a payment owns it, and that is decided here, before
+    // anything is verified and before any merchant is asked to do work.
+    const claim = await this.runtime.store.claimPayment(fingerprint, orderId);
+    if (!claim.claimed) {
+      return { step: "payment_already_spent", heldBy: claim.heldBy };
+    }
+
+    // An agent presenting a payment for an order that already had one is
+    // repeating the purchase. That is a fact about what the agent did, not a
+    // decision about what it costs: the machine is what knows that a repeat
+    // collects goods already made, reopens a purchase closed on a silent charge,
+    // or means nothing at all in the state the order is actually in.
+    if (before.payment !== null) {
+      await this.runner.apply(orderId, { kind: "purchase_repeated", at: this.runtime.clock() });
     }
 
     // The place in the call to start waiting is here, before the payment is
@@ -278,14 +339,12 @@ export class Gateway {
     );
 
     const handing: WorkerPollResponse["envelopes"] = [];
-    for (const delivery of drawn) {
-      // The queue's job ends at handing it over. Whether an unanswered delivery
-      // is repeated is the machine's, and it hears about it from the reminder
-      // left below rather than from the queue's own patience.
-      await queue.finish(delivery.handle);
+    const finished: string[] = [];
 
+    for (const delivery of drawn) {
       if (delivery.envelope.kind !== "order") {
         handing.push(delivery.envelope);
+        finished.push(delivery.handle);
         continue;
       }
 
@@ -297,20 +356,85 @@ export class Gateway {
         { openDeliveryId: delivery.envelope.id },
       );
 
+      if (applied.outcome === "refused" && applied.rejection.retryable) {
+        // The machine will take this hand-over, just not yet — a charge on this
+        // order is being executed and it will not answer anything else until it
+        // reports. The order goes back on the stream rather than being dropped,
+        // because dropping it is how an order that was paid for never reaches a
+        // merchant at all.
+        await queue.publish(delivery.envelope, config.redelivery.baseDelayMs);
+        finished.push(delivery.handle);
+        continue;
+      }
+
       if (applied.outcome !== "moved") {
+        // The order moved on since it was queued. Handing it to a handler would
+        // ask a merchant to work on a purchase that is over.
+        finished.push(delivery.handle);
         continue;
       }
 
       await this.#remindMeIfNobodyAnswers(applied.order, delivery.envelope.id, at);
       handing.push(delivery.envelope);
+      finished.push(delivery.handle);
+    }
+
+    // The queue is told last, once every hand-over in the batch has been
+    // recorded. Told first, a throw part way through the batch would leave
+    // envelopes finished that nobody was ever handed.
+    for (const handle of finished) {
+      await queue.finish(handle);
     }
 
     return { contract_version: CONTRACT_VERSION, envelopes: handing };
   }
 
-  /** The price and availability for a question that came off the stream. */
+  /**
+   * The price and availability for a question that came off the stream.
+   *
+   * The acknowledgement is the merchant's cue to release stock he set aside, so
+   * `used` has to mean what it says: the answer priced this purchase. It used to
+   * mean only that somebody was still listening, which is a different thing and
+   * wrong in the case that matters — the clock on our own patience can close the
+   * question a moment before an answer lands, and the merchant would have been
+   * told his price was taken while the sale went through at another one.
+   *
+   * So the answer is put to the machine here, and what the machine made of it is
+   * what comes back.
+   */
   async answerQuote(priceId: string, response: QuoteResponse): Promise<QuoteAnswerAck> {
-    return { used: this.quotes.answer(priceId, response) };
+    const asked = this.#questions.get(priceId);
+    if (asked === undefined) {
+      // A question we no longer hold — a worker replaying an envelope from an
+      // hour ago, or one already answered. It priced nothing.
+      return { used: false };
+    }
+
+    const at = this.runtime.clock();
+    const applied = await this.runner.apply(
+      asked,
+      response.available
+        ? {
+            kind: "quote_answered",
+            at,
+            available: true,
+            price: {
+              amount: response.price.amount,
+              currency: response.price.currency,
+              asOf: Date.parse(response.as_of),
+            },
+          }
+        : { kind: "quote_answered", at, available: false },
+      { priceId },
+    );
+
+    const used = applied.outcome === "moved";
+    if (used) {
+      this.#questions.delete(priceId);
+      // The purchase is parked waiting for exactly this.
+      this.quotes.answer(priceId, response);
+    }
+    return { used };
   }
 
   /** What the merchant's handler returned for an order it was given. */
@@ -381,14 +505,7 @@ export class Gateway {
       return null;
     }
     if (applied.outcome === "refused") {
-      return {
-        ok: false,
-        error: {
-          code: "order_already_closed",
-          message: `this order is in ${applied.rejection.state} and ${applied.rejection.message}`,
-          retryable: applied.rejection.retryable,
-        },
-      };
+      return { ok: false, error: refusedCall(applied.rejection) };
     }
     if (applied.answer !== null && !applied.answer.ok) {
       const answered = orderCallResponseOf(applied.answer);
@@ -418,12 +535,28 @@ export class Gateway {
       // transport is not served in this stage, and the honest thing to report
       // is the same fact an unanswered question produces: nobody told us what
       // this costs.
+      //
+      // Said out loud as well, because it is otherwise invisible from every
+      // side. The merchant's pricing is never once consulted, the merchant is
+      // never told so, and on a synchronous card the product simply sells at
+      // its snapshot price forever.
+      console.warn(
+        `[gateway] ${stored.id} asks for its price at an address, which this stage does not call — ${orderId} is priced as if nobody answered`,
+      );
       await this.runner.apply(orderId, { kind: "quote_silent", at: clock() });
       return;
     }
 
     const priceId = ids("prc");
     const askedAt = clock();
+
+    // Registered and parked before the question goes out, not after. A worker
+    // sitting on a poll is woken by that publish, and a merchant whose handler
+    // answers inside a millisecond would otherwise find nobody listening and
+    // have his price thrown away.
+    this.#questions.set(priceId, orderId);
+    const parked = this.quotes.wait(priceId, config.deadlines.quoteResponseMs);
+
     await queue.publish({
       kind: "quote_request",
       id: ids("env"),
@@ -437,33 +570,16 @@ export class Gateway {
       },
     });
 
-    const answered = await this.quotes.wait(priceId, config.deadlines.quoteResponseMs);
-    const at = clock();
+    const answered = await parked;
+    this.#questions.delete(priceId);
 
     if (answered === null) {
-      await this.runner.apply(orderId, { kind: "quote_silent", at });
-      return;
+      // Nobody said what it costs. The machine decides what that is worth, by
+      // mode: where the merchant's live answer still stands between the price
+      // and the charge, the card's own number sells; where the money moves at
+      // the purchase, the sale does not happen.
+      await this.runner.apply(orderId, { kind: "quote_silent", at: clock() });
     }
-
-    if (!answered.available) {
-      await this.runner.apply(orderId, { kind: "quote_answered", at, available: false });
-      return;
-    }
-
-    await this.runner.apply(
-      orderId,
-      {
-        kind: "quote_answered",
-        at,
-        available: true,
-        price: {
-          amount: answered.price.amount,
-          currency: answered.price.currency,
-          asOf: Date.parse(answered.as_of),
-        },
-      },
-      { priceId },
-    );
   }
 
   /**
@@ -522,17 +638,7 @@ export class Gateway {
       return null;
     }
     if (applied.outcome === "refused") {
-      return {
-        ok: false,
-        error: {
-          code:
-            applied.rejection.code === "settle_in_flight"
-              ? "settle_in_flight"
-              : "order_already_closed",
-          message: applied.rejection.message,
-          retryable: applied.rejection.retryable,
-        },
-      };
+      return { ok: false, error: refusedCall(applied.rejection) };
     }
     if (applied.answer === null) {
       // The machine took the event and had nothing to say back about it, which
@@ -543,6 +649,32 @@ export class Gateway {
     }
     return orderCallResponseOf(applied.answer);
   }
+}
+
+/**
+ * Why the machine would not take a merchant's call, in words that are true.
+ *
+ * The contract promises three codes mean one thing each, and the one this used
+ * to send for every refusal — "the order reached an ending that no call
+ * reopens" — was a lie about four of the five things the machine can say. A
+ * merchant walking their own list of open orders and calling deliver on one in
+ * the wrong state was told, in a code they are invited to branch on, that a
+ * live order was dead.
+ *
+ * So a closed order says it is closed, and everything else sends the machine's
+ * own word for what happened. Those are outside the promised three, which the
+ * contract allows for — the set is open — and each carries the state it was in,
+ * because "this has no meaning here" is only useful alongside where "here" is.
+ */
+function refusedCall(rejection: TransitionRejection): OrderCallError {
+  const closed = !isOpen(rejection.state);
+  return {
+    code: closed ? "order_already_closed" : rejection.code,
+    message: closed
+      ? `this order ended as ${rejection.state}, and ${rejection.event} does not reopen it`
+      : `this order is in ${rejection.state}: ${rejection.message}`,
+    retryable: rejection.retryable,
+  };
 }
 
 /** Zod's account of what is wrong, in the shape the contract publishes. */

@@ -25,6 +25,7 @@ import type { Ids } from "../../ports/clock.js";
 import type {
   OrderChange,
   OrderLookup,
+  PaymentClaim,
   Store,
   StoredCard,
   StoredOrder,
@@ -36,6 +37,8 @@ export class MemoryStore implements Store {
   readonly #cardIdByMerchantKey = new Map<string, string>();
   readonly #orders = new Map<string, StoredOrder>();
   readonly #receipts = new Map<string, Receipt>();
+  /** Which order owns which payment, so no payment is spent on two. */
+  readonly #paymentClaims = new Map<string, string>();
   /** The tail of the queue of decisions waiting on each order. */
   readonly #locks = new Map<string, Promise<unknown>>();
   readonly #ids: Ids;
@@ -110,6 +113,17 @@ export class MemoryStore implements Store {
       mine.catch(() => undefined),
     );
     return mine;
+  }
+
+  async claimPayment(fingerprint: string, orderId: string): Promise<PaymentClaim> {
+    const held = this.#paymentClaims.get(fingerprint);
+    if (held === undefined) {
+      this.#paymentClaims.set(fingerprint, orderId);
+      return { claimed: true };
+    }
+    // The same order presenting the same payment again is the ordinary retry
+    // the portal promises is safe, and it still owns it.
+    return held === orderId ? { claimed: true } : { claimed: false, heldBy: held };
   }
 
   async putReceipt(receipt: Receipt): Promise<void> {

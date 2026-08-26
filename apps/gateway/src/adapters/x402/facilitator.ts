@@ -112,10 +112,34 @@ export class X402Facilitator implements Facilitator {
   }
 }
 
-/** What an agent accepted, against what we asked for. */
+/**
+ * What an agent accepted, against what we asked for.
+ *
+ * Every field here is the agent's own unsigned copy of our requirements, so
+ * none of it is evidence of anything — a payment that passes this check has
+ * only shown that the agent copied our offer down accurately. What actually
+ * binds a payment to an order is the claim taken on it before any of this runs,
+ * and what binds it to an amount is the signature the facilitator checks
+ * against the requirements we rebuilt. This is the cheap early refusal of a
+ * request that was never going to work.
+ */
 function wrongOffer(
-  accepted: { amount?: string; asset?: string; network?: string; payTo?: string } | undefined,
-  ours: { amount: string; asset: string; network: string; payTo: string },
+  accepted:
+    | {
+        amount?: string;
+        asset?: string;
+        network?: string;
+        payTo?: string;
+        extra?: Record<string, unknown>;
+      }
+    | undefined,
+  ours: {
+    amount: string;
+    asset: string;
+    network: string;
+    payTo: string;
+    extra: Record<string, unknown>;
+  },
 ): string | null {
   if (accepted === undefined) {
     return "the payment names no offer, so there is nothing to check it against";
@@ -128,6 +152,9 @@ function wrongOffer(
   }
   if (accepted.payTo !== ours.payTo) {
     return "the payment was made out to a different address from the one asked for";
+  }
+  if (accepted.extra?.order_id !== ours.extra.order_id) {
+    return "the payment was made against a different order from the one it was presented for";
   }
   return null;
 }

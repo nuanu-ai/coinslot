@@ -60,3 +60,18 @@ export const receipts = pgTable("receipts", {
   receipt: jsonb("receipt").$type<Receipt>().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull(),
 });
+
+/**
+ * Which order owns which payment.
+ *
+ * The primary key is the whole of the mechanism: a signed payment carries no
+ * record of which purchase it is for, so two orders at the same price are
+ * payable with one signature unless something refuses the second. That refusal
+ * is this row already existing.
+ */
+export const paymentClaims = pgTable("payment_claims", {
+  /** A stable fingerprint of the part of the payment the agent actually signed. */
+  fingerprint: text("fingerprint").primaryKey(),
+  orderId: text("order_id").notNull(),
+  claimedAt: timestamp("claimed_at", { withTimezone: true, mode: "date" }).notNull(),
+});

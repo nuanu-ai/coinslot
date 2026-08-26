@@ -24,6 +24,7 @@
  * naming somebody else's order buys nothing.
  */
 
+import { createHash } from "node:crypto";
 import {
   decodePaymentSignatureHeader,
   encodePaymentRequiredHeader,
@@ -73,12 +74,18 @@ export function atomicUnits(amount: string, decimals: number): string {
 }
 
 /**
- * The currencies a price may be written in.
+ * The currencies a price may be written in, and the one conversion this gateway
+ * does make.
  *
- * A card priced in something the network has no asset for is not sold at an
- * exchange rate we made up. There is no rate in this system, nobody has decided
- * where one would come from, and a charge based on an invented one would be the
- * clearest possible claim beyond the evidence.
+ * A card priced in dollars is charged in the network's own dollar-denominated
+ * asset, one for one. That is a decision and not the absence of one, so it is
+ * written here rather than left to be inferred from the fact that it works: a
+ * merchant who writes "USD" is charging their buyer USDC on the configured
+ * chain, and the two are held to be the same number of dollars.
+ *
+ * Everything else is refused. There is no exchange rate anywhere in this
+ * system, nobody has decided where one would come from, and a charge based on
+ * an invented one would be the clearest possible claim beyond the evidence.
  */
 const PAYABLE = new Set(["USD", "USDC"]);
 
@@ -165,6 +172,39 @@ export class PaymentEdge {
   #network(): `${string}:${string}` {
     return this.#config.network as `${string}:${string}`;
   }
+}
+
+/**
+ * A stable fingerprint of the part of a payment the agent actually signed.
+ *
+ * It is taken over the scheme's own payload — the signature and whatever it
+ * covers — and deliberately not over the requirements beside it, because those
+ * are the agent's unsigned copy of what we asked for and can be rewritten
+ * freely. Two presentations of one authorisation have one fingerprint however
+ * the rest of the envelope is edited, which is what makes a payment spendable
+ * once.
+ *
+ * The payload is not read, only serialised in an order that does not depend on
+ * how it happened to be written. What is inside it belongs to the protocol.
+ */
+export function paymentFingerprint(payload: PaymentPayload): string {
+  return createHash("sha256")
+    .update(stably({ version: payload.x402Version, signed: payload.payload }))
+    .digest("hex");
+}
+
+/** JSON with its keys in a fixed order, so the same value has one text. */
+function stably(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value) ?? "null";
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(stably).join(",")}]`;
+  }
+  const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) =>
+    a < b ? -1 : a > b ? 1 : 0,
+  );
+  return `{${entries.map(([key, held]) => `${JSON.stringify(key)}:${stably(held)}`).join(",")}}`;
 }
 
 /**

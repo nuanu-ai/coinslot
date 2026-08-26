@@ -35,6 +35,7 @@ describe("loadConfig", () => {
       defaultAsyncFulfillmentMs: 86_400_000,
       handlerAnswerMs: 3_000,
     });
+    expect(loadConfig(required).reminderAttempts).toBe(3);
 
     expect(redelivery).toStrictEqual({
       baseDelayMs: 500,
@@ -127,6 +128,17 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ ...required, PORT: "70000" })).toThrowError(
       /PORT: must be within the range/,
     );
+  });
+
+  it("refuses an address the money could not reach", () => {
+    // It goes straight into the challenge that invites an agent to pay it, so a
+    // truncated paste would invite them to pay nobody.
+    expect(() => loadConfig({ ...required, PAY_TO_ADDRESS: "0xdeadbee" })).toThrowError(
+      /PAY_TO_ADDRESS is "0xdeadbee", which is not an address on eip155:84532/,
+    );
+    expect(() =>
+      loadConfig({ ...required, PAY_TO_ADDRESS: "0x0000000000000000000000000000000000000001" }),
+    ).not.toThrow();
   });
 
   it("refuses a chain that is not written the way the protocol writes one", () => {

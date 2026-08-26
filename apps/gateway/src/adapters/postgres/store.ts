@@ -22,11 +22,12 @@ import type { Ids } from "../../ports/clock.js";
 import type {
   OrderChange,
   OrderLookup,
+  PaymentClaim,
   Store,
   StoredCard,
   StoredOrder,
 } from "../../ports/store.js";
-import { cards, orders, receipts } from "./schema.js";
+import { cards, orders, paymentClaims, receipts } from "./schema.js";
 
 export class PostgresStore implements Store {
   readonly #db: NodePgDatabase;
@@ -121,6 +122,36 @@ export class PostgresStore implements Store {
     });
   }
 
+  async claimPayment(fingerprint: string, orderId: string): Promise<PaymentClaim> {
+    // The insert is the check. Two requests presenting the same payment at the
+    // same instant both reach here and the primary key decides between them,
+    // which is the one place a decision like this can be made without a race.
+    const [taken] = await this.#db
+      .insert(paymentClaims)
+      .values({ fingerprint, orderId, claimedAt: new Date() })
+      .onConflictDoNothing({ target: paymentClaims.fingerprint })
+      .returning();
+
+    if (taken !== undefined) {
+      return { claimed: true };
+    }
+
+    const [held] = await this.#db
+      .select()
+      .from(paymentClaims)
+      .where(eq(paymentClaims.fingerprint, fingerprint))
+      .limit(1);
+
+    if (held === undefined) {
+      // The row was there a moment ago and is not now. Nothing deletes these,
+      // so this is not a state this code knows how to be in.
+      throw new Error(`the claim on a payment for ${orderId} vanished between two queries`);
+    }
+    // The same order presenting the same payment again is the ordinary retry
+    // the portal promises is safe, and it still owns it.
+    return held.orderId === orderId ? { claimed: true } : { claimed: false, heldBy: held.orderId };
+  }
+
   async putReceipt(receipt: Receipt): Promise<void> {
     await this.#db
       .insert(receipts)
@@ -160,8 +191,21 @@ function rowFor(record: StoredOrder) {
   };
 }
 
-/** One pool for the process, and the drizzle handle over it. */
+/**
+ * One pool for the process, and the drizzle handle over it.
+ *
+ * The pool is an event emitter that reports failures of idle connections, and
+ * an unhandled one of those is an uncaught exception and a dead process. That
+ * matters more here than in most services: every parked purchase and every
+ * parked worker lives in this process's memory, so a database hiccup that
+ * killed it would drop every agent mid-purchase rather than degrading anything.
+ * It is logged and the pool goes on; a failure that actually stops the work
+ * surfaces on the next query, where somebody is waiting for an answer.
+ */
 export function connect(databaseUrl: string): { db: NodePgDatabase; pool: Pool } {
   const pool = new Pool({ connectionString: databaseUrl });
+  pool.on("error", (error) => {
+    console.error("[gateway] an idle database connection failed", error);
+  });
   return { db: drizzle(pool), pool };
 }

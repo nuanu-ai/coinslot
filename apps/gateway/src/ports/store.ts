@@ -57,6 +57,18 @@ export interface StoredOrder {
    */
   readonly settlement: { readonly transaction: string } | null;
   /**
+   * Everything the payment layer has actually said about this order, in its own
+   * words and in order.
+   *
+   * The machine keeps a coarse verdict — verified, settled, unknown — and three
+   * reasons a verification can fail. What the facilitator said is richer than
+   * that and is the only thing an operator can work from when a charge goes
+   * quiet: it is the difference between an outage, an empty wallet and a chain
+   * nobody configured. Dropping it left the one order somebody has to
+   * reconcile by hand with nothing to reconcile from.
+   */
+  readonly paymentWords: readonly PaymentWord[];
+  /**
    * The delivery that is out with a worker and has not been answered.
    *
    * It is here so that a reminder about one delivery cannot undo the answer to
@@ -67,6 +79,13 @@ export interface StoredOrder {
    * all day.
    */
   readonly openDeliveryId: string | null;
+}
+
+/** One thing the payment layer said, and when. */
+export interface PaymentWord {
+  readonly at: number;
+  readonly about: "verify" | "settle";
+  readonly said: string;
 }
 
 /**
@@ -87,6 +106,11 @@ export interface OrderChange<T> {
 export type OrderLookup<T> =
   | { readonly found: true; readonly result: T }
   | { readonly found: false };
+
+/** Whether a payment is this order's to spend. */
+export type PaymentClaim =
+  | { readonly claimed: true }
+  | { readonly claimed: false; readonly heldBy: string };
 
 export interface Store {
   /**
@@ -112,6 +136,20 @@ export interface Store {
     id: string,
     change: (found: StoredOrder) => Promise<OrderChange<T>> | OrderChange<T>,
   ): Promise<OrderLookup<T>>;
+
+  /**
+   * Binds one payment to one order, once and for all.
+   *
+   * A signed payment authorises an amount to an address; nothing inside it says
+   * which purchase it is for, and nothing about presenting it twice is visible
+   * to the payment layer until the second charge is actually executed. Two
+   * orders at the same price are therefore payable with one signature — both
+   * verify, both go to a merchant, both are delivered, and only the second
+   * charge fails. This is what stops that: the first order to present a payment
+   * owns it, and the same payment presented for a second order is refused
+   * before anything is verified or dispatched.
+   */
+  claimPayment(fingerprint: string, orderId: string): Promise<PaymentClaim>;
 
   putReceipt(receipt: Receipt): Promise<void>;
   receiptForOrder(orderId: string): Promise<Receipt | null>;

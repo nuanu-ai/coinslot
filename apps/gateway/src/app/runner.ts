@@ -41,10 +41,16 @@ import type {
   TransitionRejection,
   TransitionResult,
 } from "@coinslot/core";
-import { deadlines, moneyInvariantViolations, outcomeFor, transition } from "@coinslot/core";
+import {
+  assertNever,
+  deadlines,
+  moneyInvariantViolations,
+  outcomeFor,
+  transition,
+} from "@coinslot/core";
 import { asTimestamp } from "../ports/clock.js";
 import type { Reminder } from "../ports/queue.js";
-import type { OrderChange, StoredOrder } from "../ports/store.js";
+import type { OrderChange, PaymentWord, StoredOrder } from "../ports/store.js";
 import type { Runtime } from "./runtime.js";
 import { Waiting } from "./waiting.js";
 
@@ -57,6 +63,8 @@ import { Waiting } from "./waiting.js";
 export interface OrderFacts {
   readonly delivery?: Delivery;
   readonly settlement?: { readonly transaction: string };
+  /** Something the payment layer said, appended to what it has said before. */
+  readonly paymentWord?: PaymentWord;
   readonly payment?: string | null;
   readonly priceId?: string;
   readonly openDeliveryId?: string | null;
@@ -112,6 +120,9 @@ export class OrderRunner {
         ...found,
         ...(facts.delivery === undefined ? {} : { delivery: facts.delivery }),
         ...(facts.settlement === undefined ? {} : { settlement: facts.settlement }),
+        ...(facts.paymentWord === undefined
+          ? {}
+          : { paymentWords: [...found.paymentWords, facts.paymentWord] }),
         ...(facts.payment === undefined ? {} : { payment: facts.payment }),
         ...(facts.priceId === undefined ? {} : { priceId: facts.priceId }),
         ...(facts.openDeliveryId === undefined ? {} : { openDeliveryId: facts.openDeliveryId }),
@@ -159,6 +170,7 @@ export class OrderRunner {
   async presentPayment(orderId: string, payment: string, at: number): Promise<boolean> {
     const held = await this.#runtime.store.withOrder(orderId, (found): OrderChange<StoredOrder> => {
       const next: StoredOrder = { ...found, payment };
+      refuseToWriteAnImpossibleOrder(next.order);
       return { save: next, result: next };
     });
 
@@ -312,21 +324,37 @@ export class OrderRunner {
     });
 
     if (outcome.verified === true) {
-      await this.apply(record.order.id, { kind: "payment_verified", at });
+      await this.apply(
+        record.order.id,
+        { kind: "payment_verified", at },
+        {
+          paymentWord: {
+            at,
+            about: "verify",
+            said: `checked out, paid by ${outcome.payer ?? "an address the payment layer did not name"}`,
+          },
+        },
+      );
       return;
     }
     if (outcome.verified === false) {
-      await this.apply(record.order.id, {
-        kind: "payment_verification_failed",
-        at,
-        reason: outcome.reason,
-      });
+      // The machine's three reasons are coarser than what the payment layer
+      // actually said, and what it said is the only thing an operator can work
+      // from later, so both are written down.
+      await this.apply(
+        record.order.id,
+        { kind: "payment_verification_failed", at, reason: outcome.reason },
+        { paymentWord: { at, about: "verify", said: outcome.message } },
+      );
       return;
     }
+
     // The facilitator could not be asked. Nothing is claimed and no event is
     // sent: the order keeps the price it was quoted and the clock on that price
     // is the thing that ends it, which is a slower answer than a guess and the
-    // only one there is evidence for.
+    // only one there is evidence for. What it did say is written down, because
+    // an order that quietly stopped moving is otherwise a mystery.
+    await this.#writeDown(record.order.id, { at, about: "verify", said: outcome.message });
   }
 
   async #settle(record: StoredOrder, at: number): Promise<void> {
@@ -349,18 +377,43 @@ export class OrderRunner {
       await this.apply(
         record.order.id,
         { kind: "payment_settled", at },
-        { settlement: { transaction: outcome.transaction } },
+        {
+          settlement: { transaction: outcome.transaction },
+          paymentWord: { at, about: "settle", said: `went through as ${outcome.transaction}` },
+        },
       );
       return;
     }
     if (outcome.settled === false) {
-      await this.apply(record.order.id, { kind: "payment_settle_failed", at });
+      await this.apply(
+        record.order.id,
+        { kind: "payment_settle_failed", at },
+        { paymentWord: { at, about: "settle", said: outcome.reason } },
+      );
       return;
     }
+
     // The charge was asked for and nothing came back. No event, and above all
     // no second charge: the machine's clock on the settle is already running
     // and it is the thing entitled to declare a silence, in the words that keep
     // "nobody knows" apart from "it did not go through".
+    //
+    // Nothing here will ever ask again, and that is a limitation rather than an
+    // oversight. The facilitator offers verifying a payment, executing one, and
+    // a list of what it supports — and no way at all to ask what became of a
+    // charge already sent. Asking by sending it again is the one thing the
+    // machine forbids. So the words below are the whole of what a person has to
+    // go on, and they are written down for that person.
+    await this.#writeDown(record.order.id, { at, about: "settle", said: outcome.reason });
+  }
+
+  /** Records something the payment layer said, without telling the machine. */
+  async #writeDown(orderId: string, word: PaymentWord): Promise<void> {
+    console.error(`[gateway] ${orderId}: the payment layer ${word.about} — ${word.said}`);
+    await this.#runtime.store.withOrder(orderId, (found): OrderChange<null> => {
+      const next: StoredOrder = { ...found, paymentWords: [...found.paymentWords, word] };
+      return { save: next, result: null };
+    });
   }
 
   async #issueReceipt(record: StoredOrder, before: Order, at: number): Promise<void> {
@@ -403,11 +456,20 @@ export class OrderRunner {
   }
 
   #eventEnvelope(record: StoredOrder, event: string, at: number): WorkerEnvelope {
-    const price = record.order.price ?? record.order.cardPrice;
     const common = { order_id: record.order.id, at: asTimestamp(at) } as const;
 
     switch (event) {
-      case "order.refund_due":
+      case "order.refund_due": {
+        // The sum owed is the sum that was taken, and there is no fallback to
+        // the card's list price — there was one, and a debt is money that
+        // actually moved, so a guess at how much would be the wrong number in
+        // the one message whose whole purpose is naming it.
+        const price = record.order.price;
+        if (price === null) {
+          throw new Error(
+            `a refund fell due on ${record.order.id} and the order carries no price, so there is no sum to name`,
+          );
+        }
         return {
           kind: "order_event",
           id: this.#runtime.ids("env"),
@@ -419,6 +481,7 @@ export class OrderRunner {
             reason: refundReasonOf(record.order),
           },
         };
+      }
       case "order.unpaid_after_confirmation":
       case "order.payment_failed_after_delivery":
         return {
@@ -467,33 +530,64 @@ export function orderDocumentOf(record: StoredOrder): OrderDocument {
 }
 
 /**
- * The receipt's word for where the order stands. The receipt has four and the
- * agent's status has ten, so several endings map onto "in progress" here —
- * a receipt exists only for an order whose money moved, and none of the free
- * endings ever gets one.
+ * The receipt's word for where the order stands.
+ *
+ * Only one state can reach this, and the guard is the point rather than an
+ * accident: the machine asks for a receipt on the way into `delivered` and
+ * nowhere else. The receipt's vocabulary has three other words and this gateway
+ * writes none of them, so a receipt asked for anywhere else is a change nobody
+ * has thought through — and it stops here rather than quietly going out saying
+ * "delivered" over an order that was not.
  */
 function receiptOutcomeOf(order: Order): "in_progress" | "delivered" | "refund_due" | "refunded" {
-  switch (order.state) {
-    case "delivered":
-      return "delivered";
-    case "refund_due":
-      return "refund_due";
-    case "refunded":
-      return "refunded";
-    default:
-      return "in_progress";
+  if (order.state !== "delivered") {
+    throw new Error(
+      `a receipt was asked for on an order in ${order.state}, and this gateway has no word for that`,
+    );
   }
+  return "delivered";
 }
 
-/** Why a refund is owed, in the three words the merchant's event carries. */
+/**
+ * Why a refund is owed, in the three words the merchant's event carries.
+ *
+ * Every closure that can reach a debt is named rather than falling into a
+ * default, because the default was "a deadline passed" and two of these are not
+ * deadlines at all. The sum a merchant sends back and the reason he files it
+ * under are what somebody reconciles against; a reason picked because it was
+ * the last branch is a claim beyond the evidence in the one place that costs
+ * money.
+ *
+ * One of them is a fold rather than a match and it is said out loud: a charge
+ * that reported in after we had given up on it leaves a debt the merchant had
+ * no part in, and the nearest of the three words is the deadline — ours, on the
+ * charge, not his on the goods. The vocabulary has no word for "our side lost
+ * track of the money" and inventing one here would be a wire value no decision
+ * stands behind.
+ */
 function refundReasonOf(order: Order): "refused" | "deadline_passed" | "merchant_left" {
-  switch (order.closure?.cause) {
+  const closure = order.closure;
+  if (closure === null) {
+    throw new Error(`a refund fell due on ${order.id} with nothing recording why`);
+  }
+
+  switch (closure.cause) {
     case "merchant_refused":
       return "refused";
     case "merchant_departed":
       return "merchant_left";
-    default:
+    case "deadline_expired":
+    case "payment_outcome_unknown":
       return "deadline_passed";
+    case "unavailable":
+    case "quote_silent":
+    case "payment_not_verified":
+    case "payment_not_settled":
+      throw new Error(
+        `a refund fell due on ${order.id} closed as ${closure.cause}, which takes no money and so owes none`,
+      );
+    default:
+      return assertNever(closure, "closure cause");
   }
 }
 

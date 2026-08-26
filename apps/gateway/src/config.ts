@@ -123,6 +123,14 @@ const environmentSchema = z.object({
    */
   HANDLER_ANSWER_MS: durationMs(3_000),
 
+  /**
+   * How many times a reminder that failed is asked for again. A reminder is the
+   * only thing that ever declares an overdue order, so losing one to a store
+   * that was briefly unreachable costs a refund nobody marks; asking forever
+   * would turn a defect into a loop.
+   */
+  REMINDER_ATTEMPTS: countAbove(3),
+
   /** How long the gateway holds a worker's poll open (ADR-0004 §1). */
   WORKER_POLL_WAIT_MS: durationMs(25_000),
   /** The most envelopes one poll answers with, whatever the worker asked for. */
@@ -153,7 +161,12 @@ const environmentSchema = z.object({
    * protocol rather than to the order machine.
    */
   PAYMENT_TIMEOUT_SECONDS: countAbove(300),
-  /** Where the money goes. Absent until a real payment is to be taken. */
+  /**
+   * Where the money goes. Absent until a real payment is to be taken, and held
+   * to the shape of the chain it is on when it is there: this address goes
+   * straight into the challenge that invites an agent to pay it, and a
+   * truncated paste would invite them to pay nobody.
+   */
   PAY_TO_ADDRESS: z.string().min(1).optional(),
   CDP_API_KEY_ID: z.string().min(1).optional(),
   CDP_API_KEY_SECRET: z.string().min(1).optional(),
@@ -201,6 +214,8 @@ export interface GatewayConfig {
   readonly port: number;
   readonly merchantApiKey: string;
   readonly publicBaseUrl: string;
+  /** How many times a reminder that failed is asked for again. */
+  readonly reminderAttempts: number;
   readonly deadlines: DeadlineConfig;
   readonly redelivery: RedeliveryConfig;
   readonly worker: WorkerConfig;
@@ -277,10 +292,21 @@ export function loadConfig(environment: Record<string, string | undefined>): Gat
   };
 
   const problems = arithmeticProblems(deadlines);
-  if (problems.length > 0) {
-    throw new Error(
-      `The gateway cannot start, the deadlines do not add up — ${problems.join("; ")}`,
+  const payTo = environmentValues.PAY_TO_ADDRESS ?? null;
+  const network = environmentValues.PAYMENT_NETWORK;
+
+  // An address on an EVM chain has one shape. Everything else money-adjacent in
+  // this file is held to its shape; the address the money actually goes to was
+  // held to "not empty", which starts the gateway on a truncated paste and puts
+  // it in front of every agent that asks what a product costs.
+  if (payTo !== null && network.startsWith("eip155:") && !/^0x[0-9a-fA-F]{40}$/.test(payTo)) {
+    problems.push(
+      `PAY_TO_ADDRESS is ${JSON.stringify(payTo)}, which is not an address on ${network}`,
     );
+  }
+
+  if (problems.length > 0) {
+    throw new Error(`The gateway cannot start, the numbers do not add up — ${problems.join("; ")}`);
   }
 
   return {
@@ -288,6 +314,7 @@ export function loadConfig(environment: Record<string, string | undefined>): Gat
     port: environmentValues.PORT,
     merchantApiKey: environmentValues.MERCHANT_API_KEY,
     publicBaseUrl: environmentValues.PUBLIC_BASE_URL,
+    reminderAttempts: environmentValues.REMINDER_ATTEMPTS,
     deadlines,
     redelivery: {
       baseDelayMs: environmentValues.REDELIVERY_BASE_DELAY_MS,
@@ -301,9 +328,9 @@ export function loadConfig(environment: Record<string, string | undefined>): Gat
     },
     payment: {
       facilitatorUrl: environmentValues.FACILITATOR_URL,
-      network: environmentValues.PAYMENT_NETWORK,
+      network,
       timeoutSeconds: environmentValues.PAYMENT_TIMEOUT_SECONDS,
-      payTo: environmentValues.PAY_TO_ADDRESS ?? null,
+      payTo,
       cdpApiKeyId: environmentValues.CDP_API_KEY_ID ?? null,
       cdpApiKeySecret: environmentValues.CDP_API_KEY_SECRET ?? null,
     },

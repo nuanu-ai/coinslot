@@ -158,7 +158,19 @@ export class PgBossQueue implements Queue {
   }
 }
 
-/** A queue on this database, ready to be started. */
+/**
+ * A queue on this database, ready to be started.
+ *
+ * pg-boss reports its internal failures as an event, and an unhandled one of
+ * those is an uncaught exception and a dead process. That costs more here than
+ * in most services: every parked purchase and every parked worker lives in this
+ * process's memory, so a database hiccup that killed it would drop every agent
+ * mid-purchase rather than degrading anything.
+ */
 export function queueOn(databaseUrl: string, options: PgBossQueueOptions): PgBossQueue {
-  return new PgBossQueue(new PgBoss(databaseUrl), options);
+  const boss = new PgBoss(databaseUrl);
+  boss.on("error", (error: unknown) => {
+    console.error("[gateway] the queue reported a failure", error);
+  });
+  return new PgBossQueue(boss, options);
 }
