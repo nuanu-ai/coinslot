@@ -7,8 +7,8 @@ being written, so the "Code" section is in force. Decisions taken: exposure
 ADR-0001, integration model ADR-0002, stack ADR-0003.
 
 ## Hierarchy of instructions
-Conflicts are resolved in this order: a decision in `docs/decisions/` →
-Dmitry's live word → this file → general considerations. The live word
+Conflicts are resolved in this order: Dmitry's live word → a decision in
+`docs/decisions/` → this file → general considerations. The live word
 outranks the written one, but a conflict with a written decision is entered
 the same day as an edit to the decision itself — decisions do not drift
 silently.
@@ -53,8 +53,10 @@ that there is none".
   deleted; its "why not" moves into the rejected alternatives of its successor
   or into research.
 - The trigger for going back to append-only/supersede is named in advance: the
-  first product code, a second permanent participant, or the first case of
-  "but we decided otherwise" confusion caused by an edit made after the fact.
+  first product code (repo scaffolding and configuration do not count; contract
+  schemas and the state machine do), a second permanent participant, or the
+  first case of "but we decided otherwise" confusion caused by an edit made
+  after the fact.
 
 ## Documents
 
