@@ -14,6 +14,7 @@
 
 import { assertNever } from "../index.js";
 import type { Order } from "./model.js";
+import { isOpen } from "./model.js";
 
 export const ORDER_OUTCOMES = [
   /** The answer is not in yet. Not a refusal, and not a promise either. */
@@ -22,10 +23,20 @@ export const ORDER_OUTCOMES = [
   "delivered",
   /**
    * The purchase did not happen and nothing was charged: the goods were gone,
-   * the parameters did not fit, the payment did not pass verification, or the
-   * merchant refused a synchronous order.
+   * the parameters did not fit, the payment did not pass verification, the
+   * charge was reported as failed, or the merchant refused a synchronous
+   * order. In every one of these the machine knows the buyer's money did not
+   * move; where it only believes so, the word is `payment_unresolved`.
    */
   "rejected",
+  /**
+   * The purchase is closed and nobody can say whether the buyer was charged:
+   * the payment network was asked and never answered. It is deliberately not
+   * `rejected`. An agent told his purchase did not happen goes and buys the
+   * same thing elsewhere without looking at his wallet, and that is a claim
+   * this machine has no evidence for.
+   */
+  "payment_unresolved",
   /** The merchant answered a confirmation request with "I will not". */
   "declined",
   /** A deadline ran out. Nothing was charged. */
@@ -47,6 +58,19 @@ export const ORDER_OUTCOMES = [
 export type OrderOutcome = (typeof ORDER_OUTCOMES)[number];
 
 export function outcomeFor(order: Order): OrderOutcome {
+  // A charge the payment network never answered about outranks whatever the
+  // state would otherwise say, because it is the one thing the agent most
+  // needs to hear and the one thing the machine most easily overstates. Closed
+  // on that silence, the answer is that nobody knows; still open on it, the
+  // answer is the one for a question that has not come back yet — and that is
+  // the truth of it, because we are still asking.
+  if (order.closure?.cause === "payment_outcome_unknown") {
+    return "payment_unresolved";
+  }
+  if (order.payment === "outcome_unknown" && isOpen(order.state)) {
+    return "in_progress";
+  }
+
   switch (order.state) {
     case "created":
     case "quoted":

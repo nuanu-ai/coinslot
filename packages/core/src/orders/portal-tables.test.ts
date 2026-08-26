@@ -2,9 +2,9 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { createOrder } from "./create.js";
 import { createInput, must, newOrder, reach, T0, walk } from "./fixtures.js";
+import { transition } from "./machine.js";
 import type { Effect, Order } from "./model.js";
 import { MERCHANT_EVENTS } from "./model.js";
-import { transition } from "./machine.js";
 import { outcomeFor } from "./outcome.js";
 
 /**
