@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  HandlerAnswerSchema,
-  RECOMMENDED_REFUSAL_CODES,
-  RefusalSchema,
-} from "./handler.js";
+import { HandlerAnswerSchema, RECOMMENDED_REFUSAL_CODES, RefusalSchema } from "./handler.js";
 import { errorOf, expectMissingFieldRejected } from "./testing/expect-schema.js";
 
 describe("what a handler may answer", () => {
