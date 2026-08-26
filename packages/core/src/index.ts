@@ -21,3 +21,85 @@ export function assertNever(value: never, context?: string): never {
   const where = context === undefined ? "" : ` (${context})`;
   throw new Error(`Unhandled variant${where}: ${JSON.stringify(value)}`);
 }
+
+/**
+ * The order state machine. The design it implements is
+ * `docs/research/16-order-state-machine.md` with all three of its addition
+ * sections, and the merchant-facing half of the same model is
+ * `portal/orders.md` and `portal/failures.md`.
+ *
+ * The gateway is expected to use it like this: build an order with
+ * `createOrder`, feed it events with `transition`, run the effects that come
+ * back, schedule timers off `deadlines`, answer the agent with `outcomeFor`,
+ * and — where it matters enough to be worth the cycles — check the order it is
+ * about to write down with `moneyInvariantViolations`.
+ *
+ * The order fixtures used by this package's own tests are deliberately not
+ * exported: an order is built out of a real purchase, and a builder that
+ * quietly guesses its defaults has no business standing next to someone else's
+ * money.
+ */
+export type {
+  CreateOrderInput,
+  CreateOrderResult,
+  CreateRejection,
+  MerchantSelling,
+  PriceCheck,
+} from "./orders/create.js";
+export { CREATE_REJECTIONS, createOrder, MERCHANT_SELLING, PRICE_CHECKS } from "./orders/create.js";
+export { deadlines, fulfillmentDeadline, isArmed } from "./orders/deadlines.js";
+export { transition } from "./orders/machine.js";
+export type {
+  Closure,
+  Deadline,
+  DeadlineKind,
+  DeadlinePolicy,
+  Effect,
+  FulfillmentMode,
+  MerchantAnswer,
+  MerchantAnswerError,
+  MerchantAnswerResult,
+  MerchantEvent,
+  Order,
+  OrderEvent,
+  OrderEventKind,
+  OrderMode,
+  OrderPolicy,
+  OrderState,
+  OrderTimestamps,
+  PaymentStage,
+  PaymentVerificationFailure,
+  Price,
+  QuoteSource,
+  RedeliveryPolicy,
+  SettleTiming,
+  StateEvent,
+  TransitionRejection,
+  TransitionRejectionCode,
+  TransitionResult,
+} from "./orders/model.js";
+export {
+  CLOSED_ORDER_STATES,
+  DEADLINE_KINDS,
+  effectsOnQuoted,
+  FULFILLMENT_MODES,
+  isOpen,
+  MERCHANT_ANSWER_ERRORS,
+  MERCHANT_ANSWER_RESULTS,
+  MERCHANT_EVENTS,
+  modeOf,
+  OPEN_ORDER_STATES,
+  ORDER_EVENT_KINDS,
+  ORDER_STATES,
+  PAYMENT_STAGES,
+  PAYMENT_VERIFICATION_FAILURES,
+  QUOTE_SOURCES,
+  RECOMMENDED_REFUSAL_CODES,
+  SETTLE_TIMINGS,
+  TRANSITION_REJECTION_CODES,
+} from "./orders/model.js";
+export { moneyInvariantViolations } from "./orders/money.js";
+export type { OrderOutcome } from "./orders/outcome.js";
+export { ORDER_OUTCOMES, outcomeFor } from "./orders/outcome.js";
+export type { RedeliveryDecision, RedeliveryQuestion } from "./orders/redelivery.js";
+export { nextRedelivery } from "./orders/redelivery.js";
