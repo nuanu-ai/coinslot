@@ -3,10 +3,12 @@
  * their catalog sells to agents. The fulfillment worker and the integration
  * check will arrive from here.
  *
- * The package has a hard budget for third-party runtime dependencies — zero
- * (ADR-0003 §8). A merchant installing the SDK into their production must not
- * receive a foreign package tree along with it, one they would then be
- * maintaining themselves. The only dependency is our own contracts.
+ * The runtime dependency tree is minimal and listed in full: our own
+ * `@coinslot/contracts` and `zod`, nothing else. A merchant installing the SDK
+ * into their production should know exactly what arrives with it, rather than
+ * inherit a foreign package tree they would then be maintaining themselves.
+ * Every new third-party package in this tree is a recorded decision
+ * (ADR-0003 §8).
  */
 
 import { CONTRACT_VERSION } from "@coinslot/contracts";

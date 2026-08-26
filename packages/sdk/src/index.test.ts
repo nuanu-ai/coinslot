@@ -16,10 +16,12 @@ describe("@coinslot/sdk", () => {
     expect(speaksContract(`${CONTRACT_VERSION}-foreign`)).toBe(false);
   });
 
-  it("drags in not a single third-party runtime dependency", () => {
-    // The hard rule of ADR-0003 §8. A failing check means the merchant has
-    // installed a foreign package into their production along with the SDK,
-    // and every such exception must be a separate written decision.
+  it("declares no third-party dependency of its own", () => {
+    // The tree the merchant gets is `@coinslot/contracts` and `zod`, nothing
+    // else. This is one half of the pin — the SDK adds nothing of its own; the
+    // other half is the contracts test, which holds contracts to exactly zod.
+    // A failing check means a third-party package entered the merchant's
+    // production along with the SDK without a recorded decision (ADR-0003 §8).
     const thirdParty = Object.entries(manifest.dependencies ?? {}).filter(
       ([, range]) => !range.startsWith("workspace:"),
     );
