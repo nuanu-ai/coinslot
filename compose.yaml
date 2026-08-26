@@ -1,0 +1,40 @@
+# The database a developer runs the gateway against.
+#
+# One Postgres holds everything (ADR-0003 §6): the cards, the orders, the
+# receipts and the queue. There is nothing else here on purpose — the gateway
+# itself runs from the terminal so that a change is visible without a rebuild,
+# and what a deployment looks like is a later step.
+#
+#   docker compose up -d
+#   DATABASE_URL=postgres://coinslot:coinslot@localhost:5432/coinslot \
+#     pnpm --filter @coinslot/gateway db:migrate
+#
+# The volume outlives `docker compose down`, so the migrations are what bring an
+# existing database up to date; `docker compose down -v` is how to start from
+# nothing.
+#
+# The password is in the file and that is deliberate: this database holds
+# nothing but a developer's own test orders, and a secret that has to be found
+# somewhere else to bring up a sandbox is a secret people paste into chat.
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: coinslot
+      POSTGRES_PASSWORD: coinslot
+      POSTGRES_DB: coinslot
+    ports:
+      - "5432:5432"
+    volumes:
+      - coinslot-postgres:/var/lib/postgresql/data
+    healthcheck:
+      # The gateway's first query is what would otherwise discover that the
+      # server is up and the database is not ready yet.
+      test: ["CMD-SHELL", "pg_isready -U coinslot -d coinslot"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+volumes:
+  coinslot-postgres:

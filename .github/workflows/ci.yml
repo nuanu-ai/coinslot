@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 # Reading is enough for the checks: they must publish nothing and write nowhere.
 permissions:
@@ -50,6 +51,50 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - run: pnpm ${{ matrix.task }}
+
+  # The tests that need a real Postgres, run by hand.
+  #
+  # They are `workflow_dispatch` rather than part of every push, and the reason
+  # is a fact nobody has been able to check: the jobs above run on the org's own
+  # self-hosted pool, and whether that pool supports service containers depends
+  # on whether its runners have a Docker daemon. A job wired to run on every
+  # push and failing on every push because the service never starts would be a
+  # red build that says nothing. Somebody who can answer that question turns
+  # this into an ordinary job by moving it under `push` and deleting this
+  # paragraph.
+  database:
+    name: test:db
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, comino]
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: coinslot
+          POSTGRES_PASSWORD: coinslot
+          POSTGRES_DB: coinslot
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U coinslot -d coinslot"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 15
+    env:
+      DATABASE_URL: postgres://coinslot:coinslot@localhost:5432/coinslot
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - run: corepack enable
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @coinslot/gateway db:migrate
+      - run: pnpm test:db
 
   # The decision log needs neither Node nor dependencies — only bash and files.
   decisions:
