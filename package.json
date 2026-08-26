@@ -11,6 +11,7 @@
     "prepare": "git config core.hooksPath .githooks",
     "check": "biome check .",
     "check:fix": "biome check --write .",
+    "check:decisions": "./scripts/check-decisions.sh",
     "typecheck": "tsc --noEmit -p tsconfig.json && pnpm -r run typecheck",
     "test": "vitest run"
   },
