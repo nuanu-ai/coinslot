@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Проверкам достаточно чтения: ничего публиковать и никуда писать они не должны.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Три проверки монорепо ходят по одному и тому же пути установки, поэтому
+  # описаны один раз матрицей: разъехаться версиям Node или порядку шагов между
+  # ними здесь просто негде. В интерфейсе это по-прежнему три отдельные задачи —
+  # check, typecheck и test.
+  monorepo:
+    name: ${{ matrix.task }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        task: [check, typecheck, test]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      # pnpm приезжает через corepack, версия берётся из packageManager в
+      # корневом package.json — та же, что у разработчика на машине.
+      - run: corepack enable
+
+      # Второй проход setup-node включает кеш pnpm: раньше включить нельзя,
+      # кешу нужен уже установленный pnpm.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm ${{ matrix.task }}
+
+  # Журналу решений не нужны ни Node, ни зависимости — только bash и файлы.
+  decisions:
+    name: decisions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./scripts/check-decisions.sh

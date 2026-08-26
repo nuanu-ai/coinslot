@@ -1,0 +1,16 @@
+{
+  "name": "@coinslot/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Доменное ядро Coinslot — заказы, квитанции, машина состояний; чистая логика без IO",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.11"
+  }
+}

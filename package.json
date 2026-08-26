@@ -1,0 +1,24 @@
+{
+  "name": "coinslot",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.3",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "prepare": "git config core.hooksPath .githooks",
+    "check": "biome check .",
+    "check:fix": "biome check --write .",
+    "check:decisions": "./scripts/check-decisions.sh",
+    "typecheck": "tsc --noEmit -p tsconfig.json && pnpm -r run typecheck",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.10",
+    "@types/node": "^26.3.0",
+    "typescript": "7.0.2",
+    "vitest": "^4.1.11"
+  }
+}

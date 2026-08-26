@@ -12,3 +12,9 @@
 # Секреты и окружение
 .env
 .env.*
+
+# Сборка и зависимости
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
