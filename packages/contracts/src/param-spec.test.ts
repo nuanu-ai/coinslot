@@ -1,0 +1,173 @@
+import { describe, expect, it } from "vitest";
+import {
+  FieldSpecSchema,
+  type ParamType,
+  ParamSpecSchema,
+  paramSpecToValidator,
+} from "./param-spec.js";
+import { errorOf, expectMissingFieldRejected } from "./testing/expect-schema.js";
+
+/** `Object.entries` keeps the key type, which the tables below rely on. */
+const typesOf = (table: Record<ParamType, unknown[]>): [ParamType, unknown[]][] =>
+  Object.entries(table) as [ParamType, unknown[]][];
+
+describe("field spec", () => {
+  // The promise: a card declares each purchase parameter with a type, whether
+  // it is required, and words a program-buyer can read. A field spec that gets
+  // through without a type is a card that cannot be checked against anything.
+  it("accepts the spec the portal writes", () => {
+    const field = { type: "string", required: true, title: "Куда прислать доступ" };
+    expect(FieldSpecSchema.parse(field)).toStrictEqual(field);
+  });
+
+  it("accepts a spec that only names a type", () => {
+    expect(FieldSpecSchema.parse({ type: "string" })).toStrictEqual({ type: "string" });
+  });
+
+  it("refuses a field spec without a type and names the field", () => {
+    expectMissingFieldRejected(FieldSpecSchema, { type: "string", required: true }, "type");
+  });
+
+  it("refuses a type the compiler cannot turn into a check", () => {
+    // Every accepted type has a validator behind it. A card that declares
+    // `type: 'date'` would promise the agent a check nobody performs.
+    const message = errorOf(FieldSpecSchema, { type: "date" });
+    expect(message).toContain("string");
+    expect(message).toContain("integer");
+  });
+
+  it("refuses a key it does not know", () => {
+    expect(errorOf(FieldSpecSchema, { type: "string", pattern: "^a" })).toContain("pattern");
+  });
+});
+
+describe("param spec", () => {
+  it("accepts the params and the result of a real card", () => {
+    const params = { email: { type: "string", required: true, title: "Куда прислать доступ" } };
+    const result = {
+      access_url: { type: "string", title: "Ссылка для входа" },
+      expires_at: { type: "string", title: "До какого момента действует" },
+    };
+    expect(ParamSpecSchema.parse(params)).toStrictEqual(params);
+    expect(ParamSpecSchema.parse(result)).toStrictEqual(result);
+  });
+
+  it("accepts a spec with no fields at all", () => {
+    expect(ParamSpecSchema.parse({})).toStrictEqual({});
+  });
+
+  it("names the offending field when one entry of many is wrong", () => {
+    const message = errorOf(ParamSpecSchema, {
+      email: { type: "string" },
+      country: { type: "date" },
+    });
+    expect(message).toContain("country");
+    expect(message).not.toContain("email");
+  });
+
+  it("refuses a name that cannot safely become a property", () => {
+    // A spec name becomes a key in JSON on both sides and a segment of the
+    // error path a merchant reads. Dots collide with the path notation,
+    // spaces make the name unquotable, and a name starting with an underscore
+    // is how `__proto__` gets in.
+    for (const name of ["", " ", "Not Ok", "a.b", "__proto__", "1st", "-x"]) {
+      expect(
+        ParamSpecSchema.safeParse({ [name]: { type: "string" } }).success,
+        JSON.stringify(name),
+      ).toBe(false);
+    }
+  });
+
+  it("accepts names written the way either side of the contract writes them", () => {
+    for (const name of ["email", "access_url", "expiresAt", "line2"]) {
+      expect(ParamSpecSchema.safeParse({ [name]: { type: "string" } }).success, name).toBe(true);
+    }
+  });
+});
+
+describe("the compiler from a spec to a validator", () => {
+  // The promise: a card's declaration of its purchase parameters is the same
+  // check the gateway runs on the agent's purchase and the same check the
+  // delivery is held to. One spec, one meaning, in the gateway and in the SDK.
+
+  const accepted: Record<ParamType, unknown[]> = {
+    string: ["", "buyer@example.com"],
+    number: [0, 1.5, -3],
+    integer: [0, 42, -7],
+    boolean: [true, false],
+  };
+
+  const refused: Record<ParamType, unknown[]> = {
+    string: [1, true, null, {}, []],
+    number: ["1", true, null, Number.NaN, Number.POSITIVE_INFINITY],
+    integer: [1.5, "1", true, null, Number.NaN],
+    boolean: ["true", 1, 0, null],
+  };
+
+  for (const [type, values] of typesOf(accepted)) {
+    it(`accepts a ${type} where the spec declares a ${type}`, () => {
+      const validator = paramSpecToValidator({ field: { type, required: true } });
+      for (const value of values) {
+        expect(validator.safeParse({ field: value }).success, JSON.stringify(value)).toBe(true);
+      }
+    });
+  }
+
+  for (const [type, values] of typesOf(refused)) {
+    it(`refuses what is not a ${type} and names the field`, () => {
+      const validator = paramSpecToValidator({ email: { type, required: true } });
+      for (const value of values) {
+        expect(errorOf(validator, { email: value }), JSON.stringify(value)).toContain("email");
+      }
+    });
+  }
+
+  it("requires a field the spec marked required", () => {
+    const validator = paramSpecToValidator({ email: { type: "string", required: true } });
+    expect(errorOf(validator, {})).toContain("email");
+  });
+
+  it("treats a field with no required flag as optional", () => {
+    // The portal writes `required: true` where it means it, so silence means
+    // the other thing. A default of "required" would break every card whose
+    // author left the flag off.
+    const validator = paramSpecToValidator({ note: { type: "string" } });
+    expect(validator.safeParse({}).success).toBe(true);
+    expect(validator.safeParse({ note: "for a friend" }).success).toBe(true);
+  });
+
+  it("refuses a value the card never declared", () => {
+    // The decision behind this test: undeclared keys are refused, not
+    // stripped and not passed through. Stripping would be truncation the
+    // agent is never told about; passing through would hand the merchant's
+    // handler fields the card never promised, which is both a lie about the
+    // card and a way to smuggle input into someone else's code. The same rule
+    // holds for a delivery, where an undeclared field means the agent paid
+    // for a result different from the one it read before paying.
+    const validator = paramSpecToValidator({ email: { type: "string", required: true } });
+    const message = errorOf(validator, { email: "buyer@example.com", coupon: "FREE" });
+    expect(message).toContain("coupon");
+  });
+
+  it("compiles an empty spec into a check that accepts only an empty object", () => {
+    const validator = paramSpecToValidator({});
+    expect(validator.safeParse({}).success).toBe(true);
+    expect(validator.safeParse({ anything: 1 }).success).toBe(false);
+  });
+
+  it("gives back the values it was handed", () => {
+    const validator = paramSpecToValidator({
+      email: { type: "string", required: true },
+      seats: { type: "integer" },
+    });
+    const instance = { email: "buyer@example.com", seats: 3 };
+    expect(validator.parse(instance)).toStrictEqual(instance);
+  });
+
+  it("refuses an instance that is not an object at all", () => {
+    const validator = paramSpecToValidator({ email: { type: "string", required: true } });
+    for (const instance of [null, "email=buyer@example.com", 1, []]) {
+      expect(validator.safeParse(instance).success, JSON.stringify(instance)).toBe(false);
+    }
+  });
+});
