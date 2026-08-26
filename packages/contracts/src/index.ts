@@ -10,20 +10,21 @@
  * calls things inside itself is its own business, and the two are tied
  * together where they meet rather than by one importing the other.
  *
- * One shape a reader might expect here is deliberately absent. The worker
- * channel carries orders, price questions and events on one stream, each in an
- * envelope with a marker saying which it is (ADR-0004 §2). The envelope is not
- * described here because the merchant never sees it: the same decision has the
- * SDK hide the transport entirely, handing a handler an order rather than
- * anything it is wrapped in. Where the envelope should be described — here,
- * because it is still a format between two of our own parts, or alongside the
- * transport that invented it — is a question nobody has answered, and it is
- * better asked than quietly settled by whichever side writes it first.
+ * Two shapes here are read by nobody outside our own two parts, and they are
+ * described anyway. The worker envelope carries orders, price questions and
+ * events on one stream (ADR-0004 §2), and the merchant never sees it, because
+ * the SDK hands a handler an order rather than the wrapper it arrived in. The
+ * route table says which calls exist, at which addresses, with which document
+ * going each way. Both are formats between the gateway and the SDK, read by
+ * both and owned by neither — which is the same reason a card lives here, and
+ * the reason a shape agreed in two places is a shape that has already
+ * disagreed once.
  */
 
 import type { ZodType } from "zod";
 import { z } from "zod";
 import { CardSchema, FulfillmentSchema, PriceCheckSchema } from "./card.js";
+import { WorkerEnvelopeSchema } from "./envelope.js";
 import { OrderEventSchema, RefundDueReasonSchema } from "./events.js";
 import {
   AcceptanceSchema,
@@ -65,6 +66,12 @@ export {
   PriceCheckSchema,
   purchaseCheckFor,
 } from "./card.js";
+export type { WorkerEnvelope, WorkerEnvelopeKind } from "./envelope.js";
+export {
+  WORKER_ENVELOPE_KINDS,
+  WORKER_ENVELOPE_PAYLOADS,
+  WorkerEnvelopeSchema,
+} from "./envelope.js";
 export type { OrderEvent, RefundDueReason } from "./events.js";
 export { ORDER_EVENT_TYPES, OrderEventSchema, RefundDueReasonSchema } from "./events.js";
 export type { Acceptance, Delivery, HandlerAnswer, Refusal, RefusalCode } from "./handler.js";
@@ -176,6 +183,7 @@ export const schemas = Object.freeze({
   refusal_code: RefusalCodeSchema,
   sale_price: SalePriceSchema,
   timestamp: TimestampSchema,
+  worker_envelope: WorkerEnvelopeSchema,
 }) satisfies Readonly<Record<string, ZodType>>;
 
 /** The name of one schema in the registry. */
