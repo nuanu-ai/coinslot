@@ -1,0 +1,63 @@
+/**
+ * The order, as it reaches the merchant's handler.
+ *
+ * By the time an order exists the purchase has already been checked on our
+ * side: the card was found, the parameters passed the card's own declaration,
+ * the price was settled and the payment was verified. Invalid purchases, stale
+ * prices and payments that did not verify never reach a handler, which is why
+ * this schema is short.
+ *
+ * Everything here answers a question the handler would otherwise have to ask
+ * us: what to deliver, to whom, under which of its own keys, at what price,
+ * and whether the money behind it is real.
+ */
+
+import { z } from "zod";
+import { ParamNameSchema } from "./param-spec.js";
+import { IdentifierSchema, SalePriceSchema } from "./primitives.js";
+
+export const OrderSchema = z.strictObject({
+  /**
+   * The order's identifier, which is also its idempotency key: the same string
+   * on every redelivery. Delivery is at-least-once, so a handler that answers
+   * from this key instead of delivering twice is not being careful, it is
+   * being correct.
+   */
+  id: IdentifierSchema,
+
+  /** The merchant's own key for the product, the one their database uses. */
+  merchant_item_id: IdentifierSchema,
+
+  /**
+   * The purchase parameters, already checked against the card's declaration.
+   * Always present, empty for a card that takes no input — a handler should
+   * never have to tell "no parameters" from "the field did not arrive".
+   */
+  params: z.record(ParamNameSchema, z.unknown()),
+
+  /**
+   * What the product was actually sold for, which is not always what the card
+   * says: a card with a price check sells at the price the check answered.
+   * Both moments travel with it, so the sale can be written down as it stands.
+   */
+  price: SalePriceSchema,
+
+  /**
+   * The identifier of the price question this sale came out of, absent when
+   * there was none — a card without a price check sells from its own price and
+   * no question was ever asked. A merchant who set stock aside under this
+   * identifier can release it here.
+   */
+  price_id: IdentifierSchema.optional(),
+
+  /**
+   * Whether this is a test order.
+   *
+   * Required rather than defaulted. The safe reading of a missing flag is not
+   * obvious in either direction, and a test order taken for a live one is a
+   * real delivery made against money that does not exist.
+   */
+  test: z.boolean(),
+});
+
+export type Order = z.infer<typeof OrderSchema>;
