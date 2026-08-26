@@ -1,0 +1,19 @@
+{
+  "name": "@coinslot/contracts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Схемы публичного контракта Coinslot — карточка, заказ, хук цены, квитанция",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.11"
+  }
+}
