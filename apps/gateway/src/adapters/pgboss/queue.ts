@@ -30,10 +30,20 @@ import type { WorkerEnvelope } from "@coinslot/contracts";
 import { type Job, PgBoss } from "pg-boss";
 import type { DrawnEnvelope, Queue, Reminder } from "../../ports/queue.js";
 
-/** The merchant's stream of envelopes. */
-export const ENVELOPES = "coinslot.envelopes";
-/** The reminders the gateway leaves itself: deadlines, and silent deliveries. */
-export const REMINDERS = "coinslot.reminders";
+/**
+ * The two queues, named the way pg-boss will accept.
+ *
+ * A queue name becomes a database object name, and pg-boss refuses one that is
+ * not a bare identifier: letters, digits and underscores, not starting with a
+ * digit. The obvious `coinslot.envelopes` is refused at the first call, which
+ * would be at start-up in production and nowhere at all in a test — nothing
+ * offline touches this file. The shape is held to in a test instead.
+ */
+export const ENVELOPES = "coinslot_envelopes";
+export const REMINDERS = "coinslot_reminders";
+
+/** What pg-boss will take as a queue name, and therefore what these must be. */
+export const A_NAME_PG_BOSS_ACCEPTS = /^[A-Za-z_]\w*$/;
 
 export interface PgBossQueueOptions {
   /**
