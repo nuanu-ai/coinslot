@@ -1,5 +1,5 @@
 {
-  "id": "52c78130-10c6-492c-8d39-3ec69ce29288",
+  "id": "1845e7f7-e0e0-488a-8bc8-8f2ef6e4857d",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -40,7 +40,9 @@
         "cards_merchant_item_id_unique": {
           "name": "cards_merchant_item_id_unique",
           "nullsNotDistinct": false,
-          "columns": ["merchant_item_id"]
+          "columns": [
+            "merchant_item_id"
+          ]
         }
       },
       "policies": {},
@@ -123,6 +125,37 @@
           "with": {}
         }
       },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.payment_claims": {
+      "name": "payment_claims",
+      "schema": "",
+      "columns": {
+        "fingerprint": {
+          "name": "fingerprint",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "order_id": {
+          "name": "order_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "claimed_at": {
+          "name": "claimed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},

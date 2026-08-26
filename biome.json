@@ -13,6 +13,7 @@
       "!.claude",
       "!portal",
       "!spikes",
+      "!apps/gateway/drizzle",
       "!pnpm-lock.yaml"
     ]
   },
@@ -45,28 +46,40 @@
     "enabled": true,
     "rules": {
       "preset": "recommended",
-      "a11y": { "preset": "none" },
-      "complexity": { "preset": "recommended" },
+      "a11y": {
+        "preset": "none"
+      },
+      "complexity": {
+        "preset": "recommended"
+      },
       "correctness": {
         "preset": "recommended",
         "noUndeclaredDependencies": "error"
       },
-      "performance": { "preset": "recommended" },
-      "security": { "preset": "recommended" },
+      "performance": {
+        "preset": "recommended"
+      },
+      "security": {
+        "preset": "recommended"
+      },
       "style": {
         "preset": "recommended",
         "noNonNullAssertion": "error",
         "useNodejsImportProtocol": "error",
         "useConsistentArrayType": {
           "level": "error",
-          "options": { "syntax": "shorthand" }
+          "options": {
+            "syntax": "shorthand"
+          }
         }
       },
       "suspicious": {
         "preset": "recommended",
         "noExplicitAny": "error"
       },
-      "nursery": { "preset": "none" }
+      "nursery": {
+        "preset": "none"
+      }
     }
   },
   "assist": {
