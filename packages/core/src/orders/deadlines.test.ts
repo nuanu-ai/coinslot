@@ -83,9 +83,7 @@ describe("the deadlines of an order", () => {
       timestamps: { ...base.timestamps, paidAt: T0 + 30 },
     };
 
-    expect(at(order, "async_fulfillment")).toBe(
-      T0 + 30 + TEST_POLICY.deadlines.asyncFulfillmentMs,
-    );
+    expect(at(order, "async_fulfillment")).toBe(T0 + 30 + TEST_POLICY.deadlines.asyncFulfillmentMs);
     expect(at(order, "sync_response")).toBeUndefined();
   });
 

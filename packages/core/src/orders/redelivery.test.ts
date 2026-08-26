@@ -36,7 +36,12 @@ describe("deciding whether to deliver an order again", () => {
   });
 
   it("gives up once the policy's attempts are spent", () => {
-    const spent = nextRedelivery({ attempts: policy.maxAttempts, now: 0, deadlineAt: null, policy });
+    const spent = nextRedelivery({
+      attempts: policy.maxAttempts,
+      now: 0,
+      deadlineAt: null,
+      policy,
+    });
 
     expect(spent).toStrictEqual({ retry: false, reason: "attempts_exhausted" });
   });
