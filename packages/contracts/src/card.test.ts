@@ -63,6 +63,16 @@ describe("price check", () => {
     expect(PriceCheckSchema.safeParse({ url: "api.example.com/quote" }).success).toBe(false);
   });
 
+  it("refuses something that begins like an address and is not one", () => {
+    // The scheme rule and the address rule are two checks, and this is the
+    // case that tells them apart: right scheme, no address behind it. A card
+    // carrying one of these would publish, and the price question would fail
+    // at the first purchase instead of at the publish call.
+    for (const url of ["https://", "https://a b", "https://["]) {
+      expect(PriceCheckSchema.safeParse({ url }).success, url).toBe(false);
+    }
+  });
+
   it("refuses an address that names nowhere", () => {
     // A card that declares the second transport and gives no address is a card
     // whose price we would never manage to ask about, and the merchant would
