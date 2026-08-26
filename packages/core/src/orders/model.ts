@@ -222,10 +222,10 @@ export const RECOMMENDED_REFUSAL_CODES = [
 /**
  * Every waiting has a deadline and an owner of that deadline.
  *
- * `quote_expiry`, `sync_response` and `payment_after_confirmation` are ours,
- * one number each for the whole system. `confirmation_response` and
- * `async_fulfillment` are the merchant's, declared on the card and visible to
- * the agent before the purchase.
+ * `quote_expiry`, `settle_response`, `sync_response` and
+ * `payment_after_confirmation` are ours, one number each for the whole system.
+ * `confirmation_response` and `async_fulfillment` are the merchant's, declared
+ * on the card and visible to the agent before the purchase.
  */
 export const DEADLINE_KINDS = [
   "quote_expiry",
