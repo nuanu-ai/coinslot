@@ -23,7 +23,7 @@
 
 import type { ZodType } from "zod";
 import { z } from "zod";
-import { CardSchema, FulfillmentSchema, PriceCheckSchema } from "./card.js";
+import { CardSchema, FulfillmentSchema, PriceCheckSchema, PublicCardSchema } from "./card.js";
 import { WorkerEnvelopeSchema } from "./envelope.js";
 import { OrderEventSchema, RefundDueReasonSchema } from "./events.js";
 import {
@@ -58,12 +58,14 @@ import {
   PublishResultSchema,
 } from "./results.js";
 
-export type { Card, Fulfillment, PriceCheck } from "./card.js";
+export type { Card, Fulfillment, PriceCheck, PublicCard } from "./card.js";
 export {
   CardSchema,
   deliveryCheckFor,
   FulfillmentSchema,
   PriceCheckSchema,
+  PublicCardSchema,
+  publicCardOf,
   purchaseCheckFor,
 } from "./card.js";
 export type { WorkerEnvelope, WorkerEnvelopeKind } from "./envelope.js";
@@ -171,6 +173,7 @@ export const schemas = Object.freeze({
   param_spec: ParamSpecSchema,
   param_type: ParamTypeSchema,
   price_check: PriceCheckSchema,
+  public_card: PublicCardSchema,
   publish_error: PublishErrorSchema,
   publish_result: PublishResultSchema,
   quote_purpose: QuotePurposeSchema,

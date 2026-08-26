@@ -353,7 +353,9 @@ describe("the card an agent reads", () => {
     // and an agent given both would use the wrong one some of the time.
     expect(publicCard.id).toBe("itm_4d21bb");
     expect(Object.keys(publicCard)).not.toContain("merchant_item_id");
-    expect(PublicCardSchema.safeParse({ ...publicCard, merchant_item_id: "access-monthly" }).success).toBe(false);
+    expect(
+      PublicCardSchema.safeParse({ ...publicCard, merchant_item_id: "access-monthly" }).success,
+    ).toBe(false);
   });
 
   it("says the price will be asked again without saying where", () => {
@@ -362,10 +364,15 @@ describe("the card an agent reads", () => {
     // the price is asked again is the part an agent acts on: the catalog price
     // is what it compares, and the sale can go through at another.
     expect(publicCard.price_checked_at_purchase).toBe(true);
-    expect(JSON.stringify(publicCard)).not.toContain("price_check");
-    expect(PublicCardSchema.safeParse({ ...publicCard, price_check: "handler" }).success).toBe(false);
+    expect(Object.keys(publicCard)).not.toContain("price_check");
+    expect(PublicCardSchema.safeParse({ ...publicCard, price_check: "handler" }).success).toBe(
+      false,
+    );
     expect(
-      PublicCardSchema.safeParse({ ...publicCard, price_check: { url: "https://pricing.internal/quote" } }).success,
+      PublicCardSchema.safeParse({
+        ...publicCard,
+        price_check: { url: "https://pricing.internal/quote" },
+      }).success,
     ).toBe(false);
   });
 
@@ -454,9 +461,9 @@ describe("the card an agent reads", () => {
       CardSchema.parse({ ...syncCard, fulfillment: "async", fulfill_deadline_seconds: 900 }),
       issued,
     );
-    expect(
-      PublicCardSchema.safeParse({ ...async, confirm_deadline_seconds: 60 }).success,
-    ).toBe(false);
+    expect(PublicCardSchema.safeParse({ ...async, confirm_deadline_seconds: 60 }).success).toBe(
+      false,
+    );
   });
 
   it("says the deadline rule as structure, so it survives into the exported document", () => {
@@ -466,14 +473,10 @@ describe("the card an agent reads", () => {
     // branches it crosses whole, and a generated client refuses what we refuse.
     const document = toJsonSchemas().public_card;
     const branches = document.anyOf ?? document.oneOf ?? [];
-    const modeOf = (branch: (typeof branches)[number]) =>
-      ((branch as { properties?: Record<string, { const?: unknown }> }).properties?.fulfillment ?? {})
-        .const;
-    const branchFor = (mode: string) => branches.find((branch) => modeOf(branch) === mode);
+    type Branch = { properties?: Record<string, { const?: unknown } | undefined> };
+    const modeOf = (branch: unknown) => (branch as Branch).properties?.fulfillment?.const;
     const propertiesOf = (mode: string) =>
-      Object.keys(
-        (branchFor(mode) as { properties?: Record<string, unknown> } | undefined)?.properties ?? {},
-      );
+      Object.keys((branches.find((branch) => modeOf(branch) === mode) as Branch)?.properties ?? {});
 
     expect(branches).toHaveLength(3);
     expect(propertiesOf("sync")).not.toContain("fulfill_deadline_seconds");
