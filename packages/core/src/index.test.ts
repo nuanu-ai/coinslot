@@ -7,19 +7,21 @@ const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.
 };
 
 describe("@coinslot/core", () => {
-  it("останавливает работу на необработанном варианте и называет его", () => {
-    // Обманываем типы ровно так, как это делает жизнь: значение приехало из
-    // базы, а разбор про него не знает. Обещание ядра — заметный отказ вместо
-    // тихого продолжения с заказом, который никто не обработал.
+  it("stops the work on an unhandled variant and names it", () => {
+    // We fool the types exactly the way life does: the value arrived from the
+    // database, and the case analysis knows nothing about it. The core's
+    // promise is a visible refusal instead of quietly carrying on with an
+    // order nobody handled.
     const fromDatabase = "refunded" as never;
 
-    expect(() => assertNever(fromDatabase, "статус заказа")).toThrowError(/статус заказа/);
-    expect(() => assertNever(fromDatabase, "статус заказа")).toThrowError(/refunded/);
+    expect(() => assertNever(fromDatabase, "order status")).toThrowError(/order status/);
+    expect(() => assertNever(fromDatabase, "order status")).toThrowError(/refunded/);
   });
 
-  it("не тянет ни одной runtime-зависимости", () => {
-    // Ядро — чистая логика: его можно исполнить в тесте, в скрипте и в чужом
-    // окружении без установки чего бы то ни было (ADR-0003, п. 2).
+  it("drags in not a single runtime dependency", () => {
+    // The core is pure logic: it can be run in a test, in a script and in
+    // someone else's environment without installing anything at all
+    // (ADR-0003 §2).
     expect(manifest.dependencies ?? {}).toStrictEqual({});
   });
 });

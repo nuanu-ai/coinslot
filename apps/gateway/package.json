@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Гейтвей Coinslot — 402-край, очередь заказов, квитанции",
+  "description": "Coinslot gateway — the 402 edge, the order queue, receipts",
   "exports": {
     ".": "./src/index.ts"
   },

@@ -1,13 +1,13 @@
 import { z } from "zod";
 
 /**
- * Отличаем «переменная не задана» от «задана неправильно»: инженер, читающий
- * ошибку старта, должен видеть разницу между забытой строкой в окружении и
- * опечаткой в ней.
+ * We tell "the variable is not set" apart from "it is set wrong": the engineer
+ * reading a startup error has to see the difference between a line forgotten
+ * in the environment and a typo inside it.
  */
 function absentOrWrong(whenWrong: string) {
   return (issue: { input: unknown }): string =>
-    issue.input === undefined ? "переменная не задана" : whenWrong;
+    issue.input === undefined ? "the variable is not set" : whenWrong;
 }
 
 function isPostgresUrl(value: string): boolean {
@@ -19,35 +19,35 @@ function isPostgresUrl(value: string): boolean {
 }
 
 /**
- * Окружение — такая же внешняя граница, как чужой HTTP-запрос, поэтому оно
- * проходит через схему zod (ADR-0003, п. 5). Гейтвей, стартовавший с
- * полупустой конфигурацией, обнаружит это на первом же платеже, и обнаружит
- * не он, а покупатель.
+ * The environment is just as much an external boundary as someone else's HTTP
+ * request, so it goes through a zod schema (ADR-0003 §5). A gateway that
+ * started with a half-empty configuration will discover that on the very first
+ * payment, and the one to discover it will not be the gateway but the buyer.
  */
 const environmentSchema = z.object({
-  /** Один Postgres на всё: заказы, квитанции, очередь (ADR-0003, п. 6). */
+  /** One Postgres for everything: orders, receipts, the queue (ADR-0003 §6). */
   DATABASE_URL: z
-    .string({ error: absentOrWrong("должна быть строкой") })
-    .refine(isPostgresUrl, "должна быть адресом вида postgres://пользователь@хост:порт/база"),
-  /** Порт резидентного процесса; снаружи его закрывает Caddy. */
+    .string({ error: absentOrWrong("must be a string") })
+    .refine(isPostgresUrl, "must be an address of the form postgres://user@host:port/database"),
+  /** The port of the resident process; from outside it is closed off by Caddy. */
   PORT: z
-    .string({ error: absentOrWrong("должен быть строкой") })
-    .regex(/^\d+$/, "должен быть целым числом")
+    .string({ error: absentOrWrong("must be a string") })
+    .regex(/^\d+$/, "must be a whole number")
     .transform(Number)
-    .refine((port) => port >= 1 && port <= 65535, "должен быть в диапазоне 1..65535")
+    .refine((port) => port >= 1 && port <= 65535, "must be within the range 1..65535")
     .default(3000),
 });
 
-/** Конфигурация гейтвея — то, без чего процесс не имеет права стартовать. */
+/** The gateway configuration — what the process has no right to start without. */
 export interface GatewayConfig {
   readonly databaseUrl: string;
   readonly port: number;
 }
 
 /**
- * Читает конфигурацию из окружения и называет разом все проблемы, а не первую
- * попавшуюся: инженер, поднимающий гейтвей, узнаёт весь список за один заход,
- * а не по одной переменной за перезапуск.
+ * Reads the configuration from the environment and names every problem at
+ * once rather than the first one it runs into: the engineer bringing the
+ * gateway up learns the whole list in one go, not one variable per restart.
  */
 export function loadConfig(environment: Record<string, string | undefined>): GatewayConfig {
   const parsed = environmentSchema.safeParse(environment);
@@ -58,7 +58,9 @@ export function loadConfig(environment: Record<string, string | undefined>): Gat
       return variable === "" ? issue.message : `${variable}: ${issue.message}`;
     });
 
-    throw new Error(`Гейтвей не может стартовать, конфигурация неполна — ${problems.join("; ")}`);
+    throw new Error(
+      `The gateway cannot start, the configuration is incomplete — ${problems.join("; ")}`,
+    );
   }
 
   return {

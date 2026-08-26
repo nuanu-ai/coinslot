@@ -1,22 +1,26 @@
 /**
- * SDK мерчанта Coinslot: то, что чужой инженер ставит себе, чтобы его каталог
- * продавался агентам. Отсюда приедут воркер выдачи и проверка интеграции.
+ * The Coinslot merchant SDK: what someone else's engineer installs so that
+ * their catalog sells to agents. The fulfillment worker and the integration
+ * check will arrive from here.
  *
- * У пакета жёсткий бюджет сторонних runtime-зависимостей — ноль (ADR-0003,
- * п. 8). Мерчант, ставящий SDK в свой продакшен, не должен вместе с ним
- * получать чужое дерево пакетов, которое ему потом самому и обслуживать.
- * Единственная зависимость — наши же контракты.
+ * The runtime dependency tree is minimal and listed in full: our own
+ * `@coinslot/contracts` and `zod`, nothing else. A merchant installing the SDK
+ * into their production should know exactly what arrives with it, rather than
+ * inherit a foreign package tree they would then be maintaining themselves.
+ * Every new third-party package in this tree is a recorded decision
+ * (ADR-0003 §8).
  */
 
 import { CONTRACT_VERSION } from "@coinslot/contracts";
 
-/** Версия контракта, на которой разговаривает этот SDK. */
+/** The contract version this SDK talks in. */
 export const contractVersion = CONTRACT_VERSION;
 
 /**
- * Понимает ли SDK контракт указанной версии. Гейтвей называет свою версию в
- * ответе, воркер мерчанта сверяет её этой функцией и падает на старте, а не
- * на первом заказе, где расхождение диалектов стоит денег покупателя.
+ * Whether the SDK understands a contract of the given version. The gateway
+ * names its own version in the response, the merchant's worker checks it with
+ * this function and fails at startup rather than on the first order, where a
+ * divergence of dialects costs the buyer money.
  */
 export function speaksContract(version: string): boolean {
   return version === CONTRACT_VERSION;

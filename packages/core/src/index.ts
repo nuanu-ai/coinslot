@@ -1,22 +1,23 @@
 /**
- * Доменное ядро Coinslot: заказы, квитанции, идемпотентность, машина
- * состояний. Здесь живёт то, что и есть продукт, поэтому пакет ничего не
- * знает ни про HTTP, ни про базу, ни про очередь — ноль IO и ноль
- * runtime-зависимостей (ADR-0003, п. 2 и п. 9). Всё внешнее ядро получает
- * параметрами и возвращает значениями.
+ * The Coinslot domain core: orders, receipts, idempotency, the state machine.
+ * Here lives what actually is the product, so the package knows nothing about
+ * HTTP, nothing about the database and nothing about the queue — zero IO and
+ * zero runtime dependencies (ADR-0003 §2 and §9). Everything external the core
+ * receives as parameters and returns as values.
  */
 
 /**
- * Страж полноты разбора. Ставится в ветку по умолчанию у `switch` по
- * состоянию заказа: пока разобраны все состояния, TypeScript видит здесь
- * `never` и молчит, а стоит появиться новому состоянию — сборка ломается на
- * этой строке, а не в бою на заказе, который никто не обработал.
+ * The exhaustiveness guard. It goes into the default branch of a `switch` over
+ * the order state: while every state is handled, TypeScript sees `never` here
+ * and stays silent, and the moment a new state appears the build breaks on
+ * this line instead of breaking in production on an order nobody handled.
  *
- * Если типы всё-таки обмануты — значение пришло из базы или по сети, — работа
- * останавливается исключением, называющим сам вариант. Молчаливое «ничего не
- * произошло» рядом с чужими деньгами недопустимо.
+ * If the types have been fooled after all — the value came from the database
+ * or over the network — the work stops with an exception that names the
+ * variant itself. A silent "nothing happened" next to someone else's money is
+ * inadmissible.
  */
 export function assertNever(value: never, context?: string): never {
   const where = context === undefined ? "" : ` (${context})`;
-  throw new Error(`Необработанный вариант${where}: ${JSON.stringify(value)}`);
+  throw new Error(`Unhandled variant${where}: ${JSON.stringify(value)}`);
 }

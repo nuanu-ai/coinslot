@@ -7,15 +7,16 @@ const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.
 };
 
 describe("@coinslot/contracts", () => {
-  it("объявляет версию контракта и держит zod единственной runtime-зависимостью", () => {
-    // Версия — то, по чему SDK мерчанта и гейтвей понимают, что говорят об
-    // одном и том же. Пустая строка означала бы «версии нет», а молчаливого
-    // отсутствия версии в контракте быть не должно.
+  it("declares the contract version and keeps zod its only runtime dependency", () => {
+    // The version is what the merchant's SDK and the gateway use to tell that
+    // they are talking about the same thing. An empty string would mean "there
+    // is no version", and a version silently missing from the contract must
+    // not happen.
     expect(CONTRACT_VERSION).not.toBe("");
 
-    // Contracts — единственный пакет, который SDK тянет за собой, поэтому его
-    // дерево зависимостей и есть дерево зависимостей SDK (ADR-0003 п. 8).
-    // Упавшая проверка означает, что мерчант при установке получил лишнее.
+    // Contracts is the only package the SDK drags along, so its dependency
+    // tree is the SDK's dependency tree (ADR-0003 §8). A failing check means
+    // the merchant got something extra when installing.
     expect(Object.keys(manifest.dependencies ?? {})).toStrictEqual(["zod"]);
   });
 });

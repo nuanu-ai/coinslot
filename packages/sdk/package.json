@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "SDK мерчанта Coinslot — воркер выдачи и проверка интеграции",
+  "description": "Coinslot merchant SDK — the fulfillment worker and the integration check",
   "exports": {
     ".": "./src/index.ts"
   },

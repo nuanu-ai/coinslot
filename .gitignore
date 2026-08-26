@@ -6,15 +6,15 @@
 .vscode/
 *.swp
 
-# Claude Code — локальные настройки и рабочие копии агентов не коммитим
+# Claude Code — local settings and agent working copies are not committed
 .claude/settings.local.json
 .claude/worktrees/
 
-# Секреты и окружение
+# Secrets and environment
 .env
 .env.*
 
-# Сборка и зависимости
+# Build and dependencies
 node_modules/
 dist/
 coverage/

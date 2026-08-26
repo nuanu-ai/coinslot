@@ -4,7 +4,7 @@ import { loadConfig } from "./config.js";
 const database = "postgres://coinslot:secret@localhost:5432/coinslot";
 
 describe("loadConfig", () => {
-  it("читает окружение и подставляет порт по умолчанию", () => {
+  it("reads the environment and fills in the default port", () => {
     expect(loadConfig({ DATABASE_URL: database })).toStrictEqual({
       databaseUrl: database,
       port: 3000,
@@ -13,19 +13,19 @@ describe("loadConfig", () => {
     expect(loadConfig({ DATABASE_URL: database, PORT: "8080" }).port).toBe(8080);
   });
 
-  it("не даёт стартовать, называет разом все проблемы и отличает пустое от неверного", () => {
-    // Обещание инженеру: весь список недостающего он получает за один заход, а
-    // не по одной переменной за перезапуск, и «не задана» звучит иначе, чем
-    // «задана неправильно».
-    const bothBroken = () => loadConfig({ PORT: "не число" });
-    expect(bothBroken).toThrowError(/DATABASE_URL: переменная не задана/);
-    expect(bothBroken).toThrowError(/PORT: должен быть целым числом/);
+  it("does not let it start, names every problem at once and tells absent from wrong", () => {
+    // The promise to the engineer: the whole list of what is missing arrives in
+    // one go rather than one variable per restart, and "not set" sounds
+    // different from "set wrong".
+    const bothBroken = () => loadConfig({ PORT: "not a number" });
+    expect(bothBroken).toThrowError(/DATABASE_URL: the variable is not set/);
+    expect(bothBroken).toThrowError(/PORT: must be a whole number/);
 
     expect(() => loadConfig({ DATABASE_URL: "mysql://localhost/coinslot" })).toThrowError(
-      /DATABASE_URL: должна быть адресом вида postgres/,
+      /DATABASE_URL: must be an address of the form postgres/,
     );
     expect(() => loadConfig({ DATABASE_URL: database, PORT: "70000" })).toThrowError(
-      /PORT: должен быть в диапазоне/,
+      /PORT: must be within the range/,
     );
   });
 });

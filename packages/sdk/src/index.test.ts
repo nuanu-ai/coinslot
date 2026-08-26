@@ -8,18 +8,20 @@ const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.
 };
 
 describe("@coinslot/sdk", () => {
-  it("сверяет версию контракта и отказывает чужой", () => {
-    // Обещание мерчанту: расхождение диалектов обнаруживается на старте
-    // воркера, а не на заказе, где оно стоит денег покупателя.
+  it("checks the contract version and refuses a foreign one", () => {
+    // The promise to the merchant: a divergence of dialects is discovered at
+    // worker startup, not on an order, where it costs the buyer money.
     expect(contractVersion).toBe(CONTRACT_VERSION);
     expect(speaksContract(CONTRACT_VERSION)).toBe(true);
-    expect(speaksContract(`${CONTRACT_VERSION}-чужая`)).toBe(false);
+    expect(speaksContract(`${CONTRACT_VERSION}-foreign`)).toBe(false);
   });
 
-  it("не тянет ни одной сторонней runtime-зависимости", () => {
-    // Жёсткое правило ADR-0003, п. 8. Упавшая проверка означает, что мерчант
-    // вместе с SDK поставил себе в продакшен чужой пакет, и каждое такое
-    // исключение обязано быть отдельным записанным решением.
+  it("declares no third-party dependency of its own", () => {
+    // The tree the merchant gets is `@coinslot/contracts` and `zod`, nothing
+    // else. This is one half of the pin — the SDK adds nothing of its own; the
+    // other half is the contracts test, which holds contracts to exactly zod.
+    // A failing check means a third-party package entered the merchant's
+    // production along with the SDK without a recorded decision (ADR-0003 §8).
     const thirdParty = Object.entries(manifest.dependencies ?? {}).filter(
       ([, range]) => !range.startsWith("workspace:"),
     );

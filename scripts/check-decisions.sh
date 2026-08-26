@@ -1,21 +1,23 @@
 #!/usr/bin/env bash
 #
-# Проверка журнала решений: имена файлов и уникальность номеров.
+# Checks the decision log: file names and the uniqueness of numbers.
 #
-# Зачем этот файл существует. Решения в docs/decisions ссылаются друг на друга
-# и на research по номеру — «ADR-0003, п. 8» встречается и в коде, и в
-# документах портала. Номер, выданный дважды, превращает эти ссылки в загадку,
-# а имя не по образцу ломает сортировку каталога, по которой журнал читают.
-# Обе беды дешевле поймать в CI, чем в разговоре через месяц; хук на такое не
-# годится, потому что решение может приехать и не через локальный коммит.
+# Why this file exists. The decisions in docs/decisions refer to each other and
+# to research by number — "ADR-0003 §8" turns up both in the code and in the
+# portal documents. A number handed out twice turns those references into a
+# riddle, and a name that is off the pattern breaks the directory ordering the
+# log is read by. Both troubles are cheaper to catch in CI than in a
+# conversation a month later; a hook is no good for this, because a decision
+# can also arrive by a route other than a local commit.
 #
-# Чего скрипт сознательно не проверяет: неизменность уже принятых решений. По
-# хартии решения остаются живыми документами — правка вносится прямо в файл, а
-# история живёт в git. Возврат к append-only назван отдельным триггером, и это
-# решение Дмитрия, а не умолчание скрипта.
+# What the script deliberately does not check: that decisions already taken
+# stay unchanged. By the charter decisions remain living documents — the edit
+# goes straight into the file, and the history lives in git. Going back to
+# append-only is named as a separate trigger, and that is Dmitry's decision,
+# not a default of this script.
 #
-# Почему bash: проверка читает имена файлов в одном каталоге. Инструмент,
-# который для этого пришлось бы поставить, стоил бы дороже проверки.
+# Why bash: the check reads file names in a single directory. The tool that
+# would have to be installed for that would cost more than the check.
 
 set -euo pipefail
 
@@ -30,7 +32,7 @@ report() {
 }
 
 if [ ! -d "${decisions_directory}" ]; then
-  printf 'Каталога docs/decisions не существует — проверять нечего.\n' >&2
+  printf 'The docs/decisions directory does not exist — nothing to check.\n' >&2
   exit 1
 fi
 
@@ -42,18 +44,18 @@ for path in "${decisions_directory}"/*; do
 
   name="$(basename "${path}")"
 
-  # README описывает формат журнала и сам решением не является.
+  # The README describes the format of the log and is not a decision itself.
   if [ "${name}" = "README.md" ]; then
     continue
   fi
 
   if [ ! -f "${path}" ]; then
-    report "docs/decisions/${name}: решение — это файл, а не каталог."
+    report "docs/decisions/${name}: a decision is a file, not a directory."
     continue
   fi
 
   if ! printf '%s' "${name}" | grep -Eq '^[0-9]{4}-[a-z0-9]+(-[a-z0-9]+)*\.md$'; then
-    report "docs/decisions/${name}: имя не в формате NNNN-slug.md (четыре цифры, дефис, латиница в нижнем регистре)."
+    report "docs/decisions/${name}: the name is not in the NNNN-slug.md format (four digits, a hyphen, lowercase latin)."
     continue
   fi
 
@@ -63,7 +65,7 @@ for path in "${decisions_directory}"/*; do
 done
 
 if [ "${found}" -eq 0 ]; then
-  report "В docs/decisions нет ни одного решения — журнал пуст."
+  report "There is not a single decision in docs/decisions — the log is empty."
 fi
 
 duplicates="$(printf '%s' "${numbers}" | sort | uniq -d)"
@@ -71,13 +73,13 @@ duplicates="$(printf '%s' "${numbers}" | sort | uniq -d)"
 if [ -n "${duplicates}" ]; then
   for number in ${duplicates}; do
     same="$(cd "${decisions_directory}" && printf '%s ' "${number}"-*.md)"
-    report "Номер ${number} выдан больше одного раза: ${same}"
+    report "Number ${number} has been handed out more than once: ${same}"
   done
 fi
 
 if [ "${problems}" -ne 0 ]; then
-  printf 'Журнал решений не в порядке: проблем — %s.\n' "${problems}" >&2
+  printf 'The decision log is not in order. Problems: %s.\n' "${problems}" >&2
   exit 1
 fi
 
-printf 'Журнал решений в порядке: решений — %s, номера уникальны.\n' "${found}"
+printf 'The decision log is in order. Decisions: %s, numbers are unique.\n' "${found}"

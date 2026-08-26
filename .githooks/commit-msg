@@ -1,31 +1,33 @@
 #!/usr/bin/env bash
 #
-# Проверка сообщения коммита на формат Conventional Commits.
+# Checks the commit message against the Conventional Commits format.
 #
-# Зачем этот файл существует. Пока репозиторий состоял из документов, префикс
-# коммита был вежливостью: историю читали глазами, и забытый `docs:` ничего не
-# ломал. С появлением кода история становится инструментом — по типу коммита
-# работают `git bisect`, changesets и разбор релиза, и они читают строку
-# машиной, которой всё равно, что имелось в виду. Хартия называет порог
-# перевода правила в машину, а `docs/research/15-culture-stack-position.md`
-# заранее назвал этот хук частью стартового машинного минимума.
+# Why this file exists. While the repository consisted of documents, the commit
+# prefix was a courtesy: the history was read by eye, and a forgotten `docs:`
+# broke nothing. Once there is code, the history becomes a tool — `git bisect`,
+# changesets and the release breakdown work off the commit type, and they read
+# the line by machine, which does not care what was meant. The charter names
+# the threshold for moving a rule into a machine, and
+# `docs/research/15-culture-stack-position.md` named this hook in advance as
+# part of the starting machine minimum.
 #
-# Почему bash, а не husky с commitlint. Проверка помещается в двадцать строк.
-# Husky и commitlint — это две зависимости, свой конфиг и слой между git и
-# проверкой; слой окупается, когда правил много, и не окупается на одном.
+# Why bash and not husky with commitlint. The check fits into twenty lines.
+# Husky and commitlint are two dependencies, a config of their own and a layer
+# between git and the check; the layer pays off when there are many rules and
+# does not pay off on one.
 #
-# Как подключается. `pnpm install` выставляет core.hooksPath на .githooks
-# (скрипт prepare в корневом package.json). Разовый обход — `git commit
-# --no-verify`: это осознанный шаг конкретного коммита, а не настройка.
+# How it is wired up. `pnpm install` points core.hooksPath at .githooks (the
+# prepare script in the root package.json). A one-off bypass is `git commit
+# --no-verify`: a deliberate step for one specific commit, not a setting.
 
 set -euo pipefail
 
 message_file="$1"
 
-# Первая содержательная строка: комментарии git и пустые строки пропускаем.
+# The first meaningful line: git comments and blank lines are skipped.
 subject="$(awk '/^#/ { next } /^[[:space:]]*$/ { next } { print; exit }' "$message_file")"
 
-# Служебные сообщения git пишет сам, и переписывать их не нам.
+# Git writes its housekeeping messages itself, and rewriting them is not ours.
 case "$subject" in
   "Merge "* | "Revert "* | "fixup!"* | "squash!"* | "amend!"*) exit 0 ;;
 esac
@@ -37,20 +39,21 @@ if printf '%s' "$subject" | grep -Eq "^(${types})(\([a-z0-9._/-]+\))?!?: .+"; th
 fi
 
 cat >&2 <<MESSAGE
-Сообщение коммита не в формате Conventional Commits.
+The commit message is not in the Conventional Commits format.
 
-  получено: ${subject}
-  ожидается: тип(область)!: тема
+  got:      ${subject}
+  expected: type(scope)!: subject
 
-Тип — один из: ${types//|/, }.
-Область необязательна и пишется латиницей в нижнем регистре; тема пишется
-по-русски. Восклицательный знак перед двоеточием помечает ломающее изменение.
+The type is one of: ${types//|/, }.
+The scope is optional and is written in lowercase latin; the subject is
+written in English. An exclamation mark before the colon marks a breaking
+change.
 
-  docs: план до пилота — четыре этапа ходячего скелета
-  feat(contracts): схема карточки товара
-  fix(gateway)!: цена в заказе больше не берётся из карточки
+  docs: plan up to the pilot — four stages of the walking skeleton
+  feat(contracts): product card schema
+  fix(gateway)!: the order price is no longer taken from the card
 
-Если формат нарушен осознанно, коммит проходит с --no-verify.
+If the format is broken deliberately, the commit goes through with --no-verify.
 MESSAGE
 
 exit 1
