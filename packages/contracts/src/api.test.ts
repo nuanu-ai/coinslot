@@ -192,8 +192,8 @@ describe("the poll a worker makes", () => {
     // absence of a ceiling for a promise that any number will be honoured.
     const description = schemas.worker_poll_request.meta()?.description ?? "";
 
-    expect(description).toContain("gateway");
-    expect(description).toContain("ceiling");
+    expect(description).toContain("the policy is the gateway's");
+    expect(description).toContain("its own window and its own batch size whatever is asked for");
   });
 });
 
@@ -411,6 +411,17 @@ describe("the status an agent reads", () => {
       expectMissingFieldRejected(AgentOrderStatusSchema, status, field);
     });
   }
+
+  it("admits in the exported document what one of its words folds together", () => {
+    // The vocabulary defends folding three endings into "rejected" on the
+    // grounds that the reason travels separately. It does not, yet — no shape
+    // in this contract carries a refusal's reason to an agent — and the reader
+    // who has only the document is the one who would plan around the claim.
+    const description = schemas.agent_order_status.meta()?.description ?? "";
+
+    expect(description).toContain("rejected");
+    expect(description).toContain("nothing in this contract yet carries that reason to an agent");
+  });
 
   it("answers in the words both sides read, and refuses the machine's own", () => {
     expect(
@@ -727,6 +738,16 @@ describe("the addresses in the table, expanded and read back", () => {
     // of a path parameter. Looked up without asking whether the caller owns
     // the key, it expands into the source of a function.
     expect(() => expandPath("/v0/x/:constructor", {})).toThrow(/constructor/);
+
+    // And the case a check on the type alone cannot see: an inherited value
+    // that is a perfectly good string. Whatever built this object did not put
+    // an order id in it, and an address built from one goes to an order the
+    // caller never named.
+    const inherited = Object.create({ order_id: "ord_somebody_elses" }) as Record<string, string>;
+
+    expect(Object.hasOwn(inherited, "order_id")).toBe(false);
+    expect(inherited.order_id).toBe("ord_somebody_elses");
+    expect(() => expandPath("/v0/orders/:order_id", inherited)).toThrow(/order_id/);
   });
 
   it("refuses a value that is a step through the path rather than a value in it", () => {

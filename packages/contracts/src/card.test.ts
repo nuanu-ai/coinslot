@@ -494,8 +494,8 @@ describe("the card an agent reads", () => {
     // contract, and here it means only when the number shown was published.
     const description = toJsonSchemas().public_card.description ?? "";
 
-    expect(description).toContain("as_of");
-    expect(description).toContain("price_checked_at_purchase");
+    expect(description).toContain("when the price shown here was published");
+    expect(description).toContain("says nothing about how fresh that check will be");
     expect(description).toContain("not that they answer");
     expect(description).toContain("who is selling");
   });
