@@ -5,6 +5,7 @@ import {
   WorkerPollResponseSchema,
 } from "@coinslot/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { asTimestamp } from "../ports/clock.js";
 import { type Harness, harness, workOnce, workUntilStopped } from "../testing/harness.js";
 import { orderDocumentOf } from "./runner.js";
 
@@ -830,6 +831,94 @@ describe("the price question", () => {
 
     if (offered.step !== "pay") throw new Error("the card did not sell");
     expect(offered.order.order.quoteSource).toBe("card_snapshot");
+  });
+
+  it("carries the merchant's own `as_of` into the sale price, not the gateway's clock", async () => {
+    // The fifth gate on price freshness. `as_of` is the moment the price behind
+    // the sale was true; on a live-priced card that moment is the merchant's to
+    // state, and it reaches the buyer in the receipt and the merchant's worker
+    // in the order. Stamping the gateway's own clock there would claim the price
+    // was fresh at the sale when the merchant had priced it earlier. `at` — the
+    // moment of purchase — is the gateway's clock, and the two are distinct
+    // claims that must not be folded together.
+    const merchantPricedAt = "2026-08-26T10:15:00.000Z";
+
+    const harnessed = await started();
+    const itemId = await published(harnessed, livePriced(syncCard));
+
+    const worker = workUntilStopped(harnessed, {
+      onQuote: () => ({
+        available: true,
+        price: { amount: "95.00", currency: "USD" },
+        as_of: merchantPricedAt,
+      }),
+      onOrder: () => ({ delivered: { access_code: "SESAME" } }),
+    });
+    const offered = await harnessed.gateway.beginPurchase(itemId, { nights: 1 });
+    if (offered.step !== "pay") throw new Error("no price was offered");
+    const orderId = offered.order.order.id;
+
+    const bought = await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
+    await worker.stop();
+    if (bought.step !== "settled") throw new Error("the purchase did not settle");
+
+    // The purchase happened at the gateway's clock; the price behind it did not.
+    const purchasedAt = asTimestamp(harnessed.now());
+    expect(purchasedAt).not.toBe(merchantPricedAt);
+
+    // The order the merchant's worker reads, and the receipt the buyer keeps,
+    // both carry the merchant's instant as `as_of` and the gateway's clock as
+    // `at`.
+    const document = orderDocumentOf(bought.order);
+    expect(document.price.as_of).toBe(merchantPricedAt);
+    expect(document.price.at).toBe(purchasedAt);
+
+    const receipt = await harnessed.store.receiptForOrder(orderId);
+    expect(receipt?.price.as_of).toBe(merchantPricedAt);
+    expect(receipt?.price.at).toBe(purchasedAt);
+
+    // Not conflated: here freshness and purchase-time are different moments, and
+    // a receipt that reported one for the other would lose the freshness claim.
+    expect(receipt?.price.at).not.toBe(receipt?.price.as_of);
+  });
+
+  it("stamps a snapshot sale with the price's publish time, not the purchase clock", async () => {
+    // The sibling claim on the same gate. A card sold from its own price and
+    // never checked live still carries `as_of`: the moment that card price was
+    // last published (per the sale-price contract). That is a fact about the
+    // price, not about this purchase, so it stays pinned to the publish even as
+    // the gateway's clock moves on to the moment of sale — here the two are
+    // deliberately an hour and a half apart. Stamping the gateway's own clock
+    // for `as_of` would claim the price was published at the sale.
+    const harnessed = await started();
+    const itemId = await published(harnessed, syncCard);
+    const publishedAt = asTimestamp(harnessed.now());
+
+    harnessed.advance(90 * 60_000);
+    const purchasedAt = asTimestamp(harnessed.now());
+    expect(purchasedAt).not.toBe(publishedAt);
+
+    const worker = workUntilStopped(harnessed, {
+      onOrder: () => ({ delivered: { access_code: "SESAME" } }),
+    });
+    const offered = await harnessed.gateway.beginPurchase(itemId, { nights: 1 });
+    if (offered.step !== "pay") throw new Error("no price was offered");
+    const orderId = offered.order.order.id;
+    expect(offered.order.order.quoteSource).toBe("card_snapshot");
+
+    const bought = await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
+    await worker.stop();
+    if (bought.step !== "settled") throw new Error("the purchase did not settle");
+
+    const document = orderDocumentOf(bought.order);
+    expect(document.price.as_of).toBe(publishedAt);
+    expect(document.price.at).toBe(purchasedAt);
+
+    const receipt = await harnessed.store.receiptForOrder(orderId);
+    expect(receipt?.price.as_of).toBe(publishedAt);
+    expect(receipt?.price.at).toBe(purchasedAt);
+
+    expect(receipt?.price.at).not.toBe(receipt?.price.as_of);
   });
 });
 
