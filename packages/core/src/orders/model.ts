@@ -1,0 +1,457 @@
+/**
+ * The vocabulary of the order state machine: what an order can be, what can
+ * happen to it, and what the gateway is asked to do about it.
+ *
+ * The design this file implements is `docs/research/16-order-state-machine.md`
+ * together with all three of its addition sections, and the two portal pages
+ * that speak the same model to the merchant — `portal/orders.md` and
+ * `portal/failures.md`. Where the two disagreed, the choice and the reason are
+ * written down at the state or the field that carries it.
+ *
+ * Two rules hold everywhere in this package. Time is a value: every event
+ * carries the instant it happened at, and nothing here reads a clock, so the
+ * same inputs always produce the same order. And the deadlines are a policy,
+ * not a constant: their numbers are still open questions before the pilot, and
+ * a guessed number baked into the core would be a claim beyond the evidence.
+ */
+
+import { assertNever } from "../index.js";
+
+/**
+ * Every state an order can be in.
+ *
+ * The backbone is one for all three fulfillment modes; the mode switches
+ * decide which gates are passed automatically.
+ *
+ * - `created` — the intent to buy: the card was found and the purchase
+ *   parameters passed the card's schema. No price yet.
+ * - `quoted` — the price is fixed, either by the merchant's answer or by the
+ *   card's snapshot, and the payment question is next.
+ * - `awaiting_confirmation` — the merchant was asked "will you fulfill this?"
+ *   and no money has moved. Only reachable when the card needs confirmation.
+ * - `confirmed` — the merchant answered "I will", and the agent now has a
+ *   deadline to pay.
+ * - `paid` — the payment question is settled as far as this mode requires
+ *   before the order reaches the merchant. With the settle on purchase that
+ *   means the money moved; with the settle after fulfillment it means the
+ *   payment was verified and will be executed last.
+ * - `dispatched` — the order was queued and handed to the merchant's handler.
+ *   Delivery is at least once, so this state can be entered again.
+ * - `fulfilled` — the merchant produced the goods and the money still has to
+ *   move. Reachable only where the settle comes after fulfillment.
+ * - `delivered` — the successful terminal: the goods are the agent's, the
+ *   money is the merchant's, the receipt points at the quote.
+ * - `delivered_unpaid` — the merchant produced the goods after a synchronous
+ *   purchase whose settle then failed. Rare, open, and closed by the agent
+ *   repeating the purchase; no second fulfillment is ever asked for.
+ * - `refund_due` — the money was taken and the goods were not delivered. Open
+ *   by design: the refund mechanism itself is an open question, and the
+ *   machine only records the debt.
+ * - `refunded` — the debt was closed by a refund. The machine learns of it as
+ *   a fact and knows nothing about how it was executed.
+ * - `failed` — the merchant's handler refused a purchase whose money had not
+ *   moved. The agent sees a refusal; the merchant's own metrics can still tell
+ *   this apart from a purchase that never reached his handler.
+ * - `rejected` — closed before the merchant's handler ever saw the order: no
+ *   stock, a payment that did not pass verification, a silent price check on a
+ *   card whose money moves on purchase.
+ * - `declined` — the merchant answered "I will not" to a confirmation request.
+ *   Free for the agent.
+ * - `expired` — a deadline ran out. Free for the agent in every case it can
+ *   reach, because every deadline whose expiry would leave money taken sends
+ *   the order to `refund_due` instead.
+ * - `cancelled` — the merchant left and the order was open with no money taken.
+ */
+export const ORDER_STATES = [
+  "created",
+  "quoted",
+  "awaiting_confirmation",
+  "confirmed",
+  "paid",
+  "dispatched",
+  "fulfilled",
+  "delivered",
+  "delivered_unpaid",
+  "refund_due",
+  "refunded",
+  "failed",
+  "rejected",
+  "declined",
+  "expired",
+  "cancelled",
+] as const;
+
+export type OrderState = (typeof ORDER_STATES)[number];
+
+/**
+ * The states in which the order is still owed something — either work or
+ * money. `refund_due` and `delivered_unpaid` are here even though the purchase
+ * itself is over: the portal calls them the two cases that stay open, and the
+ * merchant's list of unclosed orders has to show them.
+ */
+export const OPEN_ORDER_STATES = [
+  "created",
+  "quoted",
+  "awaiting_confirmation",
+  "confirmed",
+  "paid",
+  "dispatched",
+  "fulfilled",
+  "refund_due",
+  "delivered_unpaid",
+] as const;
+
+export type OpenOrderState = (typeof OPEN_ORDER_STATES)[number];
+
+/** The states in which nothing further is owed to anybody. */
+export const CLOSED_ORDER_STATES = [
+  "delivered",
+  "refunded",
+  "failed",
+  "rejected",
+  "declined",
+  "expired",
+  "cancelled",
+] as const;
+
+export type ClosedOrderState = (typeof CLOSED_ORDER_STATES)[number];
+
+export function isOpen(state: OrderState): boolean {
+  return (OPEN_ORDER_STATES as readonly OrderState[]).includes(state);
+}
+
+/**
+ * When the payment is executed. This is one of the two switches that turn the
+ * three published modes into one machine.
+ *
+ * `after_fulfillment` is the literal reading of "refusal before the charge":
+ * the payment is verified, the order goes to the merchant, the goods come
+ * back, and only then does the money move. `on_purchase` moves the money
+ * before the merchant is asked anything at all.
+ */
+export const SETTLE_TIMINGS = ["on_purchase", "after_fulfillment"] as const;
+
+export type SettleTiming = (typeof SETTLE_TIMINGS)[number];
+
+/**
+ * The two switches of a card. The fourth combination — confirmation with the
+ * settle after fulfillment — is not forbidden by the machine and is not
+ * published either, because no product has been found that needs it.
+ */
+export type OrderMode = {
+  readonly needsConfirmation: boolean;
+  readonly settle: SettleTiming;
+};
+
+/** The modes a card can declare. */
+export const FULFILLMENT_MODES = ["sync", "async", "confirm"] as const;
+
+export type FulfillmentMode = (typeof FULFILLMENT_MODES)[number];
+
+export function modeOf(fulfillment: FulfillmentMode): OrderMode {
+  switch (fulfillment) {
+    case "sync":
+      return { needsConfirmation: false, settle: "after_fulfillment" };
+    case "async":
+      return { needsConfirmation: false, settle: "on_purchase" };
+    case "confirm":
+      return { needsConfirmation: true, settle: "on_purchase" };
+    default:
+      return assertNever(fulfillment, "fulfillment mode");
+  }
+}
+
+/**
+ * How far the payment has got.
+ *
+ * Verification and execution are two steps and the machine leans on the gap
+ * between them: in the synchronous mode the money is verified before the order
+ * goes out and executed after the goods come back.
+ */
+export const PAYMENT_STAGES = ["none", "verified", "settled", "settle_failed"] as const;
+
+export type PaymentStage = (typeof PAYMENT_STAGES)[number];
+
+/**
+ * A sum of money and the instant the price it came from was true at. The
+ * amount is a decimal string: money never becomes a float on the way through
+ * this package.
+ */
+export type Price = {
+  readonly amount: string;
+  readonly currency: string;
+  readonly asOf: number;
+};
+
+/**
+ * Where the price of this order came from. A snapshot price is the card's own
+ * number, used when the card has no price check at all and when a price check
+ * went silent on a card whose money moves after the merchant's live answer.
+ */
+export const QUOTE_SOURCES = ["card_snapshot", "merchant_answer"] as const;
+
+export type QuoteSource = (typeof QUOTE_SOURCES)[number];
+
+/** Why a payment did not pass verification. */
+export const PAYMENT_VERIFICATION_FAILURES = [
+  "signature",
+  "insufficient_funds",
+  "price_stale",
+] as const;
+
+export type PaymentVerificationFailure = (typeof PAYMENT_VERIFICATION_FAILURES)[number];
+
+/**
+ * The refusal codes the platform reads the same way everywhere. The set is
+ * open — a merchant may send his own code when none of these fits — and the
+ * availability metric is fed by `out_of_stock`.
+ */
+export const RECOMMENDED_REFUSAL_CODES = [
+  "out_of_stock",
+  "invalid_params",
+  "cannot_fulfill",
+] as const;
+
+/**
+ * Every waiting has a deadline and an owner of that deadline.
+ *
+ * `quote_expiry`, `sync_response` and `payment_after_confirmation` are ours,
+ * one number each for the whole system. `confirmation_response` and
+ * `async_fulfillment` are the merchant's, declared on the card and visible to
+ * the agent before the purchase.
+ */
+export const DEADLINE_KINDS = [
+  "quote_expiry",
+  "confirmation_response",
+  "payment_after_confirmation",
+  "sync_response",
+  "async_fulfillment",
+] as const;
+
+export type DeadlineKind = (typeof DEADLINE_KINDS)[number];
+
+export type DeadlinePolicy = {
+  /** Ours: how long a quoted price stays good. */
+  readonly quoteTtlMs: number;
+  /** Ours: the ceiling on how long an agent waits for a synchronous answer. */
+  readonly syncResponseMs: number;
+  /** Ours: how long a confirmed order waits for the agent's payment. */
+  readonly paymentAfterConfirmationMs: number;
+  /** The merchant's, from the card: how long he may take to confirm. */
+  readonly confirmationResponseMs: number;
+  /** The merchant's, from the card: how long he may take to fulfill. */
+  readonly asyncFulfillmentMs: number;
+};
+
+/**
+ * How an undelivered order is redelivered. An exception in the handler, a dead
+ * process and a broken connection are all the same thing — the answer never
+ * came back — and they are answered with another delivery, not with a refusal.
+ */
+export type RedeliveryPolicy = {
+  readonly baseDelayMs: number;
+  readonly factor: number;
+  readonly maxDelayMs: number;
+  readonly maxAttempts: number;
+};
+
+export type OrderPolicy = {
+  readonly deadlines: DeadlinePolicy;
+  readonly redelivery: RedeliveryPolicy;
+};
+
+/** A deadline that is currently running, with the instant it runs out at. */
+export type Deadline = {
+  readonly kind: DeadlineKind;
+  readonly at: number;
+};
+
+/** Why an order stopped where it stopped. */
+export type Closure =
+  | { readonly cause: "unavailable" }
+  | { readonly cause: "quote_silent" }
+  | { readonly cause: "payment_not_verified"; readonly reason: PaymentVerificationFailure }
+  | { readonly cause: "payment_not_settled" }
+  | { readonly cause: "merchant_refused"; readonly code: string; readonly message: string }
+  | { readonly cause: "deadline_expired"; readonly deadline: DeadlineKind }
+  | { readonly cause: "merchant_departed" };
+
+/**
+ * The minimal catalogue of what the merchant is told about without having
+ * asked. The catalogue grows as cases are found that his side would otherwise
+ * only learn about by reconciling by hand.
+ */
+export const MERCHANT_EVENTS = [
+  "order_refund_due",
+  "confirmed_order_unpaid",
+  "payment_not_settled_after_sync_delivery",
+] as const;
+
+export type MerchantEvent = (typeof MERCHANT_EVENTS)[number];
+
+/**
+ * What the merchant's own call gets back. Errors here are returned, never
+ * thrown, and they say whether repeating the call could change anything.
+ */
+export const MERCHANT_ANSWER_RESULTS = [
+  "delivered",
+  "already_delivered",
+  "debt_closed_by_delivery",
+  "refused",
+  "purchase_already_closed",
+] as const;
+
+export type MerchantAnswerResult = (typeof MERCHANT_ANSWER_RESULTS)[number];
+
+export const MERCHANT_ANSWER_ERRORS = [
+  "refund_already_settled",
+  "order_already_closed",
+  "not_applicable_in_mode",
+] as const;
+
+export type MerchantAnswerError = (typeof MERCHANT_ANSWER_ERRORS)[number];
+
+export type MerchantAnswer =
+  | { readonly ok: true; readonly result: MerchantAnswerResult }
+  | { readonly ok: false; readonly error: MerchantAnswerError; readonly retryable: boolean };
+
+/**
+ * What the gateway is asked to do once a transition has happened. These are
+ * descriptions, not actions: this package performs no IO, and the interpreter
+ * lives outside it.
+ */
+export type Effect =
+  | { readonly kind: "request_quote" }
+  | { readonly kind: "verify_payment" }
+  | { readonly kind: "execute_payment" }
+  | { readonly kind: "invite_payment" }
+  | { readonly kind: "dispatch_confirmation_request" }
+  | { readonly kind: "dispatch_order" }
+  | { readonly kind: "redeliver_order"; readonly attempt: number; readonly delayMs: number }
+  | { readonly kind: "release_goods_to_agent" }
+  | { readonly kind: "issue_receipt" }
+  | { readonly kind: "hold_fulfillment" }
+  | { readonly kind: "mark_refund_due"; readonly closure: Closure }
+  | { readonly kind: "emit_merchant_event"; readonly event: MerchantEvent }
+  | { readonly kind: "answer_merchant"; readonly answer: MerchantAnswer };
+
+/**
+ * What the gateway is asked to do the moment an order has a price.
+ *
+ * A card that needs confirmation sends the question to the merchant before any
+ * money touches the buyer; every other card already has the agent's payment in
+ * hand and only has to verify it.
+ */
+export function effectsOnQuoted(mode: OrderMode): readonly Effect[] {
+  return mode.needsConfirmation
+    ? [{ kind: "dispatch_confirmation_request" }]
+    : [{ kind: "verify_payment" }];
+}
+
+/**
+ * Everything that can happen to an order from outside the core: the agent's
+ * moves, the payment layer's outcomes, the merchant handler's answers, his
+ * separate calls, and the expiry of a deadline.
+ *
+ * `handler_undelivered` is the one that carries no answer at all — an
+ * exception, a dead process, a broken connection. The machine answers it with
+ * another delivery, because a refusal means "this cannot be fulfilled" and
+ * closes the order for good.
+ */
+export type OrderEvent =
+  | {
+      readonly kind: "quote_answered";
+      readonly at: number;
+      readonly available: true;
+      readonly price: Price;
+    }
+  | { readonly kind: "quote_answered"; readonly at: number; readonly available: false }
+  | { readonly kind: "quote_silent"; readonly at: number }
+  | { readonly kind: "payment_verified"; readonly at: number }
+  | {
+      readonly kind: "payment_verification_failed";
+      readonly at: number;
+      readonly reason: PaymentVerificationFailure;
+    }
+  | { readonly kind: "payment_settled"; readonly at: number }
+  | { readonly kind: "payment_settle_failed"; readonly at: number }
+  | { readonly kind: "purchase_repeated"; readonly at: number }
+  | { readonly kind: "confirmation_dispatched"; readonly at: number }
+  | { readonly kind: "order_dispatched"; readonly at: number }
+  | { readonly kind: "handler_accepted"; readonly at: number }
+  | { readonly kind: "handler_delivered"; readonly at: number }
+  | {
+      readonly kind: "handler_refused";
+      readonly at: number;
+      readonly code: string;
+      readonly message: string;
+    }
+  | { readonly kind: "handler_undelivered"; readonly at: number }
+  | { readonly kind: "deliver_called"; readonly at: number }
+  | {
+      readonly kind: "refuse_called";
+      readonly at: number;
+      readonly code: string;
+      readonly message: string;
+    }
+  | { readonly kind: "refund_settled"; readonly at: number }
+  | { readonly kind: "merchant_departed"; readonly at: number }
+  | { readonly kind: "deadline_expired"; readonly at: number; readonly deadline: DeadlineKind };
+
+export type OrderEventKind = OrderEvent["kind"];
+
+/** When each step of the order happened. Written from the events, never read
+ * from a clock. */
+export type OrderTimestamps = {
+  readonly createdAt: number;
+  readonly quotedAt: number | null;
+  readonly confirmationRequestedAt: number | null;
+  readonly confirmedAt: number | null;
+  readonly paidAt: number | null;
+  readonly dispatchedAt: number | null;
+};
+
+export type Order = {
+  readonly id: string;
+  readonly state: OrderState;
+  readonly mode: OrderMode;
+  readonly policy: OrderPolicy;
+  readonly payment: PaymentStage;
+  /** The card's own price, kept for the modes where a silent price check still
+   * sells. */
+  readonly cardPrice: Price;
+  /** The price this order is being sold at, once there is one. */
+  readonly price: Price | null;
+  readonly quoteSource: QuoteSource | null;
+  readonly dispatch: { readonly attempts: number; readonly accepted: boolean };
+  /**
+   * The merchant produced the goods for a purchase that was already closed —
+   * he started before the deadline and finished after it. The work is not
+   * lost: a repeat of the purchase picks it up, this time with the payment.
+   */
+  readonly heldFulfillment: boolean;
+  readonly closure: Closure | null;
+  readonly test: boolean;
+  readonly timestamps: OrderTimestamps;
+};
+
+/** Why a transition did not happen. */
+export const TRANSITION_REJECTIONS = [
+  "event_not_applicable",
+  "deadline_not_armed",
+  "delivery_before_payment",
+] as const;
+
+export type TransitionRejection = (typeof TRANSITION_REJECTIONS)[number];
+
+export type TransitionResult =
+  | { readonly ok: true; readonly order: Order; readonly effects: readonly Effect[] }
+  | {
+      readonly ok: false;
+      readonly rejection: {
+        readonly code: TransitionRejection;
+        readonly state: OrderState;
+        readonly event: OrderEventKind;
+        readonly message: string;
+      };
+    };

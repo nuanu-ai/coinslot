@@ -12,9 +12,8 @@
 
 import type { CreateOrderInput, MerchantSelling, PriceCheck } from "./create.js";
 import { createOrder } from "./create.js";
-import type { Effect, FulfillmentMode, Order, OrderEvent, OrderPolicy, Price } from "./model.js";
+import type { FulfillmentMode, Order, OrderPolicy, Price } from "./model.js";
 import { modeOf } from "./model.js";
-import { transition } from "./machine.js";
 
 /** An arbitrary but fixed instant. Time is a value here, never a clock. */
 export const T0 = 1_000_000;
@@ -64,20 +63,4 @@ export function newOrder(
     throw new Error(`fixture could not create the order: ${created.rejection.code}`);
   }
   return created.order;
-}
-
-/** Unwraps a transition, turning a rejection into a loud test failure. */
-export function must(order: Order, event: OrderEvent): { order: Order; effects: readonly Effect[] } {
-  const result = transition(order, event);
-  if (!result.ok) {
-    throw new Error(
-      `expected a legal transition, got ${result.rejection.code}: ${result.rejection.message}`,
-    );
-  }
-  return { order: result.order, effects: result.effects };
-}
-
-/** Walks a sequence of legal events, returning the order at the end of it. */
-export function walk(order: Order, events: readonly OrderEvent[]): Order {
-  return events.reduce((current, event) => must(current, event).order, order);
 }
