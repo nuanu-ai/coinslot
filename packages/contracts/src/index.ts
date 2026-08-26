@@ -52,7 +52,13 @@ import {
 } from "./results.js";
 
 export type { Card, Fulfillment, PriceCheck } from "./card.js";
-export { CardSchema, FulfillmentSchema, PriceCheckSchema } from "./card.js";
+export {
+  CardSchema,
+  deliveryCheckFor,
+  FulfillmentSchema,
+  PriceCheckSchema,
+  purchaseCheckFor,
+} from "./card.js";
 export type { OrderEvent, RefundDueReason } from "./events.js";
 export { ORDER_EVENT_TYPES, OrderEventSchema, RefundDueReasonSchema } from "./events.js";
 export type { HandlerAnswer, Refusal, RefusalCode } from "./handler.js";
@@ -64,12 +70,15 @@ export {
 } from "./handler.js";
 export type { Order } from "./order.js";
 export { OrderSchema } from "./order.js";
-export type { FieldSpec, ParamSpec, ParamType } from "./param-spec.js";
+export type { OrderStatus } from "./order-status.js";
+export { ORDER_STATUSES, OrderStatusSchema } from "./order-status.js";
+export type { FieldSpec, ParamSpec, ParamSpecDirection, ParamType } from "./param-spec.js";
 export {
   FieldSpecSchema,
   ParamNameSchema,
   ParamSpecSchema,
   ParamTypeSchema,
+  PROTOTYPE_KEY_IS_DROPPED,
   paramSpecToValidator,
 } from "./param-spec.js";
 export type {
@@ -92,8 +101,20 @@ export type { QuotePurpose, QuoteRequest, QuoteResponse } from "./quote.js";
 export { QuotePurposeSchema, QuoteRequestSchema, QuoteResponseSchema } from "./quote.js";
 export type { Receipt, ReceiptOutcome } from "./receipt.js";
 export { ReceiptOutcomeSchema, ReceiptSchema } from "./receipt.js";
-export type { OrderCallError, PublishError, PublishResult } from "./results.js";
-export { OrderCallErrorSchema, PublishErrorSchema, PublishResultSchema } from "./results.js";
+export type {
+  OrderCallError,
+  OrderCallResult,
+  PublishError,
+  PublishResult,
+} from "./results.js";
+export {
+  ORDER_CALL_ERROR_CODES,
+  ORDER_CALL_RESULTS,
+  OrderCallErrorSchema,
+  OrderCallResultSchema,
+  PublishErrorSchema,
+  PublishResultSchema,
+} from "./results.js";
 
 /**
  * The version of the public contract. It grows when the meaning of the fields
