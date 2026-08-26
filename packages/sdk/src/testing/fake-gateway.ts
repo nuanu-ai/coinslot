@@ -33,11 +33,7 @@
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import {
-  mountableRoutes,
-  type RouteDefinition,
-  type RouteName,
-} from "@coinslot/contracts";
+import { mountableRoutes, type RouteDefinition, type RouteName } from "@coinslot/contracts";
 
 /** One request that reached the gateway, after it was matched and read. */
 export interface GatewayCall {

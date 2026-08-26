@@ -30,14 +30,15 @@ describe("@coinslot/sdk", () => {
     expect(thirdParty).toStrictEqual([]);
   });
 
-  it("offers the command the documentation tells a merchant to run", () => {
-    // The portal's step 4 is `npx coinslot verify`, and npx finds nothing
-    // without this entry. The file it names has to be there too: a bin
-    // pointing at a path that moved is a command that fails on the merchant's
-    // machine and nowhere else.
-    const command = manifest.bin?.coinslot;
-
-    expect(command).toBe("./src/cli.ts");
-    expect(existsSync(new URL(`../${command}`, import.meta.url))).toBe(true);
+  it("advertises no command until there is one that runs", () => {
+    // The documentation's step 4 is `npx coinslot verify`, and npx finds a
+    // command through this field. Declaring it today would advertise
+    // something that cannot start: this workspace publishes TypeScript
+    // sources whose imports name `.js` files that are not there, and Node's
+    // type stripping does not rewrite such a specifier. The command exists as
+    // `runVerify` and as `src/cli.ts`, and the field goes in with the build
+    // step that makes it work.
+    expect(manifest.bin).toBeUndefined();
+    expect(existsSync(new URL("../src/cli.ts", import.meta.url))).toBe(true);
   });
 });

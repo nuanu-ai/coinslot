@@ -425,23 +425,21 @@ describe("a gateway speaking another dialect", () => {
     expect(gateway.callsTo("poll_worker")).toHaveLength(pollsWhenItStopped);
   });
 
-  it("recognises the dialect even when the answer is one it cannot read", async () => {
-    // The case the gate exists for, and the one it is easiest to miss. A
-    // gateway of another version does not differ from ours in the version
-    // string alone — it answers with a document this SDK refuses, which
-    // arrives as an ordinary parse failure. Read only from a document that
-    // parsed, the gate would never fire on a real difference, and the worker
-    // would retry a version mismatch forever while blaming the network.
+  it("passes on the version it saw in an answer it could not read, and keeps going", async () => {
+    // A gateway of another version answers with a document this SDK refuses,
+    // so the version it names is worth telling the merchant — and it is the
+    // one thing here that was never held to a schema of ours. Acted on as a
+    // verdict, a proxy's error envelope with a field of that name would stop
+    // a merchant's worker for good over something that needed waiting out. So
+    // it is a remark inside a retryable problem and nothing more.
     const problems: WorkerProblem[] = [];
 
     gateway = await startFakeGateway({
       apiKey: API_KEY,
       routes: {
         poll_worker: () => ({
-          text: JSON.stringify({
-            contract_version: "99",
-            envelopes: [{ kind: "refund_request", id: "env-9", sent_at: AT, payload: {} }],
-          }),
+          status: 503,
+          text: JSON.stringify({ contract_version: "99", error: "no worker here" }),
         }),
       },
     });
@@ -449,17 +447,18 @@ describe("a gateway speaking another dialect", () => {
     running = startWorker(
       { apiKey: API_KEY, baseUrl: gateway.url },
       { problem: (problem) => problems.push(problem) },
+      recordingClock(),
     );
 
-    await waitUntil(() => problems.length > 0, "the mismatch to be reported");
+    await waitUntil(() => problems.length > 0, "the problem to be reported");
 
-    expect(problems[0]?.kind).toBe(WORKER_PROBLEM_KINDS.CONTRACT_VERSION_MISMATCH);
-    expect(problems[0]?.fatal).toBe(true);
+    expect(problems[0]?.kind).toBe(WORKER_PROBLEM_KINDS.POLL_FAILED);
+    expect(problems[0]?.fatal).toBe(false);
     expect(problems[0]?.message).toContain("99");
+    expect(problems[0]?.message).toContain("may mean");
 
-    const pollsWhenItStopped = gateway.callsTo("poll_worker").length;
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(gateway.callsTo("poll_worker")).toHaveLength(pollsWhenItStopped);
+    // And it went on asking, which is the half that matters.
+    await waitUntil(() => (gateway?.callsTo("poll_worker").length ?? 0) >= 3, "further polls");
   });
 
   it.each([
@@ -508,10 +507,19 @@ describe("a gateway speaking another dialect", () => {
 
     await waitUntil(() => problems.length === 1, "the first mismatch");
 
-    coinslot.pricing.onQuote(() => ({ available: false, as_of: AT }));
+    const second: WorkerProblem[] = [];
 
-    await waitUntil(() => problems.length === 2, "a second loop that ran and reported");
+    running = coinslot.pricing.onQuote(() => ({ available: false, as_of: AT }), {
+      onProblem: (problem) => second.push(problem),
+    });
+
+    await waitUntil(() => second.length === 1, "a second loop that ran and reported");
+
+    expect(second[0]?.kind).toBe(WORKER_PROBLEM_KINDS.CONTRACT_VERSION_MISMATCH);
     expect(gateway.callsTo("poll_worker").length).toBeGreaterThanOrEqual(2);
+    // The first subscription's reporter hears nothing about the second's
+    // loop: each subscription's problems go where that subscription asked.
+    expect(problems).toHaveLength(1);
   });
 });
 
@@ -591,11 +599,15 @@ describe("a gateway that is not answering", () => {
       routes: { poll_worker: () => ({ status: 502, text: "bad gateway" }) },
     });
 
-    running = startWorker({ apiKey: API_KEY, baseUrl: gateway.url }, { problem: () => {} }, {
-      now: () => 0,
-      random: () => 1,
-      sleep: () => waiting,
-    });
+    running = startWorker(
+      { apiKey: API_KEY, baseUrl: gateway.url },
+      { problem: () => {} },
+      {
+        now: () => 0,
+        random: () => 1,
+        sleep: () => waiting,
+      },
+    );
 
     await waitUntil(() => (gateway?.callsTo("poll_worker").length ?? 0) === 1, "the first poll");
 
@@ -727,25 +739,42 @@ describe("a reporter that itself fails", () => {
     // The reporter is the merchant's code — a logger over a stream that
     // closed during shutdown, a client that was never configured. An
     // exception out of it would otherwise unwind the loop and escape as an
-    // unhandled rejection, which under Node's default ends their process.
-    gateway = await startFakeGateway({
-      apiKey: API_KEY,
-      routes: { poll_worker: polling(batch(envelopes.order), batch(envelopes.order)) },
-    });
+    // unhandled rejection, which under Node's default ends their process, so
+    // this listens for exactly that rather than taking the loop's survival as
+    // evidence of it.
+    const escaped: unknown[] = [];
+    const catchIt = (reason: unknown): void => {
+      escaped.push(reason);
+    };
 
-    let reported = 0;
-    const worker = startWorker(
-      { apiKey: API_KEY, baseUrl: gateway.url },
-      {
-        problem: () => {
-          reported += 1;
-          throw new Error("the merchant's logger was not configured");
+    process.on("unhandledRejection", catchIt);
+
+    try {
+      gateway = await startFakeGateway({
+        apiKey: API_KEY,
+        routes: { poll_worker: polling(batch(envelopes.order), batch(envelopes.order)) },
+      });
+
+      let reported = 0;
+      const worker = startWorker(
+        { apiKey: API_KEY, baseUrl: gateway.url },
+        {
+          problem: () => {
+            reported += 1;
+            throw new Error("the merchant's logger was not configured");
+          },
         },
-      },
-    );
+      );
 
-    await waitUntil(() => reported >= 2, "the worker to keep going past a failing reporter");
-    await expect(worker.stop()).resolves.toBeUndefined();
+      await waitUntil(() => reported >= 2, "the worker to keep going past a failing reporter");
+      await expect(worker.stop()).resolves.toBeUndefined();
+
+      // Rejections are reported at the end of a turn, so give the loop one.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(escaped).toStrictEqual([]);
+    } finally {
+      process.off("unhandledRejection", catchIt);
+    }
   });
 });
 
@@ -785,7 +814,11 @@ describe("stopping", () => {
 
     expect(problems.map((problem) => problem.kind)).toContain(WORKER_PROBLEM_KINDS.ANSWER_FAILED);
     expect(problems[0]?.subject).toBe(order.id);
-    expect(problems[0]?.message).toMatch(/delivered again/);
+    // The answer was sent and then abandoned, so whether the gateway has it is
+    // not something this side knows. Promising a redelivery here would have a
+    // merchant waiting for an order that may already be closed.
+    expect(problems[0]?.message).toMatch(/not known here/);
+    expect(problems[0]?.message).not.toMatch(/will be delivered again/);
   });
 
   it("says how much of a batch it left unread", async () => {
@@ -842,6 +875,129 @@ describe("stopping", () => {
 
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(gateway.callsTo("poll_worker")).toHaveLength(1);
+  });
+});
+
+describe("shutting down a subscription the merchant built", () => {
+  it("sends the last problems to the reporter that subscription was given", async () => {
+    // The layer the worker's own tests cannot see. Everything the loop reports
+    // while it is stopping — an answer that did not get through, a batch it
+    // left unread — is reported through whatever reporter is registered at
+    // that moment. Torn down before the loop has finished, that is the console,
+    // and the merchant who asked to hear about it hears nothing at all.
+    const problems: WorkerProblem[] = [];
+    let answering: (() => void) | undefined;
+    const held = new Promise<void>((resolve) => {
+      answering = resolve;
+    });
+
+    gateway = await startFakeGateway({
+      apiKey: API_KEY,
+      routes: {
+        poll_worker: polling(batch(envelopes.order, envelopes.quote)),
+        answer_order: () => {
+          answering?.();
+          return new Promise<never>(() => {});
+        },
+      },
+    });
+
+    const coinslot = createClient({ apiKey: API_KEY, baseUrl: gateway.url });
+    const subscription = coinslot.orders.subscribe(
+      () => ({ delivered: { access_url: "https://a.example" } }),
+      { onProblem: (problem) => problems.push(problem) },
+    );
+
+    await held;
+    await subscription.stop();
+
+    const kinds = problems.map((problem) => problem.kind);
+
+    expect(kinds).toContain(WORKER_PROBLEM_KINDS.ANSWER_FAILED);
+    expect(kinds).toContain(WORKER_PROBLEM_KINDS.BATCH_ABANDONED);
+  });
+
+  it("waits for the loop however many callers ask it to stop", async () => {
+    // A shutdown routine and a signal handler both calling stop() is ordinary.
+    // A second caller that returned at once would let the process exit with a
+    // delivery still in flight.
+    let inTheHandler: (() => void) | undefined;
+    const reached = new Promise<void>((resolve) => {
+      inTheHandler = resolve;
+    });
+    let handlerFinished = false;
+    let releaseHandler: (() => void) | undefined;
+    const handlerMayFinish = new Promise<void>((resolve) => {
+      releaseHandler = resolve;
+    });
+
+    gateway = await startFakeGateway({
+      apiKey: API_KEY,
+      routes: {
+        poll_worker: polling(batch(envelopes.order)),
+        answer_order: () => ({ body: { ok: true, result: "delivered" } }),
+      },
+    });
+
+    const coinslot = createClient({ apiKey: API_KEY, baseUrl: gateway.url });
+    const subscription = coinslot.orders.subscribe(async () => {
+      inTheHandler?.();
+      await handlerMayFinish;
+      handlerFinished = true;
+      return { delivered: { access_url: "https://a.example" } };
+    });
+
+    await reached;
+
+    const first = subscription.stop();
+    const second = subscription.stop();
+
+    releaseHandler?.();
+    await Promise.all([first, second]);
+
+    expect(handlerFinished).toBe(true);
+  });
+
+  it("refuses to register a handler while a stop is still in flight", async () => {
+    // Silently binding it to the loop that is going away would be a handler
+    // that never receives anything, registered without complaint.
+    let inTheHandler: (() => void) | undefined;
+    const reached = new Promise<void>((resolve) => {
+      inTheHandler = resolve;
+    });
+    let releaseHandler: (() => void) | undefined;
+    const handlerMayFinish = new Promise<void>((resolve) => {
+      releaseHandler = resolve;
+    });
+
+    gateway = await startFakeGateway({
+      apiKey: API_KEY,
+      routes: {
+        poll_worker: polling(batch(envelopes.order)),
+        answer_order: () => ({ body: { ok: true, result: "delivered" } }),
+      },
+    });
+
+    const coinslot = createClient({ apiKey: API_KEY, baseUrl: gateway.url });
+    const subscription = coinslot.orders.subscribe(async () => {
+      inTheHandler?.();
+      await handlerMayFinish;
+      return { delivered: { access_url: "https://a.example" } };
+    });
+
+    await reached;
+
+    const stopping = subscription.stop();
+
+    expect(() => coinslot.pricing.onQuote(() => ({ available: false, as_of: AT }))).toThrow(
+      /being stopped/,
+    );
+
+    releaseHandler?.();
+    await stopping;
+
+    // And once it has stopped, registering works again.
+    running = coinslot.pricing.onQuote(() => ({ available: false, as_of: AT }));
   });
 });
 

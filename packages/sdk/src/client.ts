@@ -38,7 +38,14 @@ import type {
   PublishResult,
   Refusal,
 } from "@coinslot/contracts";
-import { callRoute, type Gateway, type TransportFailure } from "./transport.js";
+import {
+  callRoute,
+  type Gateway,
+  REACH,
+  type Reach,
+  type TransportFailure,
+  whatIsKnown,
+} from "./transport.js";
 import {
   type EventHandler,
   type HandlerRegistry,
@@ -175,30 +182,37 @@ export interface CoinslotClient {
 }
 
 /**
- * The two codes an order call comes back under when the gateway produced no
+ * The three codes an order call comes back under when the gateway produced no
  * answer this package can read.
  *
  * The contract's list of error codes is open exactly so that a case nobody
  * anticipated reaches the merchant in its own words instead of being flattened
- * into the nearest of three. These are two of those, and they are produced
+ * into the nearest of three. These are three of those, and they are produced
  * here rather than on the wire.
  *
- * They are two and not one because the difference is the whole of what a
- * merchant needs at that moment. A call that never arrived certainly changed
- * nothing on our side. A call that was answered in words we could not read —
- * a proxy's own page, a gateway of another version, an error envelope somebody
- * added — reached us, and may well have done its work; what is unknown is what
- * it said. Told the first when the second happened, a merchant reasons about
- * their books from a fact that is not one.
+ * Three and not one because the difference is the whole of what a merchant
+ * needs at that moment, and they are about their own books. A call that never
+ * arrived certainly changed nothing. A call answered in words we could not
+ * read reached us and may well have done its work; what is missing is what it
+ * said. And a call that was sent into silence — the connection broke, the
+ * worker was shut down mid-flight — is neither of those, and saying it did not
+ * arrive would be inventing the one fact the merchant came here for.
  */
 export const CALL_DID_NOT_REACH_US = "call_did_not_reach_us";
 export const ANSWER_NOT_UNDERSTOOD = "answer_not_understood";
+export const OUTCOME_UNKNOWN = "outcome_unknown";
+
+const CODE_FOR: Readonly<Record<Reach, string>> = {
+  [REACH.NOT_RECEIVED]: CALL_DID_NOT_REACH_US,
+  [REACH.ANSWERED]: ANSWER_NOT_UNDERSTOOD,
+  [REACH.UNKNOWN]: OUTCOME_UNKNOWN,
+};
 
 /**
  * Whether calling again could change the outcome, which is what the contract's
- * flag actually asks. It could, in both cases: neither of them is a state of
- * the order, and neither will still be true in a minute if a network settled
- * or a proxy went away.
+ * flag actually asks. It could, in all three cases: none of them is a state of
+ * the order, and none will still be true in a minute if a network settled or a
+ * proxy went away.
  *
  * The sentence about repeating safely is only added where the contract says
  * the call may be repeated: delivering is idempotent by the order's
@@ -206,10 +220,10 @@ export const ANSWER_NOT_UNDERSTOOD = "answer_not_understood";
  * Refusing is documented as neither, so nothing is claimed about it.
  */
 const failedCall = (repeatIsSafe: boolean, failure: TransportFailure): OrderCallError => ({
-  code: failure.answered ? ANSWER_NOT_UNDERSTOOD : CALL_DID_NOT_REACH_US,
+  code: CODE_FOR[failure.reach],
   message: repeatIsSafe
-    ? `${failure.reason} — this call may be made again without doing its work twice`
-    : failure.reason,
+    ? `${whatIsKnown(failure)}: ${failure.reason} — this call may be made again without doing its work twice`
+    : `${whatIsKnown(failure)}: ${failure.reason}`,
   retryable: true,
 });
 
@@ -276,39 +290,70 @@ export const createClient = (options: ClientOptions): CoinslotClient => {
     }
   };
 
-  const registry: HandlerRegistry = { problem: reportToConsole };
-  let worker: RunningWorker | undefined;
-
   /**
-   * One subscription object for the life of the client, whatever loop is
-   * behind it at the time.
+   * One subscription, with the loop behind it and the handlers it dispatches
+   * to.
    *
-   * Stopping tears down the registrations as well as the loop, so a merchant
-   * who stopped and then registers again gets a working subscription rather
-   * than a handle on a loop that ended. Handing back the dead one is the
-   * failure this shape exists to prevent: nothing arrives, nothing is said,
-   * and everything looks registered.
+   * Each subscription owns its own registry rather than sharing one with the
+   * client, and that is the point rather than tidiness. A shared registry
+   * means the reporter a merchant passed is one field that every loop reads at
+   * the moment it reports — so the problems of a subscription that is winding
+   * down arrive at the reporter of the one that replaced it, describing orders
+   * that subscription never saw, while the merchant who asked to hear about
+   * them hears nothing.
    */
-  const subscription: Subscription = {
-    stop: async () => {
-      const running = worker;
+  interface Live {
+    readonly registry: HandlerRegistry;
+    readonly worker: RunningWorker;
+    readonly subscription: Subscription;
+    /** Set once stopping begins, and shared by every caller of stop(). */
+    stopping?: Promise<void>;
+  }
 
-      worker = undefined;
-      registry.order = undefined;
-      registry.quote = undefined;
-      registry.event = undefined;
-      registry.problem = reportToConsole;
+  let live: Live | undefined;
 
-      await running?.stop();
-    },
+  const beginStopping = (owned: Live): Promise<void> => {
+    // One promise for every caller, so a shutdown routine and a signal handler
+    // that both call stop() both wait for the same ending rather than the
+    // second one returning at once and letting the process exit with a
+    // delivery still in flight.
+    owned.stopping ??= owned.worker.stop().then(() => {
+      // Only now, and this order is the whole of the fix: the loop reports its
+      // last problems — an answer that did not get through, a batch it left
+      // unread — while it is stopping, and those go to the reporter this
+      // subscription was given. Torn down first, they would go to the console
+      // and the merchant would never learn that a delivery went unanswered.
+      if (live === owned) live = undefined;
+    });
+
+    return owned.stopping;
   };
 
-  const workerStarted = (): Subscription => {
+  const startedSubscription = (): Live => {
     reachable();
 
-    if (worker === undefined || !worker.running()) worker = startWorker(gateway, registry);
+    if (live?.stopping !== undefined) {
+      throw new TypeError(
+        "this client's subscription is being stopped: await that stop() before registering a handler again, or the handler would be registered on a loop that is going away",
+      );
+    }
 
-    return subscription;
+    if (live?.worker.running() === true) return live;
+
+    // Either there was none, or the last one ended on its own — a contract
+    // mismatch stops the loop without anybody calling stop(). Handing that one
+    // back would register a handler on a loop that will never poll again, and
+    // nothing would arrive and nothing would be said.
+    const registry: HandlerRegistry = { problem: reportToConsole };
+    const started: Live = {
+      registry,
+      worker: startWorker(gateway, registry),
+      subscription: { stop: () => beginStopping(started) },
+    };
+
+    live = started;
+
+    return started;
   };
 
   const orderCall = async (
@@ -345,18 +390,26 @@ export const createClient = (options: ClientOptions): CoinslotClient => {
 
     orders: {
       subscribe: (handler, subscribeOptions) => {
-        if (registry.order !== undefined) {
+        // Everything that can refuse this call happens before anything is
+        // written down, so a call that threw leaves no trace and the same call
+        // made again once the address is there succeeds. Registering first and
+        // refusing afterwards would tell the second attempt that it had
+        // already registered.
+        const owned = startedSubscription();
+
+        if (owned.registry.order !== undefined) {
           throw new TypeError(
             "orders.subscribe was called twice on one client: the second handler would silently replace the first, and one order goes to one handler",
           );
         }
 
-        registry.order = handler;
-        if (subscribeOptions?.onEvent !== undefined) registry.event = subscribeOptions.onEvent;
+        owned.registry.order = handler;
+        if (subscribeOptions?.onEvent !== undefined)
+          owned.registry.event = subscribeOptions.onEvent;
         if (subscribeOptions?.onProblem !== undefined)
-          registry.problem = subscribeOptions.onProblem;
+          owned.registry.problem = subscribeOptions.onProblem;
 
-        return workerStarted();
+        return owned.subscription;
       },
 
       deliver: (orderId, delivery) => orderCall("deliver_order", orderId, delivery),
@@ -389,16 +442,18 @@ export const createClient = (options: ClientOptions): CoinslotClient => {
 
     pricing: {
       onQuote: (handler, quoteOptions) => {
-        if (registry.quote !== undefined) {
+        const owned = startedSubscription();
+
+        if (owned.registry.quote !== undefined) {
           throw new TypeError(
             "pricing.onQuote was called twice on one client: the second handler would silently replace the first",
           );
         }
 
-        registry.quote = handler;
-        if (quoteOptions?.onProblem !== undefined) registry.problem = quoteOptions.onProblem;
+        owned.registry.quote = handler;
+        if (quoteOptions?.onProblem !== undefined) owned.registry.problem = quoteOptions.onProblem;
 
-        return workerStarted();
+        return owned.subscription;
       },
     },
   };

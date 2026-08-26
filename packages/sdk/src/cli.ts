@@ -6,15 +6,18 @@
  * a number and a stream of lines, so that everything the command does can be
  * tested without a process, a shell or a temporary directory of output.
  *
- * One thing about it is not true yet and is better said here than discovered.
- * This workspace publishes TypeScript sources with `.js` specifiers in them
- * and has no build step, and Node's own type stripping does not rewrite such a
- * specifier — it looks for the `.js` file, does not find it, and stops. So
- * `npx coinslot verify` will not run against these sources under a plain
- * `node`; it needs either a TypeScript-aware runner or the build this package
- * does not yet have. That is a property of the whole workspace rather than of
- * this file, and fixing it is a decision about how these packages are built
- * and published, not a line to add here.
+ * The package deliberately does not declare this file as its command yet, and
+ * the reason is worth having in front of whoever adds the line. This workspace
+ * publishes TypeScript sources with `.js` specifiers in them and has no build
+ * step, and Node's own type stripping does not rewrite such a specifier — it
+ * looks for the `.js` file, does not find it, and stops. So `npx coinslot
+ * verify` cannot start against these sources under a plain `node`, and a `bin`
+ * entry pointing here would be advertising a command that fails on a
+ * merchant's machine and nowhere else. What the package does offer meanwhile
+ * is `runVerify` and `checkCard`, which are the whole of the work.
+ *
+ * The line goes in with the build, and the build is a decision about how these
+ * packages are compiled and published rather than something to settle here.
  */
 
 import { runVerify } from "./verify.js";

@@ -241,25 +241,31 @@ describe("closing an order the merchant took on", () => {
     expect(result.ok === false && result.error.code).toBe(ANSWER_NOT_UNDERSTOOD);
   });
 
-  it("tells a call that never arrived from one whose answer could not be read", async () => {
-    // The two are different facts about the merchant's own books. A call that
-    // did not arrive certainly delivered nothing; a call that was answered in
-    // words we cannot read reached us and may well have done its work. A
-    // merchant told the first when the second happened reasons from something
-    // that is not so.
+  it("keeps three different facts about a failed call apart", async () => {
+    // They are three different things to know about one's own books. A call
+    // that was refused a connection certainly delivered nothing. A call
+    // answered in words we cannot read reached us and may well have done its
+    // work. A call sent into silence is neither, and telling a merchant it did
+    // not arrive would be inventing the one fact they came here for.
     const answering = await gatewayServing({
       deliver_order: () => ({ text: "<html>gateway timeout</html>" }),
     });
     const answered = await answering.orders.deliver("order-1", { access_url: "https://a.example" });
 
     expect(answered.ok === false && answered.error.code).toBe(ANSWER_NOT_UNDERSTOOD);
+    expect(answered.ok === false && answered.error.message).toMatch(/reached us/);
 
-    // Nothing is listening on this port: the request never becomes an answer.
-    const unreachable = createClient({ apiKey: API_KEY, baseUrl: "http://127.0.0.1:1" });
-    const never = await unreachable.orders.deliver("order-1", { access_url: "https://a.example" });
+    // An address that was listening a moment ago and is not any more: the
+    // connection is refused, so nothing was handed over.
+    const closed = await startFakeGateway({ apiKey: API_KEY, routes: {} });
+    await closed.close();
+
+    const gone = createClient({ apiKey: API_KEY, baseUrl: closed.url });
+    const never = await gone.orders.deliver("order-1", { access_url: "https://a.example" });
 
     expect(never.ok === false && never.error.code).toBe(CALL_DID_NOT_REACH_US);
     expect(never.ok === false && never.error.retryable).toBe(true);
+    expect(never.ok === false && never.error.message).toMatch(/did not reach us/);
   });
 
   it("takes an order on, with and without an expected time", async () => {

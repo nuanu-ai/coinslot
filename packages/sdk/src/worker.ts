@@ -60,7 +60,23 @@ import {
 import { retryDelayMs } from "./backoff.js";
 import { contractVersion, speaksContract } from "./contract.js";
 import { describeProblems, problemsOf } from "./schema.js";
-import { callRoute, type Gateway } from "./transport.js";
+import { callRoute, type Gateway, REACH, type TransportFailure, whatIsKnown } from "./transport.js";
+
+/**
+ * What follows from a failed answer for the order it was about.
+ *
+ * The three cases are three different things to tell a merchant, and only one
+ * of them is a promise. An answer that never left certainly leaves the order
+ * unanswered, so it comes back. An answer that reached us, or that vanished
+ * into silence, may have closed the order already — saying it will be
+ * delivered again would be promising a redelivery we have no grounds to
+ * expect, and a merchant who acted on that promise would be waiting for an
+ * order that never comes.
+ */
+const andSoTheOrder = (failure: TransportFailure): string =>
+  failure.reach === REACH.NOT_RECEIVED
+    ? ", so the order will be delivered again"
+    : ", so whether the order is delivered again is not something this side can say";
 
 /** What the merchant's code does with one paid order. */
 export type OrderHandler = (order: Order) => HandlerAnswer | Promise<HandlerAnswer>;
@@ -68,8 +84,35 @@ export type OrderHandler = (order: Order) => HandlerAnswer | Promise<HandlerAnsw
 /** What the merchant's code answers to "how much is this and is it there". */
 export type QuoteHandler = (question: QuoteRequest) => QuoteResponse | Promise<QuoteResponse>;
 
-/** What the merchant's code does with something that happened to an order. */
-export type EventHandler = (event: OrderEvent) => void | Promise<void>;
+/**
+ * How this delivery of a message is named, for the one kind that needs it.
+ *
+ * `id` names the message and does not change when it is delivered again;
+ * `sent_at` names this delivery of it and does. The pair is how a repeat is
+ * told from a new message without looking inside the payload.
+ */
+export interface Delivered {
+  readonly id: string;
+  readonly sent_at: string;
+}
+
+/**
+ * What the merchant's code does with something that happened to an order.
+ *
+ * The second argument is the reason this signature is not just the event. An
+ * order is answered against its own identifier and a price question against
+ * its `price_id`, so for those two a repeat is harmless by construction. An
+ * event has neither — nothing acknowledges it, and the contract gives every
+ * envelope an identifier and a delivery time precisely so that a worker can
+ * recognise a repeat. Passing that pair on is what makes recognising one
+ * possible at all.
+ *
+ * This SDK does not do it itself, and that is a decision rather than an
+ * oversight: telling a repeat from a new message means remembering what has
+ * been seen, across restarts, and a library that kept that state would be
+ * keeping it in the wrong process. The merchant already has a database.
+ */
+export type EventHandler = (event: OrderEvent, delivered: Delivered) => void | Promise<void>;
 
 /**
  * The things the worker has to tell the merchant about, under the names their
@@ -196,12 +239,13 @@ export const QUIET_POLL_FLOOR_MS = 1_000;
 /**
  * The contract version named inside something the SDK could not parse.
  *
- * The version gate would otherwise only fire on a gateway whose answer differs
- * in nothing but the version string — which is the one difference that is not
- * a difference of dialect. A gateway that added an envelope kind, or a field,
- * answers with a document this SDK refuses, and without this it would look
- * like a broken gateway forever. One field is read, and only when it is a
- * string; anything else here is a body that has nothing to say about versions.
+ * A gateway that added an envelope kind, or a field, answers with a document
+ * this SDK refuses, and the version it names is the one thing still readable
+ * in what it sent. It goes into the sentence the merchant reads and no
+ * further: this body was held to no schema of ours, so a proxy's error
+ * envelope that happens to carry a field of that name must not be able to stop
+ * a worker. One field is read, and only when it is a string; anything else is
+ * a body with nothing to say about versions.
  */
 const versionSpokenIn = (body: unknown): string | undefined => {
   if (typeof body !== "object" || body === null) return undefined;
@@ -308,7 +352,7 @@ export const startWorker = (
         kind: WORKER_PROBLEM_KINDS.ANSWER_FAILED,
         fatal: false,
         subject: order.id,
-        message: `the answer for order ${order.id} did not reach us, and the order will be delivered again${stopping ? " after this worker stopped" : ""}: ${sent.failure.reason}`,
+        message: `the answer for order ${order.id} was produced and ${whatIsKnown(sent.failure)}${andSoTheOrder(sent.failure)}: ${sent.failure.reason}`,
       });
       return;
     }
@@ -450,7 +494,7 @@ export const startWorker = (
         kind: WORKER_PROBLEM_KINDS.ANSWER_FAILED,
         fatal: false,
         subject: question.price_id,
-        message: `the price for question ${question.price_id} did not reach us${stopping ? " because this worker stopped" : ""}: ${sent.failure.reason}`,
+        message: `the price for question ${question.price_id} was answered and ${whatIsKnown(sent.failure)}; stock set aside under that identifier can be released once the question expires: ${sent.failure.reason}`,
       });
       return;
     }
@@ -465,7 +509,7 @@ export const startWorker = (
     }
   };
 
-  const handleEvent = async (event: OrderEvent): Promise<void> => {
+  const handleEvent = async (event: OrderEvent, delivered: Delivered): Promise<void> => {
     const handler = handlers.event;
 
     if (handler === undefined) {
@@ -479,7 +523,7 @@ export const startWorker = (
     }
 
     try {
-      await handler(event);
+      await handler(event, delivered);
     } catch (cause) {
       report({
         kind: WORKER_PROBLEM_KINDS.HANDLER_FAILED,
@@ -508,7 +552,7 @@ export const startWorker = (
         await handleQuote(envelope.payload);
         return;
       case "order_event":
-        await handleEvent(envelope.payload);
+        await handleEvent(envelope.payload, { id: envelope.id, sent_at: envelope.sent_at });
         return;
       default:
         // Unreachable while the contract carries three kinds, and here so
@@ -535,23 +579,24 @@ export const startWorker = (
       if (stopping) break;
 
       if (!answer.ok) {
-        // Before blaming the transport: a gateway of another dialect answers
-        // with a document this SDK cannot parse, which arrives here as an
-        // ordinary failure and would otherwise be retried forever under a
-        // message about a broken gateway. Its version is the one field we can
-        // still read out of what it sent.
+        // A gateway of another dialect answers with a document this SDK cannot
+        // parse, so the version it names is worth passing on — but only as a
+        // remark, never as a verdict. Whatever this field was read out of was
+        // not held to any schema of ours: a proxy's error envelope carrying a
+        // field of that name would otherwise stop a merchant's worker for
+        // good over something that needed waiting out. The one place a
+        // mismatch is decided is a poll answer that parsed.
         const spoken = versionSpokenIn(answer.failure.body);
-
-        if (spoken !== undefined && !speaksContract(spoken)) {
-          reportTheMismatch(spoken);
-          return;
-        }
+        const remark =
+          spoken !== undefined && !speaksContract(spoken)
+            ? ` — what answered names contract version ${spoken} while this SDK speaks ${contractVersion}, which may mean the gateway is of another version`
+            : "";
 
         failures += 1;
         report({
           kind: WORKER_PROBLEM_KINDS.POLL_FAILED,
           fatal: false,
-          message: `${answer.failure.reason} — asking again after a wait`,
+          message: `${answer.failure.reason}${remark} — asking again after a wait`,
         });
         await rest(retryDelayMs(failures, clock.random()));
         continue;

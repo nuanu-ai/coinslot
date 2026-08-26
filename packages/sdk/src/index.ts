@@ -57,9 +57,15 @@ export type {
   QuoteOptions,
   SubscribeOptions,
 } from "./client.js";
-export { ANSWER_NOT_UNDERSTOOD, CALL_DID_NOT_REACH_US, createClient } from "./client.js";
+export {
+  ANSWER_NOT_UNDERSTOOD,
+  CALL_DID_NOT_REACH_US,
+  createClient,
+  OUTCOME_UNKNOWN,
+} from "./client.js";
 export { contractVersion, speaksContract } from "./contract.js";
 export type {
+  Delivered,
   EventHandler,
   OrderHandler,
   ProblemReporter,

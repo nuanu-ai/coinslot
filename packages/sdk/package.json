@@ -3,12 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Coinslot merchant SDK — the fulfillment worker and the integration check",
+  "description": "Coinslot merchant SDK \u2014 the fulfillment worker and the integration check",
   "exports": {
     ".": "./src/index.ts"
-  },
-  "bin": {
-    "coinslot": "./src/cli.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json"

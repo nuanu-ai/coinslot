@@ -62,21 +62,80 @@ export type DocumentOf<N extends RouteName> = (typeof API_ROUTES)[N]["response"]
     : never
   : never;
 
+/**
+ * What is known about whether the call got there.
+ *
+ * Three and not two, and the third is the one that matters. A first draft had
+ * a boolean, which meant every failure that was not an answer was filed as
+ * "it did not reach us" — including a request that was fully sent and then
+ * abandoned when the worker stopped, or one whose connection broke after the
+ * gateway had it. Those are not the same fact, and a merchant reconciling
+ * their books from the wrong one of them is reconciling from something we made
+ * up.
+ *
+ * `not_received` is claimed only where the network says so plainly: the
+ * connection was refused or the name did not resolve, so nothing was ever
+ * handed over. Everything else that produced no readable answer is `unknown`,
+ * because it is.
+ */
+export const REACH = Object.freeze({
+  /** No connection was made, so the gateway certainly has nothing. */
+  NOT_RECEIVED: "not_received",
+  /** The gateway answered, and the answer is not one this package can read. */
+  ANSWERED: "answered",
+  /** It was sent and nothing came back. Whether it arrived is not known here. */
+  UNKNOWN: "unknown",
+} as const);
+
+export type Reach = (typeof REACH)[keyof typeof REACH];
+
+/**
+ * The three codes the network gives us that mean nothing was handed over.
+ *
+ * Kept short on purpose: every code not on this list is read as "unknown",
+ * which is the answer that claims least. A code added here is a claim that the
+ * request certainly never arrived, and it should be added only when that is
+ * true of it.
+ */
+const NOTHING_WAS_SENT = new Set(["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN"]);
+
+/**
+ * The network's own codes for why a call failed, however many there were.
+ *
+ * There can be several: a name that resolves to more than one address is tried
+ * at each of them, and what comes back is one error holding the others. All of
+ * them have to say nothing was sent before we say it.
+ */
+const codesUnder = (cause: unknown): string[] => {
+  const inner = (cause as { cause?: unknown })?.cause;
+  const gathered = (inner as { errors?: unknown })?.errors;
+
+  if (Array.isArray(gathered)) {
+    return gathered
+      .map((one) => (one as { code?: unknown })?.code)
+      .filter((code): code is string => typeof code === "string");
+  }
+
+  const code = (inner as { code?: unknown })?.code;
+
+  return typeof code === "string" ? [code] : [];
+};
+
+const reachFrom = (cause: unknown): Reach => {
+  const codes = codesUnder(cause);
+
+  return codes.length > 0 && codes.every((code) => NOTHING_WAS_SENT.has(code))
+    ? REACH.NOT_RECEIVED
+    : REACH.UNKNOWN;
+};
+
 /** A call that did not produce the document the route promises. */
 export interface TransportFailure {
   readonly route: RouteName;
   /** What happened, in one sentence, naming the route and the address. */
   readonly reason: string;
-  /**
-   * Whether the gateway answered at all.
-   *
-   * The two are different things to say to a merchant: a call that never
-   * arrived certainly changed nothing, while a call that was answered in words
-   * we could not read may well have done its work. Nothing further is claimed
-   * from it — an answer we cannot parse tells us the request was received and
-   * no more than that.
-   */
-  readonly answered: boolean;
+  /** What is known about whether the gateway got the call. */
+  readonly reach: Reach;
   /**
    * The body, where it was JSON and simply was not the document.
    *
@@ -122,12 +181,30 @@ export const addressOf = (baseUrl: string, name: RouteName, path: CallOptions["p
 const failure = (
   route: RouteName,
   reason: string,
-  answered: boolean,
+  reach: Reach,
   body?: unknown,
 ): { ok: false; failure: TransportFailure } => ({
   ok: false,
-  failure: { route, reason, answered, ...(body === undefined ? {} : { body }) },
+  failure: { route, reason, reach, ...(body === undefined ? {} : { body }) },
 });
+
+/**
+ * What is known about a failed call, in a clause that can be dropped into a
+ * sentence about whatever the call was carrying.
+ *
+ * It lives here rather than in each caller so that the three states are
+ * described in one place and cannot drift into three different vocabularies.
+ */
+export const whatIsKnown = (failure: TransportFailure): string => {
+  switch (failure.reach) {
+    case REACH.NOT_RECEIVED:
+      return "it did not reach us";
+    case REACH.ANSWERED:
+      return "it reached us and the answer could not be read, so whether it took effect is not known here";
+    case REACH.UNKNOWN:
+      return "it was sent and nothing came back, so whether it reached us is not known here";
+  }
+};
 
 /**
  * One call, answered with the route's document or with a sentence about why
@@ -168,7 +245,11 @@ export const callRoute = async <N extends RouteName>(
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
   } catch (cause) {
-    return failure(name, `${name} at ${url.href} could not be reached: ${String(cause)}`, false);
+    return failure(
+      name,
+      `${name} at ${url.href} could not be reached: ${String(cause)}`,
+      reachFrom(cause),
+    );
   }
 
   let text: string;
@@ -182,7 +263,7 @@ export const callRoute = async <N extends RouteName>(
     return failure(
       name,
       `${name} at ${url.href} began answering ${response.status} and the answer could not be read to the end: ${String(cause)}`,
-      true,
+      REACH.UNKNOWN,
     );
   }
 
@@ -194,7 +275,7 @@ export const callRoute = async <N extends RouteName>(
     return failure(
       name,
       `${name} at ${url.href} answered ${response.status} with something that is not JSON: ${quote(text)}`,
-      true,
+      REACH.ANSWERED,
     );
   }
 
@@ -202,7 +283,7 @@ export const callRoute = async <N extends RouteName>(
     return failure(
       name,
       `${name} does not answer with a document: ${route.response.not_one_document}`,
-      true,
+      REACH.ANSWERED,
       body,
     );
   }
@@ -213,7 +294,7 @@ export const callRoute = async <N extends RouteName>(
     return failure(
       name,
       `${name} at ${url.href} answered ${response.status} with something that is not the document it promises: ${quote(text)}`,
-      true,
+      REACH.ANSWERED,
       body,
     );
   }

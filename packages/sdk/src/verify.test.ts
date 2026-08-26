@@ -110,7 +110,8 @@ describe("npx coinslot verify", () => {
     // answer as the idempotency half — and not a merchant who typed it wrong.
     const { code, said } = await verifying("verify");
 
-    expect(said).toMatch(/no call returns a merchant's own published cards/);
+    expect(said).toMatch(/takes no key and no address/);
+    expect(said).toMatch(/no call returns a merchant's own published/);
     expect(said).toMatch(/Name the card files instead/);
     expect(code).toBe(VERIFY_EXIT.COULD_NOT_RUN);
   });
@@ -131,9 +132,14 @@ describe("npx coinslot verify", () => {
 
   it("never answers with success while a check cannot be run", async () => {
     // The one answer a build must not receive from this command today. Zero
-    // means every check passed, the idempotency run passes nothing because it
+    // means every check passed; the idempotency run passes nothing because it
     // never happens, and a merchant wiring `coinslot verify` into their
     // pipeline would take a zero as a green light for both halves.
+    //
+    // Five inputs rather than a proof: one for each way out of runVerify —
+    // nothing to check, cards that passed, cards that did not, a file that is
+    // not there, a word the command does not know. It is those five paths this
+    // pins, not a claim about every possible call.
     const answers = await Promise.all([
       verifying("verify"),
       verifying("verify", fileHolding("good.json", validCard)),

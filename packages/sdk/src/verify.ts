@@ -129,11 +129,13 @@ const USAGE = [
  * Why the bare command the documentation shows cannot work yet.
  *
  * `coinslot verify` with nothing after it would check the cards the merchant
- * has already published, which is where that step of the documentation sits —
- * after publishing, before the test purchase. There is no call that hands a
- * merchant their own published cards back. The one route that lists a catalog
- * shows what an agent sees, which by that point in the documentation is
- * exactly what these cards are not: published and not yet in any catalog.
+ * has already published. The binding reason it cannot is the plainest one:
+ * this command takes no key and no address, builds no client and asks the
+ * gateway nothing, so it has no way to see anything that was published. That
+ * is not a gap somebody forgot to fill either — there is no call on the
+ * surface that hands a merchant their own published cards back. The one route
+ * that lists a catalog answers with what an agent sees, and it is the agent's
+ * projection rather than the cards as their author wrote them.
  *
  * So this is a stop and not a scolding, and it is answered with the code that
  * means "did not run". The way through it is to name the card files, which
@@ -141,9 +143,11 @@ const USAGE = [
  */
 const NOTHING_TO_CHECK = [
   "coinslot verify was given no card files, and it cannot find them on its own:",
-  "  - no call returns a merchant's own published cards; the one route that",
-  "    lists a catalog returns what an agent sees, and a card that is published",
-  "    but not yet in a catalog is not in it",
+  "  - this command takes no key and no address and builds no client, so it",
+  "    cannot ask us anything about what you have published",
+  "  - and there is nothing to ask: no call returns a merchant's own published",
+  "    cards, and the one route that lists a catalog answers with the agent's",
+  "    projection of a card rather than the card its author wrote",
   "  - nothing in this package or in the contract says where a merchant keeps",
   "    the cards they publish from, and looking for a file name or a directory",
   "    would invent a convention nobody agreed to",
