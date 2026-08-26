@@ -250,13 +250,14 @@ describe("the asynchronous mode: the money moves first", () => {
     // Portal, "Отказаться после того, как приняли заказ": waiting for the
     // deadline to reach the same result by silence helps nobody — the buyer
     // learns of the debt the minute the merchant does.
-    const { order, effects } = must(reach("dispatched") /* sync */, {
+    const sync = must(reach("dispatched"), {
       kind: "handler_refused",
       at: T0 + 4,
       code: "out_of_stock",
       message: "none left",
     });
-    expect(order.state).toBe("failed");
+    expect(sync.order.state).toBe("failed");
+    expect(sync.effects).toStrictEqual([]);
 
     const async = walk(newOrder("async"), [
       { kind: "payment_verified", at: T0 + 1 },
@@ -278,7 +279,6 @@ describe("the asynchronous mode: the money moves first", () => {
       "emit_merchant_event",
       "answer_merchant",
     ]);
-    expect(effects.length).toBeGreaterThan(0);
   });
 });
 
@@ -599,9 +599,13 @@ describe("goods handed over that were never paid for", () => {
     const repeated = must(unpaid, { kind: "purchase_repeated", at: T0 + 6 });
 
     expect(repeated.order.state).toBe("delivered_unpaid");
-    expect(kinds(repeated.effects)).toStrictEqual(["execute_payment"]);
+    expect(kinds(repeated.effects)).toStrictEqual(["verify_payment"]);
 
-    const settled = must(repeated.order, { kind: "payment_settled", at: T0 + 7 });
+    const verified = must(repeated.order, { kind: "payment_verified", at: T0 + 7 });
+
+    expect(kinds(verified.effects)).toStrictEqual(["execute_payment"]);
+
+    const settled = must(verified.order, { kind: "payment_settled", at: T0 + 8 });
 
     expect(settled.order.state).toBe("delivered");
     expect(kinds(settled.effects)).toStrictEqual(["release_goods_to_agent", "issue_receipt"]);
@@ -651,23 +655,40 @@ describe("events that do not belong where they arrived", () => {
   const illegal: readonly [OrderState, OrderEvent, string][] = [
     ["created", { kind: "payment_verified", at: T0 + 1 }, "a payment before there is a price"],
     ["quoted", { kind: "order_dispatched", at: T0 + 1 }, "a dispatch before the payment"],
-    [
-      "quoted",
-      { kind: "payment_settled", at: T0 + 1 },
-      "a settle nobody verified first",
-    ],
+    ["quoted", { kind: "payment_settled", at: T0 + 1 }, "a settle nobody verified first"],
     [
       "awaiting_confirmation",
       { kind: "payment_verified", at: T0 + 1 },
       "a payment before the merchant answered",
     ],
     ["paid", { kind: "handler_delivered", at: T0 + 1 }, "an answer from a handler never asked"],
-    ["fulfilled", { kind: "handler_refused", at: T0 + 1, code: "x", message: "y" }, "a refusal after the goods"],
+    [
+      "fulfilled",
+      { kind: "handler_refused", at: T0 + 1, code: "x", message: "y" },
+      "a refusal after the goods",
+    ],
     ["delivered", { kind: "payment_settled", at: T0 + 1 }, "a second charge on a closed order"],
-    ["rejected", { kind: "handler_accepted", at: T0 + 1 }, "an acceptance of a purchase that never happened"],
-    ["declined", { kind: "deliver_called", at: T0 + 1 }, "goods for an order the merchant refused"],
+    [
+      "rejected",
+      { kind: "handler_accepted", at: T0 + 1 },
+      "an acceptance of a purchase that never happened",
+    ],
+    [
+      "declined",
+      { kind: "payment_settled", at: T0 + 1 },
+      "a charge for a confirmation the merchant refused",
+    ],
     ["refunded", { kind: "payment_settled", at: T0 + 1 }, "a charge after the refund"],
-    ["cancelled", { kind: "purchase_repeated", at: T0 + 1 }, "a repeat of an order the merchant left behind"],
+    [
+      "cancelled",
+      { kind: "payment_verified", at: T0 + 1 },
+      "a payment on an order the merchant left behind",
+    ],
+    [
+      "failed",
+      { kind: "handler_delivered", at: T0 + 1 },
+      "goods from a handler that refused this very order",
+    ],
   ];
 
   for (const [state, event, why] of illegal) {

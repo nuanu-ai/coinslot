@@ -75,7 +75,10 @@ export function newOrder(
 }
 
 /** Unwraps a transition, turning a rejection into a loud test failure. */
-export function must(order: Order, event: OrderEvent): { order: Order; effects: readonly Effect[] } {
+export function must(
+  order: Order,
+  event: OrderEvent,
+): { order: Order; effects: readonly Effect[] } {
   const result = transition(order, event);
   if (!result.ok) {
     throw new Error(

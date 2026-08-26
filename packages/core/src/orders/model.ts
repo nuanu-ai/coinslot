@@ -400,6 +400,41 @@ export type OrderEvent =
 
 export type OrderEventKind = OrderEvent["kind"];
 
+/**
+ * The same list as a value, for everything that has to walk every pairing of a
+ * state and an event. It is built out of a record keyed by the union itself,
+ * so an event kind added to the type and forgotten here stops the build.
+ */
+const EVENT_KIND_INDEX: Record<OrderEventKind, true> = {
+  quote_answered: true,
+  quote_silent: true,
+  payment_verified: true,
+  payment_verification_failed: true,
+  payment_settled: true,
+  payment_settle_failed: true,
+  purchase_repeated: true,
+  confirmation_dispatched: true,
+  order_dispatched: true,
+  handler_accepted: true,
+  handler_delivered: true,
+  handler_refused: true,
+  handler_undelivered: true,
+  deliver_called: true,
+  refuse_called: true,
+  refund_settled: true,
+  merchant_departed: true,
+  deadline_expired: true,
+};
+
+export const ORDER_EVENT_KINDS = Object.keys(EVENT_KIND_INDEX) as readonly OrderEventKind[];
+
+/**
+ * Everything that can happen to an order except a deadline running out. The
+ * expiry of a deadline is answered once, centrally, because a deadline that is
+ * not currently running may not close an order in any state whatsoever.
+ */
+export type StateEvent = Exclude<OrderEvent, { kind: "deadline_expired" }>;
+
 /** When each step of the order happened. Written from the events, never read
  * from a clock. */
 export type OrderTimestamps = {
