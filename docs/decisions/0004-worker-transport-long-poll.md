@@ -53,3 +53,23 @@ three on one subscription.
 Precedents for queue-drain over merchant-exposed endpoints: Telegram
 getUpdates, SQS receive-message, Temporal task queues
 (`docs/research/12-big-players-merchant-integration.md`).
+
+## Addendum (2026-08-26): the handler's answer has its own route
+
+§2 said orders are acked "by their outcome calls (deliver / refuse /
+accept)", which left the synchronous handler with no address: the state
+machine distinguishes the handler's returned answer (delivered / refused /
+accepted, arriving as the return value of the merchant's handler) from the
+merchant's later explicit calls (`deliver` / `refuse`), and in the
+synchronous mode the returned answer is the only thing there is — the
+explicit calls answer `not_applicable_in_mode` there by design.
+
+So the surface carries a dedicated answer route: the SDK posts the
+handler's return value to it, referencing the order, in every mode; the
+explicit `deliver` and `refuse` calls remain the asynchronous mode's
+closure verbs. A late synchronous answer receives the typed
+"purchase already closed" acknowledgment rather than an error.
+
+Carrying answers inside the next poll request was rejected: it would couple
+the latency-critical synchronous answer — the agent is waiting on it — to
+polling cadence and batch size, which §4 exists to keep out of that path.
