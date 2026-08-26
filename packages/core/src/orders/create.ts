@@ -88,6 +88,7 @@ export function createOrder(input: CreateOrderInput): CreateOrderResult {
       quotedAt: null,
       confirmationRequestedAt: null,
       confirmedAt: null,
+      settleStartedAt: null,
       paidAt: null,
       dispatchedAt: null,
     },

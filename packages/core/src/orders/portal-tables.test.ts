@@ -49,7 +49,8 @@ function tableRows(page: string, heading: string, column = 1): readonly string[]
     if (!line.startsWith("|")) break;
     const cells = line.split("|");
     const cell = cells[column]?.trim() ?? "";
-    if (cells.length <= column) throw new Error(`the table in "${heading}" has no column ${column}`);
+    if (cells.length <= column)
+      throw new Error(`the table in "${heading}" has no column ${column}`);
     if (/^-+$/.test(cell)) continue;
     rows.push(cell);
   }

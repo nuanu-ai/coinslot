@@ -173,7 +173,7 @@ describe("the synchronous mode: refusal before the charge", () => {
     const fulfilled = must(dispatched, { kind: "handler_delivered", at: T0 + 4 });
 
     expect(fulfilled.order.state).toBe("fulfilled");
-    expect(fulfilled.order.payment).toBe("verified");
+    expect(fulfilled.order.payment).toBe("settling");
     expect(kinds(fulfilled.effects)).toStrictEqual(["execute_payment"]);
 
     const delivered = must(fulfilled.order, { kind: "payment_settled", at: T0 + 5 });
@@ -221,7 +221,7 @@ describe("the asynchronous mode: the money moves first", () => {
     const verified = must(newOrder("async"), { kind: "payment_verified", at: T0 + 1 });
 
     expect(verified.order.state).toBe("quoted");
-    expect(verified.order.payment).toBe("verified");
+    expect(verified.order.payment).toBe("settling");
     expect(kinds(verified.effects)).toStrictEqual(["execute_payment"]);
 
     const paid = must(verified.order, { kind: "payment_settled", at: T0 + 2 });
@@ -579,13 +579,16 @@ describe("delivering twice, and delivering late", () => {
     ]);
     const { order, effects } = must(held, { kind: "purchase_repeated", at: T0 + 1_000_001 });
 
-    expect(order.state).toBe("fulfilled");
+    // Asking for the repeat's payment does not by itself reopen the purchase.
+    expect(order.state).toBe("expired");
     expect(kinds(effects)).toStrictEqual(["verify_payment"]);
 
-    const paid = walk(order, [
-      { kind: "payment_verified", at: T0 + 1_000_002 },
-      { kind: "payment_settled", at: T0 + 1_000_003 },
-    ]);
+    const reopened = must(order, { kind: "payment_verified", at: T0 + 1_000_002 });
+
+    expect(reopened.order.state).toBe("fulfilled");
+    expect(kinds(reopened.effects)).toStrictEqual(["execute_payment"]);
+
+    const paid = walk(reopened.order, [{ kind: "payment_settled", at: T0 + 1_000_003 }]);
 
     expect(paid.state).toBe("delivered");
     expect(paid.payment).toBe("settled");
@@ -852,9 +855,7 @@ describe("delivering the confirmation request again", () => {
       at: T0 + 2,
     });
 
-    expect(first.effects).toStrictEqual([
-      { kind: "redeliver_order", attempt: 2, delayMs: 1_000 },
-    ]);
+    expect(first.effects).toStrictEqual([{ kind: "redeliver_order", attempt: 2, delayMs: 1_000 }]);
 
     const redelivered = must(first.order, { kind: "confirmation_dispatched", at: T0 + 3 });
 
@@ -862,9 +863,7 @@ describe("delivering the confirmation request again", () => {
 
     const second = must(redelivered.order, { kind: "handler_undelivered", at: T0 + 4 });
 
-    expect(second.effects).toStrictEqual([
-      { kind: "redeliver_order", attempt: 3, delayMs: 2_000 },
-    ]);
+    expect(second.effects).toStrictEqual([{ kind: "redeliver_order", attempt: 3, delayMs: 2_000 }]);
   });
 
   it("closes the order citing the deadline it actually ran out of", () => {
@@ -904,7 +903,7 @@ describe("records that would say something untrue", () => {
     ]);
     const { order } = must(held, { kind: "purchase_repeated", at: T0 + 1_000_001 });
 
-    expect(order.state).toBe("fulfilled");
+    expect(order.state).toBe("expired");
     expect(order.payment).toBe("none");
   });
 
@@ -942,7 +941,11 @@ describe("events that do not belong where they arrived", () => {
       { kind: "payment_verified", at: T0 + 1 },
       "a payment before the merchant answered",
     ],
-    ["paid", { kind: "handler_delivered", at: T0 + 1 }, "an answer from a handler never asked"],
+    [
+      "paid",
+      { kind: "confirmation_dispatched", at: T0 + 1 },
+      "a confirmation on an order already paid for",
+    ],
     [
       "fulfilled",
       { kind: "handler_refused", at: T0 + 1, code: "x", message: "y" },

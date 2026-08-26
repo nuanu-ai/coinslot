@@ -2,32 +2,58 @@
  * Which clocks are running on an order right now.
  *
  * The gateway schedules its timers off this list and the machine checks
- * against it: a deadline that is not in the list cannot expire an order. That
- * one rule closes a money hole that is easy to miss — a quote timing out while
- * the settle of that very order is already on its way would close a purchase
- * that is about to be paid for.
+ * against it: a deadline that is not in the list cannot expire an order, and
+ * one that is in it cannot expire it before its time. Those two rules together
+ * close a money hole that is easy to miss — a quote timing out while the settle
+ * of that very order is already on its way, or a timer that fired twice
+ * closing an order whose merchant is still honestly inside his deadline.
  *
- * Two clocks start at instants worth naming out loud. The synchronous budget
- * is ours and it is the ceiling on how long the agent waits, so it runs from
- * the purchase itself rather than from the moment the order reached the
+ * Every open state has exactly one clock on it, and the reason is
+ * `docs/research/16-order-state-machine.md`: an overdue order does not hang,
+ * it goes to an honest ending and the agent is told which. A state with no
+ * clock would be an order waiting for an answer that may never come, reported
+ * to the agent as "not yet" forever.
+ *
+ * Three of the clocks start at instants worth naming out loud. The synchronous
+ * budget is ours and it is the ceiling on how long the agent waits, so it runs
+ * from the purchase itself rather than from the moment the order reached the
  * merchant. The merchant's fulfillment deadline runs from the settle: the
  * buyer's money is at risk from then on, and it is that risk the deadline
- * bounds.
+ * bounds. And the settle's own deadline runs from the moment the payment was
+ * handed over for execution.
  */
 
 import { assertNever } from "../index.js";
 import type { Deadline, DeadlineKind, Order } from "./model.js";
 
 export function deadlines(order: Order): readonly Deadline[] {
+  // While the payment is being executed, that is the only thing the order is
+  // waiting on, whichever state it is sitting in.
+  if (order.payment === "settling") {
+    return order.timestamps.settleStartedAt === null
+      ? []
+      : [
+          {
+            kind: "settle_response",
+            at: order.timestamps.settleStartedAt + order.policy.deadlines.settleResponseMs,
+          },
+        ];
+  }
+
   switch (order.state) {
     case "created":
-      // The price question is still out. Its own silence rules bound it, and
-      // an order without a price has nothing else to wait for.
-      return [];
+      // The price has not come back yet. The price check has its own silence
+      // rules, but they are the gateway's; this is what stops the order from
+      // waiting forever if the gateway itself falls over between the question
+      // and the answer.
+      return [
+        {
+          kind: "quote_expiry",
+          at: order.timestamps.createdAt + order.policy.deadlines.quoteTtlMs,
+        },
+      ];
 
     case "quoted":
-      // Once the payment has been verified the settle is in flight, and the
-      // life of the price is no longer what the order is waiting on.
       return order.payment === "none" && order.timestamps.quotedAt !== null
         ? [
             {
@@ -64,12 +90,13 @@ export function deadlines(order: Order): readonly Deadline[] {
       return fulfillmentDeadline(order);
 
     case "fulfilled":
-      // The merchant has done his part; executing the payment is ours, and no
-      // deadline of his may punish him for our step.
+    case "delivered_unpaid":
+      // The merchant has produced the goods and the money is ours to move. He
+      // is held to none of his deadlines here; the clock that runs, when one
+      // runs, is the settle's, handled above.
       return [];
 
     case "delivered":
-    case "delivered_unpaid":
     case "refund_due":
     case "refunded":
     case "failed":

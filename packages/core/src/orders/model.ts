@@ -167,8 +167,15 @@ export function modeOf(fulfillment: FulfillmentMode): OrderMode {
  * Verification and execution are two steps and the machine leans on the gap
  * between them: in the synchronous mode the money is verified before the order
  * goes out and executed after the goods come back.
+ *
+ * `settling` is the window between sending the payment for execution and
+ * hearing back, and it is the only stage in which the machine genuinely does
+ * not know where the buyer's money is. It exists so that nothing can close the
+ * order as free on a guess: the seconds it lasts are exactly the seconds in
+ * which a refusal, a departure or a timer would otherwise tell a buyer his
+ * purchase never happened while his money was already on its way.
  */
-export const PAYMENT_STAGES = ["none", "verified", "settled", "settle_failed"] as const;
+export const PAYMENT_STAGES = ["none", "verified", "settling", "settled", "settle_failed"] as const;
 
 export type PaymentStage = (typeof PAYMENT_STAGES)[number];
 
@@ -222,6 +229,7 @@ export const RECOMMENDED_REFUSAL_CODES = [
  */
 export const DEADLINE_KINDS = [
   "quote_expiry",
+  "settle_response",
   "confirmation_response",
   "payment_after_confirmation",
   "sync_response",
@@ -233,6 +241,12 @@ export type DeadlineKind = (typeof DEADLINE_KINDS)[number];
 export type DeadlinePolicy = {
   /** Ours: how long a quoted price stays good. */
   readonly quoteTtlMs: number;
+  /**
+   * Ours: how long the machine waits to be told whether the charge went
+   * through. ADR-0002 §3 makes a silent decision about the charge a closed
+   * failure, and a closed failure needs a moment at which it is declared.
+   */
+  readonly settleResponseMs: number;
   /** Ours: the ceiling on how long an agent waits for a synchronous answer. */
   readonly syncResponseMs: number;
   /** Ours: how long a confirmed order waits for the agent's payment. */
@@ -442,6 +456,13 @@ export type OrderTimestamps = {
   readonly quotedAt: number | null;
   readonly confirmationRequestedAt: number | null;
   readonly confirmedAt: number | null;
+  /** When the payment was last sent for execution. */
+  readonly settleStartedAt: number | null;
+  /**
+   * When the order entered `paid`. Where the money moves at the purchase this
+   * is when it moved; where it moves after the goods this is when the payment
+   * was verified.
+   */
   readonly paidAt: number | null;
   readonly dispatchedAt: number | null;
 };
@@ -476,6 +497,13 @@ export const TRANSITION_REJECTIONS = [
   "deadline_not_armed",
   "deadline_not_yet_due",
   "delivery_before_payment",
+  /**
+   * The payment is being executed and the machine does not yet know whether it
+   * went through. Nothing that would close the order, and nothing that would
+   * spend the money again, is answered until it does. The event can be sent
+   * again once the settle has reported.
+   */
+  "settle_in_flight",
 ] as const;
 
 export type TransitionRejection = (typeof TRANSITION_REJECTIONS)[number];

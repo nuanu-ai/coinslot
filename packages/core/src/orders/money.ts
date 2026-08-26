@@ -31,6 +31,18 @@ const MAY_HOLD_THE_BUYERS_MONEY: readonly OrderState[] = [
   "refunded",
 ];
 
+/**
+ * The states in which a payment may legitimately be mid-execution. Everywhere
+ * else, a settle in flight means the machine let something else happen to the
+ * order while it did not know where the money was.
+ */
+const MAY_BE_CHARGING: readonly OrderState[] = [
+  "quoted",
+  "confirmed",
+  "fulfilled",
+  "delivered_unpaid",
+];
+
 /** The states that record a debt, and therefore require a charge behind them. */
 const RECORDS_A_DEBT: readonly OrderState[] = ["refund_due", "refunded"];
 
@@ -57,6 +69,13 @@ export function moneyInvariantViolations(order: Order): readonly string[] {
 
   if (order.state === "delivered_unpaid" && order.payment === "settled") {
     violations.push("the order is marked unpaid and the money did move");
+  }
+
+  if (order.payment === "settling" && !MAY_BE_CHARGING.includes(order.state)) {
+    violations.push(
+      `the payment is being executed and the order has moved on to ${order.state}, ` +
+        "so whatever happens to the money now happens to a decided order",
+    );
   }
 
   return violations;

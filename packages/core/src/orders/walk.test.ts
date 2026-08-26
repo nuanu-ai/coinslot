@@ -65,6 +65,7 @@ function pick<T>(next: () => number, items: readonly T[]): T {
 const POLICY: OrderPolicy = {
   deadlines: {
     quoteTtlMs: 10_000,
+    settleResponseMs: 25_000,
     syncResponseMs: 8_000,
     paymentAfterConfirmationMs: 12_000,
     confirmationResponseMs: 15_000,
@@ -77,6 +78,7 @@ const PRICE: Price = { amount: "12.00", currency: "USD", asOf: 500_000 };
 
 const DEADLINES: readonly DeadlineKind[] = [
   "quote_expiry",
+  "settle_response",
   "confirmation_response",
   "payment_after_confirmation",
   "sync_response",

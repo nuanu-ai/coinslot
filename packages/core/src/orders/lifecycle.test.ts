@@ -31,6 +31,7 @@ const HOUR = 60 * MINUTE;
 const POLICY: OrderPolicy = {
   deadlines: {
     quoteTtlMs: 2 * MINUTE,
+    settleResponseMs: 30 * SECOND,
     syncResponseMs: 10 * SECOND,
     paymentAfterConfirmationMs: 5 * MINUTE,
     confirmationResponseMs: 30 * MINUTE,
@@ -83,7 +84,11 @@ describe("one eSIM, bought and provisioned, with the provisioner down at first",
     expect(created.order.price).toBeNull();
     expect(created.effects).toStrictEqual([{ kind: "request_quote" }]);
     expect(outcomeFor(created.order)).toBe("in_progress");
-    expect(deadlines(created.order)).toStrictEqual([]);
+    // Even here the order is on a clock: if the price never comes back, it
+    // ends rather than waiting for an answer forever.
+    expect(deadlines(created.order)).toStrictEqual([
+      { kind: "quote_expiry", at: NOON + 2 * MINUTE },
+    ]);
 
     // The merchant answers. He has the eSIM and it costs fifty cents more than
     // the card's snapshot said, so the sale goes at his number.
@@ -107,11 +112,15 @@ describe("one eSIM, bought and provisioned, with the provisioner down at first",
     const verified = step(quoted.order, { kind: "payment_verified", at: NOON + 2 * SECOND });
 
     expect(verified.order.state).toBe("quoted");
-    expect(verified.order.payment).toBe("verified");
+    expect(verified.order.payment).toBe("settling");
     expect(verified.effects).toStrictEqual([{ kind: "execute_payment" }]);
     // The price stops being what this order is waiting on the moment the
     // settle is in flight, so nothing can expire it out from under the money.
-    expect(deadlines(verified.order)).toStrictEqual([]);
+    // What the order waits on now is the answer about the charge, and that has
+    // a clock of its own.
+    expect(deadlines(verified.order)).toStrictEqual([
+      { kind: "settle_response", at: NOON + 2 * SECOND + 30 * SECOND },
+    ]);
 
     const paid = step(verified.order, { kind: "payment_settled", at: NOON + 3 * SECOND });
 
