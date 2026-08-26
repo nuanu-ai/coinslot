@@ -57,9 +57,14 @@ npm install @coinslot/sdk
 ```ts
 import { createClient } from '@coinslot/sdk'
 
-const coinslot = createClient({ apiKey: process.env.COINSLOT_API_KEY })
+const coinslot = createClient({
+  apiKey: process.env.COINSLOT_API_KEY,
+  baseUrl: process.env.COINSLOT_URL,
+})
 ```
 
+Адрес в `baseUrl` вы получаете при подключении вместе с ключом — у песочницы
+и у боевой системы адреса разные, поэтому клиент не подставляет никакой сам.
 Получилось, если пакет установился и клиент создался. Правильность ключа
 проверит первый же вызов к нам — он на следующем шаге.
 
