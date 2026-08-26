@@ -7,6 +7,9 @@ import {
   CatalogPageSchema,
   expandPath,
   HTTP_METHODS,
+  MERCHANT_KEY_HEADER,
+  merchantKeyFrom,
+  merchantKeyHeaderValue,
   mountableRoutes,
   OrderAcceptResponseSchema,
   OrderCallResponseSchema,
@@ -906,5 +909,55 @@ describe("the addresses in the table, expanded and read back", () => {
       expandPath("/v0/orders/:order_id", { order_id: "ord_1", orderId: "ord_2" }),
     ).toThrow(/orderId/);
     expect(() => expandPath("/v0/catalog", { order_id: "ord_1" })).toThrow(/order_id/);
+  });
+});
+
+/**
+ * The merchant key's header: the one part of the surface the route table
+ * deliberately does not carry, and the one both sides used to agree on only by
+ * each writing the same two strings down apart from the other. The gateway
+ * parsed `Authorization: Bearer` and the SDK sent it, and nothing tied the two
+ * together — the failure of which is a call that fails with an authorisation
+ * error while both repositories look correct. These four hold the agreement in
+ * one place, so a change to it breaks a test rather than a merchant's worker.
+ */
+describe("the merchant key's header, held in one place so both sides cannot drift", () => {
+  it("names the header the key travels in and the value that carries it", () => {
+    expect(MERCHANT_KEY_HEADER).toBe("authorization");
+    expect(merchantKeyHeaderValue("a-merchant-key-long-enough")).toBe(
+      "Bearer a-merchant-key-long-enough",
+    );
+  });
+
+  it("takes back out exactly the key the value was built around", () => {
+    // The property that matters: whatever the SDK put in, the gateway reads the
+    // same key out. A key travels as a bearer token, so it carries no
+    // whitespace — but every other character a key is likely to hold survives
+    // the round trip untouched.
+    for (const key of ["k", "a-merchant-key-long-enough", "sk.live_9-1/ABCxyz+42="]) {
+      expect(merchantKeyFrom(merchantKeyHeaderValue(key))).toBe(key);
+    }
+  });
+
+  it("reads the scheme however it is cased, because an auth scheme is case-insensitive", () => {
+    // A merchant whose client wrote "bearer" holds a key that is perfectly
+    // correct; matching the scheme case-sensitively would cost them an
+    // afternoon on it (RFC 7235 §2.1).
+    expect(merchantKeyFrom("Bearer abc")).toBe("abc");
+    expect(merchantKeyFrom("bearer abc")).toBe("abc");
+    expect(merchantKeyFrom("  Bearer\tabc  ")).toBe("abc");
+  });
+
+  it("returns null for anything that is not one of our bearer tokens", () => {
+    // Negative control: every way the value is not a key this contract issued
+    // reads as "no key", never as a key that happens to match. A half-parsed
+    // string that slipped through here would be compared against the real key
+    // and, now and then, would match a prefix of it.
+    expect(merchantKeyFrom(undefined)).toBeNull(); // no header at all
+    expect(merchantKeyFrom("")).toBeNull(); // an empty value
+    expect(merchantKeyFrom("abc")).toBeNull(); // no scheme, just a token
+    expect(merchantKeyFrom("Basic abc")).toBeNull(); // another scheme entirely
+    expect(merchantKeyFrom("Bearer")).toBeNull(); // the scheme with no token
+    expect(merchantKeyFrom("Bearer   ")).toBeNull(); // the scheme and only spaces
   });
 });
