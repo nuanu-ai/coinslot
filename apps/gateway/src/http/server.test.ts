@@ -312,6 +312,36 @@ describe("the payment challenge", () => {
     expect(challenge.error).toMatch(/did not name an order this gateway is holding/);
   });
 
+  it("reads a payment that is not one without falling over", async () => {
+    // The decoder is a base64 JSON parse with no schema behind it, so a header
+    // naming a real order and carrying nothing else reaches every line that
+    // reads a payment. It used to reach one that assumed a payload was there
+    // and answered "something here is broken" — which tells an agent to give up
+    // on a route that works. What it gets now is the ordinary answer to a
+    // payment the payment layer will not have: the purchase did not happen.
+    const { served, harnessed } = await started();
+    harnessed.facilitator.willRefuseVerification("signature", "that is not a payment");
+    const itemId = await publish(served, syncCard);
+    const offered = await harnessed.gateway.beginPurchase(itemId, {});
+    if (offered.step !== "pay") throw new Error("no price was offered");
+
+    const nonsense = Buffer.from(
+      JSON.stringify({
+        x402Version: 2,
+        accepted: { extra: { order_id: offered.order.order.id } },
+      }),
+      "utf8",
+    ).toString("base64");
+
+    const answered = await served.call("POST", `/v0/items/${itemId}/purchase`, {
+      body: { params: {} },
+      headers: { [PAYMENT_SIGNATURE_HEADER]: nonsense },
+    });
+
+    expect(answered.status).toBe(409);
+    expect(answered.body).toMatchObject({ status: "rejected" });
+  });
+
   it("has nothing to sell under an identifier nobody published", async () => {
     const { served } = await started();
     expect((await served.call("GET", "/v0/items/item_nope/purchase")).status).toBe(404);
