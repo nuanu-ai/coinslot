@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { must, newOrder, reach, T0, walk } from "./fixtures.js";
-import { moneyInvariantViolations } from "./money.js";
+import { transition } from "./machine.js";
 import type { Effect, Order, OrderEvent, OrderState } from "./model.js";
 import { ORDER_EVENT_KINDS, ORDER_STATES } from "./model.js";
-import { transition } from "./machine.js";
+import { moneyInvariantViolations } from "./money.js";
 
 /**
  * The invariants that make this package worth writing. Every test below is a
@@ -20,7 +20,12 @@ function moved(effects: readonly Effect[]): readonly string[] {
 function sampleEvent(kind: (typeof ORDER_EVENT_KINDS)[number]): OrderEvent {
   switch (kind) {
     case "quote_answered":
-      return { kind, at: T0 + 1, available: true, price: { amount: "1.00", currency: "USD", asOf: T0 } };
+      return {
+        kind,
+        at: T0 + 1,
+        available: true,
+        price: { amount: "1.00", currency: "USD", asOf: T0 },
+      };
     case "handler_refused":
       return { kind, at: T0 + 1, code: "out_of_stock", message: "none" };
     case "refuse_called":
