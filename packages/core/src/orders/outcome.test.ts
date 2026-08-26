@@ -42,6 +42,21 @@ describe("what the agent is told an order came to", () => {
     expect(outcomeFor(reach("declined"))).toBe("declined");
   });
 
+  it("leaves the order able to say what the agent's one word cannot", () => {
+    // The agent gets one word for both, and that word says the purchase did
+    // not happen. What the machine actually knows is different in the two
+    // cases — one charge was reported as failed, the other never reported at
+    // all — and the order has to go on carrying that difference for the
+    // dispute, the error text and the merchant's reconciliation that read it.
+    const silent = walk(reach("fulfilled"), [
+      { kind: "deadline_expired", at: T0 + 999_999, deadline: "settle_response" },
+    ]);
+    const reported = walk(reach("fulfilled"), [{ kind: "payment_settle_failed", at: T0 + 5 }]);
+
+    expect(outcomeFor(silent)).toBe(outcomeFor(reported));
+    expect(silent.payment).not.toBe(reported.payment);
+  });
+
   it("shows the two endings where money is owed as what they are", () => {
     expect(outcomeFor(reach("refund_due"))).toBe("refund_due");
     expect(outcomeFor(reach("delivered_unpaid"))).toBe("delivered_unpaid");

@@ -953,6 +953,63 @@ describe("while the settle is in flight", () => {
     expect(kinds(effects)).toStrictEqual(["mark_refund_due", "emit_merchant_event"]);
   });
 
+  it("never sends a second charge while the first one's outcome is unknown", () => {
+    // The blocker this test exists for: a settle that reported nothing was
+    // recorded as a settle that failed, so a repeat of the purchase sent the
+    // money out again — unbounded, and with the first charge's fate still
+    // unknown. Repeating four times produced five charges.
+    const silent = walk(reach("fulfilled"), [
+      { kind: "deadline_expired", at: T0 + 999_999, deadline: "settle_response" },
+    ]);
+
+    expect(silent.state).toBe("delivered_unpaid");
+    expect(silent.payment).toBe("outcome_unknown");
+
+    const repeated = transition(silent, { kind: "purchase_repeated", at: T0 + 1_000_000 });
+
+    expect(repeated.ok).toBe(false);
+    if (repeated.ok) return;
+    expect(repeated.rejection.retryable).toBe(true);
+  });
+
+  it("keeps a charge that reported nothing apart from one that reported failure", () => {
+    const silent = walk(reach("fulfilled"), [
+      { kind: "deadline_expired", at: T0 + 999_999, deadline: "settle_response" },
+    ]);
+    const failed = walk(reach("fulfilled"), [{ kind: "payment_settle_failed", at: T0 + 5 }]);
+
+    expect(silent.state).toBe(failed.state);
+    expect(silent.payment).toBe("outcome_unknown");
+    expect(failed.payment).toBe("settle_failed");
+  });
+
+  it("takes the answer when the payment layer finally speaks", () => {
+    // The money did move after all, and the merchant's goods are already made.
+    // Dropping this answer would leave the buyer charged for a purchase the
+    // machine goes on calling "did not happen".
+    const silent = walk(reach("fulfilled"), [
+      { kind: "deadline_expired", at: T0 + 999_999, deadline: "settle_response" },
+    ]);
+    const { order, effects } = must(silent, { kind: "payment_settled", at: T0 + 1_000_000 });
+
+    expect(order.state).toBe("delivered");
+    expect(order.payment).toBe("settled");
+    expect(kinds(effects)).toStrictEqual(["release_goods_to_agent", "issue_receipt"]);
+  });
+
+  it("lets the repeat through once the answer is in", () => {
+    const known = walk(reach("fulfilled"), [
+      { kind: "deadline_expired", at: T0 + 999_999, deadline: "settle_response" },
+      { kind: "payment_settle_failed", at: T0 + 1_000_000 },
+    ]);
+
+    expect(known.payment).toBe("settle_failed");
+
+    const { effects } = must(known, { kind: "purchase_repeated", at: T0 + 1_000_001 });
+
+    expect(kinds(effects)).toStrictEqual(["verify_payment"]);
+  });
+
   it("closes a synchronous order whose settle went silent as goods without payment", () => {
     // The merchant produced the goods and we cannot say whether the money
     // arrived. He is told, exactly as the portal promises him.
@@ -1007,6 +1064,31 @@ describe("an answer that arrives before we recorded handing the order over", () 
         answer: { ok: false, error: "not_applicable_in_mode", retryable: false },
       },
     ]);
+  });
+
+  it("claims a hand-over only from an answer that proves the handler ran", () => {
+    // A `refuse` call can be made from anywhere at any time; a handler answer
+    // can only come from a handler that was invoked. Counting the first as a
+    // delivery credits the order round with a delivery it never had, and in
+    // the confirm mode the merchant learned of the order from the confirmation
+    // round instead.
+    const paid = walk(reach("confirmed"), [
+      { kind: "payment_verified", at: T0 + 3 },
+      { kind: "payment_settled", at: T0 + 4 },
+    ]);
+
+    expect(paid.state).toBe("paid");
+    expect(paid.dispatch.attempts).toBe(0);
+
+    const { order } = must(paid, {
+      kind: "refuse_called",
+      at: T0 + 5,
+      code: "out_of_stock",
+      message: "none",
+    });
+
+    expect(order.state).toBe("refund_due");
+    expect(order.dispatch.attempts).toBe(0);
   });
 
   it("does not invent the instant of a hand-over it only heard about", () => {
@@ -1107,6 +1189,22 @@ describe("records that would say something untrue", () => {
 
     expect(order.state).toBe("delivered");
     expect(order.closure).toBeNull();
+  });
+
+  it("does not carry the reason a purchase ran out of time onto its second life", () => {
+    // Two orders in the same state must not differ in the field a dispute and
+    // the merchant's dashboard render from, for no reason but which path they
+    // took to get there.
+    const revived = walk(reach("dispatched"), [
+      { kind: "deadline_expired", at: T0 + 999_999, deadline: "sync_response" },
+      { kind: "handler_delivered", at: T0 + 1_000_000 },
+      { kind: "purchase_repeated", at: T0 + 1_000_001 },
+      { kind: "payment_verified", at: T0 + 1_000_002 },
+      { kind: "payment_settle_failed", at: T0 + 1_000_003 },
+    ]);
+
+    expect(revived.state).toBe("delivered_unpaid");
+    expect(revived.closure).toBeNull();
   });
 
   it("does not carry a dead verification into a repeated purchase", () => {
