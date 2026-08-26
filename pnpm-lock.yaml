@@ -43,6 +43,9 @@ importers:
 
   packages/core:
     devDependencies:
+      '@coinslot/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       vitest:
         specifier: ^4.1.11
         version: 4.1.11(@types/node@26.3.0)(vite@8.2.2(@types/node@26.3.0))
