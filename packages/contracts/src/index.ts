@@ -25,7 +25,13 @@ import type { ZodType } from "zod";
 import { z } from "zod";
 import { CardSchema, FulfillmentSchema, PriceCheckSchema } from "./card.js";
 import { OrderEventSchema, RefundDueReasonSchema } from "./events.js";
-import { HandlerAnswerSchema, RefusalCodeSchema, RefusalSchema } from "./handler.js";
+import {
+  AcceptanceSchema,
+  DeliverySchema,
+  HandlerAnswerSchema,
+  RefusalCodeSchema,
+  RefusalSchema,
+} from "./handler.js";
 import { OrderSchema } from "./order.js";
 import { OrderStatusSchema } from "./order-status.js";
 import {
@@ -61,8 +67,10 @@ export {
 } from "./card.js";
 export type { OrderEvent, RefundDueReason } from "./events.js";
 export { ORDER_EVENT_TYPES, OrderEventSchema, RefundDueReasonSchema } from "./events.js";
-export type { HandlerAnswer, Refusal, RefusalCode } from "./handler.js";
+export type { Acceptance, Delivery, HandlerAnswer, Refusal, RefusalCode } from "./handler.js";
 export {
+  AcceptanceSchema,
+  DeliverySchema,
   HandlerAnswerSchema,
   RECOMMENDED_REFUSAL_CODES,
   RefusalCodeSchema,
@@ -137,9 +145,11 @@ export const CONTRACT_VERSION = "0";
  * can see, so a test holds the two in step.
  */
 export const schemas = Object.freeze({
+  acceptance: AcceptanceSchema,
   amount: AmountSchema,
   card: CardSchema,
   currency_code: CurrencyCodeSchema,
+  delivery: DeliverySchema,
   field_spec: FieldSpecSchema,
   fulfillment: FulfillmentSchema,
   handler_answer: HandlerAnswerSchema,
