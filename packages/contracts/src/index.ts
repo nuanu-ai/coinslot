@@ -23,6 +23,19 @@
 
 import type { ZodType } from "zod";
 import { z } from "zod";
+import {
+  AgentOrderStatusSchema,
+  CatalogPageSchema,
+  OrderAcceptResponseSchema,
+  OrderCallResponseSchema,
+  OrderListQuerySchema,
+  OrderListSchema,
+  OrderWithStatusSchema,
+  PurchaseRequestSchema,
+  QuoteAnswerAckSchema,
+  WorkerPollRequestSchema,
+  WorkerPollResponseSchema,
+} from "./api.js";
 import { CardSchema, FulfillmentSchema, PriceCheckSchema, PublicCardSchema } from "./card.js";
 import { WorkerEnvelopeSchema } from "./envelope.js";
 import { OrderEventSchema, RefundDueReasonSchema } from "./events.js";
@@ -58,6 +71,44 @@ import {
   PublishResultSchema,
 } from "./results.js";
 
+export type {
+  AgentOrderStatus,
+  AuthMode,
+  CatalogPage,
+  HttpMethod,
+  OrderAcceptResponse,
+  OrderCallResponse,
+  OrderList,
+  OrderListQuery,
+  OrderWithStatus,
+  PurchaseRequest,
+  QuoteAnswerAck,
+  RouteDefinition,
+  RouteName,
+  RouteResponse,
+  WorkerPollRequest,
+  WorkerPollResponse,
+} from "./api.js";
+export {
+  AgentOrderStatusSchema,
+  API_ROUTES,
+  AUTH_MODES,
+  CatalogPageSchema,
+  expandPath,
+  HTTP_METHODS,
+  MAX_POLL_ENVELOPES,
+  MAX_POLL_WAIT_SECONDS,
+  OrderAcceptResponseSchema,
+  OrderCallResponseSchema,
+  OrderListQuerySchema,
+  OrderListSchema,
+  OrderWithStatusSchema,
+  PurchaseRequestSchema,
+  pathParamsOf,
+  QuoteAnswerAckSchema,
+  WorkerPollRequestSchema,
+  WorkerPollResponseSchema,
+} from "./api.js";
 export type { Card, Fulfillment, PriceCheck, PublicCard } from "./card.js";
 export {
   CardSchema,
@@ -155,8 +206,10 @@ export const CONTRACT_VERSION = "0";
  */
 export const schemas = Object.freeze({
   acceptance: AcceptanceSchema,
+  agent_order_status: AgentOrderStatusSchema,
   amount: AmountSchema,
   card: CardSchema,
+  catalog_page: CatalogPageSchema,
   currency_code: CurrencyCodeSchema,
   delivery: DeliverySchema,
   field_spec: FieldSpecSchema,
@@ -165,10 +218,15 @@ export const schemas = Object.freeze({
   identifier: IdentifierSchema,
   money: MoneySchema,
   order: OrderSchema,
+  order_accept_response: OrderAcceptResponseSchema,
   order_call_error: OrderCallErrorSchema,
+  order_call_response: OrderCallResponseSchema,
   order_call_result: OrderCallResultSchema,
   order_event: OrderEventSchema,
+  order_list: OrderListSchema,
+  order_list_query: OrderListQuerySchema,
   order_status: OrderStatusSchema,
+  order_with_status: OrderWithStatusSchema,
   param_name: ParamNameSchema,
   param_spec: ParamSpecSchema,
   param_type: ParamTypeSchema,
@@ -176,6 +234,8 @@ export const schemas = Object.freeze({
   public_card: PublicCardSchema,
   publish_error: PublishErrorSchema,
   publish_result: PublishResultSchema,
+  purchase_request: PurchaseRequestSchema,
+  quote_answer_ack: QuoteAnswerAckSchema,
   quote_purpose: QuotePurposeSchema,
   quote_request: QuoteRequestSchema,
   quote_response: QuoteResponseSchema,
@@ -187,6 +247,8 @@ export const schemas = Object.freeze({
   sale_price: SalePriceSchema,
   timestamp: TimestampSchema,
   worker_envelope: WorkerEnvelopeSchema,
+  worker_poll_request: WorkerPollRequestSchema,
+  worker_poll_response: WorkerPollResponseSchema,
 }) satisfies Readonly<Record<string, ZodType>>;
 
 /** The name of one schema in the registry. */

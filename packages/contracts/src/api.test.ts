@@ -14,8 +14,8 @@ import {
   OrderListQuerySchema,
   OrderListSchema,
   OrderWithStatusSchema,
-  pathParamsOf,
   PurchaseRequestSchema,
+  pathParamsOf,
   QuoteAnswerAckSchema,
   type RouteDefinition,
   WorkerPollRequestSchema,
@@ -104,8 +104,10 @@ describe("the list of orders", () => {
   });
 
   it("accepts a list of orders read back with their states", () => {
-    expect(OrderListSchema.safeParse({ orders: [openOrder, { ...order, status: "refund_due" }] })
-      .success).toBe(true);
+    expect(
+      OrderListSchema.safeParse({ orders: [openOrder, { ...order, status: "refund_due" }] })
+        .success,
+    ).toBe(true);
   });
 
   it("is an object rather than a bare array", () => {
@@ -287,7 +289,9 @@ describe("what taking an order on comes back as", () => {
   });
 
   it("refuses a word smuggled into the success", () => {
-    expect(OrderAcceptResponseSchema.safeParse({ ok: { result: "delivered" } }).success).toBe(false);
+    expect(OrderAcceptResponseSchema.safeParse({ ok: { result: "delivered" } }).success).toBe(
+      false,
+    );
     expect(OrderAcceptResponseSchema.safeParse({ ok: { result: "accepted" } }).success).toBe(false);
   });
 
@@ -324,9 +328,9 @@ describe("the purchase an agent sends", () => {
     // The same rule the order keeps: nobody downstream should have to tell "no
     // parameters" from "the field did not arrive".
     expect(PurchaseRequestSchema.parse({ params: {} })).toStrictEqual({ params: {} });
-    expect(PurchaseRequestSchema.safeParse({ params: { email: "buyer@example.com" } }).success).toBe(
-      true,
-    );
+    expect(
+      PurchaseRequestSchema.safeParse({ params: { email: "buyer@example.com" } }).success,
+    ).toBe(true);
     expectMissingFieldRejected(PurchaseRequestSchema, { params: {} }, "params");
   });
 
@@ -358,8 +362,9 @@ describe("the status an agent reads", () => {
   }
 
   it("answers in the words both sides read, and refuses the machine's own", () => {
-    expect(AgentOrderStatusSchema.safeParse({ ...status, status: "payment_unresolved" }).success)
-      .toBe(true);
+    expect(
+      AgentOrderStatusSchema.safeParse({ ...status, status: "payment_unresolved" }).success,
+    ).toBe(true);
     expect(AgentOrderStatusSchema.safeParse({ ...status, status: "paid" }).success).toBe(false);
   });
 });
@@ -545,9 +550,9 @@ describe("the addresses in the table, expanded and read back", () => {
   it("refuses a value for something the address does not take", () => {
     // A caller passing `orderId` to a path that wants `order_id` has a bug,
     // and dropping it silently would send a request that does something else.
-    expect(() => expandPath("/v0/orders/:order_id", { order_id: "ord_1", orderId: "ord_2" })).toThrow(
-      /orderId/,
-    );
+    expect(() =>
+      expandPath("/v0/orders/:order_id", { order_id: "ord_1", orderId: "ord_2" }),
+    ).toThrow(/orderId/);
     expect(() => expandPath("/v0/catalog", { order_id: "ord_1" })).toThrow(/order_id/);
   });
 });
