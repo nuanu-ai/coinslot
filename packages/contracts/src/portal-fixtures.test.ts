@@ -107,7 +107,10 @@ const occursIn = (fence: string, token: Token): boolean => {
   switch (token.kind) {
     // `email:` or `"email":` — a name in the position of a name.
     case "key":
-      return new RegExp(`["']?${escaped(token.text)}["']?\\s*:`).test(fence);
+      // The left boundary is what stops `code:` matching inside
+      // `reason_code:`. Without it a renamed field passed the guard, and a
+      // rename is the most consequential drift a portal edit can carry.
+      return new RegExp(`(?<![\\w$])["']?${escaped(token.text)}["']?\\s*:`).test(fence);
     // `'sync'` or `"sync"` — a string, quotes and all, so one value cannot
     // pass as the tail of a longer one.
     case "text":
@@ -120,7 +123,11 @@ const occursIn = (fence: string, token: Token): boolean => {
 
 /** The names an example writes on a line of their own, for the reverse check. */
 const keysWrittenIn = (fence: string): string[] =>
-  [...fence.matchAll(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:/gm)].map((match) => match[1] ?? "");
+  // Anchored at the start of a line or just after a brace or comma, because
+  // the portal writes nested objects inline: `price: { amount: '5.00' }`.
+  // Anchored only at the line start, a field added inside one of those was
+  // invisible to the reverse check.
+  [...fence.matchAll(/(?:^|[{,])\s*([A-Za-z_][A-Za-z0-9_]*)\s*:/gm)].map((match) => match[1] ?? "");
 
 /**
  * The other direction of the drift check: names the example writes that the
@@ -352,12 +359,40 @@ describe("the drift check itself", () => {
     expect(occursIn('  "email": "buyer@example.com"', token("key", "email"))).toBe(true);
   });
 
+  it("does not let a renamed field pass as the one it was renamed from", () => {
+    // The drift that matters most and was invisible: renaming `code:` to
+    // `reason_code:` on the portal left every fixture green, because the
+    // matcher had no left boundary and found `code:` inside the new name. A
+    // merchant would then be copying a field our schemas do not know.
+    expect(occursIn("  reason_code: 'out_of_stock'", token("key", "code"))).toBe(false);
+    expect(occursIn('  "reason_code": "out_of_stock"', token("key", "code"))).toBe(false);
+    expect(occursIn("  code: 'out_of_stock'", token("key", "code"))).toBe(true);
+    expect(occursIn("{ code: 'out_of_stock' }", token("key", "code"))).toBe(true);
+  });
+
   it("reads the names an example writes, for the other direction", () => {
     expect(keysWrittenIn("  price: {\n    amount: '5.00',\n  }\n  title: 'x'")).toStrictEqual([
       "price",
       "amount",
       "title",
     ]);
+  });
+
+  it("reads names written inside an object on one line", () => {
+    // The hole this closes: the portal writes small objects inline, so a field
+    // added to one of them — `vat` next to `amount` in a card's price — sat
+    // where the reverse check could not see it, though `MoneySchema` would
+    // refuse that card outright.
+    expect(keysWrittenIn("  price: { amount: '5.00', currency: 'USD' },")).toStrictEqual([
+      "price",
+      "amount",
+      "currency",
+    ]);
+    expect(keysWrittenIn("  price: { amount: '5.00', vat: '0.50' },")).toContain("vat");
+  });
+
+  it("reads no name out of a destructuring, which writes no colon", () => {
+    expect(keysWrittenIn("const { id, errors } = await publish({")).toStrictEqual([]);
   });
 
   it("keeps a value token tied to the field it came from", () => {
@@ -400,9 +435,11 @@ describe("the drift check itself", () => {
     const known = new Set(["merchant_item_id", "title", "fulfillment"]);
 
     expect(namesTheFixtureLacks("  title: 'x'\n  fulfillment: 'sync'", known)).toStrictEqual([]);
+    // Both the new field and what it contains: an inline object is where a
+    // field hides most easily, so the check reaches inside it.
     expect(
       namesTheFixtureLacks("  title: 'x'\n  subscription: { period: 'P1M' }", known),
-    ).toStrictEqual(["subscription"]);
+    ).toStrictEqual(["subscription", "period"]);
   });
 });
 
