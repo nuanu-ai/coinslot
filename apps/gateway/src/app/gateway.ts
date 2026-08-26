@@ -441,13 +441,15 @@ export class Gateway {
       { priceId },
     );
 
-    const used = applied.outcome === "moved";
-    if (used) {
-      this.#questions.delete(priceId);
-      // The purchase is parked waiting for exactly this.
-      this.quotes.answer(priceId, response);
-    }
-    return { used };
+    // The question is finished either way: it has been put to the machine, and
+    // a second answer to it can only be told the same thing. Whoever is parked
+    // on the purchase is woken either way too — if the answer priced it they
+    // have their price, and if it did not the order has already moved on and
+    // there is nothing left to wait for.
+    this.#questions.delete(priceId);
+    this.quotes.answer(priceId, response);
+
+    return { used: applied.outcome === "moved" };
   }
 
   /** What the merchant's handler returned for an order it was given. */
