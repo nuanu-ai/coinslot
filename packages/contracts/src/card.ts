@@ -146,7 +146,9 @@ export const CardSchema = CardFieldsSchema.superRefine((card, ctx) => {
     return;
   }
 
-  if (card.fulfillment !== "confirm" && card.confirm_deadline_seconds !== undefined) {
+  // Past the gate only "sync" and "async" remain, and neither is ever asked to
+  // confirm — which is why this needs no test on the mode of its own.
+  if (card.confirm_deadline_seconds !== undefined) {
     ctx.addIssue({
       code: "custom",
       path: ["confirm_deadline_seconds"],
