@@ -70,7 +70,7 @@ const coinslot = createClient({ apiKey: process.env.COINSLOT_API_KEY })
 можно хоть десять раз подряд.
 
 ```ts
-const { id, errors } = await coinslot.catalog.publish({
+const published = await coinslot.catalog.publish({
   merchant_item_id: 'access-monthly',
   title: 'Доступ к сервису на один месяц',
   description:
@@ -84,11 +84,15 @@ const { id, errors } = await coinslot.catalog.publish({
   },
   fulfillment: 'sync',
 })
+
+if ('errors' in published) {
+  console.error(published.errors)
+}
 ```
 
-Невалидная карточка исключения не бросает: вызов возвращает `errors` — список
-полей с объяснением, что в них не так. Пустой список и есть признак того, что
-карточка принята.
+Невалидная карточка исключения не бросает: вместо `ok` вызов возвращает
+`errors` — непустой список полей с объяснением, что в каждом не так. Есть
+`ok` — карточка принята, и в нём лежит наш каталожный идентификатор.
 
 Поле `merchant_item_id` — ваш собственный идентификатор товара, тот же, что у
 вас в базе. Рядом мы заводим свой каталожный `id`, но ваш ключ остаётся с
@@ -221,12 +225,23 @@ await coinslot.orders.refuse(order.id, {
 Обработчик цены вы ставите рядом с обработчиком заказов, в том же процессе:
 
 ```ts
-coinslot.pricing.onQuote(async (q) => ({
-  available: await inStock(q.merchant_item_id),
-  price: { amount: await priceOf(q.merchant_item_id), currency: 'USD' },
-  as_of: new Date().toISOString(),
-}))
+coinslot.pricing.onQuote(async (q) => {
+  const current = await currentPriceOf(q.merchant_item_id)
+
+  if (current === null) {
+    return { available: false, as_of: new Date().toISOString() }
+  }
+
+  return {
+    available: true,
+    price: { amount: current.amount, currency: 'USD' },
+    as_of: current.checked_at,
+  }
+})
 ```
+
+Ответ «нет в наличии» цены не несёт — по такому ответу мы покупку не
+начинаем.
 
 Это путь по умолчанию: канал тот же, что у заказов, выставлять наружу ничего
 не нужно. Второй транспорт, хук цены, — HTTP-адрес на вашей стороне; он для

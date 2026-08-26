@@ -41,6 +41,13 @@ that there is none".
   single declared exception is the red `test(...)` commit of a red→green pair,
   from the code stage onward.
 - Remote: `github.com/nuanu-ai/coinslot` (private). We push when we commit.
+- Agent worktrees live under `.claude/worktrees/<topic>` on branches named
+  `agent/<topic>` — the name says what the work is, not which process did it.
+  Acceptance of an agent branch ends with the worktree removed and the branch
+  deleted: `pnpm worktrees:clean` removes every agent worktree that is
+  unlocked, clean and fully merged, and names its reason for keeping the
+  rest (`pnpm worktrees` lists without removing). A worktree that outlives
+  its merge is litter.
 - Never commit: secrets, `.env`, `.claude/settings.local.json`.
 
 ## Decisions
