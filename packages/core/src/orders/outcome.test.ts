@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { reach, T0, walk } from "./fixtures.js";
+import { newOrder, reach, T0, walk } from "./fixtures.js";
 import type { OrderState } from "./model.js";
 import { ORDER_STATES } from "./model.js";
 import { ORDER_OUTCOMES, outcomeFor } from "./outcome.js";
@@ -42,19 +42,56 @@ describe("what the agent is told an order came to", () => {
     expect(outcomeFor(reach("declined"))).toBe("declined");
   });
 
-  it("leaves the order able to say what the agent's one word cannot", () => {
-    // The agent gets one word for both, and that word says the purchase did
-    // not happen. What the machine actually knows is different in the two
-    // cases — one charge was reported as failed, the other never reported at
-    // all — and the order has to go on carrying that difference for the
-    // dispute, the error text and the merchant's reconciliation that read it.
+  it("does not tell the agent a purchase failed when it does not know", () => {
+    // The fifth gate on the most visible artifact there is. A charge the
+    // payment network never answered about is not a refusal: the agent's
+    // wallet may be lighter, and an agent told "the purchase did not happen"
+    // will go and buy the same thing somewhere else without checking.
+    const unresolved = walk(newOrder("async"), [
+      { kind: "payment_verified", at: T0 + 1 },
+      { kind: "deadline_expired", at: T0 + 999_999, deadline: "settle_response" },
+    ]);
+
+    expect(unresolved.closure).toStrictEqual({ cause: "payment_outcome_unknown" });
+    expect(outcomeFor(unresolved)).toBe("payment_unresolved");
+    expect(outcomeFor(unresolved)).not.toBe("rejected");
+  });
+
+  it("keeps saying so while it is still finding out", () => {
+    // The same not-knowing on an order that is still open — the merchant's
+    // goods are made and we are waiting on the payment network. There the
+    // honest word is the one for an answer that has not arrived.
+    const stillAsking = walk(reach("fulfilled"), [
+      { kind: "deadline_expired", at: T0 + 999_999, deadline: "settle_response" },
+    ]);
+
+    expect(stillAsking.payment).toBe("outcome_unknown");
+    expect(outcomeFor(stillAsking)).toBe("in_progress");
+  });
+
+  it("goes back to a plain refusal once the payment network does answer", () => {
+    const answered = walk(newOrder("async"), [
+      { kind: "payment_verified", at: T0 + 1 },
+      { kind: "deadline_expired", at: T0 + 999_999, deadline: "settle_response" },
+      { kind: "payment_settle_failed", at: T0 + 1_000_000 },
+    ]);
+
+    expect(outcomeFor(answered)).toBe("rejected");
+  });
+
+  it("carries the difference all the way out to the agent, not only inside", () => {
+    // One charge was reported as failed and the other never reported at all.
+    // The order has always carried that difference for the dispute, the error
+    // text and the merchant's reconciliation; now the agent hears it too,
+    // because he is the one whose wallet the answer is about.
     const silent = walk(reach("fulfilled"), [
       { kind: "deadline_expired", at: T0 + 999_999, deadline: "settle_response" },
     ]);
     const reported = walk(reach("fulfilled"), [{ kind: "payment_settle_failed", at: T0 + 5 }]);
 
-    expect(outcomeFor(silent)).toBe(outcomeFor(reported));
+    expect(silent.state).toBe(reported.state);
     expect(silent.payment).not.toBe(reported.payment);
+    expect(outcomeFor(silent)).not.toBe(outcomeFor(reported));
   });
 
   it("shows the two endings where money is owed as what they are", () => {

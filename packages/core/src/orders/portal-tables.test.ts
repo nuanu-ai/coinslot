@@ -4,6 +4,7 @@ import { createOrder } from "./create.js";
 import { createInput, must, newOrder, reach, T0, walk } from "./fixtures.js";
 import type { Effect, Order } from "./model.js";
 import { MERCHANT_EVENTS } from "./model.js";
+import { transition } from "./machine.js";
 import { outcomeFor } from "./outcome.js";
 
 /**
@@ -87,6 +88,7 @@ const ENDINGS = [
   "Вы ушли, и открытые заказы закрылись",
   "Деньги списаны, выдачи не случилось",
   "Вы выдали синхронно, а платёж не исполнился",
+  "Платёжная сеть не ответила, списаны ли деньги",
 ] as const;
 
 describe('portal/orders.md, "Чем заказ может закончиться"', () => {
@@ -172,6 +174,29 @@ describe('portal/orders.md, "Чем заказ может закончиться
 
     expect(outcomeFor(order)).toBe("refund_due");
     expect(order.payment).toBe("settled");
+  });
+
+  it(`${ENDINGS[7]}: the agent is told the outcome is unknown, not that he was refused`, () => {
+    // The row's own third column: «исход платежа неизвестен» — не «отказ».
+    // The two are different answers to an agent deciding whether to go and buy
+    // the same thing somewhere else, and the machine may not give the cheaper
+    // one when it does not know.
+    const unresolved = walk(newOrder("async"), [
+      { kind: "payment_verified", at: T0 + 1 },
+      { kind: "deadline_expired", at: T0 + 999_999, deadline: "settle_response" },
+    ]);
+
+    expect(unresolved.closure).toStrictEqual({ cause: "payment_outcome_unknown" });
+    expect(outcomeFor(unresolved)).toBe("payment_unresolved");
+    expect(outcomeFor(unresolved)).not.toBe("rejected");
+
+    // And the row's promise that a repeat with the same key is safe: it costs
+    // the buyer nothing, because no second charge is sent over the first.
+    const repeated = transition(unresolved, { kind: "purchase_repeated", at: T0 + 1_000_000 });
+
+    expect(repeated.ok).toBe(true);
+    if (!repeated.ok) return;
+    expect(repeated.effects).toStrictEqual([]);
   });
 
   it(`${ENDINGS[6]}: the money never came, and a repeat drives the payment home`, () => {
@@ -472,6 +497,7 @@ describe("the portal and this machine cannot drift apart quietly", () => {
       "по невыданному [возвращаете вы](/money)",
       "у вас",
       "не пришли",
+      "неизвестно — выясняем и сообщаем, когда узнаём",
     ]);
   });
 
