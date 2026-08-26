@@ -50,6 +50,13 @@ export interface StoredOrder {
   /** What the agent presented to pay with, verbatim, until the charge is done. */
   readonly payment: string | null;
   /**
+   * What the payment layer said when the charge went through, kept because the
+   * agent's own client reads it off the answer to its purchase. It is the
+   * payment layer's word and not ours: the order's own record of the money is
+   * the machine's payment stage, and this is only the receipt for it.
+   */
+  readonly settlement: { readonly transaction: string } | null;
+  /**
    * The delivery that is out with a worker and has not been answered.
    *
    * It is here so that a reminder about one delivery cannot undo the answer to

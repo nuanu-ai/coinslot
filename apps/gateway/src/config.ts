@@ -128,12 +128,31 @@ const environmentSchema = z.object({
   /** The most envelopes one poll answers with, whatever the worker asked for. */
   WORKER_POLL_MAX_ENVELOPES: countAbove(32),
 
+  /**
+   * Where this gateway answers from, which is what a payment challenge names as
+   * the thing being paid for. Behind a terminator the address the process sees
+   * is not the address an agent called, so it is configuration rather than
+   * something read off the request.
+   */
+  PUBLIC_BASE_URL: z.url().default("http://localhost:3000"),
+
   FACILITATOR_URL: z.url().default("https://x402.org/facilitator"),
-  /** A CAIP-2 chain, the way x402 v2 writes networks. */
+  /**
+   * The chain, written the way x402 version two writes one: a CAIP-2
+   * identifier. The default is Base Sepolia, the test network — a gateway that
+   * defaulted to a chain where the money is real would make going live
+   * something that happens by forgetting a variable.
+   */
   PAYMENT_NETWORK: z
     .string()
-    .regex(/^[^:\s]+:[^:\s]+$|^[a-z-]+$/, "must be a network name")
-    .default("base-sepolia"),
+    .regex(/^[^:\s]+:[^:\s]+$/, "must be a CAIP-2 chain such as eip155:84532")
+    .default("eip155:84532"),
+  /**
+   * How long a challenge stays payable, in seconds. It is the number the
+   * payment authorisation itself is signed against, so it belongs to the
+   * protocol rather than to the order machine.
+   */
+  PAYMENT_TIMEOUT_SECONDS: countAbove(300),
   /** Where the money goes. Absent until a real payment is to be taken. */
   PAY_TO_ADDRESS: z.string().min(1).optional(),
   CDP_API_KEY_ID: z.string().min(1).optional(),
@@ -170,6 +189,7 @@ export interface WorkerConfig {
 export interface PaymentConfig {
   readonly facilitatorUrl: string;
   readonly network: string;
+  readonly timeoutSeconds: number;
   readonly payTo: string | null;
   readonly cdpApiKeyId: string | null;
   readonly cdpApiKeySecret: string | null;
@@ -180,6 +200,7 @@ export interface GatewayConfig {
   readonly databaseUrl: string;
   readonly port: number;
   readonly merchantApiKey: string;
+  readonly publicBaseUrl: string;
   readonly deadlines: DeadlineConfig;
   readonly redelivery: RedeliveryConfig;
   readonly worker: WorkerConfig;
@@ -266,6 +287,7 @@ export function loadConfig(environment: Record<string, string | undefined>): Gat
     databaseUrl: environmentValues.DATABASE_URL,
     port: environmentValues.PORT,
     merchantApiKey: environmentValues.MERCHANT_API_KEY,
+    publicBaseUrl: environmentValues.PUBLIC_BASE_URL,
     deadlines,
     redelivery: {
       baseDelayMs: environmentValues.REDELIVERY_BASE_DELAY_MS,
@@ -280,6 +302,7 @@ export function loadConfig(environment: Record<string, string | undefined>): Gat
     payment: {
       facilitatorUrl: environmentValues.FACILITATOR_URL,
       network: environmentValues.PAYMENT_NETWORK,
+      timeoutSeconds: environmentValues.PAYMENT_TIMEOUT_SECONDS,
       payTo: environmentValues.PAY_TO_ADDRESS ?? null,
       cdpApiKeyId: environmentValues.CDP_API_KEY_ID ?? null,
       cdpApiKeySecret: environmentValues.CDP_API_KEY_SECRET ?? null,

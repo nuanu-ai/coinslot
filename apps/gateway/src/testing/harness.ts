@@ -12,6 +12,7 @@
  * numbers a test passes in are what decide how long anything takes.
  */
 
+import type { AddressInfo } from "node:net";
 import type { HandlerAnswer, Order, QuoteResponse } from "@coinslot/contracts";
 import { ScriptedFacilitator } from "../adapters/memory/facilitator.js";
 import { MemoryQueue } from "../adapters/memory/queue.js";
@@ -19,6 +20,7 @@ import { MemoryStore } from "../adapters/memory/store.js";
 import { Gateway } from "../app/gateway.js";
 import type { Runtime } from "../app/runtime.js";
 import { type GatewayConfig, loadConfig } from "../config.js";
+import { buildApp } from "../http/server.js";
 import type { Ids } from "../ports/clock.js";
 
 /** Identifiers a test can read: ord_1, item_1, env_3. */
@@ -140,5 +142,63 @@ export function workUntilStopped(harnessed: Harness, behaviour: WorkerBehaviour)
       running = false;
       await loop;
     },
+  };
+}
+
+/** One call against a gateway actually listening on a port. */
+export interface Call {
+  readonly status: number;
+  readonly headers: Headers;
+  readonly body: unknown;
+}
+
+export interface Served {
+  readonly url: string;
+  call(
+    method: string,
+    path: string,
+    options?: { readonly body?: unknown; readonly headers?: Record<string, string> },
+  ): Promise<Call>;
+  close(): Promise<void>;
+}
+
+/**
+ * Puts the whole surface on a real port and calls it over real HTTP.
+ *
+ * Nothing is stubbed between the request and the flows: the mounting loop, the
+ * body checks, the door and the payment exchange all run. A test that went
+ * through a fake request object would be testing the fake.
+ */
+export async function serve(harnessed: Harness): Promise<Served> {
+  const app = buildApp(harnessed.gateway);
+  const server = app.listen(0);
+  await new Promise<void>((resolve) => server.once("listening", resolve));
+  const { port } = server.address() as AddressInfo;
+  const url = `http://127.0.0.1:${port}`;
+
+  return {
+    url,
+    async call(method, path, options = {}) {
+      const response = await fetch(`${url}${path}`, {
+        method,
+        headers: {
+          ...(options.body === undefined ? {} : { "content-type": "application/json" }),
+          ...options.headers,
+        },
+        ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
+      });
+      const text = await response.text();
+      let body: unknown = text;
+      try {
+        body = text === "" ? null : JSON.parse(text);
+      } catch {
+        // Left as text: a test asserting on a non-JSON answer wants to see it.
+      }
+      return { status: response.status, headers: response.headers, body };
+    },
+    close: () =>
+      new Promise<void>((resolve, reject) => {
+        server.close((error) => (error === undefined ? resolve() : reject(error)));
+      }),
   };
 }

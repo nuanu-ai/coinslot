@@ -62,6 +62,7 @@ const order = (id: string, state: Order["state"]): StoredOrder => ({
   priceId: null,
   delivery: null,
   payment: null,
+  settlement: null,
   openDeliveryId: null,
 });
 

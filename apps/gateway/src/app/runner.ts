@@ -56,6 +56,7 @@ import { Waiting } from "./waiting.js";
  */
 export interface OrderFacts {
   readonly delivery?: Delivery;
+  readonly settlement?: { readonly transaction: string };
   readonly payment?: string | null;
   readonly priceId?: string;
   readonly openDeliveryId?: string | null;
@@ -110,6 +111,7 @@ export class OrderRunner {
       const known: StoredOrder = {
         ...found,
         ...(facts.delivery === undefined ? {} : { delivery: facts.delivery }),
+        ...(facts.settlement === undefined ? {} : { settlement: facts.settlement }),
         ...(facts.payment === undefined ? {} : { payment: facts.payment }),
         ...(facts.priceId === undefined ? {} : { priceId: facts.priceId }),
         ...(facts.openDeliveryId === undefined ? {} : { openDeliveryId: facts.openDeliveryId }),
@@ -341,7 +343,11 @@ export class OrderRunner {
     });
 
     if (outcome.settled === true) {
-      await this.apply(record.order.id, { kind: "payment_settled", at });
+      await this.apply(
+        record.order.id,
+        { kind: "payment_settled", at },
+        { settlement: { transaction: outcome.transaction } },
+      );
       return;
     }
     if (outcome.settled === false) {

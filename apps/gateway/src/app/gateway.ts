@@ -199,6 +199,7 @@ export class Gateway {
       priceId: null,
       delivery: null,
       payment: null,
+      settlement: null,
       openDeliveryId: null,
     };
     await this.runner.create(record, created.effects, at);

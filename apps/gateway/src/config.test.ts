@@ -83,9 +83,11 @@ describe("loadConfig", () => {
     const config = loadConfig(required);
 
     expect(config.worker).toStrictEqual({ pollWaitMs: 25_000, pollMaxEnvelopes: 32 });
+    expect(config.publicBaseUrl).toBe("http://localhost:3000");
     expect(config.payment).toStrictEqual({
       facilitatorUrl: "https://x402.org/facilitator",
-      network: "base-sepolia",
+      network: "eip155:84532",
+      timeoutSeconds: 300,
       payTo: null,
       cdpApiKeyId: null,
       cdpApiKeySecret: null,
@@ -94,7 +96,7 @@ describe("loadConfig", () => {
     const live = loadConfig({
       ...required,
       FACILITATOR_URL: "https://api.cdp.coinbase.com/platform/v2/x402",
-      PAYMENT_NETWORK: "base",
+      PAYMENT_NETWORK: "eip155:8453",
       PAY_TO_ADDRESS: "0x0000000000000000000000000000000000000001",
       CDP_API_KEY_ID: "key-id",
       CDP_API_KEY_SECRET: "key-secret",
@@ -102,7 +104,8 @@ describe("loadConfig", () => {
 
     expect(live.payment).toStrictEqual({
       facilitatorUrl: "https://api.cdp.coinbase.com/platform/v2/x402",
-      network: "base",
+      network: "eip155:8453",
+      timeoutSeconds: 300,
       payTo: "0x0000000000000000000000000000000000000001",
       cdpApiKeyId: "key-id",
       cdpApiKeySecret: "key-secret",
@@ -123,6 +126,15 @@ describe("loadConfig", () => {
     ).toThrowError(/DATABASE_URL: must be an address of the form postgres/);
     expect(() => loadConfig({ ...required, PORT: "70000" })).toThrowError(
       /PORT: must be within the range/,
+    );
+  });
+
+  it("refuses a chain that is not written the way the protocol writes one", () => {
+    // A network name from version one of the protocol looks harmless and is a
+    // different string from the one the asset table is keyed by, so a challenge
+    // built from it would name an asset that is not there.
+    expect(() => loadConfig({ ...required, PAYMENT_NETWORK: "base-sepolia" })).toThrowError(
+      /PAYMENT_NETWORK: must be a CAIP-2 chain such as eip155:84532/,
     );
   });
 
