@@ -144,6 +144,29 @@ describe("pricing the purchase", () => {
     expect(kinds(effects)).toStrictEqual(["dispatch_confirmation_request"]);
   });
 
+  it("treats running out of patience with the price check as the same silence", () => {
+    // The wait for an answer and the life of an answer are two different
+    // waitings. Running out of the first one is the merchant being silent, and
+    // ADR-0002 §3 answers silence by mode: it must not close a synchronous
+    // purchase that is supposed to go on to a sale at the card's own price.
+    const sync = must(newOrder("sync", { priceCheck: "merchant" }), {
+      kind: "deadline_expired",
+      at: T0 + TEST_POLICY.deadlines.quoteResponseMs,
+      deadline: "quote_response",
+    });
+    const async = must(newOrder("async", { priceCheck: "merchant" }), {
+      kind: "deadline_expired",
+      at: T0 + TEST_POLICY.deadlines.quoteResponseMs,
+      deadline: "quote_response",
+    });
+
+    expect(sync.order.state).toBe("quoted");
+    expect(sync.order.quoteSource).toBe("card_snapshot");
+    expect(kinds(sync.effects)).toStrictEqual(["verify_payment"]);
+    expect(async.order.state).toBe("rejected");
+    expect(async.order.closure).toStrictEqual({ cause: "quote_silent" });
+  });
+
   it("refuses to start an asynchronous purchase when the check goes silent", () => {
     // ADR-0002 §3, closed failure: here the money moves before the merchant is
     // asked anything, so an open failure would manufacture debts to buyers
@@ -880,6 +903,40 @@ describe("while the settle is in flight", () => {
     if (result.ok) return;
     expect(result.rejection.code).toBe("settle_in_flight");
     expect(result.rejection.retryable).toBe(true);
+  });
+
+  it("does not ask for a second try where there is nothing to wait for", () => {
+    // The flag is an instruction, and an interpreter that follows it on a
+    // refusal meaning "this event does not belong here" spins forever.
+    const nonsense = transition(reach("delivered"), { kind: "payment_settled", at: T0 + 1 });
+    const early = transition(reach("dispatched"), {
+      kind: "deadline_expired",
+      at: T0 + 1_000,
+      deadline: "sync_response",
+    });
+
+    expect(nonsense.ok).toBe(false);
+    expect(early.ok).toBe(false);
+    if (nonsense.ok || early.ok) return;
+    expect(nonsense.rejection.retryable).toBe(false);
+    expect(early.rejection.retryable).toBe(false);
+  });
+
+  it("frees a merchant whose confirmed order went quiet rather than failing", () => {
+    // He answered "I will fulfill it" and nobody paid him. Whether the charge
+    // failed or never answered makes no difference to him, and the portal
+    // promises him the event either way.
+    const midCharge = walk(reach("confirmed"), [{ kind: "payment_verified", at: T0 + 3 }]);
+    const { order, effects } = must(midCharge, {
+      kind: "deadline_expired",
+      at: T0 + 999_999,
+      deadline: "settle_response",
+    });
+
+    expect(order.state).toBe("rejected");
+    expect(effects).toStrictEqual([
+      { kind: "emit_merchant_event", event: "order.unpaid_after_confirmation" },
+    ]);
   });
 
   it("turns a charge that lands after that into a debt rather than losing it", () => {
