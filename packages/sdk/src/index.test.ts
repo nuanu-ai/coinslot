@@ -1,10 +1,11 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { CONTRACT_VERSION } from "@coinslot/contracts";
 import { describe, expect, it } from "vitest";
 import { contractVersion, speaksContract } from "./index.js";
 
 const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
   dependencies?: Record<string, string>;
+  bin?: Record<string, string>;
 };
 
 describe("@coinslot/sdk", () => {
@@ -27,5 +28,17 @@ describe("@coinslot/sdk", () => {
     );
 
     expect(thirdParty).toStrictEqual([]);
+  });
+
+  it("advertises no command until there is one that runs", () => {
+    // The documentation's step 4 is `npx coinslot verify`, and npx finds a
+    // command through this field. Declaring it today would advertise
+    // something that cannot start: this workspace publishes TypeScript
+    // sources whose imports name `.js` files that are not there, and Node's
+    // type stripping does not rewrite such a specifier. The command exists as
+    // `runVerify` and as `src/cli.ts`, and the field goes in with the build
+    // step that makes it work.
+    expect(manifest.bin).toBeUndefined();
+    expect(existsSync(new URL("../src/cli.ts", import.meta.url))).toBe(true);
   });
 });

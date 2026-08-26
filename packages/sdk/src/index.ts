@@ -1,27 +1,82 @@
 /**
  * The Coinslot merchant SDK: what someone else's engineer installs so that
- * their catalog sells to agents. The fulfillment worker and the integration
- * check will arrive from here.
+ * their catalog sells to agents.
+ *
+ * There are two things in here and they are one process. `createClient` builds
+ * a handle on the gateway from a key and an address; through it a merchant
+ * publishes cards, receives paid orders on an outgoing subscription, answers
+ * questions about prices, and closes orders they took on earlier. Beside it,
+ * `checkCard` and `runVerify` are the check a merchant runs on their own cards
+ * before publishing them — the same check the documentation calls
+ * `npx coinslot verify`, which is not yet a command that can start: this
+ * workspace has no build step, and `src/cli.ts` explains what that costs.
  *
  * The runtime dependency tree is minimal and listed in full: our own
- * `@coinslot/contracts` and `zod`, nothing else. A merchant installing the SDK
- * into their production should know exactly what arrives with it, rather than
- * inherit a foreign package tree they would then be maintaining themselves.
- * Every new third-party package in this tree is a recorded decision
- * (ADR-0003 §8).
+ * `@coinslot/contracts`, and zod underneath it, and nothing else. A merchant
+ * installing the SDK into their production should know exactly what arrives
+ * with it, rather than inherit a foreign package tree they would then be
+ * maintaining themselves. Every new third-party package in this tree is a
+ * recorded decision (ADR-0003 §8), and a test in this package holds the line.
+ *
+ * The types a merchant needs to write their own functions against — what a
+ * card is, what an order carries, what a handler may answer — are re-exported
+ * here from the contracts package, so that integration code has one import and
+ * not two.
  */
 
-import { CONTRACT_VERSION } from "@coinslot/contracts";
-
-/** The contract version this SDK talks in. */
-export const contractVersion = CONTRACT_VERSION;
-
-/**
- * Whether the SDK understands a contract of the given version. The gateway
- * names its own version in the response, the merchant's worker checks it with
- * this function and fails at startup rather than on the first order, where a
- * divergence of dialects costs the buyer money.
- */
-export function speaksContract(version: string): boolean {
-  return version === CONTRACT_VERSION;
-}
+export type {
+  Acceptance,
+  Card,
+  Delivery,
+  Fulfillment,
+  HandlerAnswer,
+  Money,
+  Order,
+  OrderCallError,
+  OrderCallResponse,
+  OrderCallResult,
+  OrderEvent,
+  OrderList,
+  OrderStatus,
+  OrderWithStatus,
+  PublishError,
+  PublishResult,
+  QuotePurpose,
+  QuoteRequest,
+  QuoteResponse,
+  Refusal,
+  RefusalCode,
+  SalePrice,
+} from "@coinslot/contracts";
+export { ORDER_EVENT_TYPES, RECOMMENDED_REFUSAL_CODES } from "@coinslot/contracts";
+export type { CardCheck } from "./check-card.js";
+export { checkCard } from "./check-card.js";
+export type {
+  CatalogNamespace,
+  ClientOptions,
+  CoinslotClient,
+  OrdersNamespace,
+  PricingNamespace,
+  QuoteOptions,
+  SubscribeOptions,
+} from "./client.js";
+export {
+  ANSWER_NOT_UNDERSTOOD,
+  CALL_DID_NOT_REACH_US,
+  createClient,
+  OUTCOME_UNKNOWN,
+} from "./client.js";
+export { contractVersion, speaksContract } from "./contract.js";
+export type { Say } from "./verify.js";
+export { IDEMPOTENCY_IS_NOT_BUILDABLE, NOT_JSON, runVerify, VERIFY_EXIT } from "./verify.js";
+export type {
+  Delivered,
+  EventHandler,
+  OrderHandler,
+  ProblemReporter,
+  QuoteHandler,
+  Subscription,
+  WorkerProblem,
+  WorkerProblemKind,
+} from "./worker.js";
+export { WORKER_PROBLEM_KINDS } from "./worker.js";
