@@ -65,8 +65,17 @@ describe("the deadlines of an order", () => {
 
   it("measures the synchronous budget from the agent's own purchase", () => {
     // The synchronous budget is ours and it is the ceiling on how long the
-    // agent waits, so it starts when he asked, not when we got round to him.
-    const order: Order = { ...newOrder("sync"), state: "paid", payment: "verified" };
+    // agent waits, so it starts when he asked and not when we got round to
+    // him. An order that spent three seconds in the queue has three seconds
+    // less of it, and the two timestamps below are deliberately different so
+    // that measuring from the wrong one is visible here.
+    const base = newOrder("sync");
+    const order: Order = {
+      ...base,
+      state: "dispatched",
+      payment: "verified",
+      timestamps: { ...base.timestamps, paidAt: T0 + 1_000, dispatchedAt: T0 + 3_000 },
+    };
 
     expect(at(order, "sync_response")).toBe(T0 + TEST_POLICY.deadlines.syncResponseMs);
     expect(at(order, "async_fulfillment")).toBeUndefined();
