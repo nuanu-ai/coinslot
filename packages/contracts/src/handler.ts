@@ -75,22 +75,39 @@ export const RefusalSchema = z.strictObject({
  * it. There is one exception, and it is the one written down at
  * `PROTOTYPE_KEY_IS_DROPPED` in `param-spec.ts` — of the four places that
  * share it, this is where the loss would actually reach the agent.
+ *
+ * It is named and exported rather than left inside the answer below because
+ * two surfaces carry it: what a synchronous handler returns, and the body of
+ * the delivery call an asynchronous merchant makes (`api.ts`). Written out
+ * twice, the two would be one shape only until somebody edited one of them.
  */
-const DeliveredSchema = z.record(ParamNameSchema, z.unknown());
+export const DeliverySchema = z.record(ParamNameSchema, z.unknown()).meta({
+  description:
+    "What the merchant delivers: the fields the card's result declared. This document holds the names to the shape a card could have declared and no further. That they are the names this particular card declared is checked against that card, and no document standing on its own can express it.",
+});
+
+/**
+ * Taking an order on: the merchant will deliver, and here is how long they
+ * expect that to take, when they know. An empty acceptance is a complete
+ * answer.
+ *
+ * Named and exported for the same reason as the delivery above — it is both a
+ * handler's answer and the body of a call.
+ */
+export const AcceptanceSchema = z
+  .strictObject({
+    eta_seconds: z.int().positive().optional(),
+  })
+  .meta({
+    description:
+      "Taking an order on: the merchant will deliver it. eta_seconds is how long they expect that to take, when they know; leaving it out is a complete answer and not a refusal to say. It is an expectation and not a commitment — what the merchant is actually held to is the delivery deadline on the card, and the two are different numbers.",
+  });
 
 export const HandlerAnswerSchema = z.union(
   [
-    z.strictObject({ delivered: DeliveredSchema }),
+    z.strictObject({ delivered: DeliverySchema }),
     z.strictObject({ refused: RefusalSchema }),
-    z.strictObject({
-      accepted: z.strictObject({
-        /**
-         * How long the merchant expects the delivery to take, when they know.
-         * An empty `accepted` is a complete answer.
-         */
-        eta_seconds: z.int().positive().optional(),
-      }),
-    }),
+    z.strictObject({ accepted: AcceptanceSchema }),
   ],
   {
     error:
@@ -100,4 +117,6 @@ export const HandlerAnswerSchema = z.union(
 
 export type RefusalCode = z.infer<typeof RefusalCodeSchema>;
 export type Refusal = z.infer<typeof RefusalSchema>;
+export type Delivery = z.infer<typeof DeliverySchema>;
+export type Acceptance = z.infer<typeof AcceptanceSchema>;
 export type HandlerAnswer = z.infer<typeof HandlerAnswerSchema>;

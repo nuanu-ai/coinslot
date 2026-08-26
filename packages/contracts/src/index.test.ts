@@ -328,6 +328,14 @@ describe("the contract as JSON Schema", () => {
     // The other half: a walk that found nothing would satisfy the invariant
     // above and check nothing at all. These two are the refinements the
     // package has today, one of them nested inside another schema.
+    //
+    // `card.result` is reached from two registry entries — the published card
+    // and the projection an agent reads share one instance, deliberately, so
+    // that the rule they both promise cannot be edited in one place only. The
+    // walk reports it once, under whichever entry it meets first, so this list
+    // says `card.result` rather than naming the projection too. Rename either
+    // entry so that it sorts first and the path here changes without anything
+    // being wrong; that is a reason to read the failure, not to distrust it.
     expect(refinedSchemaPaths().sort()).toStrictEqual(["card", "card.result"]);
   });
 

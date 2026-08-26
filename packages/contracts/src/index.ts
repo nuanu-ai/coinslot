@@ -10,22 +10,42 @@
  * calls things inside itself is its own business, and the two are tied
  * together where they meet rather than by one importing the other.
  *
- * One shape a reader might expect here is deliberately absent. The worker
- * channel carries orders, price questions and events on one stream, each in an
- * envelope with a marker saying which it is (ADR-0004 §2). The envelope is not
- * described here because the merchant never sees it: the same decision has the
- * SDK hide the transport entirely, handing a handler an order rather than
- * anything it is wrapped in. Where the envelope should be described — here,
- * because it is still a format between two of our own parts, or alongside the
- * transport that invented it — is a question nobody has answered, and it is
- * better asked than quietly settled by whichever side writes it first.
+ * Two shapes here are read by nobody outside our own two parts, and they are
+ * described anyway. The worker envelope carries orders, price questions and
+ * events on one stream (ADR-0004 §2), and the merchant never sees it, because
+ * the SDK hands a handler an order rather than the wrapper it arrived in. The
+ * route table says which calls exist, at which addresses, with which document
+ * going each way. Both are formats between the gateway and the SDK, read by
+ * both and owned by neither — which is the same reason a card lives here, and
+ * the reason a shape agreed in two places is a shape that has already
+ * disagreed once.
  */
 
 import type { ZodType } from "zod";
 import { z } from "zod";
-import { CardSchema, FulfillmentSchema, PriceCheckSchema } from "./card.js";
+import {
+  AgentOrderStatusSchema,
+  CatalogPageSchema,
+  OrderAcceptResponseSchema,
+  OrderCallResponseSchema,
+  OrderListQuerySchema,
+  OrderListSchema,
+  OrderWithStatusSchema,
+  PurchaseRequestSchema,
+  QuoteAnswerAckSchema,
+  WorkerPollRequestSchema,
+  WorkerPollResponseSchema,
+} from "./api.js";
+import { CardSchema, FulfillmentSchema, PriceCheckSchema, PublicCardSchema } from "./card.js";
+import { WorkerEnvelopeSchema } from "./envelope.js";
 import { OrderEventSchema, RefundDueReasonSchema } from "./events.js";
-import { HandlerAnswerSchema, RefusalCodeSchema, RefusalSchema } from "./handler.js";
+import {
+  AcceptanceSchema,
+  DeliverySchema,
+  HandlerAnswerSchema,
+  RefusalCodeSchema,
+  RefusalSchema,
+} from "./handler.js";
 import { OrderSchema } from "./order.js";
 import { OrderStatusSchema } from "./order-status.js";
 import {
@@ -51,18 +71,65 @@ import {
   PublishResultSchema,
 } from "./results.js";
 
-export type { Card, Fulfillment, PriceCheck } from "./card.js";
+export type {
+  AgentOrderStatus,
+  AuthMode,
+  CatalogPage,
+  HttpMethod,
+  OrderAcceptResponse,
+  OrderCallResponse,
+  OrderList,
+  OrderListQuery,
+  OrderWithStatus,
+  PurchaseRequest,
+  QuoteAnswerAck,
+  RouteDefinition,
+  RouteName,
+  RouteResponse,
+  WorkerPollRequest,
+  WorkerPollResponse,
+} from "./api.js";
+export {
+  AgentOrderStatusSchema,
+  API_ROUTES,
+  AUTH_MODES,
+  CatalogPageSchema,
+  expandPath,
+  HTTP_METHODS,
+  mountableRoutes,
+  OrderAcceptResponseSchema,
+  OrderCallResponseSchema,
+  OrderListQuerySchema,
+  OrderListSchema,
+  OrderWithStatusSchema,
+  PurchaseRequestSchema,
+  pathParamsOf,
+  QuoteAnswerAckSchema,
+  WorkerPollRequestSchema,
+  WorkerPollResponseSchema,
+} from "./api.js";
+export type { Card, Fulfillment, PriceCheck, PublicCard } from "./card.js";
 export {
   CardSchema,
   deliveryCheckFor,
   FulfillmentSchema,
   PriceCheckSchema,
+  PublicCardSchema,
+  publicCardOf,
   purchaseCheckFor,
 } from "./card.js";
+export type { WorkerEnvelope, WorkerEnvelopeKind } from "./envelope.js";
+export {
+  WORKER_ENVELOPE_KINDS,
+  WORKER_ENVELOPE_PAYLOADS,
+  WorkerEnvelopeSchema,
+} from "./envelope.js";
 export type { OrderEvent, RefundDueReason } from "./events.js";
 export { ORDER_EVENT_TYPES, OrderEventSchema, RefundDueReasonSchema } from "./events.js";
-export type { HandlerAnswer, Refusal, RefusalCode } from "./handler.js";
+export type { Acceptance, Delivery, HandlerAnswer, Refusal, RefusalCode } from "./handler.js";
 export {
+  AcceptanceSchema,
+  DeliverySchema,
   HandlerAnswerSchema,
   RECOMMENDED_REFUSAL_CODES,
   RefusalCodeSchema,
@@ -137,25 +204,37 @@ export const CONTRACT_VERSION = "0";
  * can see, so a test holds the two in step.
  */
 export const schemas = Object.freeze({
+  acceptance: AcceptanceSchema,
+  agent_order_status: AgentOrderStatusSchema,
   amount: AmountSchema,
   card: CardSchema,
+  catalog_page: CatalogPageSchema,
   currency_code: CurrencyCodeSchema,
+  delivery: DeliverySchema,
   field_spec: FieldSpecSchema,
   fulfillment: FulfillmentSchema,
   handler_answer: HandlerAnswerSchema,
   identifier: IdentifierSchema,
   money: MoneySchema,
   order: OrderSchema,
+  order_accept_response: OrderAcceptResponseSchema,
   order_call_error: OrderCallErrorSchema,
+  order_call_response: OrderCallResponseSchema,
   order_call_result: OrderCallResultSchema,
   order_event: OrderEventSchema,
+  order_list: OrderListSchema,
+  order_list_query: OrderListQuerySchema,
   order_status: OrderStatusSchema,
+  order_with_status: OrderWithStatusSchema,
   param_name: ParamNameSchema,
   param_spec: ParamSpecSchema,
   param_type: ParamTypeSchema,
   price_check: PriceCheckSchema,
+  public_card: PublicCardSchema,
   publish_error: PublishErrorSchema,
   publish_result: PublishResultSchema,
+  purchase_request: PurchaseRequestSchema,
+  quote_answer_ack: QuoteAnswerAckSchema,
   quote_purpose: QuotePurposeSchema,
   quote_request: QuoteRequestSchema,
   quote_response: QuoteResponseSchema,
@@ -166,6 +245,9 @@ export const schemas = Object.freeze({
   refusal_code: RefusalCodeSchema,
   sale_price: SalePriceSchema,
   timestamp: TimestampSchema,
+  worker_envelope: WorkerEnvelopeSchema,
+  worker_poll_request: WorkerPollRequestSchema,
+  worker_poll_response: WorkerPollResponseSchema,
 }) satisfies Readonly<Record<string, ZodType>>;
 
 /** The name of one schema in the registry. */

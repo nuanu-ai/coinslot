@@ -13,12 +13,16 @@
  *
  * The two calls are shaped differently and it is worth saying why rather than
  * leaving it to be noticed. Publishing answers with one value, `{ok} | {errors}`,
- * because a card is accepted or it is not. Answering for an order has a
- * vocabulary of successes and a vocabulary of failures and no union tying them
- * together, because the transport that carries those calls is not designed
- * yet — the shape of a call's return belongs with the call, and the API
- * surface lands here as its own step. Until then a merchant reads the two
- * lists, which is less than they should have to do.
+ * because a card is accepted or it is not. Answering for an order is a
+ * vocabulary of successes and a vocabulary of failures held apart, and what
+ * ties them into one answer lives with the call that returns it — a merchant
+ * reads `OrderCallResponseSchema` in `api.ts`, which puts the success word
+ * inside `ok` so that the marker of success is the same one whether a delivery
+ * was the first or a repeat.
+ *
+ * The plural in `errors` and the singular in the order call's `error` are not
+ * an inconsistency: a card can be wrong in several places at once, while a
+ * call either went through or did not go through for one reason.
  */
 
 import { z } from "zod";
@@ -41,8 +45,9 @@ import { IdentifierSchema } from "./primitives.js";
  * for it. Both are true of the effect — nothing is delivered twice and nothing
  * is charged twice — but a merchant who reads that sentence and writes
  * `if (result === "delivered")` turns their own safe retry into a failure
- * branch. Until the pages and this list agree, a consumer branching on success
- * should test for membership in this enumeration rather than for one value.
+ * branch. The answer these words travel in is built so that nobody has to: a
+ * consumer branches on `ok` and records the word, which stays right when this
+ * list grows a sixth entry.
  * `debt_closed_by_delivery` says the delivery deadline had already passed and
  * the goods went out anyway, closing a debt instead of completing a sale; the
  * merchant may want to know that happened. `refused` is the refusal taking
