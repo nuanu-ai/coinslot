@@ -5,7 +5,8 @@
   "type": "module",
   "description": "Coinslot vertical slice — a sandbox buyer walks a full purchase through the real gateway against a mock merchant on the real SDK, offline and deterministic",
   "scripts": {
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "smoke": "tsx src/smoke.ts"
   },
   "devDependencies": {
     "@coinslot/contracts": "workspace:*",
