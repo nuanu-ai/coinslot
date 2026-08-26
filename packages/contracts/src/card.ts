@@ -46,17 +46,20 @@ export const PriceCheckSchema = z.union(
   [
     z.literal("handler"),
     z.strictObject({
-      // The https rule is written twice on purpose. `protocol` is what zod
-      // checks; the pattern is what survives into the JSON Schema export,
-      // where zod renders a url as `format: "uri"` and drops everything else.
-      // An engineer generating code from the exported document would otherwise
-      // build a client that happily posts a merchant's prices over http.
+      // Two checks, and each earns its place. `z.url()` says this is a URL at
+      // all; the pattern says the scheme is https. The scheme is a pattern
+      // rather than zod's own `protocol` option because a pattern is what
+      // survives into the JSON Schema export — zod renders a url as
+      // `format: "uri"` and drops the rest, so a generated client would
+      // otherwise happily post a merchant's prices over http. Written both
+      // ways, the protocol option was doing nothing the pattern did not, and
+      // no test could tell the difference.
       //
-      // Both are case-insensitive because a URL scheme is (RFC 3986 §3.1), and
-      // for a while these two disagreed: zod accepted `HTTPS://` and the added
-      // pattern refused it, with a message saying an address was not https
-      // about an address that was.
-      url: z.url({ protocol: /^https$/i }).regex(/^https:\/\//i, "a price hook is https"),
+      // Case-insensitive because a URL scheme is (RFC 3986 §3.1). Written
+      // case-sensitively alongside zod's own check, the two disagreed:
+      // `HTTPS://` passed one and failed the other, with a message saying an
+      // address was not https about an address that was.
+      url: z.url().regex(/^https:\/\//i, "a price hook is https"),
     }),
   ],
   { error: 'a price check is either "handler" or { url } naming an https address' },

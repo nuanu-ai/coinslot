@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { CardSchema, FulfillmentSchema, PriceCheckSchema } from "./card.js";
+import {
+  CardSchema,
+  deliveryCheckFor,
+  FulfillmentSchema,
+  PriceCheckSchema,
+  purchaseCheckFor,
+} from "./card.js";
 import { toJsonSchemas } from "./index.js";
 import { errorOf, expectMissingFieldRejected } from "./testing/expect-schema.js";
 
@@ -223,6 +229,49 @@ describe("the merchant's two deadlines", () => {
     // The default values are among the numbers named before the pilot, so a
     // card is allowed to leave both out and take ours.
     expect(CardSchema.safeParse({ ...syncCard, fulfillment: "async" }).success).toBe(true);
+  });
+});
+
+describe("the checks a card compiles to", () => {
+  // The promise: the card is the only place that knows which of its two
+  // declarations is which, so asking it for a check cannot get the direction
+  // backwards. A caller who compiled the result as a purchase would silently
+  // reopen the hole where a delivery promises nothing.
+  //
+  // The card below is the one that tells the two apart: a field with no
+  // `required` flag, which a purchase may omit and a delivery may not.
+  const card = CardSchema.parse({
+    ...syncCard,
+    params: { email: { type: "string", required: true }, note: { type: "string" } },
+    result: { access_url: { type: "string" }, expires_at: { type: "string" } },
+  });
+
+  it("lets a purchase leave out a parameter that was never marked required", () => {
+    const check = purchaseCheckFor(card);
+
+    expect(check.safeParse({ email: "buyer@example.com" }).success).toBe(true);
+    expect(check.safeParse({ email: "buyer@example.com", note: "for a friend" }).success).toBe(
+      true,
+    );
+    expect(check.safeParse({ note: "for a friend" }).success).toBe(false);
+  });
+
+  it("holds a delivery to every field the same card declared", () => {
+    const check = deliveryCheckFor(card);
+
+    expect(
+      check.safeParse({ access_url: "https://example.com/a", expires_at: "2026-09-25T10:00:00Z" })
+        .success,
+    ).toBe(true);
+    expect(check.safeParse({ access_url: "https://example.com/a" }).success).toBe(false);
+  });
+
+  it("compiles nothing for a card that asks for no parameters", () => {
+    const withoutParams = CardSchema.parse({ ...syncCard, params: undefined });
+    const check = purchaseCheckFor(withoutParams);
+
+    expect(check.safeParse({}).success).toBe(true);
+    expect(check.safeParse({ email: "buyer@example.com" }).success).toBe(false);
   });
 });
 

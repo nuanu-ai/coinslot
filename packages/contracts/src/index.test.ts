@@ -75,6 +75,13 @@ const walkRefined = (
   }
 };
 
+/** The refinements inside one schema, described or not. */
+const refinementsIn = (schema: unknown, name: string): { path: string; described: boolean }[] => {
+  const found: { path: string; described: boolean }[] = [];
+  walkRefined(schema, name, found, new Set<unknown>());
+  return found;
+};
+
 const refinedSchemas = (): { path: string; described: boolean }[] => {
   const found: { path: string; described: boolean }[] = [];
   const seen = new Set<unknown>();
@@ -264,6 +271,29 @@ describe("the contract as JSON Schema", () => {
     // above and check nothing at all. These two are the refinements the
     // package has today, one of them nested inside another schema.
     expect(refinedSchemaPaths().sort()).toStrictEqual(["card", "card.result"]);
+  });
+
+  it("would notice an undescribed refinement, including a nested one", () => {
+    // And the third part, which the mutation self-check asked for: with every
+    // refinement in the package described, the invariant passes whether it is
+    // demanding a description or not. These two schemas are built here, never
+    // registered, purely so the demand itself is exercised.
+    const undescribed = z.string().refine(() => true);
+    const described = z
+      .string()
+      .refine(() => true)
+      .meta({ description: "says what it checks" });
+
+    expect(refinementsIn(undescribed, "bare")).toStrictEqual([{ path: "bare", described: false }]);
+    expect(refinementsIn(described, "bare")).toStrictEqual([{ path: "bare", described: true }]);
+
+    // Nested, which is where the defect actually hid.
+    expect(refinementsIn(z.strictObject({ field: undescribed }), "holder")).toStrictEqual([
+      { path: "holder.field", described: false },
+    ]);
+
+    // And a schema with no refinement at all contributes nothing.
+    expect(refinementsIn(z.string(), "plain")).toStrictEqual([]);
   });
 
   it("carries the rules it cannot express as structure in words instead", () => {
