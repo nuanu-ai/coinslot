@@ -578,34 +578,78 @@ describe("a gateway that is not answering", () => {
   it("does not go on to the next poll until the wait is over", async () => {
     // The recording clock above asserts which delays are asked for; this one
     // asserts that the loop actually waits for them, which is the half a
-    // recorded number cannot show.
+    // recorded number cannot show. The wait is a promise this test resolves,
+    // so what is being observed is the loop's own ordering and not how fast
+    // the machine happened to be.
+    let waitIsOver: (() => void) | undefined;
+    const waiting = new Promise<void>((resolve) => {
+      waitIsOver = resolve;
+    });
+
+    gateway = await startFakeGateway({
+      apiKey: API_KEY,
+      routes: { poll_worker: () => ({ status: 502, text: "bad gateway" }) },
+    });
+
+    running = startWorker({ apiKey: API_KEY, baseUrl: gateway.url }, { problem: () => {} }, {
+      now: () => 0,
+      random: () => 1,
+      sleep: () => waiting,
+    });
+
+    await waitUntil(() => (gateway?.callsTo("poll_worker").length ?? 0) === 1, "the first poll");
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(gateway.callsTo("poll_worker")).toHaveLength(1);
+
+    waitIsOver?.();
+    await waitUntil(() => (gateway?.callsTo("poll_worker").length ?? 0) >= 2, "the second poll");
+  });
+});
+
+describe("the clock the worker runs on by default", () => {
+  it("waits the whole time it was given, and gives up the moment it is stopped", async () => {
+    // The seam the tests above replace, tested once on its own so that
+    // replacing it elsewhere does not mean the real one is never exercised.
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 
     try {
-      gateway = await startFakeGateway({
-        apiKey: API_KEY,
-        routes: { poll_worker: () => ({ status: 502, text: "bad gateway" }) },
+      const controller = new AbortController();
+      let over = false;
+
+      void systemClock.sleep(FIRST_RETRY_MS, controller.signal).then(() => {
+        over = true;
       });
 
-      running = startWorker(
-        { apiKey: API_KEY, baseUrl: gateway.url },
-        { problem: () => {} },
-        {
-          ...systemClock,
-          random: () => 1,
-        },
-      );
-
-      await vi.waitFor(() => expect(gateway?.callsTo("poll_worker").length).toBe(1));
-
       await vi.advanceTimersByTimeAsync(FIRST_RETRY_MS - 1);
-      expect(gateway.callsTo("poll_worker")).toHaveLength(1);
+      expect(over).toBe(false);
 
       await vi.advanceTimersByTimeAsync(1);
-      await vi.waitFor(() => expect(gateway?.callsTo("poll_worker").length).toBe(2));
+      expect(over).toBe(true);
+
+      // Stopping cuts a wait short, which is what makes a parked worker shut
+      // down at once instead of half a minute later.
+      let cutShort = false;
+      const second = new AbortController();
+
+      void systemClock.sleep(FIRST_RETRY_MS, second.signal).then(() => {
+        cutShort = true;
+      });
+
+      second.abort();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(cutShort).toBe(true);
+
+      // And a wait asked for after the stop does not happen at all.
+      let afterwards = false;
+
+      void systemClock.sleep(FIRST_RETRY_MS, second.signal).then(() => {
+        afterwards = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(afterwards).toBe(true);
     } finally {
-      await running?.stop();
-      running = undefined;
       vi.useRealTimers();
     }
   });
@@ -758,17 +802,20 @@ describe("stopping", () => {
       apiKey: API_KEY,
       routes: {
         poll_worker: polling(batch(envelopes.order, envelopes.quote, envelopes.event)),
-        answer_order: () => ({ body: { ok: true, result: "delivered" } }),
+        // Held open, so the loop is certainly still inside the first envelope
+        // when the worker is stopped. Left to finish, whether the second
+        // envelope had been reached would depend on how fast the machine was.
+        answer_order: () => {
+          handling?.();
+          return new Promise<never>(() => {});
+        },
       },
     });
 
     const worker = startWorker(
       { apiKey: API_KEY, baseUrl: gateway.url },
       {
-        order: () => {
-          handling?.();
-          return { delivered: { access_url: "https://a.example" } };
-        },
+        order: () => ({ delivered: { access_url: "https://a.example" } }),
         problem: (problem) => problems.push(problem),
       },
     );
