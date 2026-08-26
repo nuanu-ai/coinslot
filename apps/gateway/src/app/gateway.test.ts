@@ -4,8 +4,9 @@ import {
   PublishResultSchema,
   WorkerPollResponseSchema,
 } from "@coinslot/contracts";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { type Harness, harness, workOnce, workUntilStopped } from "../testing/harness.js";
+import { orderDocumentOf } from "./runner.js";
 
 const syncCard: Card = {
   merchant_item_id: "room-101",
@@ -903,6 +904,103 @@ describe("the merchant's calls", () => {
 
     // The call written for acceptances answers them properly.
     expect(await harnessed.gateway.acceptOrder(orderId, {})).toStrictEqual({ ok: true });
+  });
+});
+
+describe("the claims on payments", () => {
+  it("forgets the ones too old to be guarding anything, and keeps the rest", async () => {
+    // A claim covers the window between a payment being verified and the charge
+    // being executed; after that the token itself refuses the same
+    // authorisation. They cannot be kept forever — the route that makes them
+    // takes no key — and they cannot be thrown away early either, or the guard
+    // is off for every payment presented since the last sweep.
+    const harnessed = await started({ CLAIM_RETENTION_MS: "60000" });
+    const itemId = await published(harnessed, asyncCard);
+
+    const old = await harnessed.gateway.beginPurchase(itemId, {});
+    if (old.step !== "pay") throw new Error("no price was offered");
+    await harnessed.gateway.payPurchase(old.order.order.id, "OLD", "OLD");
+
+    harnessed.advance(90_000);
+
+    const fresh = await harnessed.gateway.beginPurchase(itemId, {});
+    if (fresh.step !== "pay") throw new Error("no price was offered");
+    await harnessed.gateway.payPurchase(fresh.order.order.id, "FRESH", "FRESH");
+
+    expect(await harnessed.gateway.forgetOldClaims()).toBe(1);
+
+    // The old payment is nobody's again; the fresh one is still spoken for.
+    const takingOld = await harnessed.gateway.beginPurchase(itemId, {});
+    const takingFresh = await harnessed.gateway.beginPurchase(itemId, {});
+    if (takingOld.step !== "pay" || takingFresh.step !== "pay") {
+      throw new Error("no price was offered");
+    }
+    expect(
+      (await harnessed.gateway.payPurchase(takingOld.order.order.id, "OLD", "OLD")).step,
+    ).not.toBe("payment_already_spent");
+    expect(
+      (await harnessed.gateway.payPurchase(takingFresh.order.order.id, "FRESH", "FRESH")).step,
+    ).toBe("payment_already_spent");
+  });
+});
+
+describe("an order sent out again", () => {
+  it("carries the instant of this delivery, under the identifier of the same message", async () => {
+    // A worker tells a repeat from a new message by exactly that pair: the
+    // identifier names the message and does not change, the instant names this
+    // delivery and does. Sent out again with its original stamp, a repeat looks
+    // like the delivery that had already been.
+    const harnessed = await started({
+      QUOTE_RESPONSE_MS: "50",
+      SYNC_RESPONSE_MS: "400",
+      SETTLE_RESPONSE_MS: "300",
+      SYNC_BUDGET_MS: "700",
+      SETTLE_IN_FLIGHT_RETRY_MS: "5",
+    });
+    const itemId = await published(harnessed, syncCard);
+    harnessed.facilitator.willSettle({ settled: "unknown", reason: "still asking" });
+
+    const offered = await harnessed.gateway.beginPurchase(itemId, { nights: 1 });
+    if (offered.step !== "pay") throw new Error("no price was offered");
+    const orderId = offered.order.order.id;
+
+    // The handler answers, which sends the order into its charge — and the
+    // charge does not report back, so the order sits there mid-settle. The
+    // machine answers nothing else while that is true.
+    const worker = workUntilStopped(harnessed, {
+      onOrder: () => ({ delivered: { access_code: "SESAME" } }),
+    });
+    const buying = harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
+    await vi.waitFor(
+      async () =>
+        expect((await harnessed.store.orderById(orderId))?.order.payment).toBe("settling"),
+      { timeout: 2_000, interval: 5 },
+    );
+    await worker.stop();
+
+    // The same order comes round again while the charge is in flight.
+    const stale = "2020-01-01T00:00:00.000Z";
+    const record = await harnessed.store.orderById(orderId);
+    if (record === null) throw new Error("the order went missing");
+    await harnessed.queue.publish({
+      kind: "order",
+      id: "env_the_same_message",
+      sent_at: stale,
+      payload: orderDocumentOf(record),
+    });
+
+    // The poll hands it to nobody — the machine will not take the hand-over
+    // yet — and puts it back on the stream instead of dropping it.
+    expect((await harnessed.gateway.poll(10, 0)).envelopes).toStrictEqual([]);
+
+    harnessed.advance(60_000);
+    const back = await harnessed.queue.draw(10, 500);
+
+    expect(back).toHaveLength(1);
+    expect(back[0]?.envelope.id).toBe("env_the_same_message");
+    expect(back[0]?.envelope.sent_at).not.toBe(stale);
+
+    await buying;
   });
 });
 

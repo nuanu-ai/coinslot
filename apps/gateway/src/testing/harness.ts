@@ -53,14 +53,17 @@ export interface Harness {
 }
 
 export async function harness(overrides: Record<string, string> = {}): Promise<Harness> {
-  const store = new MemoryStore(countedIds());
+  // A clock that starts at a readable instant and only moves when a test says
+  // so, so an order's deadlines are arithmetic a reader can check by eye. It is
+  // declared first because everything that keeps time reads it — the store
+  // stamps its claims on payments from here too, or a test that moves the clock
+  // would move everything except the one thing it was moving it for.
+  let now = Date.parse("2026-08-26T12:00:00.000Z");
+
+  const store = new MemoryStore(countedIds(), () => now);
   const queue = new MemoryQueue();
   const facilitator = new ScriptedFacilitator();
   const ids = countedIds();
-
-  // A clock that starts at a readable instant and only moves when a test says
-  // so, so an order's deadlines are arithmetic a reader can check by eye.
-  let now = Date.parse("2026-08-26T12:00:00.000Z");
 
   const runtime: Runtime = {
     config: testConfig(overrides),
