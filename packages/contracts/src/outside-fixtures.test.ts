@@ -44,11 +44,12 @@ import {
   OrderWithStatusSchema,
   PurchaseRequestSchema,
   QuoteAnswerAckSchema,
+  type RouteDefinition,
   WorkerPollResponseSchema,
 } from "./api.js";
 import { CardSchema, deliveryCheckFor, publicCardOf, purchaseCheckFor } from "./card.js";
 import { OrderEventSchema } from "./events.js";
-import { AcceptanceSchema, DeliverySchema, HandlerAnswerSchema, RefusalSchema } from "./handler.js";
+import { AcceptanceSchema, HandlerAnswerSchema } from "./handler.js";
 import { CONTRACT_VERSION } from "./index.js";
 import { OrderSchema } from "./order.js";
 
@@ -65,6 +66,18 @@ import { ReceiptSchema } from "./receipt.js";
 const verdictOf = (schema: z.ZodType, value: unknown): string => {
   const result = schema.safeParse(value);
   return result.success ? "accepted" : `refused: ${z.prettifyError(result.error)}`;
+};
+
+/**
+ * The body a route takes, insisted on rather than fallen back from.
+ *
+ * Written as `route.request ?? SomeSchema`, these checks would go on passing
+ * against a table that had lost the body entirely — the fallback swallows the
+ * one mutation it invites.
+ */
+const bodyOf = (route: RouteDefinition): z.ZodType => {
+  expect(route.request, `${route.method} ${route.path} carries no request body`).toBeDefined();
+  return route.request ?? z.never();
 };
 
 /**
@@ -411,7 +424,7 @@ describe("the HTTP surface, carrying this catalog rather than the portal's", () 
 
     expect(address).toBe("/v0/quotes/prc_5d10ab/answer");
     expect(
-      verdictOf(API_ROUTES.answer_quote.request ?? QuoteResponseSchema, {
+      verdictOf(bodyOf(API_ROUTES.answer_quote), {
         available: true,
         price: { amount: "8.75", currency: "USD" },
         as_of: "2026-08-26T12:00:00Z",
@@ -440,9 +453,7 @@ describe("the HTTP surface, carrying this catalog rather than the portal's", () 
 
     // The delivery is the card's own declaration, so the surface's document and
     // the card's compiled check have to agree about it.
-    expect(verdictOf(API_ROUTES.deliver_order.request ?? DeliverySchema, delivered)).toBe(
-      "accepted",
-    );
+    expect(verdictOf(bodyOf(API_ROUTES.deliver_order), delivered)).toBe("accepted");
     expect(verdictOf(deliveryCheckFor(esim), delivered)).toBe("accepted");
     expect(verdictOf(OrderCallResponseSchema, { ok: true, result: "delivered" })).toBe("accepted");
   });
@@ -453,7 +464,7 @@ describe("the HTTP surface, carrying this catalog rather than the portal's", () 
     // and the debt arrives as an event, while a second attempt after the refund
     // was paid out is the failure that says retrying changes nothing.
     expect(
-      verdictOf(API_ROUTES.refuse_order.request ?? RefusalSchema, {
+      verdictOf(bodyOf(API_ROUTES.refuse_order), {
         code: "out_of_stock",
         message: "У поставщика не осталось профилей этого плана",
       }),
