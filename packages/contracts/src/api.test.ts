@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ZodType } from "zod";
+import { type ZodType, z } from "zod";
 import {
   AgentOrderStatusSchema,
   API_ROUTES,
@@ -22,7 +22,7 @@ import {
 } from "./api.js";
 import { CardSchema, publicCardOf } from "./card.js";
 import { CONTRACT_VERSION, type SchemaName, schemas } from "./index.js";
-import { ORDER_CALL_RESULTS } from "./results.js";
+import { ORDER_CALL_ERROR_CODES, ORDER_CALL_RESULTS } from "./results.js";
 import { errorOf, expectMissingFieldRejected } from "./testing/expect-schema.js";
 
 const order = {
@@ -59,6 +59,17 @@ const orderEnvelope = {
   id: "msg_4a19be",
   sent_at: "2026-08-26T10:20:01Z",
   payload: order,
+};
+
+/**
+ * Whether a schema accepts a value — and, when it does not, why.
+ *
+ * A bare boolean reports "expected false to be true" and leaves the reader to
+ * find the field themselves.
+ */
+const verdictOf = (schema: ZodType, value: unknown): string => {
+  const result = schema.safeParse(value);
+  return result.success ? "accepted" : `refused: ${z.prettifyError(result.error)}`;
 };
 
 const callError = {
@@ -461,6 +472,116 @@ describe("the catalog an agent reads", () => {
   });
 });
 
+describe("the answer a handler returned, on its way back", () => {
+  // The promise: whatever a merchant's handler returns has an address, in
+  // every mode. Before the addendum of 2026-08-26 to ADR-0004 it did not — the
+  // explicit deliver and refuse calls do not apply in the synchronous mode by
+  // the machine's own design, and there the returned answer is the only thing
+  // there is, so a synchronous refusal had nowhere to go.
+
+  const answerRoute: RouteDefinition = API_ROUTES.answer_order;
+
+  /** The body and the answer as the table names them, not as we import them. */
+  const body = (): ZodType => {
+    expect(answerRoute.request, "the answer route carries no request body").toBeDefined();
+    return answerRoute.request ?? z.never();
+  };
+
+  const answer = (): ZodType => {
+    expect("document" in answerRoute.response).toBe(true);
+    return "document" in answerRoute.response ? answerRoute.response.document : z.never();
+  };
+
+  it("carries each of the three things a handler can return", () => {
+    expect(verdictOf(body(), { delivered: { access_url: "https://example.com/a/9f2c4a" } })).toBe(
+      "accepted",
+    );
+    expect(
+      verdictOf(body(), { refused: { code: "out_of_stock", message: "Мест на тарифе нет" } }),
+    ).toBe("accepted");
+    expect(verdictOf(body(), { accepted: { eta_seconds: 60 } })).toBe("accepted");
+    expect(verdictOf(body(), { accepted: {} })).toBe("accepted");
+  });
+
+  it("refuses an answer that says two things at once, or nothing", () => {
+    // A handler answers with exactly one of the three. Two would be two
+    // answers, and whichever we acted on the merchant could say was the wrong
+    // one; none is silence, and silence is a deadline, not an answer.
+    expect(
+      verdictOf(body(), {
+        delivered: { access_url: "https://example.com/a" },
+        refused: { code: "out_of_stock", message: "нет" },
+      }),
+    ).not.toBe("accepted");
+    expect(verdictOf(body(), {})).not.toBe("accepted");
+  });
+
+  it("refuses a refusal nobody can count or read", () => {
+    // The code feeds the share of purchases that ran into a missing product,
+    // and the message is for the person who picks the case up afterwards.
+    expect(verdictOf(body(), { refused: { message: "нет" } })).not.toBe("accepted");
+    expect(verdictOf(body(), { refused: { code: "out_of_stock" } })).not.toBe("accepted");
+    expect(verdictOf(body(), { refused: { code: "", message: "нет" } })).not.toBe("accepted");
+    expect(verdictOf(body(), { refused: { code: "out_of_stock", message: " " } })).not.toBe(
+      "accepted",
+    );
+  });
+
+  it("refuses an acceptance that promises a delivery in no time at all", () => {
+    expect(verdictOf(body(), { accepted: { eta_seconds: 0 } })).not.toBe("accepted");
+    expect(verdictOf(body(), { accepted: { eta_seconds: -60 } })).not.toBe("accepted");
+  });
+
+  it("refuses a fourth kind of answer", () => {
+    // "Not right now" would blur the line a refusal draws: a supplier who
+    // timed out once would look like a product that cannot be sold at all. A
+    // temporary failure is an exception, and it comes back as another delivery.
+    expect(verdictOf(body(), { deferred: { retry_after_seconds: 30 } })).not.toBe("accepted");
+    expect(verdictOf(body(), { delivered: { access_url: "https://x" }, extra: 1 })).not.toBe(
+      "accepted",
+    );
+  });
+
+  it("tells a late synchronous handler that the work was not wasted", () => {
+    // The case the addendum names. The merchant started before the deadline
+    // and finished after it: nothing went wrong on their side, the goods
+    // exist, and a repeat purchase collects them. Told this was an error, they
+    // would go looking for a fault that is not there — and the word is a
+    // success in the published vocabulary, not a failure code.
+    const late = answer().safeParse({ ok: true, result: "purchase_already_closed" });
+
+    expect(late.success ? "accepted" : "refused").toBe("accepted");
+    expect((late.data as { ok: boolean }).ok).toBe(true);
+    expect(ORDER_CALL_RESULTS).toContain("purchase_already_closed");
+    expect(ORDER_CALL_ERROR_CODES).not.toContain("purchase_already_closed");
+  });
+
+  it("answers in the same family as the explicit closure calls", () => {
+    // One vocabulary of successes and one of failures across all four calls. A
+    // second family here would be a second thing for a merchant to learn about
+    // the same order.
+    expect(answer()).toBe(OrderCallResponseSchema);
+    expect(
+      verdictOf(answer(), {
+        ok: false,
+        error: {
+          code: "order_already_closed",
+          message: "Заказ уже закрыт",
+          retryable: false,
+        },
+      }),
+    ).toBe("accepted");
+  });
+
+  it("is reachable from the registry the way every other document is", () => {
+    // The gap this route closed: `handler_answer` was a document the contract
+    // published and the table referred to from nowhere, so the one shape a
+    // synchronous merchant needs was exported and unreachable through the API.
+    expect(body()).toBe(schemas.handler_answer);
+    expect(Object.keys(schemas)).toContain("handler_answer");
+  });
+});
+
 describe("the route table", () => {
   // The promise: the gateway that serves these calls and the SDK that makes
   // them read one description of them. Two dialects of the same surface is
@@ -500,6 +621,15 @@ describe("the route table", () => {
       "-",
       "worker_poll_request",
       "worker_poll_response",
+    ],
+    [
+      "answer_order",
+      "POST",
+      "/v0/orders/:order_id/answer",
+      "merchant_key",
+      "-",
+      "handler_answer",
+      "order_call_response",
     ],
     [
       "deliver_order",

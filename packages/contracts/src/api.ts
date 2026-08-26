@@ -33,25 +33,23 @@
  * and it says so in a field rather than by leaving the response out. A missing
  * field is a silence, and a reader cannot tell a silence from an oversight.
  *
- * One call the surface needs is missing, and it is named here for the same
- * reason. A synchronous card's handler answers with the goods or with a
- * refusal — `HandlerAnswerSchema` — and in that mode the order machine refuses
- * `deliver` and `refuse` as calls that do not apply, because there the
- * handler's own answer is the delivery and the refusal. Over a long poll there
- * is no synchronous channel for that answer to travel back on, so it has to be
- * a call, and no route below carries it. Which shape it takes is a real choice
- * — one route carrying the whole handler answer, or the outcomes riding the
- * next poll — and the transport decision reads the other way from the machine
- * on this point. Settling it here, in a table, would be settling it in the
- * wrong place. Until it is settled, `handler_answer` is a document this
- * contract publishes and this table does not use, and an SDK that needs to
- * send a synchronous refusal has nowhere to send it.
+ * Two ways of answering for an order sit in the table and they are not the
+ * same thing, which is worth reading before either is used. What a merchant's
+ * handler returns — delivered, refused, taken on — goes to the answer route,
+ * in every mode, and the SDK sends it without the merchant asking. `deliver`
+ * and `refuse` are the asynchronous mode's explicit closure verbs, called
+ * later by a merchant who took an order on and now has the goods or has run
+ * out of them. The order machine keeps the same two apart, and in the
+ * synchronous mode it is the returned answer that exists and the explicit
+ * calls that do not. The addendum of 2026-08-26 to ADR-0004 settles this; §2
+ * of that decision, read alone, leaves the synchronous handler with no address
+ * at all.
  */
 
 import { z } from "zod";
 import { CardSchema, PublicCardSchema } from "./card.js";
 import { WorkerEnvelopeSchema } from "./envelope.js";
-import { AcceptanceSchema, DeliverySchema, RefusalSchema } from "./handler.js";
+import { AcceptanceSchema, DeliverySchema, HandlerAnswerSchema, RefusalSchema } from "./handler.js";
 import { OrderSchema } from "./order.js";
 import { OrderStatusSchema } from "./order-status.js";
 import { ParamNameSchema } from "./param-spec.js";
@@ -444,12 +442,22 @@ export const API_ROUTES = Object.freeze({
     response: { document: WorkerPollResponseSchema },
   },
 
+  answer_order: {
+    method: "POST",
+    path: "/v0/orders/:order_id/answer",
+    auth: "merchant_key",
+    description:
+      "What the merchant's handler returned for an order it was given: the goods, a refusal, or an acceptance. The SDK sends this itself, in every mode, and it is the only way a synchronous answer reaches us at all — there the handler's return is the delivery and the refusal, and the explicit deliver and refuse calls do not apply. A synchronous answer that arrives after its deadline is not an error: the work exists and a repeat purchase collects it, and the answer says so in the word purchase_already_closed.",
+    request: HandlerAnswerSchema,
+    response: { document: OrderCallResponseSchema },
+  },
+
   deliver_order: {
     method: "POST",
     path: "/v0/orders/:order_id/deliver",
     auth: "merchant_key",
     description:
-      "The goods for an order. Idempotent by the order's identifier: called again after a dropped connection it delivers nothing twice and charges nothing twice, so repeating it is safe and keeping a note of what was already sent is not needed. A late call is accepted too — where the delivery deadline has passed and the refund has not yet been paid out, delivering closes the debt.",
+      "The goods for an order the merchant took on earlier — the asynchronous mode's closure verb, called by the merchant rather than by the SDK. Idempotent by the order's identifier: called again after a dropped connection it delivers nothing twice and charges nothing twice, so repeating it is safe and keeping a note of what was already sent is not needed. A late call is accepted too — where the delivery deadline has passed and the refund has not yet been paid out, delivering closes the debt.",
     request: DeliverySchema,
     response: { document: OrderCallResponseSchema },
   },
@@ -459,7 +467,7 @@ export const API_ROUTES = Object.freeze({
     path: "/v0/orders/:order_id/refuse",
     auth: "merchant_key",
     description:
-      'A final "this cannot be delivered" for an order already taken on. It exists only where an acceptance came first; in the synchronous mode the handler\'s own answer is the refusal and there is no separate call, which is what the error code not_applicable_in_mode says from the other side. A temporary failure is not a refusal — it is an exception, a dead process or a dropped connection, and it is answered with another delivery.',
+      "A final \"this cannot be delivered\" for an order already taken on — the asynchronous mode's other closure verb. It exists only where an acceptance came first; in the synchronous mode the handler's own answer is the refusal and travels on the answer route instead, which is what the error code not_applicable_in_mode says from the other side. A temporary failure is not a refusal — it is an exception, a dead process or a dropped connection, and it is answered with another delivery.",
     request: RefusalSchema,
     response: { document: OrderCallResponseSchema },
   },

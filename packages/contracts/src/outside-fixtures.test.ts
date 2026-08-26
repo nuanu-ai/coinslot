@@ -433,6 +433,33 @@ describe("the HTTP surface, carrying this catalog rather than the portal's", () 
     expect(verdictOf(QuoteAnswerAckSchema, { used: true })).toBe("accepted");
   });
 
+  it("returns the rented number from a synchronous handler, at the address the table names", () => {
+    // The pilot's default mode, and the one the surface could not carry until
+    // the answer route existed: here the handler's return is the delivery and
+    // the refusal, and the explicit deliver and refuse calls do not apply.
+    const address = expandPath(API_ROUTES.answer_order.path, { order_id: "ord_1c42fa" });
+    const delivered = { phone_number: "+447700900123" };
+
+    expect(address).toBe("/v0/orders/ord_1c42fa/answer");
+    expect(verdictOf(bodyOf(API_ROUTES.answer_order), { delivered })).toBe("accepted");
+    // The same answer is held to what this card advertised before anyone paid.
+    expect(verdictOf(deliveryCheckFor(number), delivered)).toBe("accepted");
+
+    // Their supplier answering "no SIM" travels the same way, and in this mode
+    // the buyer spends nothing.
+    expect(
+      verdictOf(bodyOf(API_ROUTES.answer_order), {
+        refused: { code: "out_of_stock", message: "Свободных номеров в этой стране нет" },
+      }),
+    ).toBe("accepted");
+
+    // And the handler that started in time and finished late is told the work
+    // was not wasted, rather than told it failed.
+    expect(
+      verdictOf(OrderCallResponseSchema, { ok: true, result: "purchase_already_closed" }),
+    ).toBe("accepted");
+  });
+
   it("takes the eSIM order on and then delivers it, at the addresses the table names", () => {
     expect(expandPath(API_ROUTES.accept_order.path, { order_id: esimOrder.id })).toBe(
       "/v0/orders/ord_88b3c1/accept",
