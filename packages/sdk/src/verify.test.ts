@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { VERIFY_EXIT, runVerify } from "./verify.js";
+import { runVerify, VERIFY_EXIT } from "./verify.js";
 
 const validCard = {
   merchant_item_id: "access-monthly",
