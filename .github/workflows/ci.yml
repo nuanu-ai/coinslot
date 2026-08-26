@@ -30,9 +30,9 @@ jobs:
       matrix:
         task: [check, typecheck, test]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
 
@@ -42,7 +42,7 @@ jobs:
 
       # The second setup-node pass turns on the pnpm cache: it cannot be turned
       # on earlier, the cache needs pnpm to be installed already.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: pnpm
@@ -56,5 +56,5 @@ jobs:
     name: decisions
     runs-on: [self-hosted, comino]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: ./scripts/check-decisions.sh
