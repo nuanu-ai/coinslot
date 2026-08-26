@@ -24,7 +24,10 @@ import { IdentifierSchema, MoneySchema } from "./primitives.js";
  * payment executes at the moment of purchase. `confirm` — the merchant is
  * asked first, and the payment executes right after they say yes.
  */
-export const FulfillmentSchema = z.enum(["sync", "async", "confirm"]);
+export const FulfillmentSchema = z.enum(["sync", "async", "confirm"]).meta({
+  description:
+    'When the product reaches the agent, and so when the money moves. "sync" — in the answer to the purchase, payment last. "async" — later, by a separate call, payment at the moment of purchase. "confirm" — the merchant is asked first and the payment follows their yes. A card cannot be published as "confirm" during the pilot: the confirmation request has no shape on the wire yet, so a handler could not tell one from a paid order.',
+});
 
 /**
  * How the price and availability of this card are asked for, if they are.
@@ -119,6 +122,30 @@ const CardFieldsSchema = z.strictObject({
  * product, so it has no field here at all.
  */
 export const CardSchema = CardFieldsSchema.superRefine((card, ctx) => {
+  if (card.fulfillment === "confirm") {
+    // The gate, and the reason it is a refusal rather than a note somewhere.
+    // A confirmation request reaches the merchant before any money moves and
+    // must be answered without delivering — but nothing on the wire marks it
+    // as one, so a handler could not tell it from a paid order. Publishing
+    // such a card would sell the merchant a mode that cannot be served, and
+    // the first they heard of it would be a request they mishandled.
+    //
+    // The value stays in the enumeration: the mode exists in the model and the
+    // state machine knows it. What is missing is its shape on the wire, and
+    // that is a "not yet", not a "no".
+    ctx.addIssue({
+      code: "custom",
+      path: ["fulfillment"],
+      message:
+        'a card cannot be published as "confirm" during the pilot: the confirmation request has no shape on the wire yet, so a handler could not tell one from a paid order',
+    });
+
+    // The deadline rules below are unchanged and still right for this mode.
+    // Reporting them alongside the gate would stack a second complaint on a
+    // card that has one problem, and lifting the gate later would uncover it.
+    return;
+  }
+
   if (card.fulfillment !== "confirm" && card.confirm_deadline_seconds !== undefined) {
     ctx.addIssue({
       code: "custom",
@@ -142,7 +169,7 @@ export const CardSchema = CardFieldsSchema.superRefine((card, ctx) => {
   // sends deadlines a card cannot carry and only find out on the first publish.
   // Saying it in words is weaker than checking it, and better than silence.
   description:
-    'A product in the catalog, as the merchant publishes it. Two rules are enforced beyond the shape below: confirm_deadline_seconds is only allowed when fulfillment is "confirm", and fulfill_deadline_seconds only when fulfillment is "async" or "confirm" — a synchronous card delivers inside the system-wide response budget and names no deadline of its own.',
+    'A product in the catalog, as the merchant publishes it. Three rules are enforced beyond the shape below. A card cannot be published as fulfillment "confirm" during the pilot: the confirmation request has no shape on the wire yet, so a handler could not tell one from a paid order. confirm_deadline_seconds is only allowed when fulfillment is "confirm", and fulfill_deadline_seconds only when fulfillment is "async" or "confirm" — a synchronous card delivers inside the system-wide response budget and names no deadline of its own.',
 });
 
 export type Fulfillment = z.infer<typeof FulfillmentSchema>;
