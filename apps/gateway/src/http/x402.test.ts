@@ -172,6 +172,40 @@ describe("one payment, one fingerprint", () => {
     );
   });
 
+  it("does not key on a nonce that has no payer beside it", () => {
+    // The chain keys on the pair — authorizationState[authorizer][nonce] — so a
+    // nonce alone is not a key. Keyed on the nonce without the payer, the first
+    // agent to use a nonce would block every other payer who picked the same,
+    // and a client that counts from one picks exactly those. The proof is that
+    // a nonce with no `from` beside it falls through to the signature the
+    // authorisation carries, and the nonce then changes nothing: two such
+    // payments differing only in nonce are one payment, and both are the same
+    // payment as the bare signature.
+    const withNonce = (nonce: string) =>
+      signed({ signature: "0xdeadbeef", authorization: { to: "0xbbbb", value: "1", nonce } });
+    const bareSignature = signed({ signature: "0xdeadbeef" });
+
+    expect(fingerprintOf(withNonce("0x01"))).toBe(fingerprintOf(withNonce("0x02")));
+    expect(fingerprintOf(withNonce("0x01"))).toBe(fingerprintOf(bareSignature));
+  });
+
+  it("does not key on a payer that has no nonce beside it", () => {
+    // The symmetric edge. A payer without a nonce is not half of a key either:
+    // it falls through to the signature, and two different payers with no nonce
+    // are one payment, the same as the bare signature. Keyed on the payer
+    // alone, one payer could spend once and never again.
+    const withPayer = (from: string) =>
+      signed({ signature: "0xdeadbeef", authorization: { from, to: "0xbbbb", value: "1" } });
+    const bareSignature = signed({ signature: "0xdeadbeef" });
+
+    expect(fingerprintOf(withPayer("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"))).toBe(
+      fingerprintOf(withPayer("0xcccccccccccccccccccccccccccccccccccccccc")),
+    );
+    expect(fingerprintOf(withPayer("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"))).toBe(
+      fingerprintOf(bareSignature),
+    );
+  });
+
   it("does not change when the agent rewrites everything it is allowed to rewrite", () => {
     // The requirements beside the payload are the agent's own unsigned copy of
     // what we asked for. If the fingerprint moved with them, one signature
