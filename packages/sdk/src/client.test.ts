@@ -1,6 +1,6 @@
 import type { Card, Order } from "@coinslot/contracts";
 import { afterEach, describe, expect, it } from "vitest";
-import { createClient } from "./index.js";
+import { ANSWER_NOT_UNDERSTOOD, CALL_DID_NOT_REACH_US, createClient } from "./index.js";
 import { type FakeGateway, startFakeGateway } from "./testing/fake-gateway.js";
 
 const API_KEY = "merchant-key-for-the-tests";
@@ -236,6 +236,30 @@ describe("closing an order the merchant took on", () => {
 
     expect(result.ok).toBe(false);
     expect(result.ok === false && result.error.retryable).toBe(true);
+    // The gateway did answer — this is a body we cannot read, not a call that
+    // never arrived, and the two are different facts about the merchant's books.
+    expect(result.ok === false && result.error.code).toBe(ANSWER_NOT_UNDERSTOOD);
+  });
+
+  it("tells a call that never arrived from one whose answer could not be read", async () => {
+    // The two are different facts about the merchant's own books. A call that
+    // did not arrive certainly delivered nothing; a call that was answered in
+    // words we cannot read reached us and may well have done its work. A
+    // merchant told the first when the second happened reasons from something
+    // that is not so.
+    const answering = await gatewayServing({
+      deliver_order: () => ({ text: "<html>gateway timeout</html>" }),
+    });
+    const answered = await answering.orders.deliver("order-1", { access_url: "https://a.example" });
+
+    expect(answered.ok === false && answered.error.code).toBe(ANSWER_NOT_UNDERSTOOD);
+
+    // Nothing is listening on this port: the request never becomes an answer.
+    const unreachable = createClient({ apiKey: API_KEY, baseUrl: "http://127.0.0.1:1" });
+    const never = await unreachable.orders.deliver("order-1", { access_url: "https://a.example" });
+
+    expect(never.ok === false && never.error.code).toBe(CALL_DID_NOT_REACH_US);
+    expect(never.ok === false && never.error.retryable).toBe(true);
   });
 
   it("takes an order on, with and without an expected time", async () => {

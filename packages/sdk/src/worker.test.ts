@@ -462,26 +462,56 @@ describe("a gateway speaking another dialect", () => {
     expect(gateway.callsTo("poll_worker")).toHaveLength(pollsWhenItStopped);
   });
 
-  it("still blames the transport for an answer that names no version", async () => {
-    // The other half of the same rule: a proxy's error page is not a dialect,
-    // and reading it as one would stop a worker that only needed to wait.
+  it.each([
+    ["a proxy's own page", { status: 502, text: "<html>bad gateway</html>" }],
+    ["an error envelope somebody added", { text: JSON.stringify({ error: "no such worker" }) }],
+    ["a version that is not a word", { text: JSON.stringify({ contract_version: 99 }) }],
+  ])("still blames the transport for %s", async (_what, answer) => {
+    // The other half of the same rule, and the more dangerous half. A proxy's
+    // page, an error envelope, a field of the wrong type — none of them is a
+    // dialect, and a worker stopped for good on one of those is a merchant
+    // taken off the air by something that only needed waiting out.
     const problems: WorkerProblem[] = [];
 
-    gateway = await startFakeGateway({
-      apiKey: API_KEY,
-      routes: { poll_worker: () => ({ status: 502, text: "<html>bad gateway</html>" }) },
-    });
+    gateway = await startFakeGateway({ apiKey: API_KEY, routes: { poll_worker: () => answer } });
 
     running = startWorker(
       { apiKey: API_KEY, baseUrl: gateway.url },
       { problem: (problem) => problems.push(problem) },
-      { ...recordingClock() },
+      recordingClock(),
     );
 
     await waitUntil(() => problems.length > 0, "the problem to be reported");
 
     expect(problems[0]?.kind).toBe(WORKER_PROBLEM_KINDS.POLL_FAILED);
     expect(problems[0]?.fatal).toBe(false);
+  });
+
+  it("does not attach a later handler to a loop that has already died", async () => {
+    // A process that registered its order handler, lost the worker to a
+    // mismatch, and registers a price handler afterwards. Handed the dead
+    // loop, it would receive nothing and be told nothing; started afresh, it
+    // meets the same mismatch and is told about it again, which is the answer
+    // it can act on.
+    const problems: WorkerProblem[] = [];
+
+    gateway = await startFakeGateway({
+      apiKey: API_KEY,
+      routes: { poll_worker: () => ({ body: { contract_version: "99", envelopes: [] } }) },
+    });
+
+    const coinslot = createClient({ apiKey: API_KEY, baseUrl: gateway.url });
+
+    running = coinslot.orders.subscribe(() => ({ accepted: {} }), {
+      onProblem: (problem) => problems.push(problem),
+    });
+
+    await waitUntil(() => problems.length === 1, "the first mismatch");
+
+    coinslot.pricing.onQuote(() => ({ available: false, as_of: AT }));
+
+    await waitUntil(() => problems.length === 2, "a second loop that ran and reported");
+    expect(gateway.callsTo("poll_worker").length).toBeGreaterThanOrEqual(2);
   });
 });
 
