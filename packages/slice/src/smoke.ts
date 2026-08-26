@@ -235,6 +235,16 @@ async function main(): Promise<void> {
       return;
     }
 
+    // Refuse rather than trust the buyer's client cap alone. If the challenge's
+    // asset is not the one this network's default table knows, the dollar amount
+    // could not be read above, and paying then would be paying an amount this
+    // command could not check.
+    if (amountUsd === null) {
+      die(
+        `could not read the challenge amount in dollars (asset ${requirement.asset} is not ${asset.symbol} on ${network}), so it cannot be checked against the cap`,
+      );
+    }
+
     // --- the one real paid call (only under --confirm) ----------------------
     say("--confirm: signing and settling one real testnet payment now.");
     const bought = await buyer.buy(listing.id, { email: "smoke@example.com" });
@@ -255,6 +265,11 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  console.error("[smoke] the smoke command failed:", error);
+  // The message only, never the whole error object: a payment client's error can
+  // carry request details in tow, and the buyer's key is not something to risk
+  // printing even by accident.
+  console.error(
+    `[smoke] the smoke command failed: ${error instanceof Error ? error.message : String(error)}`,
+  );
   process.exit(1);
 });

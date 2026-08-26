@@ -20,6 +20,7 @@
 
 import { deliveryCheckFor, ReceiptSchema } from "@coinslot/contracts";
 import { ScriptedFacilitator } from "@coinslot/gateway";
+import { WORKER_PROBLEM_KINDS } from "@coinslot/sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { makeBuyer } from "./buyer.js";
 import { EUROPE_ESIM, RENTED_NUMBER } from "./cards.js";
@@ -71,8 +72,13 @@ describe("the stage-one gate: a sandbox purchase, green from catalog to receipt"
   });
 
   afterEach(async () => {
-    await merchant.stop();
-    await booted.stop();
+    // The server is closed even if stopping the merchant throws, so a failed
+    // teardown of one test does not leak a listener into the next.
+    try {
+      await merchant.stop();
+    } finally {
+      await booted.stop();
+    }
   });
 
   it("sells a synchronous rented number: catalog → quote → verify → deliver → settle → receipt", async () => {
@@ -200,8 +206,41 @@ describe("the stage-one gate: a sandbox purchase, green from catalog to receipt"
     // not patched here. What must hold is that nothing else went wrong and
     // nothing was fatal — a fatal problem stops the worker.
     const KNOWN_ACCEPT_REPORT = "acceptance_has_no_word_in_this_contract";
-    const unexpected = merchant.problems.filter((p) => !p.message.includes(KNOWN_ACCEPT_REPORT));
-    expect(unexpected).toStrictEqual([]);
-    expect(merchant.problems.some((p) => p.fatal)).toBe(false);
+    const acceptReports = merchant.problems.filter((p) => p.message.includes(KNOWN_ACCEPT_REPORT));
+    const otherProblems = merchant.problems.filter((p) => !p.message.includes(KNOWN_ACCEPT_REPORT));
+    // Nothing else went wrong, and the known report is pinned to exactly the one
+    // instance it should be — this one order, once, not fatal — so a bug that
+    // produced a flood of them, or hung one on a different order, could not hide
+    // behind the tolerance.
+    expect(otherProblems).toStrictEqual([]);
+    expect(acceptReports).toHaveLength(1);
+    expect(acceptReports[0]?.kind).toBe(WORKER_PROBLEM_KINDS.ANSWER_REFUSED);
+    expect(acceptReports[0]?.subject).toBe(orderId);
+    expect(acceptReports[0]?.fatal).toBe(false);
+  }, 20_000);
+
+  it("a refused payment moves no money and hands over no goods: the synchronous refusal is free", async () => {
+    // The negative control for the money-safety promise. In the synchronous
+    // mode the payment is verified before the merchant is asked and executed
+    // only after the goods come back, so a payment the layer will not vouch
+    // for must cost the buyer nothing: no charge, no goods, the order left to
+    // end on its own deadline.
+    facilitator.willRefuseVerification("signature", "scripted refusal for the negative control");
+
+    const catalog = await buyer.catalog();
+    const rented = catalog.find((card) => card.title === RENTED_NUMBER.title);
+    if (rented === undefined) throw new Error("the rented number is not in the catalog");
+
+    const bought = await buyer.buy(rented.id, { area_code: "415" });
+
+    // No goods, no settlement receipt, and not the success status.
+    expect(bought.status).not.toBe(200);
+    expect(fields(bought.body).delivered).toBeUndefined();
+    expect(bought.settlement).toBeNull();
+
+    // The payment was put to the layer once and turned away, and — the point
+    // of the control — nothing was ever charged.
+    expect(facilitator.verifies).toHaveLength(1);
+    expect(facilitator.settles).toStrictEqual([]);
   }, 20_000);
 });

@@ -89,6 +89,9 @@ export function makeBuyer(options: BuyerOptions): Buyer {
         headers: { accept: "application/json" },
       });
       const header = response.headers.get("payment-required");
+      // The challenge rides in the header; the body is drained rather than left
+      // dangling on the socket.
+      await response.body?.cancel();
       if (header === null) {
         throw new Error(
           `expected a 402 challenge for ${itemId} but the gateway answered ${response.status} with no PAYMENT-REQUIRED header`,
