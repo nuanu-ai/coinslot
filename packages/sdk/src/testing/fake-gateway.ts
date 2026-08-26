@@ -34,7 +34,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import {
-  API_ROUTES,
   mountableRoutes,
   type RouteDefinition,
   type RouteName,
@@ -289,9 +288,3 @@ export const startFakeGateway = async (options: FakeGatewayOptions): Promise<Fak
       }),
   };
 };
-
-/** Every route the table says a gateway may serve, for the tests that count them. */
-export const mountableRouteNames = (): RouteName[] => mounted.map((route) => route.name);
-
-/** Every route in the table, mountable or not. */
-export const allRouteNames = (): RouteName[] => Object.keys(API_ROUTES) as RouteName[];
