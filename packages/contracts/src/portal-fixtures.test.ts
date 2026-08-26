@@ -120,6 +120,17 @@ const occursIn = (fence: string, token: Token): boolean => {
 const keysWrittenIn = (fence: string): string[] =>
   [...fence.matchAll(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:/gm)].map((match) => match[1] ?? "");
 
+/**
+ * The other direction of the drift check: names the example writes that the
+ * transcription has never heard of.
+ *
+ * Without it a field added on the portal is invisible here — every token of
+ * the transcription still occurs, so the check passes while the example has
+ * grown something no schema is holding.
+ */
+const namesTheFixtureLacks = (fence: string, known: Set<string>): string[] =>
+  keysWrittenIn(fence).filter((name) => !known.has(name));
+
 interface Fence {
   file: string;
   language: string;
@@ -276,6 +287,18 @@ describe("the drift check itself", () => {
       "title",
     ]);
   });
+
+  it("notices a name the example grew and the transcription never heard of", () => {
+    // The case the forward check cannot see: every token of the transcription
+    // still occurs, and the example has gained a field nothing holds to a
+    // schema.
+    const known = new Set(["merchant_item_id", "title", "fulfillment"]);
+
+    expect(namesTheFixtureLacks("  title: 'x'\n  fulfillment: 'sync'", known)).toStrictEqual([]);
+    expect(
+      namesTheFixtureLacks("  title: 'x'\n  subscription: { period: 'P1M' }", known),
+    ).toStrictEqual(["subscription"]);
+  });
 });
 
 describe("the portal's examples pass the schemas", () => {
@@ -293,20 +316,17 @@ describe("the portal's examples pass the schemas", () => {
         }
 
         if (fixture.completeKeys === true) {
-          // And the other direction: a name the portal added and the
-          // transcription never heard of.
           const known = new Set([
             ...tokensOf(fixture.value)
               .filter((token) => token.kind === "key")
               .map((token) => token.text),
             ...(fixture.outerKeys ?? []),
           ]);
-          for (const name of keysWrittenIn(text)) {
-            expect(
-              known.has(name),
-              `the example now writes "${name}", which this fixture does not carry, so nothing holds it to a schema`,
-            ).toBe(true);
-          }
+
+          expect(
+            namesTheFixtureLacks(text, known),
+            "the example now writes names this fixture does not carry, so nothing holds them to a schema",
+          ).toStrictEqual([]);
         }
       }
 
