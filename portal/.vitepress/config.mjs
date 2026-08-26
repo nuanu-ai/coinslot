@@ -21,7 +21,7 @@ export default defineConfig({
       {
         text: 'Инженеру',
         items: [
-          { text: 'Первая продажа', link: '/quickstart' },
+          { text: 'Первая тестовая продажа', link: '/quickstart' },
           { text: 'Карточка товара', link: '/cards' },
           { text: 'Заказы и режимы выдачи', link: '/orders' },
           { text: 'Что может пойти не так', link: '/failures' },
