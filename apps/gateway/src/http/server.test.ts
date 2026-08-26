@@ -529,65 +529,102 @@ describe("whose purchase it is", () => {
   const BUYER = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
   const STRANGER = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
-  it("does not give a stranger the goods the buyer paid for", async () => {
+  // Two payments for one order, presented over HTTP and released into the
+  // ownership decision at the same instant, so what settles it is the in-lock
+  // guard and not which request the runtime happened to schedule first. Held
+  // verifications keep both calls at the decision until each has reached it;
+  // asserting a fixed winner instead would pass or fail on the machine's
+  // timing, which is how these two once went green locally and red on a
+  // faster runner. The larger sync budget keeps the parked calls alive across
+  // the hold.
+  const RACE_TIMING = {
+    QUOTE_RESPONSE_MS: "50",
+    SYNC_RESPONSE_MS: "300",
+    SETTLE_RESPONSE_MS: "100",
+    SYNC_BUDGET_MS: "500",
+  };
+
+  const raceTwoPayments = async (served: Served, harnessed: Harness, itemId: string) => {
+    const challenge = await challengeFor(served, itemId);
+    const buyerHeader = paidBy(challenge, BUYER, "0x01");
+    const strangerHeader = paidBy(challenge, STRANGER, "0x02");
+
+    const release = harnessed.facilitator.holdVerification();
+    const race = Promise.all([
+      served.call("POST", `/v0/items/${itemId}/purchase`, {
+        body: { params: {} },
+        headers: { [PAYMENT_SIGNATURE_HEADER]: buyerHeader },
+      }),
+      served.call("POST", `/v0/items/${itemId}/purchase`, {
+        body: { params: {} },
+        headers: { [PAYMENT_SIGNATURE_HEADER]: strangerHeader },
+      }),
+    ]);
+    // Yield to the event loop, not just the microtask queue: the two
+    // presentations travel over a real socket, so their verifications only
+    // arrive on I/O ticks. A microtask spin would never let them land.
+    for (let i = 0; i < 2_000 && harnessed.facilitator.verifies.length < 2; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    expect(harnessed.facilitator.verifies).toHaveLength(2);
+    release();
+    return { race, buyerHeader, strangerHeader };
+  };
+
+  it("hands the goods to exactly one of two racing payments and refuses the other", async () => {
     // An order's identifier is not a secret the way a password is: this gateway
     // puts it in the challenge itself. In the synchronous mode the goods reach
     // an agent through the call it is parked on and nowhere else, so a second
-    // call under the same order would have taken the first one's place — and
-    // the buyer, who paid, would have been told nothing happened.
-    const { served, harnessed } = await started();
+    // call under the same order must not take the first one's place — exactly
+    // one wins, the other is told this order is already somebody's.
+    const { served, harnessed } = await started(RACE_TIMING);
     const itemId = await publish(served, syncCard);
-    const challenge = await challengeFor(served, itemId);
 
     const worker = workUntilStopped(harnessed, {
       onOrder: () => ({ delivered: { access_code: "SESAME" } }),
     });
-    const buying = served.call("POST", `/v0/items/${itemId}/purchase`, {
-      body: { params: {} },
-      headers: { [PAYMENT_SIGNATURE_HEADER]: paidBy(challenge, BUYER, "0x01") },
-    });
-    const stealing = await served.call("POST", `/v0/items/${itemId}/purchase`, {
-      body: { params: {} },
-      headers: { [PAYMENT_SIGNATURE_HEADER]: paidBy(challenge, STRANGER, "0x02") },
-    });
-    const bought = await buying;
+    const { race } = await raceTwoPayments(served, harnessed, itemId);
+    const [a, b] = await race;
     await worker.stop();
 
-    expect(bought.status).toBe(200);
-    expect(bought.body).toMatchObject({ delivered: { access_code: "SESAME" } });
-
-    expect(stealing.status).toBe(409);
-    expect((stealing.body as { error: { code: string } }).error.code).toBe("not_this_purchase");
-    expect(JSON.stringify(stealing.body)).not.toContain("SESAME");
+    const won = [a, b].filter((r) => r.status === 200);
+    const refused = [a, b].filter((r) => r.status === 409);
+    expect(won).toHaveLength(1);
+    expect(refused).toHaveLength(1);
+    const winner = won[0];
+    const loser = refused[0];
+    if (winner === undefined || loser === undefined)
+      throw new Error("the race had no single winner");
+    expect(winner.body).toMatchObject({ delivered: { access_code: "SESAME" } });
+    expect((loser.body as { error: { code: string } }).error.code).toBe("not_this_purchase");
+    expect(JSON.stringify(loser.body)).not.toContain("SESAME");
   });
 
-  it("does not charge a payment the order was not bought with", async () => {
+  it("charges exactly one payment, the one the winner owns", async () => {
     // Between a verification and a charge the order sits waiting, and a
     // presentation landing in that window used to replace the authorisation
     // that would be executed. The merchant then produced the goods and was paid
-    // with somebody else's failing payment, while the buyer's good one was
-    // never charged.
-    const { served, harnessed } = await started();
+    // with somebody else's payment, while the winner's own was never charged.
+    // Whichever of the two wins, the single charge is that one's payment.
+    const { served, harnessed } = await started(RACE_TIMING);
     const itemId = await publish(served, syncCard);
-    const challenge = await challengeFor(served, itemId);
 
     const worker = workUntilStopped(harnessed, {
       onOrder: () => ({ delivered: { access_code: "SESAME" } }),
     });
-    const buying = served.call("POST", `/v0/items/${itemId}/purchase`, {
-      body: { params: {} },
-      headers: { [PAYMENT_SIGNATURE_HEADER]: paidBy(challenge, BUYER, "0x01") },
-    });
-    await served.call("POST", `/v0/items/${itemId}/purchase`, {
-      body: { params: {} },
-      headers: { [PAYMENT_SIGNATURE_HEADER]: paidBy(challenge, STRANGER, "0x02") },
-    });
-    await buying;
+    const { race, buyerHeader, strangerHeader } = await raceTwoPayments(served, harnessed, itemId);
+    const [buyerResult, strangerResult] = await race;
     await worker.stop();
+
+    // Promise.all keeps the call order, so the first result is the buyer's call
+    // and the second the stranger's; the winner's header is whichever returned
+    // the goods.
+    const winnerHeader = buyerResult.status === 200 ? buyerHeader : strangerHeader;
+    expect([buyerResult.status, strangerResult.status].filter((s) => s === 200)).toHaveLength(1);
 
     const charged = harnessed.facilitator.settles.map((charge) => charge.payment);
     expect(charged).toHaveLength(1);
-    expect(charged[0]).toBe(paidBy(challenge, BUYER, "0x01"));
+    expect(charged[0]).toBe(winnerHeader);
   });
 
   it("does not let a stranger close somebody else's open purchase", async () => {
