@@ -97,12 +97,12 @@ export const TimestampSchema = z.iso.datetime({ offset: true });
 export const IdentifierSchema = z
   .string()
   .regex(/^\S(?:[\s\S]*\S)?$/, "an identifier must not be empty, blank or padded with whitespace")
-  .refine(
-    (id) =>
-      ![...id].some((character) => {
-        const code = character.codePointAt(0) ?? 0;
-        return code < 0x20 || code === 0x7f;
-      }),
+  .regex(
+    // Both rules are patterns rather than refinements so that both survive
+    // into the JSON Schema export, where zod keeps patterns and drops
+    // refinements without a word.
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: refusing them is the point
+    /^[^\u0000-\u001f\u007f]+$/u,
     "an identifier must not carry control characters",
   );
 

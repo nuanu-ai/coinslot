@@ -137,6 +137,22 @@ describe("the contract as JSON Schema", () => {
     expect(spec.additionalProperties).toMatchObject({ required: ["type"] });
   });
 
+  it("keeps a rule that has two parts, rather than exporting only the first", () => {
+    // An identifier is held to two patterns. JSON Schema takes one `pattern`
+    // per schema, so the two arrive as an `allOf` — and a reader who got only
+    // the first would build a client that accepts keys we refuse. Both are
+    // read back and run.
+    const identifier = toJsonSchemas().identifier;
+    const patterns = (identifier.allOf ?? []).map((part) => nested(part).pattern ?? "");
+
+    expect(patterns).toHaveLength(2);
+    const accepts = (value: string) => patterns.every((source) => new RegExp(source).test(value));
+
+    expect(accepts("access-monthly")).toBe(true);
+    expect(accepts("access-monthly ")).toBe(false);
+    expect(accepts("a\u0000b")).toBe(false);
+  });
+
   it("carries the rules it cannot express as structure in words instead", () => {
     // The honest half of the export. JSON Schema cannot say "this field only
     // when that one has this value", and zod drops such a rule without a word;
