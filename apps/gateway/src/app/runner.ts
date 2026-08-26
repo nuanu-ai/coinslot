@@ -38,6 +38,8 @@ import type {
   MerchantAnswer,
   Order,
   OrderEvent,
+  OrderState,
+  StateEvent,
   TransitionRejection,
   TransitionResult,
 } from "@coinslot/core";
@@ -62,17 +64,28 @@ import { purchaseOf, Waiting } from "./waiting.js";
  */
 export interface OrderFacts {
   readonly delivery?: Delivery;
-  /** Who this order is now being fulfilled against, where that has changed. */
-  readonly paidBy?: string;
-  /** The address that payment spends from. */
-  readonly paidFrom?: string | null;
   readonly settlement?: { readonly transaction: string };
   /** Something the payment layer said, appended to what it has said before. */
   readonly paymentWord?: PaymentWord;
-  readonly payment?: string | null;
   readonly priceId?: string;
   readonly openDeliveryId?: string | null;
 }
+
+/**
+ * What presenting a verified payment came to.
+ *
+ * `took` is ownership settled by this payment — the order moved and its effects
+ * ran. `already_yours` is the same owner asking again about a purchase already
+ * under way. `not_owner` is somebody else's payment turned away without a mark
+ * on the order. `refused` is the machine declining the event the payment would
+ * have driven — a repeat on an order whose charge is still unaccounted for.
+ */
+export type PresentResult =
+  | { readonly kind: "took"; readonly order: StoredOrder; readonly answer: MerchantAnswer | null }
+  | { readonly kind: "already_yours"; readonly state: OrderState }
+  | { readonly kind: "not_owner"; readonly state: OrderState }
+  | { readonly kind: "refused"; readonly rejection: TransitionRejection }
+  | { readonly kind: "no_such_order" };
 
 /** What one hold on an order came to, before its effects are carried out. */
 interface Decided {
@@ -80,6 +93,18 @@ interface Decided {
   readonly before: Order;
   readonly known: StoredOrder;
 }
+
+/** What the hold in `presentVerifiedPayment` came to, before its effects run. */
+type PresentDecided =
+  | {
+      readonly kind: "took";
+      readonly before: Order;
+      readonly known: StoredOrder;
+      readonly effects: readonly Effect[];
+    }
+  | { readonly kind: "already_yours"; readonly state: OrderState }
+  | { readonly kind: "not_owner"; readonly state: OrderState }
+  | { readonly kind: "refused"; readonly rejection: TransitionRejection };
 
 export type Applied =
   | {
@@ -130,10 +155,7 @@ export class OrderRunner {
           ...found,
           ...(facts.delivery === undefined ? {} : { delivery: facts.delivery }),
           ...(facts.settlement === undefined ? {} : { settlement: facts.settlement }),
-          ...(facts.paymentWord === undefined
-            ? {}
-            : { paymentWords: [...found.paymentWords, facts.paymentWord] }),
-
+          ...(facts.paymentWord === undefined ? {} : this.#alsoSaid(found, facts.paymentWord)),
           ...(facts.priceId === undefined ? {} : { priceId: facts.priceId }),
           ...(facts.openDeliveryId === undefined ? {} : { openDeliveryId: facts.openDeliveryId }),
         };
@@ -147,26 +169,7 @@ export class OrderRunner {
         }
 
         refuseToWriteAnImpossibleOrder(moved.order);
-
-        // The payment on the record is the one the machine's stage speaks
-        // about, so it may only be replaced when the machine has no opinion
-        // about a payment: before the first one, or after a repeat has reset
-        // it. Written at any other moment, a later presentation would swap the
-        // authorisation under a verification that had already happened, and the
-        // charge would execute something nothing had checked.
-        const takesIt =
-          facts.payment !== undefined && (known.payment === null || moved.order.payment === "none");
-        const next: StoredOrder = {
-          ...known,
-          order: moved.order,
-          ...(takesIt
-            ? {
-                payment: facts.payment,
-                ...(facts.paidBy === undefined ? {} : { paidBy: facts.paidBy }),
-                ...(facts.paidFrom === undefined ? {} : { paidFrom: facts.paidFrom }),
-              }
-            : {}),
-        };
+        const next: StoredOrder = { ...known, order: moved.order };
 
         // The clocks the order will be waiting on are started before the change
         // to it is committed, because of which way the two failures fall.
@@ -199,41 +202,94 @@ export class OrderRunner {
   }
 
   /**
-   * The agent has presented a payment for an order that was waiting for one.
+   * A payment the payment layer has already vouched for, presented for an
+   * order. The ownership decision and the state change both happen here, inside
+   * the store's hold on the order, and that is the whole point of the method.
    *
-   * The machine asked for the payment to be verified the moment it had a price;
-   * there was nothing to verify then, because the agent had only just been told
-   * what to pay. This is that same effect, carried out now that there is
-   * something to carry it out with — and whether a payment means anything in
-   * the state the order is actually in is still the machine's to say, from the
-   * event this produces.
+   * Ownership cannot be decided from a copy of the order read before the hold:
+   * two verified payments for one order both pass verification, both reach this
+   * method, and if each read a stale "nobody owns it yet" they would both take
+   * it — two buyers, two merchants asked to deliver, one charge that succeeds
+   * and one that fails on a merchant who handed over goods for nothing. So the
+   * guard reads `found.paidBy` under the lock: the first to arrive becomes the
+   * owner, and the second finds an owner that is not it and is turned away
+   * without a mark on the order.
+   *
+   * The payment is verified before the lock — a network round-trip must not
+   * hold a row — so the events driven here are `payment_verified` and, on an
+   * order a repeat reopens, the `purchase_repeated` before it. The machine's
+   * own request to verify (its `verify_payment` effect) is already answered and
+   * is dropped when the effects run.
    */
-  async presentPayment(
+  async presentVerifiedPayment(
     orderId: string,
+    owner: string,
     payment: string,
-    paidBy: string,
-    paidFrom: string | null,
     at: number,
-  ): Promise<boolean> {
-    const held = await this.#runtime.store.withOrder(orderId, (found): OrderChange<StoredOrder> => {
-      if (found.order.payment !== "none") {
-        // The machine already has an opinion about a payment on this order, and
-        // the one on the record is what that opinion is about. Replacing it now
-        // would hand the charge an authorisation nothing had verified.
-        throw new Error(
-          `a payment was presented for ${orderId}, whose own payment is already ${found.order.payment}`,
-        );
-      }
-      const next: StoredOrder = { ...found, payment, paidBy, paidFrom };
-      refuseToWriteAnImpossibleOrder(next.order);
-      return { save: next, result: next };
-    });
+  ): Promise<PresentResult> {
+    const word: PaymentWord = { at, about: "verify", said: `checked out, paid by ${owner}` };
 
-    if (!held.found) {
-      return false;
+    const decided = await this.#runtime.store.withOrder(
+      orderId,
+      async (found): Promise<OrderChange<PresentDecided>> => {
+        if (found.paidBy !== null && found.paidBy !== owner) {
+          // Somebody else's payment owns this order. Nothing is written.
+          return { result: { kind: "not_owner", state: found.order.state } };
+        }
+
+        const events = eventsForVerifiedPayment(found.order, at);
+        if (events.length === 0) {
+          // The owner is asking again about a purchase already under way. The
+          // answer is wherever it has got to, and nothing changes.
+          return { result: { kind: "already_yours", state: found.order.state } };
+        }
+
+        let order = found.order;
+        const effects: Effect[] = [];
+        for (const event of events) {
+          const moved = transition(order, event);
+          if (!moved.ok) {
+            // The machine declines — a repeat on an order whose charge never
+            // reported back, for one. Nothing is written.
+            return { result: { kind: "refused", rejection: moved.rejection } };
+          }
+          order = moved.order;
+          refuseToWriteAnImpossibleOrder(order);
+          effects.push(...moved.effects);
+        }
+
+        const next: StoredOrder = {
+          ...found,
+          order,
+          payment,
+          paidBy: owner,
+          ...this.#alsoSaid(found, word),
+        };
+
+        // The clocks are armed before the change is committed, for the same
+        // reason `apply` arms them there.
+        await this.#arm(deadlines(found.order), deadlines(order), orderId);
+        return {
+          save: next,
+          result: { kind: "took", before: found.order, known: next, effects },
+        };
+      },
+    );
+
+    if (!decided.found) {
+      return { kind: "no_such_order" };
     }
-    await this.#verify(held.result, at);
-    return true;
+    const result = decided.result;
+    if (result.kind !== "took") {
+      return result;
+    }
+
+    // The payment is already verified, so the machine's request to verify it is
+    // answered and dropped; everything else runs outside the lock.
+    const runnable = result.effects.filter((effect) => effect.kind !== "verify_payment");
+    const answer = await this.#run(result.known, result.before, runnable, at);
+    this.#wakeTheAgent(result.known);
+    return { kind: "took", order: result.known, answer };
   }
 
   /**
@@ -289,7 +345,13 @@ export class OrderRunner {
           break;
 
         case "verify_payment":
-          await this.#verify(record, at);
+          // The machine asks for a payment to be verified — at quote time, when
+          // there is no payment yet, and again when a repeat reopens an order.
+          // The gateway verifies eagerly instead, before it takes the order's
+          // lock and before it applies the payment: a network round-trip must
+          // not hold a row, and the ownership decision needs the verified payer
+          // in hand. So by the time any transition runs, the payment this
+          // effect names is already checked, and there is nothing to do here.
           break;
 
         case "execute_payment":
@@ -360,56 +422,6 @@ export class OrderRunner {
     }
 
     return answer;
-  }
-
-  async #verify(record: StoredOrder, at: number): Promise<void> {
-    const payment = record.payment;
-    const price = record.order.price;
-    if (payment === null || price === null) {
-      // Nothing has been presented yet. The order is priced and the challenge
-      // stands; the agent comes back with a payment and this runs then.
-      return;
-    }
-
-    const outcome = await this.#runtime.facilitator.verify({
-      orderId: record.order.id,
-      amount: price.amount,
-      currency: price.currency,
-      payment,
-    });
-
-    if (outcome.verified === true) {
-      await this.apply(
-        record.order.id,
-        { kind: "payment_verified", at },
-        {
-          paymentWord: {
-            at,
-            about: "verify",
-            said: `checked out, paid by ${outcome.payer ?? "an address the payment layer did not name"}`,
-          },
-        },
-      );
-      return;
-    }
-    if (outcome.verified === false) {
-      // The machine's three reasons are coarser than what the payment layer
-      // actually said, and what it said is the only thing an operator can work
-      // from later, so both are written down.
-      await this.apply(
-        record.order.id,
-        { kind: "payment_verification_failed", at, reason: outcome.reason },
-        { paymentWord: { at, about: "verify", said: outcome.message } },
-      );
-      return;
-    }
-
-    // The facilitator could not be asked. Nothing is claimed and no event is
-    // sent: the order keeps the price it was quoted and the clock on that price
-    // is the thing that ends it, which is a slower answer than a guess and the
-    // only one there is evidence for. What it did say is written down, because
-    // an order that quietly stopped moving is otherwise a mystery.
-    await this.#writeDown(record.order.id, { at, about: "verify", said: outcome.message });
   }
 
   async #settle(record: StoredOrder, at: number): Promise<void> {
@@ -683,5 +695,42 @@ function refuseToWriteAnImpossibleOrder(order: Order): void {
     throw new Error(
       `the order ${order.id} breaks what must be true about money and will not be written down — ${violations.join("; ")}`,
     );
+  }
+}
+
+/**
+ * The events a verified payment drives an order home with, from where it stands.
+ *
+ * Almost always one: the order is waiting to be paid, and `payment_verified`
+ * carries it forward. An order a repeat reopens — the goods already made and
+ * the money never taken, or a synchronous purchase that ran out of time with
+ * its work held — takes `purchase_repeated` first, to reset it, and then the
+ * verification. Everywhere else a verified payment has nothing to drive, and an
+ * empty list is how the owner asking again about a purchase already under way
+ * is told the answer is wherever it has got to.
+ *
+ * The machine has the final say either way: a repeat it will not allow — one on
+ * an order whose charge never reported back — is refused when the events run
+ * through `transition`, not decided here.
+ */
+function eventsForVerifiedPayment(order: Order, at: number): StateEvent[] {
+  switch (order.state) {
+    case "quoted":
+    case "confirmed":
+      return [{ kind: "payment_verified", at }];
+    case "delivered_unpaid":
+      return [
+        { kind: "purchase_repeated", at },
+        { kind: "payment_verified", at },
+      ];
+    case "expired":
+      return order.heldFulfillment
+        ? [
+            { kind: "purchase_repeated", at },
+            { kind: "payment_verified", at },
+          ]
+        : [];
+    default:
+      return [];
   }
 }

@@ -14,6 +14,18 @@
 import type { PaymentVerificationFailure } from "@coinslot/core";
 import type { Charge, Facilitator, SettleOutcome, VerifyOutcome } from "../../ports/facilitator.js";
 
+/**
+ * Who the payment layer would say paid, faked from the payment itself so a test
+ * can model two buyers and a buyer's own repeat without a real signature.
+ *
+ * The real facilitator returns the address that actually signed the payment;
+ * here the payment string stands in for that signature, and the payer is the
+ * part of it before a `#` or `:`. So "alice#first" and "alice#second" are one
+ * wallet presenting two authorisations — a repeat — while "alice" and "bob" are
+ * two different buyers. A payment with neither separator is its own payer.
+ */
+export const scriptedPayer = (payment: string): string => payment.split(/[#:]/, 1)[0] ?? payment;
+
 export class ScriptedFacilitator implements Facilitator {
   readonly verifies: Charge[] = [];
   readonly settles: Charge[] = [];
@@ -21,6 +33,7 @@ export class ScriptedFacilitator implements Facilitator {
   #verifyOutcomes: VerifyOutcome[] = [];
   #settleOutcomes: SettleOutcome[] = [];
   #settlements = 0;
+  #verifyGate: Promise<void> | null = null;
 
   /** The next verification answers this, and the ones after it the last one. */
   willVerify(...outcomes: VerifyOutcome[]): this {
@@ -40,9 +53,31 @@ export class ScriptedFacilitator implements Facilitator {
     return this;
   }
 
+  /**
+   * Holds every verification until the returned function is called.
+   *
+   * A concurrency test uses it to put two presentations of one order past
+   * verification at the same instant, so that what decides between them is the
+   * ownership guard under the store's lock and not the order the two calls
+   * happened to reach the facilitator in.
+   */
+  holdVerification(): () => void {
+    let release: () => void = () => undefined;
+    this.#verifyGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return release;
+  }
+
   async verify(charge: Charge): Promise<VerifyOutcome> {
     this.verifies.push(charge);
-    return next(this.#verifyOutcomes, this.verifies.length, { verified: true, payer: "0xpayer" });
+    if (this.#verifyGate !== null) {
+      await this.#verifyGate;
+    }
+    return next(this.#verifyOutcomes, this.verifies.length, {
+      verified: true,
+      payer: scriptedPayer(charge.payment),
+    });
   }
 
   async settle(charge: Charge): Promise<SettleOutcome> {

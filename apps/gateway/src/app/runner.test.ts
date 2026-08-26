@@ -66,7 +66,6 @@ const impossible = (): StoredOrder => {
     delivery: null,
     payment: null,
     paidBy: null,
-    paidFrom: null,
     settlement: null,
     paymentWords: [],
     paymentWordsDropped: 0,
@@ -149,7 +148,7 @@ describe("an order whose next clock could not be started", () => {
   });
 });
 
-describe("the payment on an order", () => {
+describe("who an order belongs to", () => {
   /** An order that has been quoted and is waiting for a payment. */
   const waiting = async (harnessed: Harness) => {
     const published = await harnessed.gateway.publishCard({
@@ -166,40 +165,54 @@ describe("the payment on an order", () => {
     return offered.order.order.id;
   };
 
-  it("is not replaced once the machine has an opinion about one", async () => {
-    // The payment on the record is what the machine's own payment stage speaks
-    // about. Replaced after a verification, the charge would execute an
-    // authorisation nothing had checked — a merchant paid with somebody else's
-    // failing payment while the buyer's good one was never charged.
+  it("is settled by the first verified payment, and not taken from its owner", async () => {
+    // The ownership decision reads the order under the lock, so a payment that
+    // is not the order's own is turned away without a mark on it — the charge is
+    // never swapped for a stranger's, and the merchant is never paid with an
+    // authorisation the buyer did not present.
     open = await harness();
     const orderId = await waiting(open);
-    await open.gateway.runner.presentPayment(orderId, "MINE", "fp-mine", "0xa", open.now());
-    await open.gateway.runner.apply(orderId, { kind: "payment_verified", at: open.now() });
 
-    await open.gateway.runner.apply(
+    const first = await open.gateway.runner.presentVerifiedPayment(
       orderId,
-      { kind: "purchase_repeated", at: open.now() },
-      { payment: "THEIRS", paidBy: "fp-theirs", paidFrom: "0xb" },
+      "alice",
+      "PAY-A",
+      open.now(),
     );
+    expect(first.kind).toBe("took");
+
+    const stranger = await open.gateway.runner.presentVerifiedPayment(
+      orderId,
+      "bob",
+      "PAY-B",
+      open.now(),
+    );
+    expect(stranger.kind).toBe("not_owner");
 
     const after = await open.store.orderById(orderId);
-    expect(after?.payment).toBe("MINE");
-    expect(after?.paidBy).toBe("fp-mine");
+    expect(after?.paidBy).toBe("alice");
+    expect(after?.payment).toBe("PAY-A");
   });
 
-  it("cannot be presented at all once the machine has one", async () => {
-    // The same rule from the other door: a presentation that arrives while the
-    // machine is mid-payment is a defect in whoever called, not a case to be
-    // handled quietly.
+  it("tells the owner asking again where it stands, and changes nothing", async () => {
+    // A dropped connection and a retry from the same buyer is not a second
+    // purchase. It finds the order already its own and under way, and the
+    // answer is wherever it has got to — the payment that is being charged is
+    // still the first one.
     open = await harness();
     const orderId = await waiting(open);
-    await open.gateway.runner.presentPayment(orderId, "MINE", "fp-mine", "0xa", open.now());
-    await open.gateway.runner.apply(orderId, { kind: "payment_verified", at: open.now() });
+    await open.gateway.runner.presentVerifiedPayment(orderId, "alice", "PAY-A", open.now());
 
-    await expect(
-      open.gateway.runner.presentPayment(orderId, "THEIRS", "fp-theirs", "0xb", open.now()),
-    ).rejects.toThrow(/whose own payment is already/);
+    const again = await open.gateway.runner.presentVerifiedPayment(
+      orderId,
+      "alice",
+      "PAY-A-AGAIN",
+      open.now(),
+    );
+    expect(again.kind).toBe("already_yours");
 
-    expect((await open.store.orderById(orderId))?.payment).toBe("MINE");
+    const after = await open.store.orderById(orderId);
+    expect(after?.payment).toBe("PAY-A");
+    expect(after?.paidBy).toBe("alice");
   });
 });

@@ -91,6 +91,8 @@ export type PurchaseAttempt =
     }
   /** The machine would not take this payment on this order, and said why. */
   | { readonly step: "payment_not_taken"; readonly why: string; readonly retryable: boolean }
+  /** The payment layer did not vouch for this payment; nothing was touched. */
+  | { readonly step: "payment_not_verified"; readonly why: string; readonly retryable: boolean }
   /** This order is somebody else's purchase, and this payment is not its own. */
   | { readonly step: "not_this_purchase" };
 
@@ -263,7 +265,6 @@ export class Gateway {
       delivery: null,
       payment: null,
       paidBy: null,
-      paidFrom: null,
       settlement: null,
       paymentWords: [],
       paymentWordsDropped: 0,
@@ -288,20 +289,65 @@ export class Gateway {
     orderId: string,
     payment: string,
     fingerprint: string,
-    payer: string | null = null,
   ): Promise<PurchaseAttempt> {
     const before = await this.runtime.store.orderById(orderId);
     if (before === null) {
       return { step: "no_such_item" };
     }
 
-    // A signed payment says how much, to whom and on which chain, and nothing
-    // at all about which purchase it is for. Two orders at the same price are
-    // therefore payable with one signature: both would verify, both would go to
-    // a merchant, both would be delivered, and only the second charge would
-    // fail — leaving a merchant who handed over goods for nothing. The first
-    // order to present a payment owns it, and that is decided here, before
-    // anything is verified and before any merchant is asked to do work.
+    const price = before.order.price;
+    if (price === null) {
+      // A payment for an order that was never priced. The agent is only ever
+      // given a challenge for a priced order, so this is a payment for the
+      // wrong order or one built without one; there is nothing to check it
+      // against.
+      return {
+        step: "payment_not_verified",
+        why: "this order has no price for a payment to be checked against",
+        retryable: false,
+      };
+    }
+
+    // The payment layer is asked whether this payment is good, and this happens
+    // before any lock is taken: it is a network round-trip and must not hold a
+    // row. Only a payment it vouches for goes any further — a payment that does
+    // not check out closes nothing and claims nothing, so a stranger's junk
+    // cannot spend the life of an order somebody else was issued a challenge
+    // for. The order stays open and ends on its own deadline; the agent is told
+    // what the layer said and may present a better payment while the quote
+    // still stands.
+    const verified = await this.runtime.facilitator.verify({
+      orderId,
+      amount: price.amount,
+      currency: price.currency,
+      payment,
+    });
+
+    if (verified.verified !== true) {
+      const why = verified.verified === false ? verified.message : verified.message;
+      console.warn(`[gateway] a payment for ${orderId} did not verify: ${why}`);
+      return {
+        step: "payment_not_verified",
+        why,
+        // "unknown" is the layer not answering — trying again may reach it.
+        // "false" is the layer saying no — the same payment will not pass,
+        // though the order is still open for a corrected one.
+        retryable: verified.verified === "unknown",
+      };
+    }
+
+    // The owner is who the payment layer says paid, never the address the
+    // payment declares of itself: a declared address that did not sign does not
+    // verify. Where the layer vouches for a payment without naming a payer, the
+    // payment's own fingerprint stands in — it is derived from what was signed,
+    // so it is no more forgeable.
+    const owner = verified.payer ?? fingerprint;
+
+    // One authorisation buys one order. This is a different guard from
+    // ownership: it stops the same payment being spent on two different orders,
+    // which owning-by-payer cannot, because the same wallet would own both. It
+    // comes after verification, so a payment that never checked out never burns
+    // a claim against the order it named.
     const claim = await this.runtime.store.claimPayment(fingerprint, orderId);
     if (!claim.claimed) {
       const holder = await this.runtime.store.orderById(claim.heldBy);
@@ -315,37 +361,51 @@ export class Gateway {
       };
     }
 
-    // Whose purchase this is. An order's identifier travels — in the challenge,
-    // on the merchant's stream, in a receipt — and the route that takes a
-    // payment takes no key, so without this anybody holding one could act as
-    // the buyer of somebody else's order. The first payment presented owns it.
-    const taken = await this.#present(orderId, payment, fingerprint, payer, before);
-    if (taken !== null) {
-      return taken;
-    }
-
-    // The place in the call to start waiting is here, and the key is the
-    // purchase rather than the order. In the synchronous mode the goods reach
-    // the agent through this park and nowhere else, so a second call parking
-    // under the order's own identifier would take them from whoever was already
-    // waiting — and the buyer, who paid, would be told nothing happened.
-    //
-    // The whole exchange, the goods and then the charge, is promised to the
-    // agent inside one ceiling counted from the purchase itself. What is left
-    // of that ceiling is how long this waits, and never longer.
+    // The park, keyed on the order and its owner. In the synchronous mode the
+    // goods reach the agent through this and nowhere else. Two different buyers
+    // racing one order carry two owners and park on two keys, so neither takes
+    // the other's goods; the same buyer's two concurrent calls share one key
+    // and both are woken. The wait is what is left of the promised ceiling,
+    // counted from the purchase itself, and never longer.
+    const key = purchaseOf(orderId, owner);
     const waits = before.order.mode.settle === "after_fulfillment";
     const spent = this.runtime.clock() - before.order.timestamps.createdAt;
     const left = Math.max(this.runtime.config.deadlines.syncBudgetMs - spent, 0);
-    const parked = waits
-      ? this.runner.purchases.wait(purchaseOf(orderId, fingerprint), left)
-      : null;
+    const parked = waits ? this.runner.purchases.wait(key, left) : null;
 
+    // The ownership decision and the state change, both inside the order's lock.
+    const taken = await this.runner.presentVerifiedPayment(
+      orderId,
+      owner,
+      payment,
+      this.runtime.clock(),
+    );
+
+    if (taken.kind === "no_such_order") {
+      this.runner.purchases.giveUp(key);
+      return { step: "no_such_item" };
+    }
+    if (taken.kind === "not_owner") {
+      this.runner.purchases.giveUp(key);
+      return { step: "not_this_purchase" };
+    }
+    if (taken.kind === "refused") {
+      this.runner.purchases.giveUp(key);
+      return {
+        step: "payment_not_taken",
+        why: taken.rejection.message,
+        retryable: taken.rejection.retryable,
+      };
+    }
+
+    // Took it, or it was already the owner's: the goods, if any, come through
+    // the park.
     if (parked !== null) {
       const settled = await this.runtime.store.orderById(orderId);
       if (settled !== null && outcomeFor(settled.order) !== "in_progress") {
         // It is already answered — an order that was over before this payment
         // arrived, for instance. There is nothing left to wait for.
-        this.runner.purchases.giveUp(purchaseOf(orderId, fingerprint));
+        this.runner.purchases.giveUp(key);
       }
       await parked;
     }
@@ -579,95 +639,6 @@ export class Gateway {
   }
 
   // --- the parts the flows above lean on ------------------------------------
-
-  /**
-   * Hands the payment to the order, and tells the machine what kind of
-   * presentation it is. Answers with a refusal to give the agent, or nothing
-   * when the payment was taken.
-   *
-   * A payment on an order that already has one is a repeat of the purchase, and
-   * the two facts travel together: the machine is told the purchase was
-   * repeated and given the new authorisation in the same breath. Told first and
-   * given the payment after, the verification the machine asks for on a repeat
-   * would run against the authorisation that had just failed — charging the old
-   * one and throwing away the one the agent actually presented.
-   *
-   * And a repeat the machine will not take is not forced through. It refuses
-   * one on an order whose charge never reported back, because sending a second
-   * one would be spending the buyer's money on a guess about the first; writing
-   * the new payment down anyway would erase the record of which authorisation
-   * is unaccounted for, which is the only thing anybody could reconcile that
-   * order from.
-   */
-  async #present(
-    orderId: string,
-    payment: string,
-    fingerprint: string,
-    payer: string | null,
-    before: StoredOrder,
-  ): Promise<PurchaseAttempt | null> {
-    const take = async (): Promise<PurchaseAttempt | null> =>
-      (await this.runner.presentPayment(orderId, payment, fingerprint, payer, this.runtime.clock()))
-        ? null
-        : { step: "no_such_item" };
-
-    if (before.paidBy === null) {
-      // Nobody owns this order yet, so this presentation does.
-      return take();
-    }
-
-    if (before.paidBy === fingerprint) {
-      // The owner, asking again. Still waiting for a payment means a dropped
-      // connection and a retry, which the portal promises is safe; anything
-      // else means the purchase is already under way and there is nothing to
-      // present — the answer is whatever it has come to.
-      return before.order.payment === "none" ? take() : null;
-    }
-
-    // A payment that is not the one this order took. The one way another can
-    // take over is a repeat of the purchase, and two things have to hold for
-    // that. It has to come from the agent who bought — a repeat carries a fresh
-    // authorisation, so the fingerprint cannot say that and the address it
-    // spends from is what does — and the machine has to agree that a repeat
-    // means anything here at all: it knows that one collects goods already
-    // made, that it must not send a second charge on top of one whose fate is
-    // unknown, and that in most states it means nothing.
-    if (before.paidFrom !== null && before.paidFrom !== payer) {
-      return { step: "not_this_purchase" };
-    }
-
-    // The new authorisation travels with the event, so the verification the
-    // machine asks for runs against the payment the agent actually presented
-    // rather than the one before it.
-    const repeated = await this.runner.apply(
-      orderId,
-      { kind: "purchase_repeated", at: this.runtime.clock() },
-      { payment, paidBy: fingerprint, paidFrom: payer },
-    );
-
-    if (repeated.outcome === "no_such_order") {
-      return { step: "no_such_item" };
-    }
-    if (repeated.outcome === "refused") {
-      return {
-        step: "payment_not_taken",
-        why: repeated.rejection.message,
-        retryable: repeated.rejection.retryable,
-      };
-    }
-    if (repeated.order.paidBy !== fingerprint) {
-      // The machine did not reopen the order, so it is still being fulfilled
-      // against the payment it took and nothing about it changed.
-      return { step: "not_this_purchase" };
-    }
-
-    return repeated.effects.some((effect) => effect.kind === "verify_payment")
-      ? // The machine asked for the new payment to be checked and the runner
-        // has already done it. Presenting it again would put a second question
-        // to the facilitator about the same authorisation.
-        null
-      : take();
-  }
 
   /**
    * Puts the price question to the merchant and waits out our own patience for

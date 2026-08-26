@@ -29,7 +29,6 @@ import {
   PAYMENT_REQUIRED_HEADER,
   PAYMENT_RESPONSE_HEADER,
   PaymentEdge,
-  payerIn,
   paymentFingerprint,
   presentedPayment,
 } from "./x402.js";
@@ -257,7 +256,6 @@ async function purchase(
           presented.orderId,
           presented.raw,
           paymentFingerprint(presented.payload, edge.token()),
-          payerIn(presented.payload),
         ),
       );
     }
@@ -316,18 +314,26 @@ async function answerPurchase(
       );
 
     case "not_this_purchase":
-      // Somebody is already buying this order with a payment of their own. An
-      // order's identifier travels — in a challenge, on the merchant's stream,
-      // in a receipt — and holding one is not the same as being the agent whose
-      // purchase it is.
+      // This order already belongs to another payment — the payment layer named
+      // its payer, and it is not the one this call presented. An order's
+      // identifier travels, in a challenge, on the merchant's stream, in a
+      // receipt, and holding one is not the same as being the agent whose
+      // purchase it is. The wording claims nothing about how far along the order
+      // is, only that it is not this caller's to pay.
       return written(
         response,
         CONFLICT,
-        refusal(
-          "not_this_purchase",
-          "this order is already being bought with a payment of its own, and this is not that payment",
-        ),
+        refusal("not_this_purchase", "this order already belongs to another payment"),
       );
+
+    case "payment_not_verified":
+      // The payment layer did not vouch for this payment, so nothing was
+      // touched: the order is exactly where it was and ends on its own
+      // deadline. The agent is told what the layer said and, where trying again
+      // could reach it, that it may.
+      return written(response, CONFLICT, {
+        error: { code: "payment_not_verified", message: attempt.why, retryable: attempt.retryable },
+      });
 
     case "payment_not_taken":
       // The machine would not take a payment on this order and said why. The

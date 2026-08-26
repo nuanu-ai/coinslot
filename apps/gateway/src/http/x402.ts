@@ -244,21 +244,6 @@ export function paymentFingerprint(payload: PaymentPayload, token: TokenIdentity
   return digestOf({ ...chain, by: "payload", payload: canonical(signed) });
 }
 
-/**
- * The address an authorisation says it is spending from.
- *
- * Anybody can write it, so on its own it proves nothing — but a payment whose
- * `from` is not the address that signed it does not verify, so a claim to be
- * somebody buys only a refusal. That makes it exactly good enough for what it
- * is used for: telling a repeat of a purchase by the agent that made it from a
- * stranger who saw the order's identifier and wants the goods it already
- * produced.
- */
-export function payerIn(payload: PaymentPayload): string | null {
-  const signed = asRecord(payload.payload) ?? {};
-  return asHex(asRecord(signed.authorization)?.from);
-}
-
 /** Which token an authorisation is spent on, as this gateway has configured it. */
 export interface TokenIdentity {
   readonly network: string;

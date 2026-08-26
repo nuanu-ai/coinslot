@@ -23,7 +23,7 @@ export { PgBossQueue, queueOn } from "./adapters/pgboss/queue.js";
 export { connect, PostgresStore } from "./adapters/postgres/store.js";
 export { X402Facilitator } from "./adapters/x402/facilitator.js";
 export { Gateway, type PurchaseAttempt } from "./app/gateway.js";
-export { type Applied, OrderRunner, orderDocumentOf } from "./app/runner.js";
+export { type Applied, OrderRunner, orderDocumentOf, type PresentResult } from "./app/runner.js";
 export {
   modeForCard,
   policyFor,

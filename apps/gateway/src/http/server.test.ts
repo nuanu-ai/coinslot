@@ -339,7 +339,9 @@ describe("the payment challenge", () => {
     });
 
     expect(answered.status).toBe(409);
-    expect(answered.body).toMatchObject({ status: "rejected" });
+    expect((answered.body as { error: { code: string } }).error.code).toBe("payment_not_verified");
+    // The order it named was not closed by a payment that could not be read.
+    expect((await harnessed.store.orderById(offered.order.order.id))?.order.state).toBe("quoted");
   });
 
   it("has nothing to sell under an identifier nobody published", async () => {
