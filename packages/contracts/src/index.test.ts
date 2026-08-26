@@ -62,7 +62,9 @@ const walkRefined = (
     if (child === undefined) continue;
 
     if (Array.isArray(child)) {
-      child.forEach((option, index) => walkRefined(option, `${path}[${index}]`, found, seen));
+      for (const [index, option] of child.entries()) {
+        walkRefined(option, `${path}[${index}]`, found, seen);
+      }
     } else if (key === "shape") {
       for (const [name, field] of Object.entries(child as Record<string, unknown>)) {
         walkRefined(field, `${path}.${name}`, found, seen);
@@ -222,20 +224,23 @@ describe("the contract as JSON Schema", () => {
     expect(spec.additionalProperties).toMatchObject({ required: ["type"] });
   });
 
-  it("keeps a rule that has two parts, rather than exporting only the first", () => {
-    // An identifier is held to two patterns. JSON Schema takes one `pattern`
-    // per schema, so the two arrive as an `allOf` — and a reader who got only
-    // the first would build a client that accepts keys we refuse. Both are
-    // read back and run.
-    const identifier = toJsonSchemas().identifier;
-    const patterns = (identifier.allOf ?? []).map((part) => nested(part).pattern ?? "");
+  it("exports the identifier rule whole, and it means the same thing there", () => {
+    // The rule is one pattern rather than several checks precisely so that all
+    // of it crosses into the document: a generated client should refuse the
+    // keys we refuse. The pattern is read back out and run, because a pattern
+    // that is present and matches everything would pass a test that only
+    // looked for one.
+    const pattern = toJsonSchemas().identifier.pattern;
 
-    expect(patterns).toHaveLength(2);
-    const accepts = (value: string) => patterns.every((source) => new RegExp(source).test(value));
+    expect(pattern).toBeTypeOf("string");
+    const accepts = (value: string) => new RegExp(pattern ?? "", "u").test(value);
 
     expect(accepts("access-monthly")).toBe(true);
+    expect(accepts("SKU 100/1")).toBe(true);
+    expect(accepts("")).toBe(false);
     expect(accepts("access-monthly ")).toBe(false);
     expect(accepts("a\u0000b")).toBe(false);
+    expect(accepts("access-monthly\u200b")).toBe(false);
   });
 
   it("leaves no refinement undescribed, anywhere in the registry", () => {

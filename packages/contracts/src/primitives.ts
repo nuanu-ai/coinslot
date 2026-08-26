@@ -94,17 +94,20 @@ export const TimestampSchema = z.iso.datetime({ offset: true });
  * before the pilot rather than invented here; until then the bound on an
  * identifier is whatever the transport carrying it allows.
  */
-export const IdentifierSchema = z
-  .string()
-  .regex(/^\S(?:[\s\S]*\S)?$/, "an identifier must not be empty, blank or padded with whitespace")
-  .regex(
-    // Both rules are patterns rather than refinements so that both survive
-    // into the JSON Schema export, where zod keeps patterns and drops
-    // refinements without a word.
-    // biome-ignore lint/suspicious/noControlCharactersInRegex: refusing them is the point
-    /^[^\u0000-\u001f\u007f]+$/u,
-    "an identifier must not carry control characters",
-  );
+const UNPRINTABLE = "\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u2060-\\u2064\\ufeff";
+
+export const IdentifierSchema = z.string().regex(
+  // One pattern, not three checks, because a rule written as a refinement is
+  // dropped from the JSON Schema export without a word — the defect this
+  // package has already paid for twice. As a pattern it crosses intact, and a
+  // generated client refuses the same keys we do.
+  //
+  // It reads: a first character that is neither whitespace nor unprintable,
+  // then anything printable, then a last character under the same rule as the
+  // first. One character on its own is allowed; nothing at all is not.
+  new RegExp(`^[^\\s${UNPRINTABLE}](?:[^${UNPRINTABLE}]*[^\\s${UNPRINTABLE}])?$`, "u"),
+  "an identifier must not be empty, padded with whitespace, or carry characters that show nothing",
+);
 
 /**
  * The price a purchase actually went through at.
