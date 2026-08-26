@@ -997,6 +997,24 @@ describe("while the settle is in flight", () => {
     expect(kinds(effects)).toStrictEqual(["release_goods_to_agent", "issue_receipt"]);
   });
 
+  it("holds an order with the goods made and the money in flight against a departure", () => {
+    // What keeps a merchant's departure from closing an order whose goods he
+    // has already produced is not a branch inside that state — it is that the
+    // state is always mid-charge, so the guard turns the departure back before
+    // anything else looks at it. This is the test that makes that true, and
+    // the reason the arm behind it can never be reached.
+    const held = reach("fulfilled");
+
+    expect(held.payment).toBe("settling");
+
+    const result = transition(held, { kind: "merchant_departed", at: T0 + 9 });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.rejection.code).toBe("settle_in_flight");
+    expect(result.rejection.retryable).toBe(true);
+  });
+
   it("does not let a failed verification wipe the charge it knows nothing about", () => {
     // The way round the guard that the widened walk found: a payment that did
     // not check out never became a charge, but clearing the record on it left

@@ -848,13 +848,13 @@ function fromFulfilled(order: Order, event: StateEvent): TransitionResult {
       // This state belongs to the synchronous mode, where the handler refuses
       // by answering and there is no separate call at all.
       return answer(order, { ok: false, error: "not_applicable_in_mode", retryable: false });
-    case "merchant_departed":
-      // His goods are already made and the money for them is mid-flight. His
-      // leaving settles nothing here, and closing the order as owing nobody
-      // anything would be the one wrong answer.
-      return ok(order);
     case "purchase_repeated":
       return ok(order);
+    // Both entrances to this state go through `startSettle`, so an order here
+    // is always mid-charge and the settling guard has already turned back
+    // everything below. These arms exist for the compiler; refusing is the
+    // safe thing for them to say if that ever stops being true.
+    case "merchant_departed":
     case "quote_answered":
     case "quote_silent":
     case "payment_verified":
