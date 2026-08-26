@@ -35,6 +35,14 @@ import { IdentifierSchema } from "./primitives.js";
  * Five and not fewer, because each one is a different thing for the merchant
  * to do next. `delivered` is the sale closing. `already_delivered` is their
  * own retry landing twice — safe, and no second delivery is wanted.
+ *
+ * That second one is worth a warning, because the merchant-facing pages say a
+ * repeated call returns "the same success" and this returns a different word
+ * for it. Both are true of the effect — nothing is delivered twice and nothing
+ * is charged twice — but a merchant who reads that sentence and writes
+ * `if (result === "delivered")` turns their own safe retry into a failure
+ * branch. Until the pages and this list agree, a consumer branching on success
+ * should test for membership in this enumeration rather than for one value.
  * `debt_closed_by_delivery` says the delivery deadline had already passed and
  * the goods went out anyway, closing a debt instead of completing a sale; the
  * merchant may want to know that happened. `refused` is the refusal taking
