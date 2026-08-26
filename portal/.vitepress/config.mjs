@@ -24,7 +24,8 @@ export default defineConfig({
           { text: 'Первая продажа', link: '/quickstart' },
           { text: 'Карточка товара', link: '/cards' },
           { text: 'Заказы и режимы выдачи', link: '/orders' },
-          { text: 'Что может пойти не так', link: '/failures' }
+          { text: 'Что может пойти не так', link: '/failures' },
+          { text: 'Частые вопросы инженера', link: '/faq#вопросы-инженера' }
         ]
       }
     ],
