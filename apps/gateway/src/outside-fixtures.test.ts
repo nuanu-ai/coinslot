@@ -1,0 +1,338 @@
+/**
+ * Two purchases walked the whole way through, with nothing borrowed.
+ *
+ * Everything the other tests reach for — the harness, the counted identifiers,
+ * the worker loop, the cards — is built here from scratch instead. A fixture
+ * that quietly supplies a field, a default or a step is exactly what would let
+ * a gateway pass its own suite and fail the first real purchase, so this file
+ * takes nothing from one. It publishes a card the way a merchant's SDK would,
+ * reads the catalog the way an agent would, pays the way an x402 client does,
+ * answers the way a handler does, and reads the receipt at the end.
+ *
+ * The only things swapped are the three that would need a database, a queue
+ * server and a payment network. Everything between the socket and the order
+ * machine is what runs in production.
+ */
+
+import { encodePaymentSignatureHeader, decodePaymentRequiredHeader } from "@x402/core/http";
+import { randomUUID } from "node:crypto";
+import type { AddressInfo } from "node:net";
+import { describe, expect, it } from "vitest";
+import { ScriptedFacilitator } from "./adapters/memory/facilitator.js";
+import { MemoryQueue } from "./adapters/memory/queue.js";
+import { MemoryStore } from "./adapters/memory/store.js";
+import { Gateway } from "./app/gateway.js";
+import { loadConfig } from "./config.js";
+import { buildApp } from "./http/server.js";
+
+const MERCHANT_KEY = "the-merchant-key-for-this-walk";
+const PAY_TO = "0x00000000000000000000000000000000000000aa";
+
+/** A whole gateway and a socket to talk to it over, built from nothing. */
+async function aGatewayOnAPort() {
+  const ids = () => randomUUID();
+  const store = new MemoryStore(ids);
+  const queue = new MemoryQueue();
+  const facilitator = new ScriptedFacilitator();
+
+  const gateway = new Gateway({
+    config: loadConfig({
+      DATABASE_URL: "postgres://coinslot@localhost:5432/coinslot",
+      MERCHANT_API_KEY: MERCHANT_KEY,
+      PAY_TO_ADDRESS: PAY_TO,
+    }),
+    store,
+    queue,
+    facilitator,
+    clock: () => Date.now(),
+    ids,
+  });
+  await gateway.start();
+
+  const server = buildApp(gateway).listen(0);
+  await new Promise<void>((resolve) => server.once("listening", resolve));
+  const { port } = server.address() as AddressInfo;
+
+  const call = async (
+    method: string,
+    path: string,
+    options: { body?: unknown; headers?: Record<string, string> } = {},
+  ) => {
+    const response = await fetch(`http://127.0.0.1:${port}${path}`, {
+      method,
+      headers: {
+        ...(options.body === undefined ? {} : { "content-type": "application/json" }),
+        ...options.headers,
+      },
+      ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
+    });
+    const text = await response.text();
+    return {
+      status: response.status,
+      headers: response.headers,
+      body: (text === "" ? null : JSON.parse(text)) as never,
+    };
+  };
+
+  return {
+    call,
+    facilitator,
+    store,
+    async close() {
+      server.close();
+      await gateway.stop();
+    },
+  };
+}
+
+/**
+ * The merchant's worker, written the way a merchant's would be: draw the
+ * stream, do the work, post what the handler returned. It runs until it is
+ * stopped, because an order arrives while the agent is waiting rather than
+ * before.
+ */
+function aMerchantsWorker(
+  call: Awaited<ReturnType<typeof aGatewayOnAPort>>["call"],
+  handle: (order: { id: string; merchant_item_id: string }) => Record<string, unknown>,
+) {
+  let running = true;
+  const seen: string[] = [];
+
+  const loop = (async () => {
+    while (running) {
+      const drawn = await call("POST", "/v0/worker/poll", {
+        body: { wait_seconds: 0, max: 10 },
+        headers: { authorization: `Bearer ${MERCHANT_KEY}` },
+      });
+      const { envelopes } = drawn.body as {
+        envelopes: { kind: string; payload: { id: string; merchant_item_id: string } }[];
+      };
+
+      for (const envelope of envelopes) {
+        if (envelope.kind !== "order") continue;
+        seen.push(envelope.payload.id);
+        await call("POST", `/v0/orders/${encodeURIComponent(envelope.payload.id)}/answer`, {
+          body: { delivered: handle(envelope.payload) },
+          headers: { authorization: `Bearer ${MERCHANT_KEY}` },
+        });
+      }
+
+      if (envelopes.length === 0) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+    }
+  })();
+
+  return {
+    seen,
+    async stop() {
+      running = false;
+      await loop;
+    },
+  };
+}
+
+/** What an x402 client does with a challenge: accept an option and sign it. */
+function payFor(challengeHeader: string): string {
+  const challenge = decodePaymentRequiredHeader(challengeHeader);
+  const accepted = challenge.accepts[0];
+  if (accepted === undefined) {
+    throw new Error("the challenge offered no way to pay");
+  }
+  return encodePaymentSignatureHeader({
+    x402Version: challenge.x402Version,
+    accepted,
+    payload: { signature: "0xsigned-by-the-agent" },
+  });
+}
+
+describe("a purchase from the outside", () => {
+  it("walks a synchronous sale from the catalog to the receipt", async () => {
+    const gateway = await aGatewayOnAPort();
+    try {
+      // The merchant publishes, the way their SDK would.
+      const published = await gateway.call("POST", "/v0/catalog/publish", {
+        headers: { authorization: `Bearer ${MERCHANT_KEY}` },
+        body: {
+          merchant_item_id: "night-in-101",
+          title: "A room for the night",
+          description: "One night in room 101, key by code",
+          price: { amount: "80.00", currency: "USD" },
+          params: { nights: { type: "integer", required: true } },
+          result: { access_code: { type: "string" } },
+          fulfillment: "sync",
+        },
+      });
+      expect(published.status).toBe(200);
+      const itemId = (published.body as { ok: { id: string } }).ok.id;
+
+      // The agent finds it. Nothing here needs a key.
+      const catalog = await gateway.call("GET", "/v0/catalog");
+      expect(catalog.status).toBe(200);
+      const offered = (catalog.body as { items: { id: string; price: { amount: string } }[] }).items;
+      expect(offered).toHaveLength(1);
+      expect(offered[0]?.id).toBe(itemId);
+      expect(offered[0]?.price.amount).toBe("80.00");
+
+      // It asks to buy and is told what to pay.
+      const challenged = await gateway.call("POST", `/v0/items/${itemId}/purchase`, {
+        body: { params: { nights: 1 } },
+      });
+      expect(challenged.status).toBe(402);
+      const challenge = challenged.headers.get("payment-required");
+      expect(challenge).toBeTruthy();
+
+      // Nothing has been charged for a purchase nobody has paid for.
+      expect(gateway.facilitator.verifies).toHaveLength(0);
+      expect(gateway.facilitator.settles).toHaveLength(0);
+
+      // The merchant's worker is running, and the agent pays.
+      const worker = aMerchantsWorker(gateway.call, () => ({ access_code: "4417" }));
+      const bought = await gateway.call("POST", `/v0/items/${itemId}/purchase`, {
+        body: { params: { nights: 1 } },
+        headers: { "payment-signature": payFor(challenge ?? "") },
+      });
+      await worker.stop();
+
+      // The goods themselves come back in the answer to the purchase.
+      expect(bought.status).toBe(200);
+      const answer = bought.body as {
+        delivered: { access_code: string };
+        order: { id: string; price: { amount: string } };
+        receipt: { outcome: string; price: { amount: string } };
+      };
+      expect(answer.delivered).toStrictEqual({ access_code: "4417" });
+      expect(answer.order.price.amount).toBe("80.00");
+      expect(answer.receipt.outcome).toBe("delivered");
+      expect(answer.receipt.price.amount).toBe("80.00");
+      expect(bought.headers.get("payment-response")).toBeTruthy();
+
+      // Verified before the merchant was asked, charged after they answered,
+      // and each of those happened exactly once.
+      expect(gateway.facilitator.verifies).toHaveLength(1);
+      expect(gateway.facilitator.settles).toHaveLength(1);
+      expect(worker.seen).toStrictEqual([answer.order.id]);
+
+      // And the merchant can read it back: one order, closed, nothing open.
+      const read = await gateway.call("GET", `/v0/orders/${encodeURIComponent(answer.order.id)}`, {
+        headers: { authorization: `Bearer ${MERCHANT_KEY}` },
+      });
+      expect(read.body).toMatchObject({ id: answer.order.id, status: "delivered" });
+
+      const open = await gateway.call("GET", "/v0/orders?open=true", {
+        headers: { authorization: `Bearer ${MERCHANT_KEY}` },
+      });
+      expect((open.body as { orders: unknown[] }).orders).toStrictEqual([]);
+    } finally {
+      await gateway.close();
+    }
+  });
+
+  it("walks an asynchronous sale from the catalog to the receipt", async () => {
+    const gateway = await aGatewayOnAPort();
+    try {
+      const published = await gateway.call("POST", "/v0/catalog/publish", {
+        headers: { authorization: `Bearer ${MERCHANT_KEY}` },
+        body: {
+          merchant_item_id: "esim-7-days",
+          title: "A seven day eSIM",
+          description: "Seven days of data, activated by code",
+          price: { amount: "12.50", currency: "USD" },
+          result: { activation_code: { type: "string" } },
+          fulfillment: "async",
+          fulfill_deadline_seconds: 86_400,
+        },
+      });
+      expect(published.status).toBe(200);
+      const itemId = (published.body as { ok: { id: string } }).ok.id;
+
+      const catalog = await gateway.call("GET", "/v0/catalog");
+      expect(
+        (catalog.body as { items: { fulfillment: string; fulfill_deadline_seconds: number }[] })
+          .items[0],
+      ).toMatchObject({ fulfillment: "async", fulfill_deadline_seconds: 86_400 });
+
+      const challenged = await gateway.call("POST", `/v0/items/${itemId}/purchase`, {
+        body: { params: {} },
+      });
+      expect(challenged.status).toBe(402);
+
+      // The money moves at the purchase here, so the agent is answered with an
+      // order rather than with goods — and told plainly that there is no
+      // receipt yet, which is not the same as there being no field for one.
+      const bought = await gateway.call("POST", `/v0/items/${itemId}/purchase`, {
+        body: { params: {} },
+        headers: { "payment-signature": payFor(challenged.headers.get("payment-required") ?? "") },
+      });
+      expect(bought.status).toBe(200);
+      const started = bought.body as { order: { id: string }; receipt: null };
+      expect(started.receipt).toBeNull();
+      expect(gateway.facilitator.settles).toHaveLength(1);
+
+      const orderId = started.order.id;
+
+      // The merchant draws the order and takes it on.
+      const drawn = await gateway.call("POST", "/v0/worker/poll", {
+        body: { wait_seconds: 0 },
+        headers: { authorization: `Bearer ${MERCHANT_KEY}` },
+      });
+      const { envelopes } = drawn.body as { envelopes: { kind: string; payload: { id: string } }[] };
+      expect(envelopes.map((envelope) => envelope.payload.id)).toStrictEqual([orderId]);
+
+      const accepted = await gateway.call(
+        "POST",
+        `/v0/orders/${encodeURIComponent(orderId)}/accept`,
+        { body: { eta_seconds: 120 }, headers: { authorization: `Bearer ${MERCHANT_KEY}` } },
+      );
+      expect(accepted.status).toBe(200);
+      expect(accepted.body).toStrictEqual({ ok: true });
+
+      // Until they deliver, the order is one of the merchant's open ones.
+      const open = await gateway.call("GET", "/v0/orders?open=true", {
+        headers: { authorization: `Bearer ${MERCHANT_KEY}` },
+      });
+      expect((open.body as { orders: { id: string; status: string }[] }).orders).toMatchObject([
+        { id: orderId, status: "in_progress" },
+      ]);
+
+      // Later, they deliver by the call the asynchronous mode is closed with.
+      const delivered = await gateway.call(
+        "POST",
+        `/v0/orders/${encodeURIComponent(orderId)}/deliver`,
+        {
+          body: { activation_code: "LPA:1$rsp.example$AB12" },
+          headers: { authorization: `Bearer ${MERCHANT_KEY}` },
+        },
+      );
+      expect(delivered.status).toBe(200);
+      expect(delivered.body).toStrictEqual({ ok: true, result: "delivered" });
+
+      // A repeat of that call is safe, and charges nothing a second time.
+      const again = await gateway.call(
+        "POST",
+        `/v0/orders/${encodeURIComponent(orderId)}/deliver`,
+        {
+          body: { activation_code: "LPA:1$rsp.example$AB12" },
+          headers: { authorization: `Bearer ${MERCHANT_KEY}` },
+        },
+      );
+      expect(again.body).toStrictEqual({ ok: true, result: "already_delivered" });
+      expect(gateway.facilitator.settles).toHaveLength(1);
+
+      // The receipt is written and the order is closed.
+      const receipt = await gateway.store.receiptForOrder(orderId);
+      expect(receipt).toMatchObject({
+        order_id: orderId,
+        outcome: "delivered",
+        price: { amount: "12.50", currency: "USD" },
+      });
+
+      const closed = await gateway.call("GET", "/v0/orders?open=true", {
+        headers: { authorization: `Bearer ${MERCHANT_KEY}` },
+      });
+      expect((closed.body as { orders: unknown[] }).orders).toStrictEqual([]);
+    } finally {
+      await gateway.close();
+    }
+  });
+});
