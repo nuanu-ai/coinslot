@@ -1,16 +1,17 @@
 # Coinslot
 
-Шлюз, через который классический интернет-магазин продаёт свои товары
-ИИ-агентам за стейблкоины по протоколу x402. Что это и зачем — `docs/vision.md`.
+The gateway through which a classic online store sells its goods to AI agents
+for stablecoins over the x402 protocol. What it is and why — `docs/vision.md`.
 
-Стадия — этап 0 плана пилота (`docs/research/21-pilot-plan.md`): каркас
-монорепо поднят, дальше — контракты кодом и машина состояний заказа.
+The stage is stage 0 of the pilot plan (`docs/research/21-pilot-plan.md`): the
+monorepo scaffold is up, next come contracts as code and the order state
+machine.
 
-- Принятые решения — `docs/decisions/` (экспозиция каталога, модель
-  интеграции, стек)
-- Рабочие материалы исследования — `docs/research/`
-- Документация для подключающихся магазинов — `portal/` (отдельный проект:
-  `cd portal && pnpm install && pnpm docs:dev`)
-- Код — `packages/` (contracts, core, sdk) и `apps/gateway`. Проверки:
-  `pnpm install`, затем `pnpm check`, `pnpm typecheck`, `pnpm test`,
+- Decisions taken — `docs/decisions/` (catalog exposure, integration model,
+  stack)
+- Research working materials — `docs/research/`
+- Documentation for the stores that are integrating — `portal/` (a separate
+  project: `cd portal && pnpm install && pnpm docs:dev`)
+- Code — `packages/` (contracts, core, sdk) and `apps/gateway`. Checks:
+  `pnpm install`, then `pnpm check`, `pnpm typecheck`, `pnpm test`,
   `pnpm check:decisions`
