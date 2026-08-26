@@ -98,6 +98,8 @@ export const WORKER_PROBLEM_KINDS = Object.freeze({
   QUOTE_ANSWER_UNUSED: "quote_answer_unused",
   /** The worker stopped part-way through a batch and the rest went unread. */
   BATCH_ABANDONED: "batch_abandoned",
+  /** The loop itself failed in a way nothing here anticipated. A defect in this SDK. */
+  WORKER_FAILED: "worker_failed",
   /** A delivery carried the one field name this contract removes in silence. */
   DELIVERY_FIELD_DROPPED: "delivery_field_dropped",
 } as const);
@@ -589,7 +591,7 @@ export const startWorker = (
         });
       }
 
-      if (answer.document.envelopes.length === 0) {
+      if (batch.length === 0) {
         await rest(QUIET_POLL_FLOOR_MS - (clock.now() - startedAt));
       }
     }
@@ -597,11 +599,15 @@ export const startWorker = (
 
   const finished = run()
     .catch((cause: unknown) => {
+      // Under its own name rather than as a failed poll, because nothing about
+      // a poll failed: everything the loop expects to go wrong is handled
+      // inside it, so reaching here means this SDK has a defect and the
+      // merchant's worker is down until their process is restarted.
       report({
-        kind: WORKER_PROBLEM_KINDS.POLL_FAILED,
+        kind: WORKER_PROBLEM_KINDS.WORKER_FAILED,
         fatal: true,
         cause,
-        message: `the worker stopped on an error it did not expect: ${String(cause)}`,
+        message: `the worker stopped on an error it did not expect, which is a defect in the Coinslot SDK rather than something the gateway did: ${String(cause)}`,
       });
     })
     .finally(() => {
