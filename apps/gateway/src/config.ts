@@ -114,6 +114,15 @@ const environmentSchema = z.object({
   REDELIVERY_MAX_DELAY_MS: durationMs(30_000),
   REDELIVERY_MAX_ATTEMPTS: countAbove(5),
 
+  /**
+   * How long the gateway waits for a handler to answer a delivery before it
+   * reports the delivery as unanswered. It is not a deadline on the order: the
+   * machine takes that report, works out whether another attempt could still
+   * land inside the order's own deadline, and answers with a retry or with an
+   * ending.
+   */
+  HANDLER_ANSWER_MS: durationMs(3_000),
+
   /** How long the gateway holds a worker's poll open (ADR-0004 §1). */
   WORKER_POLL_WAIT_MS: durationMs(25_000),
   /** The most envelopes one poll answers with, whatever the worker asked for. */
@@ -142,6 +151,8 @@ export interface DeadlineConfig {
   readonly paymentAfterConfirmationMs: number;
   readonly defaultConfirmationResponseMs: number;
   readonly defaultAsyncFulfillmentMs: number;
+  /** How long a delivery may go unanswered before it is reported unanswered. */
+  readonly handlerAnswerMs: number;
 }
 
 export interface RedeliveryConfig {
@@ -241,6 +252,7 @@ export function loadConfig(environment: Record<string, string | undefined>): Gat
     paymentAfterConfirmationMs: environmentValues.PAYMENT_AFTER_CONFIRMATION_MS,
     defaultConfirmationResponseMs: environmentValues.DEFAULT_CONFIRMATION_RESPONSE_MS,
     defaultAsyncFulfillmentMs: environmentValues.DEFAULT_ASYNC_FULFILLMENT_MS,
+    handlerAnswerMs: environmentValues.HANDLER_ANSWER_MS,
   };
 
   const problems = arithmeticProblems(deadlines);

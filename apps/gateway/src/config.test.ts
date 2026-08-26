@@ -33,6 +33,7 @@ describe("loadConfig", () => {
       paymentAfterConfirmationMs: 300_000,
       defaultConfirmationResponseMs: 3_600_000,
       defaultAsyncFulfillmentMs: 86_400_000,
+      handlerAnswerMs: 3_000,
     });
 
     expect(redelivery).toStrictEqual({
@@ -54,6 +55,7 @@ describe("loadConfig", () => {
       PAYMENT_AFTER_CONFIRMATION_MS: "5000",
       DEFAULT_CONFIRMATION_RESPONSE_MS: "6000",
       DEFAULT_ASYNC_FULFILLMENT_MS: "7000",
+      HANDLER_ANSWER_MS: "1500",
       REDELIVERY_BASE_DELAY_MS: "10",
       REDELIVERY_FACTOR: "3",
       REDELIVERY_MAX_DELAY_MS: "100",
@@ -68,6 +70,7 @@ describe("loadConfig", () => {
     expect(config.deadlines.paymentAfterConfirmationMs).toBe(5000);
     expect(config.deadlines.defaultConfirmationResponseMs).toBe(6000);
     expect(config.deadlines.defaultAsyncFulfillmentMs).toBe(7000);
+    expect(config.deadlines.handlerAnswerMs).toBe(1500);
     expect(config.redelivery).toStrictEqual({
       baseDelayMs: 10,
       factor: 3,

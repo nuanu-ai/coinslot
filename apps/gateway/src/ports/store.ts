@@ -49,6 +49,17 @@ export interface StoredOrder {
   readonly delivery: Delivery | null;
   /** What the agent presented to pay with, verbatim, until the charge is done. */
   readonly payment: string | null;
+  /**
+   * The delivery that is out with a worker and has not been answered.
+   *
+   * It is here so that a reminder about one delivery cannot undo the answer to
+   * another. A merchant who took an order on and has a day to fulfill it
+   * answered the delivery he was given; without this, the reminder left against
+   * that same delivery would fire afterwards, the machine would be told his
+   * handler never answered, and he would be sent the order again — every window,
+   * all day.
+   */
+  readonly openDeliveryId: string | null;
 }
 
 /**
