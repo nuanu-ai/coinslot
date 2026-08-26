@@ -1,12 +1,13 @@
 import { defineConfig } from "vitest/config";
 
 /**
- * Один конфиг на весь workspace: тесты лежат рядом с кодом, отдельных
- * проектов на пакет не заводим, пока это не понадобится по-настоящему.
+ * One config for the whole workspace: tests sit next to the code, and we do
+ * not set up a separate project per package until that is genuinely needed.
  *
- * `pnpm test` обязан быть бесплатным, детерминированным и работать без сети.
- * Всё, что трогает чейн, фасилитатор или живой API мерчанта, живёт в отдельной
- * команде smoke с потолком расхода и сюда не попадает.
+ * `pnpm test` must be free, deterministic and work without the network.
+ * Everything that touches the chain, the facilitator or a merchant's live API
+ * lives in a separate smoke command with a spending cap and does not get in
+ * here.
  */
 export default defineConfig({
   test: {

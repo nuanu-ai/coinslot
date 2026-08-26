@@ -1,8 +1,8 @@
-# Состав монорепо. `portal/` сюда намеренно не входит: это отдельный
-# vitepress-проект со своим локом и своей сборкой, и втягивать его в общий
-# install значит связать выпуск документации с выпуском кода. `spikes/`
-# тоже снаружи — спайки живут на своих зависимостях и умирают вместе с
-# выводами.
+# What the monorepo is made of. `portal/` is deliberately left out: it is a
+# separate vitepress project with its own lockfile and its own build, and
+# pulling it into the shared install would tie the release of the
+# documentation to the release of the code. `spikes/` is outside too — spikes
+# live on their own dependencies and die together with their conclusions.
 packages:
   - packages/*
   - apps/*
