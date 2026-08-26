@@ -22,7 +22,7 @@
  * the portal, or change what an example says, and the build says so.
  */
 
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { z } from "zod";
 import { CardSchema } from "./card.js";
@@ -266,6 +266,39 @@ const fixtures: Fixture[] = [
     fence: { file: "portal/quickstart.md", language: "ts", index: 2 },
     schema: HandlerAnswerSchema,
     value: { refused: { code: "out_of_stock", message: "Мест на тарифе нет" } },
+  },
+  {
+    kind: "transcribed",
+    what: "a handler delivering a synchronous order",
+    fence: { file: "portal/quickstart.md", language: "ts", index: 2 },
+    schema: HandlerAnswerSchema,
+    computed: ["access_url"],
+    value: { delivered: { access_url: "https://example.com/a/9f2c4a" } },
+  },
+  {
+    kind: "transcribed",
+    what: "the price handler in the field reference, answering that the item is there",
+    fence: { file: "portal/cards.md", language: "ts", index: 1 },
+    schema: QuoteResponseSchema,
+    // Both answers share this fence, so each branch's names keep the other's
+    // alive: renaming the unavailable branch's fields left every token of its
+    // own fixture still occurring, in the other branch. The reverse check is
+    // what closes that, and this branch is the one whose names cover the fence.
+    completeKeys: true,
+    computed: ["amount", "as_of"],
+    value: {
+      available: true,
+      price: { amount: "5.00", currency: "USD" },
+      as_of: "2026-08-26T10:15:00Z",
+    },
+  },
+  {
+    kind: "transcribed",
+    what: "the same price handler, answering that it is not",
+    fence: { file: "portal/cards.md", language: "ts", index: 1 },
+    schema: QuoteResponseSchema,
+    computed: ["as_of"],
+    value: { available: false, as_of: "2026-08-26T10:15:00Z" },
   },
   {
     kind: "transcribed",
@@ -524,15 +557,14 @@ describe("no example on the portal goes unpinned", () => {
   // them has to appear in the map above. TypeScript fences are not counted:
   // most of them are calling code rather than a payload, and counting those
   // would fail on every unrelated example the portal gains.
-  const pages = [
-    "portal/cards.md",
-    "portal/orders.md",
-    "portal/quickstart.md",
-    "portal/failures.md",
-    "portal/money.md",
-    "portal/faq.md",
-    "portal/index.md",
-  ];
+  // Read from the directory rather than listed here. A hand-kept list guards
+  // the pages somebody remembered, and a page added to the portal — the very
+  // moment a new payload example is most likely to appear — would be guarded
+  // by nothing at all. `WRITING.md` is the house style, addressed to us.
+  const pages = readdirSync(new URL("portal", repoRoot))
+    .filter((file) => file.endsWith(".md") && file !== "WRITING.md")
+    .map((file) => `portal/${file}`)
+    .sort();
 
   for (const page of pages) {
     for (const language of ["json", "http"]) {
