@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { OrderStatusSchema } from "./order-status.js";
 import { ReceiptOutcomeSchema, ReceiptSchema } from "./receipt.js";
 import { errorOf, expectMissingFieldRejected } from "./testing/expect-schema.js";
 
@@ -19,19 +20,40 @@ const receipt = {
 };
 
 describe("what a receipt says became of the purchase", () => {
-  // The promise: a receipt says exactly what is known. "Paid, delivery still
-  // running" is a different statement from "delivered" and from "paid and
-  // never delivered", and an agent must not have to read one as another.
-  it("tells the three states a paid purchase can be in apart", () => {
-    for (const outcome of ["pending", "delivered", "refund_due"]) {
+  // The promise: a receipt says exactly what is known, in the same words the
+  // order status uses. "Paid, delivery still running" is a different statement
+  // from "delivered" and from "paid and never delivered", and an agent must
+  // not have to read one as another.
+  it("tells apart the four states a paid purchase can be in", () => {
+    for (const outcome of ["in_progress", "delivered", "refund_due", "refunded"]) {
       expect(ReceiptOutcomeSchema.safeParse(outcome).success, outcome).toBe(true);
     }
   });
 
-  it("has no value for a purchase that never got as far as paying", () => {
-    // A refused, declined or expired purchase leaves no receipt at all: no
-    // money moved, and there is nothing to be proof of.
-    for (const outcome of ["rejected", "declined", "expired", "cancelled", ""]) {
+  it("borrows its words from the order status rather than inventing its own", () => {
+    // A receipt outcome that read `pending` where the order said `in_progress`
+    // would be two names for one state, and whichever an agent happened to
+    // read would look like the whole truth.
+    for (const outcome of ReceiptOutcomeSchema.options) {
+      expect(OrderStatusSchema.safeParse(outcome).success, outcome).toBe(true);
+    }
+    expect(ReceiptOutcomeSchema.safeParse("pending").success).toBe(false);
+  });
+
+  it("has no value for a purchase whose money never moved", () => {
+    // A refused, declined, expired or cancelled purchase leaves no receipt at
+    // all: nothing moved, and there is nothing to be proof of. Neither does a
+    // synchronous delivery whose payment failed — that is the case where the
+    // merchant produced the goods and no payment executed, so there is no
+    // record of one to write.
+    for (const outcome of [
+      "rejected",
+      "declined",
+      "expired",
+      "cancelled",
+      "delivered_unpaid",
+      "",
+    ]) {
       expect(ReceiptOutcomeSchema.safeParse(outcome).success, JSON.stringify(outcome)).toBe(false);
     }
   });
@@ -43,7 +65,11 @@ describe("receipt", () => {
   });
 
   it("accepts a receipt for a purchase still waiting on its delivery", () => {
-    expect(ReceiptSchema.safeParse({ ...receipt, outcome: "pending" }).success).toBe(true);
+    expect(ReceiptSchema.safeParse({ ...receipt, outcome: "in_progress" }).success).toBe(true);
+  });
+
+  it("accepts a receipt for a debt that has since been paid back", () => {
+    expect(ReceiptSchema.safeParse({ ...receipt, outcome: "refunded" }).success).toBe(true);
   });
 
   it("accepts a receipt for a sale that had no price question behind it", () => {

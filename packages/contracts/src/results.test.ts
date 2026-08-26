@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { OrderCallErrorSchema, PublishErrorSchema, PublishResultSchema } from "./results.js";
+import {
+  ORDER_CALL_ERROR_CODES,
+  ORDER_CALL_RESULTS,
+  OrderCallErrorSchema,
+  OrderCallResultSchema,
+  PublishErrorSchema,
+  PublishResultSchema,
+} from "./results.js";
 import { errorOf, expectMissingFieldRejected } from "./testing/expect-schema.js";
 
 describe("what publishing a card returns", () => {
@@ -77,6 +84,79 @@ describe("one finding about a card", () => {
         false,
       );
     }
+  });
+});
+
+describe("what delivering or refusing an order answers with", () => {
+  // The promise: the merchant's code branches on these, so they are words we
+  // owe them rather than prose we are free to reword. Each one is a different
+  // thing to do next, which is why none of them collapses into another.
+
+  it("names every way the call can succeed", () => {
+    expect([...ORDER_CALL_RESULTS]).toStrictEqual([
+      "delivered",
+      "already_delivered",
+      "debt_closed_by_delivery",
+      "refused",
+      "purchase_already_closed",
+    ]);
+  });
+
+  it("accepts each of them and nothing else", () => {
+    for (const result of ORDER_CALL_RESULTS) {
+      expect(OrderCallResultSchema.safeParse(result).success, result).toBe(true);
+    }
+    for (const result of ["ok", "success", "delivered_twice", ""]) {
+      expect(OrderCallResultSchema.safeParse(result).success, JSON.stringify(result)).toBe(false);
+    }
+  });
+
+  it("tells a first delivery from a repeat and from a debt closed late", () => {
+    // Three successes that a merchant reads differently: the first delivery is
+    // the sale closing, a repeat is their own retry landing twice and needs no
+    // second delivery, and a debt closed by a late delivery says the deadline
+    // had already passed and the goods went out anyway.
+    expect(new Set(["delivered", "already_delivered", "debt_closed_by_delivery"]).size).toBe(3);
+    for (const result of ["delivered", "already_delivered", "debt_closed_by_delivery"]) {
+      expect(OrderCallResultSchema.safeParse(result).success, result).toBe(true);
+    }
+  });
+
+  it("has a word for a synchronous handler that came back too late", () => {
+    // The case the portal describes as "покупка уже закрыта": not an error,
+    // because nothing went wrong on the merchant's side — the work is done and
+    // a repeat purchase will collect it.
+    expect(OrderCallResultSchema.safeParse("purchase_already_closed").success).toBe(true);
+  });
+});
+
+describe("the error codes those calls answer with", () => {
+  it("names the three the merchant is expected to branch on", () => {
+    expect([...ORDER_CALL_ERROR_CODES]).toStrictEqual([
+      "refund_already_settled",
+      "order_already_closed",
+      "not_applicable_in_mode",
+    ]);
+  });
+
+  it("carries each of them in an error a merchant can act on", () => {
+    for (const code of ORDER_CALL_ERROR_CODES) {
+      const error = { code, message: "…", retryable: false };
+      expect(OrderCallErrorSchema.safeParse(error).success, code).toBe(true);
+    }
+  });
+
+  it("still accepts a code outside the three", () => {
+    // The list is what we promise to mean the same way, not a gate. An error
+    // we have not anticipated has to be able to reach the merchant in words
+    // rather than be flattened into the nearest of three.
+    expect(
+      OrderCallErrorSchema.safeParse({
+        code: "gateway_unavailable",
+        message: "…",
+        retryable: true,
+      }).success,
+    ).toBe(true);
   });
 });
 
