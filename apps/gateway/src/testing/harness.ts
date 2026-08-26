@@ -108,20 +108,21 @@ export interface WorkerBehaviour {
  * exercises the same path a merchant's code will.
  */
 export async function workOnce(
-  harnessed: Harness,
+  worked: Harness | { readonly gateway: Gateway },
   behaviour: WorkerBehaviour,
   waitMs = 1_000,
 ): Promise<number> {
-  const { envelopes } = await harnessed.gateway.poll(10, waitMs);
+  const { gateway } = worked;
+  const { envelopes } = await gateway.poll(10, waitMs);
 
   for (const envelope of envelopes) {
     if (envelope.kind === "order" && behaviour.onOrder !== undefined) {
       const answer = await behaviour.onOrder(envelope.payload);
-      await harnessed.gateway.answerOrder(envelope.payload.id, answer);
+      await gateway.answerOrder(envelope.payload.id, answer);
     }
     if (envelope.kind === "quote_request" && behaviour.onQuote !== undefined) {
       const answer = await behaviour.onQuote(envelope.payload);
-      await harnessed.gateway.answerQuote(envelope.payload.price_id, answer);
+      await gateway.answerQuote(envelope.payload.price_id, answer);
     }
   }
 
@@ -129,11 +130,14 @@ export async function workOnce(
 }
 
 /** Keeps a worker turning until `stop` is called, the way a subscription does. */
-export function workUntilStopped(harnessed: Harness, behaviour: WorkerBehaviour) {
+export function workUntilStopped(
+  worked: Harness | { readonly gateway: Gateway },
+  behaviour: WorkerBehaviour,
+) {
   let running = true;
   const loop = (async () => {
     while (running) {
-      await workOnce(harnessed, behaviour, 50);
+      await workOnce(worked, behaviour, 50);
     }
   })();
 

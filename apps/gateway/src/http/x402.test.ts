@@ -60,9 +60,9 @@ describe("what an agent is asked to pay", () => {
   });
 
   it("will not ask for money with nowhere to send it", () => {
-    expect(() => edge(null).requirementsFor({ amount: "1.00", currency: "USD" }, null)).toThrowError(
-      /nowhere to send the money/,
-    );
+    expect(() =>
+      edge(null).requirementsFor({ amount: "1.00", currency: "USD" }, null),
+    ).toThrowError(/nowhere to send the money/);
   });
 
   it("will not invent an exchange rate for a currency it cannot charge in", () => {
