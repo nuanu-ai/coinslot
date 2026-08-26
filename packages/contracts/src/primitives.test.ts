@@ -138,6 +138,33 @@ describe("identifier", () => {
     }
   });
 
+  it("refuses an identifier carrying a character that shows nothing", () => {
+    // The characters that make the harm real. A trailing space at least looks
+    // like something in a monospaced log; a zero-width space is a key that is
+    // pixel-for-pixel identical to another one and republishes as a second
+    // card the portal promises cannot appear. Refused in the middle too, for
+    // the same reason: a zero-width space between two letters of a key leaves
+    // it reading exactly like the key without one.
+    for (const id of [
+      "\u200baccess-monthly",
+      "access-monthly\u200b",
+      "\u200eaccess-monthly",
+      "access-monthly\u2060",
+      "\ufeffaccess-monthly",
+      "access-monthly\ufeff",
+      "acce\u200bss-monthly",
+      "acce\ufeffss-monthly",
+    ]) {
+      expect(IdentifierSchema.safeParse(id).success, JSON.stringify(id)).toBe(false);
+    }
+  });
+
+  it("still accepts the keys a merchant legitimately writes", () => {
+    for (const id of ["SKU 100/1", "тариф-месяц", "item.v2", "a b c", "A"]) {
+      expect(IdentifierSchema.safeParse(id).success, id).toBe(true);
+    }
+  });
+
   it("refuses an identifier carrying control characters", () => {
     for (const id of ["a\u0000b", "a\u0007b", "a\u001fb", "a\u007fb"]) {
       expect(IdentifierSchema.safeParse(id).success, JSON.stringify(id)).toBe(false);

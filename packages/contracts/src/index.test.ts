@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import * as contracts from "./index.js";
 import { CONTRACT_VERSION, type JsonSchemaDocument, schemas, toJsonSchemas } from "./index.js";
 
@@ -18,6 +19,73 @@ const nested = (value: JsonSchemaDocument[keyof JsonSchemaDocument]): JsonSchema
   expect(value, "expected a nested schema object").toBeTypeOf("object");
   return (value ?? {}) as JsonSchemaDocument;
 };
+
+/** A zod schema as it is built internally, for the refinement walk below. */
+interface ZodInternals {
+  _zod?: { def?: Record<string, unknown> };
+}
+
+const isRefined = (schema: unknown): boolean =>
+  (((schema as ZodInternals)._zod?.def?.checks as unknown[]) ?? []).some(
+    (check) => (check as ZodInternals)._zod?.def?.check === "custom",
+  );
+
+/**
+ * Every schema in the registry that carries a refinement, by the path it sits
+ * at — including the ones nested inside another schema, which is where the
+ * defect hid the first time.
+ *
+ * The walk follows the shapes zod builds a schema out of. It is coupled to
+ * those internals on purpose: a walk that quietly stopped finding anything
+ * would leave the invariant below passing over nothing, so a companion test
+ * pins what it finds today.
+ */
+const walkRefined = (
+  schema: unknown,
+  path: string,
+  found: { path: string; described: boolean }[],
+  seen: Set<unknown>,
+): void => {
+  if (schema === null || typeof schema !== "object" || seen.has(schema)) return;
+  seen.add(schema);
+
+  const def = (schema as ZodInternals)._zod?.def;
+  if (def === undefined) return;
+
+  if (isRefined(schema)) {
+    const meta = z.globalRegistry.get(schema as never);
+    found.push({ path, described: (meta?.description ?? "").length > 0 });
+  }
+
+  for (const key of ["shape", "options", "valueType", "keyType", "innerType", "element"]) {
+    const child = def[key];
+    if (child === undefined) continue;
+
+    if (Array.isArray(child)) {
+      child.forEach((option, index) => walkRefined(option, `${path}[${index}]`, found, seen));
+    } else if (key === "shape") {
+      for (const [name, field] of Object.entries(child as Record<string, unknown>)) {
+        walkRefined(field, `${path}.${name}`, found, seen);
+      }
+    } else {
+      walkRefined(child, path, found, seen);
+    }
+  }
+};
+
+const refinedSchemas = (): { path: string; described: boolean }[] => {
+  const found: { path: string; described: boolean }[] = [];
+  const seen = new Set<unknown>();
+  for (const [name, schema] of Object.entries(schemas)) walkRefined(schema, name, found, seen);
+  return found;
+};
+
+const refinedSchemaPaths = (): string[] => refinedSchemas().map((entry) => entry.path);
+
+const refinedSchemasWithoutDescription = (): string[] =>
+  refinedSchemas()
+    .filter((entry) => !entry.described)
+    .map((entry) => entry.path);
 
 describe("@coinslot/contracts", () => {
   it("declares the contract version and keeps zod its only runtime dependency", () => {
@@ -67,6 +135,22 @@ describe("the contract as JSON Schema", () => {
     const documents = toJsonSchemas();
 
     expect(Object.keys(documents).sort()).toStrictEqual(Object.keys(schemas).sort());
+  });
+
+  it("describes something in every document, not only the ones read back below", () => {
+    // The tests further down read seven documents in detail, and that left
+    // twenty describing nothing without a single failure — including `order`,
+    // `receipt` and `quote_request`, which are the ones an engineer actually
+    // generates from. Detailed reading does not scale to every schema; this
+    // does, and it is the line that catches a document reduced to its name.
+    const empty = Object.entries(toJsonSchemas())
+      .filter(
+        ([, document]) =>
+          Object.keys(document).filter((key) => key !== "$id" && key !== "$schema").length === 0,
+      )
+      .map(([name]) => name);
+
+    expect(empty).toStrictEqual([]);
   });
 
   it("stamps each document with the contract version it came from", () => {
@@ -152,6 +236,29 @@ describe("the contract as JSON Schema", () => {
     expect(accepts("access-monthly")).toBe(true);
     expect(accepts("access-monthly ")).toBe(false);
     expect(accepts("a\u0000b")).toBe(false);
+  });
+
+  it("leaves no refinement undescribed, anywhere in the registry", () => {
+    // This is the abstraction the second review asked for, and the reason is
+    // that the same defect arrived twice: a rule written as a refinement
+    // vanishes from the export without a word, and remembering to describe it
+    // per schema failed the first time it was tried. The invariant replaces
+    // the remembering — add a refinement anywhere and the build asks for the
+    // sentence that tells a generator's reader what is not being checked.
+    //
+    // It reads zod's own internals to find the refinements, which is a
+    // deliberate coupling: if that shape ever changes, this test breaks
+    // loudly, and a silently empty walk would be worse than a broken one.
+    const undescribed = refinedSchemasWithoutDescription();
+
+    expect(undescribed).toStrictEqual([]);
+  });
+
+  it("finds the refinements it is supposed to be checking", () => {
+    // The other half: a walk that found nothing would satisfy the invariant
+    // above and check nothing at all. These two are the refinements the
+    // package has today, one of them nested inside another schema.
+    expect(refinedSchemaPaths().sort()).toStrictEqual(["card", "card.result"]);
   });
 
   it("carries the rules it cannot express as structure in words instead", () => {
