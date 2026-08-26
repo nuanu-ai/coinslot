@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   FieldSpecSchema,
-  type ParamType,
   ParamSpecSchema,
+  type ParamType,
   paramSpecToValidator,
 } from "./param-spec.js";
 import { errorOf, expectMissingFieldRejected } from "./testing/expect-schema.js";
@@ -67,15 +67,26 @@ describe("param spec", () => {
 
   it("refuses a name that cannot safely become a property", () => {
     // A spec name becomes a key in JSON on both sides and a segment of the
-    // error path a merchant reads. Dots collide with the path notation,
-    // spaces make the name unquotable, and a name starting with an underscore
-    // is how `__proto__` gets in.
-    for (const name of ["", " ", "Not Ok", "a.b", "__proto__", "1st", "-x"]) {
+    // error path a merchant reads. Dots collide with that path notation and
+    // spaces make the name unquotable in an error.
+    for (const name of ["", " ", "Not Ok", "a.b", "1st", "-x", "_hidden"]) {
       expect(
         ParamSpecSchema.safeParse({ [name]: { type: "string" } }).success,
         JSON.stringify(name),
       ).toBe(false);
     }
+  });
+
+  it("cannot carry a parameter named __proto__", () => {
+    // The promise: nothing named `__proto__` reaches the compiler, where
+    // assigning it would set a prototype instead of declaring a field. The
+    // mechanism is zod's, not ours — it removes the key before the name check
+    // ever runs, so the spec comes back without it rather than refused. This
+    // test exists to notice if that ever stops being true.
+    const spec = ParamSpecSchema.parse(
+      JSON.parse('{"email": {"type": "string"}, "__proto__": {"type": "string"}}'),
+    );
+    expect(Object.keys(spec)).toStrictEqual(["email"]);
   });
 
   it("accepts names written the way either side of the contract writes them", () => {
