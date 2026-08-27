@@ -97,11 +97,14 @@ lists it.
   door accepts. A card that could carry real examples would say more, and adding
   a field for them is not part of this.
 - The challenge now carries the declaration in one header, and nothing bounds a
-  card's description or the number of its parameters. A card with a 1,500
-  character description and eight parameters produces a 4.3 KB header, and a
-  large one over 10 KB — enough to meet a proxy's default buffer, where the
-  agent gets a transport error instead of a challenge. Whether a description
-  gets a maximum is an open question and the number would be a decision.
+  card's description or the number of its parameters. Measured: a card with a
+  55-character description and one parameter produces a 1.9 KB header; one with
+  a 1,500-character description and eight parameters, 4.3 KB; one with a
+  4,000-character description and forty parameters, 10.3 KB. What a given
+  terminator does with a header that size is not measured, and it is the kind of
+  limit that shows up as a transport error rather than as a refusal anybody can
+  read. Whether a description gets a maximum is an open question, and the number
+  would be a decision rather than a derivation.
 - Rejected: an opt-in flag on the card. It would make the default invisibility,
   which is the state this change exists to leave.
 - Rejected: reusing the merchant's existing name as the listing name. It would
