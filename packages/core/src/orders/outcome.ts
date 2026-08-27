@@ -64,11 +64,14 @@ export function outcomeFor(order: Order): OrderOutcome {
   // on that silence, the answer is that nobody knows; still open on it, the
   // answer is the one for a question that has not come back yet — and that is
   // the truth of it, because we are still asking.
-  if (order.closure?.cause === "payment_outcome_unknown") {
-    return "payment_unresolved";
-  }
-  if (order.payment === "outcome_unknown" && isOpen(order.state)) {
-    return "in_progress";
+  //
+  // The test is the payment stage and not the closure. An order closed on the
+  // silence keeps that closure after the charge finally reports in and the
+  // order becomes a debt, because the closure records why the order stopped
+  // where it stopped; reading it here would go on claiming nobody knows about
+  // an order the machine has just written a refund against.
+  if (order.payment === "outcome_unknown") {
+    return isOpen(order.state) ? "in_progress" : "payment_unresolved";
   }
 
   switch (order.state) {
