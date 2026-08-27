@@ -140,6 +140,15 @@ export async function issueKey(
  */
 export const SEEDED_MERCHANT = { id: "the_merchant", name: "The pilot merchant" } as const;
 
+/**
+ * What the sandbox's merchant is listed as until somebody says otherwise.
+ *
+ * It says sandbox out loud on purpose: this name travels to a catalogue, and a
+ * listing that reads like a real seller is the one thing a sandbox must not
+ * look like.
+ */
+export const SEEDED_SERVICE_NAME = "Coinslot sandbox";
+
 /** What seeding the sandbox's key came to, in a word somebody can print. */
 export type SeedOutcome =
   /** There was no such key and now there is; here it is, the way it was given. */
@@ -185,6 +194,16 @@ export async function seedSandboxKey(
 ): Promise<SeedOutcome> {
   const digest = keyDigest(secret);
   await store.addMerchant(SEEDED_MERCHANT, at);
+
+  // A sandbox that comes up undiscoverable is a sandbox that cannot show the
+  // thing it exists to show: without a listing name the challenge carries no
+  // declaration at all, and a catalogue has nothing to read. So the seeded
+  // merchant is given one — but only if it has none, because a name somebody
+  // set by hand is a choice and this is a default.
+  const merchant = await store.merchantById(SEEDED_MERCHANT.id);
+  if (merchant !== null && merchant.serviceName === null) {
+    await setServiceName(store, SEEDED_MERCHANT.id, SEEDED_SERVICE_NAME, at);
+  }
 
   // Looked up in whatever state it is in, not through the door's own lookup:
   // the door answers nothing for a disabled key, and issuing a second key with
