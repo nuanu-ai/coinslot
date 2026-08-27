@@ -21,6 +21,7 @@ import {
   newKeySecret,
   SEEDED_MERCHANT,
   seedSandboxKey,
+  setServiceName,
 } from "./merchants.js";
 
 const aStore = () => new MemoryStore(countedIds());
@@ -154,5 +155,58 @@ describe("seeding the sandbox", () => {
     await seedSandboxKey(store, ids, "the-sandbox-key", 2_000);
 
     expect(await store.selling(SEEDED_MERCHANT.id)).toBe("paused");
+  });
+});
+
+describe("the name a merchant is listed under", () => {
+  // The promise: what a seller is called in a discovery catalog is a fact the
+  // merchant owns, kept in the one place a merchant is kept, and it never
+  // reaches the catalog in a shape the catalog would quietly cut down.
+  it("is nothing at all until somebody sets one", async () => {
+    // A merchant is made from a name typed at a terminal, and that name is not
+    // a listing name: it may be written in any alphabet and be any length.
+    // Standing it in for one would put a mangled version of somebody's name in
+    // front of every agent that searches.
+    const store = aStore();
+
+    const made = await makeMerchant(store, countedIds(), "Кафе «Ветер»", 1_000, "mch_1");
+
+    expect(made?.serviceName).toBeNull();
+  });
+
+  it("is kept once it is set, and read back with the merchant", async () => {
+    const store = aStore();
+    await makeMerchant(store, countedIds(), "A merchant", 1_000, "mch_1");
+
+    const named = await setServiceName(store, "mch_1", "Freeland", 2_000);
+
+    expect(named?.serviceName).toBe("Freeland");
+    expect((await store.merchantById("mch_1"))?.serviceName).toBe("Freeland");
+  });
+
+  it("can be taken away again", async () => {
+    const store = aStore();
+    await makeMerchant(store, countedIds(), "A merchant", 1_000, "mch_1");
+    await setServiceName(store, "mch_1", "Freeland", 2_000);
+
+    const cleared = await setServiceName(store, "mch_1", null, 3_000);
+
+    expect(cleared?.serviceName).toBeNull();
+  });
+
+  it("is nothing for a merchant who is not there", async () => {
+    expect(await setServiceName(aStore(), "mch_nobody", "Freeland", 1_000)).toBeNull();
+  });
+
+  it("refuses a name the catalog would cut down rather than writing it", async () => {
+    // The measured behaviour of the catalog: a name outside printable ASCII or
+    // longer than thirty-two characters is dropped without a word. A merchant
+    // has to meet that here, where somebody is reading the answer.
+    const store = aStore();
+    await makeMerchant(store, countedIds(), "A merchant", 1_000, "mch_1");
+
+    await expect(setServiceName(store, "mch_1", "x".repeat(33), 2_000)).rejects.toThrow(/32/);
+    await expect(setServiceName(store, "mch_1", "Кафе", 2_000)).rejects.toThrow(/ASCII/i);
+    expect((await store.merchantById("mch_1"))?.serviceName).toBeNull();
   });
 });

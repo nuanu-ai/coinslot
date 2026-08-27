@@ -4,6 +4,7 @@ import { API_ROUTES, mountableRoutes } from "@coinslot/contracts";
 import { decodePaymentRequiredHeader, encodePaymentSignatureHeader } from "@x402/core/http";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
+import { setServiceName } from "../app/merchants.js";
 import { type Harness, harness, type Served, serve, workUntilStopped } from "../testing/harness.js";
 import { buildApp } from "./server.js";
 import { ORDER_ID_IN_EXTRA, PAYMENT_REQUIRED_HEADER, PAYMENT_SIGNATURE_HEADER } from "./x402.js";
@@ -1083,5 +1084,119 @@ describe("the merchant's receipts", () => {
     const { served } = await started();
 
     expect((await served.call("GET", "/v0/receipts")).status).toBe(401);
+  });
+});
+
+describe("a product that is declared and a product that is not", () => {
+  // The promise: everything a challenge tells a catalog about is something an
+  // agent can then buy. A declared resource that answers every purchase with a
+  // refusal is worse than an unlisted one — the agent budgets for it, picks it
+  // over a competitor, and finds out at the till.
+  const paused = async (served: Served, itemId: string) => {
+    const answered = await served.call("POST", `/v0/cards/${itemId}/pause`, {
+      headers: asMerchant,
+    });
+    expect(answered.status).toBe(200);
+  };
+
+  it("declares a card that is for sale", async () => {
+    const { served } = await started();
+    const itemId = await publish(served, syncCard);
+
+    const answered = await served.call("GET", `/v0/items/${itemId}/purchase`);
+
+    expect(answered.status).toBe(402);
+    const challenge = decodePaymentRequiredHeader(
+      answered.headers.get(PAYMENT_REQUIRED_HEADER) ?? "",
+    );
+    expect(challenge.extensions?.bazaar).toBeTypeOf("object");
+    expect(challenge.resource.url).toBe(`http://localhost:3000/v0/items/${itemId}/purchase`);
+  });
+
+  it("stops answering a challenge for a card its merchant took off sale", async () => {
+    // The catalog lists a resource that answers 402 and drops one that stops.
+    // A paused card that kept answering would stay listed and refuse every
+    // purchase behind the listing.
+    const { served } = await started();
+    const itemId = await publish(served, syncCard);
+    await paused(served, itemId);
+
+    const answered = await served.call("GET", `/v0/items/${itemId}/purchase`);
+
+    expect(answered.status).toBe(409);
+    expect(answered.headers.get(PAYMENT_REQUIRED_HEADER)).toBeNull();
+    expect((answered.body as { error: { code: string } }).error.code).toBe("not_selling");
+  });
+
+  it("stops answering a challenge when the merchant stopped selling everything", async () => {
+    const { served } = await started();
+    const itemId = await publish(served, syncCard);
+    const stopped = await served.call("POST", "/v0/selling/pause", { headers: asMerchant });
+    expect(stopped.status).toBe(200);
+
+    const answered = await served.call("GET", `/v0/items/${itemId}/purchase`);
+
+    expect(answered.status).toBe(409);
+    expect(answered.headers.get(PAYMENT_REQUIRED_HEADER)).toBeNull();
+  });
+
+  it("answers again once the card is back on sale", async () => {
+    const { served } = await started();
+    const itemId = await publish(served, syncCard);
+    await paused(served, itemId);
+    const resumed = await served.call("POST", `/v0/cards/${itemId}/resume`, {
+      headers: asMerchant,
+    });
+    expect(resumed.status).toBe(200);
+
+    expect((await served.call("GET", `/v0/items/${itemId}/purchase`)).status).toBe(402);
+  });
+
+  it("says who is selling, reading the name off the merchant who published it", async () => {
+    // The name comes from the merchants table and from nowhere else. Nothing
+    // else on the wire carries a seller's name, so a challenge that lost it on
+    // the way out would list every product of ours under nobody.
+    const { served, harnessed } = await started();
+    await setServiceName(harnessed.store, harnessed.merchant.id, "The pilot merchant", Date.now());
+    const itemId = await publish(served, syncCard);
+
+    const answered = await served.call("GET", `/v0/items/${itemId}/purchase`);
+
+    expect(
+      decodePaymentRequiredHeader(answered.headers.get(PAYMENT_REQUIRED_HEADER) ?? "").resource
+        .serviceName,
+    ).toBe("The pilot merchant");
+  });
+
+  it("says nothing about a seller whose merchant has not been given a listing name", async () => {
+    const { served } = await started();
+    const itemId = await publish(served, syncCard);
+
+    const answered = await served.call("GET", `/v0/items/${itemId}/purchase`);
+    const { resource } = decodePaymentRequiredHeader(
+      answered.headers.get(PAYMENT_REQUIRED_HEADER) ?? "",
+    );
+
+    expect("serviceName" in resource).toBe(false);
+  });
+
+  it("names the same resource however the address was typed", async () => {
+    // The resource identity is what a listing is keyed on, and a query string
+    // or a second method must not change it. Read off the request it would:
+    // the address the process sees is not the address an agent called.
+    const { served } = await started();
+    const itemId = await publish(served, syncCard);
+
+    const urlOf = async (method: "GET" | "POST", path: string) =>
+      decodePaymentRequiredHeader(
+        (
+          await served.call(method, path, method === "POST" ? { body: { params: {} } } : {})
+        ).headers.get(PAYMENT_REQUIRED_HEADER) ?? "",
+      ).resource.url;
+
+    const plain = await urlOf("GET", `/v0/items/${itemId}/purchase`);
+
+    expect(await urlOf("GET", `/v0/items/${itemId}/purchase?utm=abc`)).toBe(plain);
+    expect(await urlOf("POST", `/v0/items/${itemId}/purchase`)).toBe(plain);
   });
 });

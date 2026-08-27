@@ -665,7 +665,7 @@ export const API_ROUTES = Object.freeze({
     path: "/v0/items/:item_id/purchase",
     auth: "none",
     description:
-      "Buying one product. The payment is what stands in for authorisation, so there is no key on this call. Its answer is not one document: the first is a payment challenge, and what follows a paid purchase depends on the card's mode — the goods themselves where delivery is synchronous, an order and a receipt otherwise. The address also answers the challenge on GET, because the validators and crawlers that list a paid resource ask for it that way; a GET carries no body, so it can produce the challenge and never a completed purchase.",
+      "Buying one product. The payment is what stands in for authorisation, so there is no key on this call. Its answer is not one document: the first is a payment challenge, and what follows a paid purchase depends on the card's mode — the goods themselves where delivery is synchronous, an order and a receipt otherwise. The address also answers the challenge on GET, because the validators and crawlers that list a paid resource ask for it that way; a GET carries no body, so it can produce the challenge and never a completed purchase. A product that is not on sale answers neither method with a challenge: it is refused, so that a catalog built from these challenges never carries a product nobody can buy.",
     request: PurchaseRequestSchema,
     also_answers_on: ["GET"],
     response: {

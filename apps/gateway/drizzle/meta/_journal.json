@@ -29,6 +29,13 @@
       "when": 1787851498002,
       "tag": "0003_merchant_tenancy",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1787856610358,
+      "tag": "0004_merchant_service_name",
+      "breakpoints": true
     }
   ]
 }

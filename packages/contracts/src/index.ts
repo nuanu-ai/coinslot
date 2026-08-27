@@ -44,6 +44,8 @@ import {
   MerchantCardSchema,
   PriceCheckSchema,
   PublicCardSchema,
+  ServiceNameSchema,
+  TagsSchema,
 } from "./card.js";
 import { WorkerEnvelopeSchema } from "./envelope.js";
 import { OrderEventSchema, RefundDueReasonSchema } from "./events.js";
@@ -124,8 +126,16 @@ export {
   WorkerPollRequestSchema,
   WorkerPollResponseSchema,
 } from "./api.js";
-export type { Card, Fulfillment, MerchantCard, PriceCheck, PublicCard } from "./card.js";
+export type {
+  BazaarDeclaration,
+  Card,
+  Fulfillment,
+  MerchantCard,
+  PriceCheck,
+  PublicCard,
+} from "./card.js";
 export {
+  bazaarDeclarationOf,
   CardSchema,
   deliveryCheckFor,
   FulfillmentSchema,
@@ -134,6 +144,8 @@ export {
   PublicCardSchema,
   publicCardOf,
   purchaseCheckFor,
+  ServiceNameSchema,
+  TagsSchema,
 } from "./card.js";
 export type { WorkerEnvelope, WorkerEnvelopeKind } from "./envelope.js";
 export {
@@ -267,6 +279,8 @@ export const schemas = Object.freeze({
   refusal_code: RefusalCodeSchema,
   sale_price: SalePriceSchema,
   selling_state: SellingStateSchema,
+  service_name: ServiceNameSchema,
+  tags: TagsSchema,
   timestamp: TimestampSchema,
   worker_envelope: WorkerEnvelopeSchema,
   worker_poll_request: WorkerPollRequestSchema,

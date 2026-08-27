@@ -16,15 +16,19 @@
  * keys being rows is for.
  */
 
-import { issueKey, makeMerchant } from "./app/merchants.js";
+import { ZodError } from "zod";
+import { issueKey, makeMerchant, setServiceName } from "./app/merchants.js";
 import type { Ids } from "./ports/clock.js";
-import type { Store, StoredKey } from "./ports/store.js";
+import type { Store, StoredKey, StoredMerchant } from "./ports/store.js";
 
 const USAGE = [
   "Usage: pnpm --filter @coinslot/gateway merchant <command>",
   "",
   "  add <name>                 make a merchant and print the identifier it got",
   "  list                       the merchants there are, and how many keys work",
+  "  listed-as <merchant> <name>",
+  "                             the name this seller is shown under in a",
+  "                             discovery catalog, or --none to take it away",
   "  key <merchant> <label>     issue a key to a merchant and print it, once",
   "  keys <merchant>            that merchant's keys, working and revoked",
   "  disable <key>              stop one key working, touching no other",
@@ -59,6 +63,15 @@ export async function runMerchant(
     return label === ""
       ? needs(say, "key", "a label", 'key the_merchant "the shop\'s own worker"')
       : await addKey(store, ids, now, say, first, label);
+  }
+  if (verb === "listed-as") {
+    if (first === undefined) {
+      return needs(say, "listed-as", "a merchant", 'listed-as the_merchant "The pilot merchant"');
+    }
+    const named = rest.join(" ").trim();
+    return named === ""
+      ? needs(say, "listed-as", "a name", 'listed-as the_merchant "The pilot merchant"')
+      : await setListingName(store, now, say, first, named === NO_NAME ? null : named);
   }
   if (verb === "keys") {
     return first === undefined
@@ -103,6 +116,55 @@ async function addMerchant(
   say("");
   say(`They have no keys yet: pnpm --filter @coinslot/gateway merchant key ${made.id} "a name"`);
   return 0;
+}
+
+/**
+ * The word that takes a listing name away, rather than a verb of its own.
+ *
+ * A name is one argument, so "no name" needs some spelling, and an empty one
+ * would be indistinguishable from a shell that swallowed a quote. This is a
+ * word nobody would ever be listed under.
+ */
+const NO_NAME = "--none";
+
+async function setListingName(
+  store: Store,
+  now: () => number,
+  say: (line: string) => void,
+  merchantId: string,
+  serviceName: string | null,
+): Promise<number> {
+  let named: StoredMerchant | null;
+  try {
+    named = await setServiceName(store, merchantId, serviceName, now());
+  } catch (thrown) {
+    // The name will not survive the catalog, and the catalog would not say so.
+    // What is printed is the rule and the name that broke it; nothing is
+    // written, so the merchant keeps whatever they were listed under before.
+    say(`That name cannot be listed: ${reasonOf(thrown)}`);
+    say("Nothing was written.");
+    return 1;
+  }
+
+  if (named === null) {
+    say(`There is no merchant ${merchantId}, so there is nobody to list.`);
+    return 1;
+  }
+
+  say(
+    named.serviceName === null
+      ? `${named.id} is listed under no name, so nothing about the seller goes out.`
+      : `${named.id} is listed as "${named.serviceName}".`,
+  );
+  return 0;
+}
+
+/** What a refusal said, in the words the person at the terminal should read. */
+function reasonOf(thrown: unknown): string {
+  if (thrown instanceof ZodError) {
+    return thrown.issues.map((issue) => issue.message).join("; ");
+  }
+  return thrown instanceof Error ? thrown.message : String(thrown);
 }
 
 async function listMerchants(store: Store, say: (line: string) => void): Promise<number> {

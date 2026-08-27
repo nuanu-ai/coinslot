@@ -26,6 +26,7 @@
  */
 
 import { z } from "zod";
+import type { ParamSpec, ParamType } from "./param-spec.js";
 import { ParamSpecSchema, paramSpecToValidator } from "./param-spec.js";
 import { IdentifierSchema, MoneySchema, TimestampSchema } from "./primitives.js";
 import { SellingStateSchema } from "./selling.js";
@@ -83,6 +84,88 @@ export const PriceCheckSchema = z.union(
 const TitleSchema = z.string().regex(/\S/, "a title must not be empty or blank");
 
 /**
+ * The longest a word may be before the discovery channel stops carrying it, and
+ * the most words it carries.
+ *
+ * Both numbers belong to the channel rather than to us, and both are read off
+ * its own implementation rather than guessed: a name is at most thirty-two
+ * characters of printable ASCII, and at most five tags survive. What the
+ * channel does past those limits is drop the value without telling anybody,
+ * which is why they are enforced here instead — a merchant whose tag or whose
+ * name silently disappeared would have nothing to look at and no reason to
+ * suspect anything went wrong.
+ */
+const LISTED_TEXT_MAX = 32;
+const LISTED_TAGS_MAX = 5;
+
+/**
+ * A word the discovery channel can render, held to the channel's own rule.
+ *
+ * Printable ASCII and nothing else, because the channel measures length in
+ * bytes and drops anything outside that range. The restriction is real and it
+ * costs something worth saying out loud: a seller whose name is written in
+ * Cyrillic, Greek or Arabic cannot be listed under it, and this refuses the
+ * name rather than listing them under a mangled one.
+ */
+const listedText = (what: string) =>
+  z
+    .string()
+    .min(1, `a ${what} must not be empty`)
+    .max(LISTED_TEXT_MAX, `a ${what} is at most ${LISTED_TEXT_MAX} characters`)
+    .regex(/^[\x20-\x7e]*$/, `a ${what} is printable ASCII, which is all the listing carries`)
+    // Blank and padded in one rule. A space at either end survives the listing
+    // untouched, which is worse than being dropped: it makes two spellings of
+    // one word, and a merchant comparing what they typed with what they see
+    // finds them identical.
+    .regex(/^\S(?:[\s\S]*\S)?$/, `a ${what} must not be blank or padded with spaces`);
+
+/**
+ * The name the seller of a card is listed under, wherever a catalog names a
+ * seller rather than a product.
+ *
+ * It belongs to the merchant and not to any one card: a merchant sells under
+ * one name, and a per-card name would be one seller appearing as several. What
+ * holds it is the merchants table, so this schema is the rule alone, applied
+ * wherever a merchant's listing name is written down.
+ */
+export const ServiceNameSchema = listedText("service name").meta({
+  description:
+    "The name a seller is listed under in a discovery catalog. At most 32 characters of printable ASCII, because that is what the catalog carries; a name outside that is refused here rather than truncated there, where nobody would be told.",
+});
+
+/**
+ * The words a merchant puts on one product so an agent searching a catalog can
+ * find it.
+ *
+ * They describe this product and not the seller, which is why they sit on the
+ * card. At most five, because the catalog keeps the first five and drops the
+ * rest without a word.
+ */
+export const TagsSchema = z
+  .array(listedText("tag"))
+  // Not an empty list. A card that names no tags leaves the field out; an
+  // empty list is a value a catalog renders, and the two would be one thing
+  // written two ways with nothing to tell them apart.
+  .min(1, "a card that names no tags leaves the field out rather than sending an empty list")
+  .max(LISTED_TAGS_MAX, `a card carries at most ${LISTED_TAGS_MAX} tags`)
+  .refine(
+    // The catalog folds tags together without regard to case and keeps the
+    // first of each, so "Access" and "access" published together become one
+    // tag and the merchant is never told which of the two survived. Refusing
+    // the pair is the version of that a merchant can act on.
+    (tags) => new Set(tags.map((tag) => tag.toLowerCase())).size === tags.length,
+    "two tags that differ only in case are one tag to the listing, so both cannot be published",
+  )
+  .meta({
+    description:
+      "Words describing this product for an agent searching a discovery catalog. Between 1 and 5 of them, each 1 to 32 characters of printable ASCII with no space at either end, and no two the same without regard to case — because that is what the catalog keeps, and it drops the rest in silence. A card with no tags leaves the field out.",
+    // The case rule is a refinement and zod drops those when it renders a
+    // document. This much of it does cross, so a generated client refuses at
+    // least the identical pair.
+    uniqueItems: true,
+  });
+
+/**
  * What the buyer gets, what it is good for and what it does not include. Read
  * by a program, so distinguishing facts do the work here.
  */
@@ -132,6 +215,12 @@ const CardFieldsSchema = z.strictObject({
   params: ParamSpecSchema.optional(),
 
   result: DeclaredResultSchema,
+
+  /**
+   * Words for an agent searching a discovery catalog. Absent on a card whose
+   * merchant named none, and never invented for them.
+   */
+  tags: TagsSchema.optional(),
 
   fulfillment: FulfillmentSchema,
 
@@ -264,11 +353,21 @@ export const deliveryCheckFor = (card: Card): z.ZodType =>
  * with no moment behind it cannot be judged stale, and this is the only
  * freshness claim a catalog makes.
  *
+ * `tags` are gone as well, and that one is a decision rather than an omission.
+ * They are words a merchant chose so that a search in a discovery catalog finds
+ * this product, held to that catalog's own rule about length and alphabet. Our
+ * own catalog is not searched that way — an agent reading it has the whole
+ * page — so carrying them here would put a foreign catalog's constraint in
+ * front of a reader who has no use for it.
+ *
  * One thing an agent might reasonably want is not here, and saying so is
  * better than leaving it to be discovered: nothing in this document names who
- * is selling. There is no shape in this contract for a merchant's public
- * identity, and inventing one here would answer a question — who "we" are to
- * the buyer, and who the merchant is — that is still open.
+ * is selling. There is a shape in this contract for one name a seller carries —
+ * `ServiceNameSchema`, the name a discovery catalog lists them under — and it
+ * is deliberately not this. That name exists to satisfy one channel's rules,
+ * a merchant may have none, and standing it in for a public identity would
+ * answer a question — who "we" are to the buyer, and who the merchant is —
+ * that is still open.
  */
 const PublicCardFieldsSchema = z.strictObject({
   /** Our catalog identifier, the one a purchase, a receipt and a status use. */
@@ -391,6 +490,124 @@ export const publicCardOf = (
       };
   }
 };
+
+/**
+ * One card as a discovery catalog reads it: what an agent that has never seen
+ * our own catalog finds when it searches somewhere else.
+ *
+ * This is the second projection of a card and it sits beside the first because
+ * the two have to be read together. Both are claims we make to somebody about
+ * to spend money, both are built by naming what is copied rather than by
+ * copying the card and removing what is internal, and a field added to a card
+ * has to be considered against both or it reaches one audience by accident.
+ *
+ * What comes out is not a wire document of ours. It is the material an x402
+ * payment challenge is assembled from — the resource block, an example of the
+ * purchase body, the JSON Schema that body is held to, and an example of what a
+ * delivery carries — and the assembling is done at the edge, by the protocol's
+ * own library, from exactly these pieces. Keeping the projection here and the
+ * assembly there is what stops this package growing a payment library's
+ * dependency tree, which is the merchant SDK's dependency tree (ADR-0003 §8).
+ *
+ * Two decisions inside are worth reading before the code.
+ *
+ * The card's title is not sent. The resource block has one field of prose and
+ * the card has two, and joining a merchant's headline to a merchant's
+ * description with punctuation of our own would be us writing their listing for
+ * them. The description is the field a card writes for a program to read, so it
+ * is the one that goes.
+ *
+ * The examples are shapes rather than facts. A card declares the types of what
+ * it takes and what it returns and carries no example values, so what goes out
+ * is every declared field holding a value that stands for its type and nothing
+ * more. That is a claim we can keep — a test holds the input example to this
+ * card's own purchase check and the output example to its own delivery check,
+ * so what we publish is something our own door would accept — and it is not a
+ * claim about anybody's real data, which we do not have and will not invent.
+ */
+export interface BazaarDeclaration {
+  /** The resource block: what is being paid for, and who is selling it. */
+  readonly resource: {
+    /** The canonical address of this resource, exactly as it was given. */
+    readonly url: string;
+    readonly description: string;
+    readonly mimeType: string;
+    readonly serviceName?: string;
+    readonly tags?: readonly string[];
+  };
+  /** An example purchase body, in the shape this gateway takes one. */
+  readonly input: Record<string, unknown>;
+  /** The JSON Schema that body is held to, derived from the card's `params`. */
+  readonly inputSchema: Record<string, unknown>;
+  /** An example of what arrives on delivery, derived from the card's `result`. */
+  readonly output: { readonly example: Record<string, unknown> };
+}
+
+/**
+ * One declared field as a value standing for its own type.
+ *
+ * A string is the word `string` rather than an empty one, and that is not a
+ * flourish: a delivered string has to carry something, so an example built out
+ * of empty strings would be an example this system's own delivery check
+ * refuses — published to strangers as what they will receive. The word says
+ * what goes there, which is more than an empty string said anyway.
+ */
+const standInFor = (type: ParamType): unknown => {
+  switch (type) {
+    case "string":
+      return "string";
+    case "number":
+    case "integer":
+      return 0;
+    case "boolean":
+      return false;
+  }
+};
+
+/** A whole declaration as an example: every field, each one standing for a type. */
+const exampleOf = (spec: ParamSpec): Record<string, unknown> =>
+  Object.fromEntries(Object.entries(spec).map(([name, field]) => [name, standInFor(field.type)]));
+
+/**
+ * The JSON Schema a purchase body is held to.
+ *
+ * It is rendered from the very check the gateway runs against an agent's
+ * parameters, so the document a stranger reads and the door they meet cannot
+ * disagree. The rendered document names its own dialect at the top, which is
+ * right for a document standing alone and wrong for one about to be nested
+ * inside another schema, so that one line is dropped here.
+ */
+const purchaseBodySchemaOf = (card: Card): Record<string, unknown> => {
+  const { $schema, ...body } = z.toJSONSchema(z.strictObject({ params: purchaseCheckFor(card) }));
+  return body as Record<string, unknown>;
+};
+
+/**
+ * The card as a discovery catalog reads it.
+ *
+ * The two things a card cannot know are passed in: the address this resource
+ * answers at, which is pinned by whoever runs the gateway rather than worked
+ * out from a request, and the name its seller is listed under, which belongs to
+ * the merchant. A seller with no listing name and a card with no tags leave
+ * those fields out altogether — an empty string and an empty list are values a
+ * catalog would render, and the absence is the only way to say that nobody
+ * named one.
+ */
+export const bazaarDeclarationOf = (
+  card: Card,
+  listed: { readonly url: string; readonly serviceName: string | null },
+): BazaarDeclaration => ({
+  resource: {
+    url: listed.url,
+    description: card.description,
+    mimeType: "application/json",
+    ...(listed.serviceName === null ? {} : { serviceName: listed.serviceName }),
+    ...(card.tags === undefined ? {} : { tags: card.tags }),
+  },
+  input: { params: exampleOf(card.params ?? {}) },
+  inputSchema: purchaseBodySchemaOf(card),
+  output: { example: exampleOf(card.result) },
+});
 
 /**
  * One card as the merchant who published it reads it back.

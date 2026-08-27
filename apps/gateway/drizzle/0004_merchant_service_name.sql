@@ -1,0 +1,1 @@
+ALTER TABLE "merchants" ADD COLUMN "service_name" text;

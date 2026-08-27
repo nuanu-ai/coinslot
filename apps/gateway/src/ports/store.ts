@@ -197,6 +197,24 @@ export type PaymentClaim =
 export interface StoredMerchant {
   readonly id: string;
   readonly name: string;
+  /**
+   * The name this seller is listed under in a discovery catalog, or nothing at
+   * all where nobody has named one.
+   *
+   * It is a second field rather than the name above, and the difference is the
+   * whole reason it exists. The name above is read by a person at a terminal
+   * and may be written in any alphabet and be any length; this one goes out to
+   * strangers through a catalog that carries at most thirty-two characters of
+   * printable ASCII and drops anything else in silence. Folded into one field,
+   * either a merchant could not be called what they are called, or they would
+   * be listed under a cut-down version of it and never be told.
+   *
+   * Null is the ordinary state and it means what it says: nobody has named one,
+   * so nothing about a seller goes out. It is never filled in from the name
+   * above, because a name that happens to fit the catalog's rule is still not a
+   * name anybody chose to trade under.
+   */
+  readonly serviceName: string | null;
   readonly selling: MerchantSelling;
   readonly createdAt: number;
 }
@@ -254,6 +272,20 @@ export interface Store {
 
   /** Every merchant, for the command that lists them. */
   merchants(): Promise<readonly StoredMerchant[]>;
+
+  /**
+   * Sets or clears the name one merchant is listed under, and hands back the
+   * merchant as they now stand. Null where there is no such merchant.
+   *
+   * The value is expected to have been held to the catalog's rule already; the
+   * caller that does it is `setServiceName` in `app/merchants.ts`, which is the
+   * one place a name is checked before it is written.
+   */
+  setServiceName(
+    id: string,
+    serviceName: string | null,
+    at: number,
+  ): Promise<StoredMerchant | null>;
 
   /** Writes down one key of one merchant. The digest is what is kept, not the key. */
   addKey(

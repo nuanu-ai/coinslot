@@ -25,6 +25,7 @@
  */
 
 import { createHash, randomBytes } from "node:crypto";
+import { ServiceNameSchema } from "@coinslot/contracts";
 import type { Ids } from "../ports/clock.js";
 import type { Store, StoredKey, StoredMerchant } from "../ports/store.js";
 
@@ -63,6 +64,31 @@ export interface IssuedKey {
   readonly key: StoredKey;
   /** The only time this is ever readable. Nothing keeps it. */
   readonly secret: string;
+}
+
+/**
+ * Sets or clears the name a merchant is listed under in a discovery catalog,
+ * and hands back the merchant as they now stand. Null where there is no such
+ * merchant.
+ *
+ * The check is here rather than in the store, and it throws rather than
+ * answering, because there is exactly one wrong answer available: writing a
+ * name the catalog will not carry. The catalog drops what it cannot render and
+ * tells nobody, so a merchant would end up trading under a word they did not
+ * choose with nothing anywhere to say so. Refusing loudly at the one place a
+ * name is written is the only version of this that somebody reads.
+ */
+export async function setServiceName(
+  store: Store,
+  merchantId: string,
+  serviceName: string | null,
+  at: number,
+): Promise<StoredMerchant | null> {
+  if (serviceName !== null) {
+    // Throws with the schema's own words, which name the rule and the number.
+    ServiceNameSchema.parse(serviceName);
+  }
+  return store.setServiceName(merchantId, serviceName, at);
 }
 
 /** Writes down a merchant. Null where that identifier is already taken. */

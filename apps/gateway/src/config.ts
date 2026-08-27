@@ -205,8 +205,18 @@ const environmentSchema = z.object({
    * the thing being paid for. Behind a terminator the address the process sees
    * is not the address an agent called, so it is configuration rather than
    * something read off the request.
+   *
+   * The trailing slash is taken off here, once, and the reason is not tidiness.
+   * A path is joined onto this string, so a base written with a slash produces
+   * an address with two in the middle of it — a second spelling of one product,
+   * which a discovery catalog reads as a second resource. Whoever wrote the
+   * variable cannot be expected to know that, and the two spellings are one
+   * deployment: the one place that can settle it is here.
    */
-  PUBLIC_BASE_URL: z.url().default("http://localhost:3000"),
+  PUBLIC_BASE_URL: z
+    .url()
+    .default("http://localhost:3000")
+    .transform((value) => value.replace(/\/+$/, "")),
 
   /**
    * The facilitator, or the one address that means there is no chain behind

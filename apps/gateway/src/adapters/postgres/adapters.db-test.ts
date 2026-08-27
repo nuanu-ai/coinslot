@@ -490,6 +490,36 @@ if (databaseUrl === null) {
       });
     });
 
+    it("keeps and clears a seller's listing name the same way in memory and here", async () => {
+      // The name a seller is listed under travels to strangers, and everything
+      // offline is tested against the in-memory store. A column that took a
+      // name and gave back something else — or, worse, one that answered for a
+      // merchant nobody named — would show up only in production, in a
+      // catalog. The same script through both, and the answers compared.
+      const script = async (subject: Store) => {
+        await subject.addMerchant({ id: "mch_listed", name: "A merchant" }, now);
+        return {
+          madeWithNone: (await subject.merchantById("mch_listed"))?.serviceName ?? "absent",
+          named: (await subject.setServiceName("mch_listed", "Freeland", now))?.serviceName,
+          readBack: (await subject.merchantById("mch_listed"))?.serviceName,
+          cleared: (await subject.setServiceName("mch_listed", null, now))?.serviceName ?? "absent",
+          nobody: await subject.setServiceName("mch_nobody", "Freeland", now),
+        };
+      };
+
+      const inTheDatabase = await script(store);
+      const inMemory = await script(new MemoryStore(countedIds()));
+
+      expect(inTheDatabase).toStrictEqual(inMemory);
+      expect(inTheDatabase).toStrictEqual({
+        madeWithNone: "absent",
+        named: "Freeland",
+        readBack: "Freeland",
+        cleared: "absent",
+        nobody: null,
+      });
+    });
+
     it("forgets claims older than an instant, and says how many went", async () => {
       await store.claimPayment("fp-db-old", "ord_old");
 

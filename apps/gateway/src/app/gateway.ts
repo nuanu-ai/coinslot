@@ -78,6 +78,20 @@ export type SellingChange =
   | { readonly ok: true; readonly cards: MerchantCardList }
   | { readonly ok: false; readonly why: string };
 
+/**
+ * One product as a thing that can be paid for, and everything a challenge for
+ * it has to say: the card, whether it may be sold at this moment, and the name
+ * its seller is listed under where one has been set.
+ */
+export interface PaidResource {
+  /** The card as it is held, under the catalog identifier we issued for it. */
+  readonly stored: StoredCard;
+  /** What a purchase of this card would meet right now. */
+  readonly selling: MerchantSelling;
+  /** The seller's name in a discovery catalog, or nothing where none is set. */
+  readonly serviceName: string | null;
+}
+
 /** What a purchase attempt came to. */
 export type PurchaseAttempt =
   /** The order is priced and waiting to be paid for: here is what it costs. */
@@ -245,6 +259,39 @@ export class Gateway {
             as_of: asTimestamp(entry.card.asOf),
           }),
         ),
+    };
+  }
+
+  /**
+   * One product as a thing that can be paid for: the card, the word it is
+   * selling under right now, and the name its seller is listed under.
+   *
+   * It is one read rather than three at the edge because the three answer one
+   * question — may this product be offered for sale, and what does a challenge
+   * for it say. The selling word is the same fold the order machine is given,
+   * so a card this reports as anything but open is a card whose purchase the
+   * machine would refuse; a challenge issued for one would be an invitation to
+   * pay for something that cannot be bought, and it would be that invitation
+   * that a discovery catalog listed.
+   *
+   * Null where there is no such card. Unscoped, like every other read on the
+   * buying surface: an agent has no key and no merchant.
+   */
+  async paidResource(itemId: string): Promise<PaidResource | null> {
+    const stored = await this.runtime.store.cardById(itemId);
+    if (stored === null) {
+      return null;
+    }
+    const merchant = await this.runtime.store.merchantById(stored.merchantId);
+    return {
+      stored,
+      // The same fold every other reader of this question gets, and the same
+      // one the machine is given: the merchant's word and the card's own pause
+      // become one word. A merchant the store cannot find is a card with no
+      // owner, which the database refuses — and if it ever happened, the safe
+      // reading of "I cannot say" is that this is not for sale.
+      selling: merchant === null ? "paused" : sellingFor(merchant.selling, stored),
+      serviceName: merchant?.serviceName ?? null,
     };
   }
 

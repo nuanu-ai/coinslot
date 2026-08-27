@@ -14,13 +14,15 @@
     "start": "tsx src/main.ts",
     "merchant": "tsx src/merchant.ts",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "tsx src/migrate.ts"
+    "db:migrate": "tsx src/migrate.ts",
+    "listing": "tsx src/listing.ts"
   },
   "dependencies": {
     "@coinslot/contracts": "workspace:*",
     "@coinslot/core": "workspace:*",
     "@x402/core": "2.23.0",
     "@x402/evm": "2.23.0",
+    "@x402/extensions": "2.23.0",
     "drizzle-orm": "0.45.2",
     "express": "5.2.1",
     "pg": "8.23.0",
