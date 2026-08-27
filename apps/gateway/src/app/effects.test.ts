@@ -205,7 +205,10 @@ describe("the sweep of what an order is still owed", () => {
 
     const drawn = await harnessed.queue.draw(harnessed.merchant.id, 10, 0);
     expect(drawn).toHaveLength(1);
-    expect(drawn[0]?.envelope.kind).toBe("order");
+    const sent = drawn[0]?.envelope;
+    // The order itself, not some other merchant's and not an event about it.
+    expect(sent?.kind).toBe("order");
+    expect(sent?.kind === "order" ? sent.payload.id : null).toBe(orderId);
   });
 
   it("stops asking once the merchant has actually taken it", async () => {
@@ -216,7 +219,7 @@ describe("the sweep of what an order is still owed", () => {
     const orderId = await paidWithNothingOnTheStream(harnessed);
 
     await sweep(harnessed);
-    await workOnce(harnessed, { onOrder: () => ({ accepted: true }) }, 0);
+    await workOnce(harnessed, { onOrder: () => ({ accepted: {} }) }, 0);
     expect((await harnessed.store.orderById(orderId))?.order.state).toBe("dispatched");
 
     await sweep(harnessed);
@@ -234,16 +237,21 @@ describe("the sweep of what an order is still owed", () => {
 
     await sweep(harnessed);
     await sweep(harnessed);
-    expect(await harnessed.queue.draw(harnessed.merchant.id, 10, 0)).toHaveLength(2);
 
-    // Both envelopes are answered, the way a worker restarting answers both.
-    for (const delivered of [1, 2]) {
-      await workOnce(
-        harnessed,
-        { onOrder: () => ({ delivered: { activation_code: `CODE-${delivered}` } }) },
-        0,
-      );
-    }
+    // Both envelopes are answered, the way a merchant's handler answers a
+    // repeat: with goods of its own, made a second time.
+    let made = 0;
+    const answered = await workOnce(
+      harnessed,
+      {
+        onOrder: () => {
+          made += 1;
+          return { delivered: { activation_code: `CODE-${made}` } };
+        },
+      },
+      0,
+    );
+    expect(answered).toBe(2);
 
     const after = await harnessed.store.orderById(orderId);
     expect(after?.order.state).toBe("delivered");
@@ -264,12 +272,7 @@ describe("the sweep of what an order is still owed", () => {
  */
 async function paidWithNothingOnTheStream(harnessed: Harness): Promise<string> {
   const orderId = await quoted(harnessed, asyncCard);
-  await harnessed.gateway.runner.presentVerifiedPayment(
-    orderId,
-    "alice",
-    "PAY-A",
-    harnessed.now(),
-  );
+  await harnessed.gateway.runner.presentVerifiedPayment(orderId, "alice", "PAY-A", harnessed.now());
   const lost = await harnessed.queue.draw(harnessed.merchant.id, 10, 0);
   expect(lost).toHaveLength(1);
 

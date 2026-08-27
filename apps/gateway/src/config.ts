@@ -188,6 +188,18 @@ const environmentSchema = z.object({
    */
   CLAIM_RETENTION_MS: durationMs(30 * 24 * 60 * 60 * 1_000),
   /**
+   * How long an order may sit paid for before the sweep decides its envelope
+   * reached nobody and sends it out again (ADR-0013).
+   *
+   * Every sale spends some of this window there — an order is paid from the
+   * moment the money is in until a worker draws it — so what the number buys is
+   * the difference between a merchant who is merely between polls and one whose
+   * envelope was never written. Too short and every busy merchant is handed
+   * duplicates; too long and an order paid for reaches nobody until its own
+   * fulfillment deadline turns it into a debt.
+   */
+  SWEEP_DISPATCH_GRACE_MS: durationMs(5 * 60 * 1_000),
+  /**
    * How many of the payment layer's own words are kept on one order. They are
    * what an operator reconciles a silent charge from, and they arrive on an
    * unauthenticated route, so the list is bounded and what fell off it is
@@ -348,6 +360,8 @@ export interface GatewayConfig {
   readonly settleInFlightRetryMs: number;
   /** How long a claim on a payment is kept. */
   readonly claimRetentionMs: number;
+  /** How long a paid order may sit before the sweep sends it out again. */
+  readonly sweepDispatchGraceMs: number;
   /** How many of the payment layer's own words one order keeps. */
   readonly paymentWordsKept: number;
   readonly deadlines: DeadlineConfig;
@@ -472,6 +486,7 @@ export function loadConfig(environment: Record<string, string | undefined>): Gat
     reminderRetryDelayMs: environmentValues.REMINDER_RETRY_DELAY_MS,
     settleInFlightRetryMs: environmentValues.SETTLE_IN_FLIGHT_RETRY_MS,
     claimRetentionMs: environmentValues.CLAIM_RETENTION_MS,
+    sweepDispatchGraceMs: environmentValues.SWEEP_DISPATCH_GRACE_MS,
     paymentWordsKept: environmentValues.PAYMENT_WORDS_KEPT,
     deadlines,
     redelivery: {

@@ -33,8 +33,10 @@
  */
 
 import type { WorkerEnvelope } from "@coinslot/contracts";
-import { type Job, PgBoss } from "pg-boss";
+import { sql } from "drizzle-orm";
+import { type DrizzleTransactionLike, fromDrizzle, type Job, PgBoss } from "pg-boss";
 import type { DrawnEnvelope, Queue, Reminder, ReminderPatience } from "../../ports/queue.js";
+import type { Envelopes } from "../postgres/store.js";
 
 /**
  * What pg-boss will take as a queue name, and therefore what every name below
@@ -170,6 +172,71 @@ export class PgBossQueue implements Queue {
     if (afterMs === undefined || afterMs <= 0) {
       this.#wakeEverybody(stream);
     }
+  }
+
+  /**
+   * The same publish, made part of somebody else's transaction (ADR-0013).
+   *
+   * `fromDrizzle` wraps that transaction as the handle pg-boss takes in its
+   * send options — whose whole contract is running one statement — so the job
+   * is inserted on that connection and commits or rolls back with whatever else
+   * is being written there. Nothing sees it until the commit, which is why the
+   * parked polls are not woken here but by `committed` afterwards.
+   *
+   * Making the merchant's stream is not part of the transaction and must not
+   * be: it is `create_queue` ending in `on conflict do nothing`, it goes on the
+   * library's own connection, and a stream left behind by a transaction that
+   * rolled back is a row nobody minds. It costs one round trip per merchant per
+   * process, and the trip is inside the caller's hold on the order — worth
+   * knowing for a first sale, invisible for every one after it.
+   */
+  async publishWithin(
+    tx: DrizzleTransactionLike,
+    merchantId: string,
+    envelope: WorkerEnvelope,
+    afterMs?: number,
+  ): Promise<void> {
+    const stream = await this.#stream(merchantId);
+    const sent = await this.#boss.send(stream, envelope as unknown as object, {
+      retryLimit: 0,
+      ...(afterMs === undefined || afterMs <= 0
+        ? {}
+        : { startAfter: new Date(Date.now() + afterMs) }),
+      db: fromDrizzle(tx, sql),
+    });
+
+    // The library answers with the job's identifier, or with nothing when it
+    // did not make one. Thrown rather than swallowed, and here the throw is
+    // what takes the order down with it: an order that says the merchant was
+    // handed the work is not written unless the work was actually enqueued.
+    if (sent === null) {
+      throw new Error(`the queue would not take the envelope ${envelope.id}`);
+    }
+  }
+
+  /**
+   * The transaction those envelopes were written in has committed, so the polls
+   * parked on those streams are told to look again.
+   *
+   * Woken any earlier they would fetch, find nothing — the job is not visible
+   * outside an uncommitted transaction — and go back to their polling interval
+   * having spent the wake ADR-0004 §4 exists to give them.
+   */
+  envelopesCommitted(merchantIds: readonly string[]): void {
+    for (const merchantId of new Set(merchantIds)) {
+      this.#wakeEverybody(streamOf(merchantId));
+    }
+  }
+
+  /** This queue as the store's way of writing an envelope with an order. */
+  envelopes(): Envelopes {
+    return {
+      within: (tx, merchantId, envelope, afterMs) =>
+        this.publishWithin(tx, merchantId, envelope, afterMs),
+      committed: (merchantIds) => {
+        this.envelopesCommitted(merchantIds);
+      },
+    };
   }
 
   async draw(merchantId: string, max: number, waitMs: number): Promise<readonly DrawnEnvelope[]> {

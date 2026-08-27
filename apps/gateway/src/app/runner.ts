@@ -20,11 +20,20 @@
  * the safe thing is to stop, because the alternative is to write it down and
  * carry on selling.
  *
- * The effects run after the order is written and outside the hold on it. They
- * do real work — a network call to the facilitator, an envelope onto the queue
- * — and several of them produce the next event about the same order. Run under
- * the hold, the first of those would wait for a hold that only it could
- * release.
+ * The effects fall in two halves and the split is ADR-0013. The ones that must
+ * not be lost — the envelope that hands the order to the merchant, the receipt
+ * — are written down inside the same hold that writes the state implying them,
+ * so a process that dies mid-flight either did both or did neither. There is no
+ * repair for the other way round: an order that says the merchant was handed
+ * the work has already moved past the transition that emits the dispatch, and
+ * nothing re-emits it. Everything else runs after the order is written and
+ * outside the hold, because it does real work — a network call to the
+ * facilitator — and produces the next event about the same order; run under the
+ * hold, it would wait for a hold that only it could release.
+ *
+ * None of this makes delivery exactly-once and none of it tries to. Everything
+ * here is at least once, which is what the contract already promises a merchant
+ * and what their handler is already told to survive.
  *
  * And time is a value. Every event carries the instant it happened at, taken
  * from the clock once at the edge, so the same purchase replayed produces the
@@ -34,6 +43,7 @@
 import type {
   Delivery,
   Order as OrderDocument,
+  Receipt,
   SalePrice,
   WorkerEnvelope,
 } from "@coinslot/contracts";
@@ -57,9 +67,18 @@ import {
 } from "@coinslot/core";
 import { asTimestamp } from "../ports/clock.js";
 import type { Reminder } from "../ports/queue.js";
-import type { MerchantScope, OrderChange, PaymentWord, StoredOrder } from "../ports/store.js";
+import type {
+  MerchantScope,
+  OrderChange,
+  PaymentWord,
+  StoredOrder,
+  WithTheOrder,
+} from "../ports/store.js";
 import type { Runtime } from "./runtime.js";
 import { purchaseOf, Waiting } from "./waiting.js";
+
+/** The queue's name for the daily sweep of what an order is still owed. */
+export const SWEEP_EFFECTS = "coinslot_sweep_effects";
 
 /**
  * What is written down about the purchase alongside the machine's own order.
@@ -98,7 +117,6 @@ export type PresentResult =
 /** What one hold on an order came to, before its effects are carried out. */
 interface Decided {
   readonly moved: TransitionResult;
-  readonly before: Order;
   readonly known: StoredOrder;
 }
 
@@ -106,7 +124,6 @@ interface Decided {
 type PresentDecided =
   | {
       readonly kind: "took";
-      readonly before: Order;
       readonly known: StoredOrder;
       readonly effects: readonly Effect[];
     }
@@ -127,6 +144,52 @@ export type Applied =
 
 /** What a parked purchase is woken with: the order as it finally stands. */
 export type PurchaseSettled = StoredOrder;
+
+/** What one run of the sweep repaired, and what it could not. */
+export interface Swept {
+  /** Orders paid for that had reached nobody and were sent out again. */
+  dispatched: number;
+  /** Delivered orders that had no receipt and now have one. */
+  receipted: number;
+  /** Clocks that had run out with nothing waiting on them, started again. */
+  rearmed: number;
+  /** Orders the sweep could not repair, each of which was said out loud. */
+  refused: number;
+}
+
+/**
+ * Whether this effect is carried out after the order is written, rather than
+ * written down with it (ADR-0013).
+ *
+ * The list is exhaustive rather than a set of names, so an effect added to the
+ * machine cannot quietly fall into the wrong half: the compiler asks for it
+ * here. What belongs on the written-down side is an effect that cannot be
+ * re-driven once the order has moved past the transition that asked for it, and
+ * whose receiver tolerates it arriving twice — because the sweep re-drives
+ * exactly those. An effect that tolerates neither belongs in neither half and
+ * is a decision somebody has to take rather than a case to be added.
+ */
+function carriedOutAfterwards(effect: Effect): boolean {
+  switch (effect.kind) {
+    case "dispatch_order":
+    case "redeliver_order":
+    case "emit_merchant_event":
+    case "issue_receipt":
+      return false;
+    case "request_quote":
+    case "verify_payment":
+    case "execute_payment":
+    case "invite_payment":
+    case "dispatch_confirmation_request":
+    case "release_goods_to_agent":
+    case "hold_fulfillment":
+    case "mark_refund_due":
+    case "answer_merchant":
+      return true;
+    default:
+      return assertNever(effect, "effect");
+  }
+}
 
 export class OrderRunner {
   readonly #runtime: Runtime;
@@ -150,7 +213,11 @@ export class OrderRunner {
     // while an order written with no clock on it is one nothing will ever close.
     await this.#arm([], deadlines(record.order), record.order.id);
     await this.#runtime.store.addOrder(record);
-    await this.#run(record, record.order, effects, at);
+    // Nothing the birth of an order asks for has to be written down with it:
+    // the machine's effects here are a price question and a request to verify a
+    // payment, and neither leaves a record. An effect that must not be lost
+    // reaching this point would be refused by `#run`, loudly.
+    await this.#run(record, effects, at);
     return record;
   }
 
@@ -187,7 +254,7 @@ export class OrderRunner {
           // Nothing is written for a refused event, not even the facts that
           // came with it: an event the machine says has no meaning here should
           // leave no trace of having been believed.
-          return { result: { moved, before: known.order, known } };
+          return { result: { moved, known } };
         }
 
         refuseToWriteAnImpossibleOrder(moved.order);
@@ -208,7 +275,12 @@ export class OrderRunner {
         // and the order hangs with nobody waiting on anything.
         await this.#arm(deadlines(known.order), deadlines(next.order), orderId);
 
-        return { save: next, result: { moved, before: known.order, known: next } };
+        return {
+          save: next,
+          // The effects that must not be lost go in with the order (ADR-0013).
+          alongside: this.#writesWithTheOrder(next, known.order, moved.effects, event.at),
+          result: { moved, known: next },
+        };
       },
       scope,
     );
@@ -217,12 +289,12 @@ export class OrderRunner {
       return { outcome: "no_such_order" };
     }
 
-    const { moved, before, known } = decided.result;
+    const { moved, known } = decided.result;
     if (!moved.ok) {
       return { outcome: "refused", rejection: moved.rejection };
     }
 
-    const answer = await this.#run(known, before, moved.effects, event.at);
+    const answer = await this.#run(known, moved.effects.filter(carriedOutAfterwards), event.at);
     this.#wakeTheAgent(known);
 
     return { outcome: "moved", order: known, effects: moved.effects, answer };
@@ -298,7 +370,8 @@ export class OrderRunner {
         await this.#arm(deadlines(found.order), deadlines(order), orderId);
         return {
           save: next,
-          result: { kind: "took", before: found.order, known: next, effects },
+          alongside: this.#writesWithTheOrder(next, found.order, effects, at),
+          result: { kind: "took", known: next, effects },
         };
       },
     );
@@ -312,11 +385,135 @@ export class OrderRunner {
     }
 
     // The payment is already verified, so the machine's request to verify it is
-    // answered and dropped; everything else runs outside the lock.
-    const runnable = result.effects.filter((effect) => effect.kind !== "verify_payment");
-    const answer = await this.#run(result.known, result.before, runnable, at);
+    // answered and dropped; what was written down with the order is not carried
+    // out a second time; and what is left runs outside the lock.
+    const runnable = result.effects.filter(
+      (effect) => effect.kind !== "verify_payment" && carriedOutAfterwards(effect),
+    );
+    const answer = await this.#run(result.known, runnable, at);
     this.#wakeTheAgent(result.known);
     return { kind: "took", order: result.known, answer };
+  }
+
+  /**
+   * What the orders are still owed, asked of the orders themselves (ADR-0013).
+   *
+   * It keeps no second book of what was meant to happen. Each of its three
+   * questions is a fact about an order and is answered by doing the missing
+   * thing: an order paid for that has reached nobody is put on its merchant's
+   * stream, a delivered order with no receipt gets one, and an open order whose
+   * clock ran out has the clock started again so that the machine can end it.
+   *
+   * It is safe to run twice because it will be, and two of the three are no-ops
+   * on a second run for a reason that is in the orders rather than in a memory
+   * of having run: the receipt is there, so the order is no longer one without
+   * a receipt; the reminder ended the order, so the order is no longer open.
+   *
+   * The third is not a no-op and is not pretended to be. An order still sitting
+   * in `paid` after the first envelope went out is, from here, an order that
+   * has reached nobody — which is exactly the case this exists for — so it goes
+   * out again. What makes that safe is what makes the whole sweep safe: a
+   * merchant is already promised the same order can reach him twice, and his
+   * handler is already told to survive it. An effect whose receiver could not
+   * survive a repeat cannot be swept, and would have to say so where it is
+   * defined.
+   */
+  async sweep(): Promise<Swept> {
+    const now = this.#runtime.clock();
+    const swept: Swept = { dispatched: 0, receipted: 0, rearmed: 0, refused: 0 };
+
+    for (const record of await this.#runtime.store.openOrders()) {
+      try {
+        swept.dispatched += await this.#sweepTheDispatch(record, now);
+        swept.rearmed += await this.#sweepTheClocks(record, now);
+      } catch (thrown) {
+        // One order that cannot be repaired does not stop the others being
+        // repaired, which is the whole reason there is a sweep. It is said out
+        // loud because a sweep that quietly gave up on an order would leave
+        // nobody looking at it at all.
+        swept.refused += 1;
+        console.error(`[gateway] the sweep could not repair ${record.order.id}`, thrown);
+      }
+    }
+
+    for (const record of await this.#runtime.store.deliveredWithoutReceipt()) {
+      try {
+        await this.#runtime.store.putReceipt(
+          record.merchantId,
+          this.#receiptFor(record, record.order, now),
+        );
+        swept.receipted += 1;
+      } catch (thrown) {
+        swept.refused += 1;
+        console.error(`[gateway] the sweep could not receipt ${record.order.id}`, thrown);
+      }
+    }
+
+    if (swept.dispatched + swept.receipted + swept.rearmed + swept.refused > 0) {
+      console.log(
+        `[gateway] the sweep sent ${swept.dispatched} orders out again, wrote ${swept.receipted} receipts, started ${swept.rearmed} clocks, and could not repair ${swept.refused}`,
+      );
+    }
+    return swept;
+  }
+
+  /**
+   * An order that is paid for and has reached nobody, put on its merchant's
+   * stream again.
+   *
+   * The grace is what keeps this off the ordinary case. An order is in `paid`
+   * from the moment the money is in until a worker draws its envelope, and that
+   * gap is a normal part of every sale; only an order that has sat there longer
+   * than any worker would have taken looks like one whose envelope went
+   * nowhere. Nothing here can tell that apart from a merchant who is simply not
+   * polling, and it does not try to: it sends the order again, which is what
+   * the merchant is already promised can happen.
+   */
+  async #sweepTheDispatch(record: StoredOrder, now: number): Promise<number> {
+    const paidAt = record.order.timestamps.paidAt;
+    if (record.order.state !== "paid" || paidAt === null) {
+      return 0;
+    }
+    if (paidAt + this.#runtime.config.sweepDispatchGraceMs > now) {
+      return 0;
+    }
+
+    await this.#runtime.queue.publish(record.merchantId, this.#orderEnvelope(record, now));
+    return 1;
+  }
+
+  /**
+   * The clocks an order is waiting on that have already run out, started again.
+   *
+   * A reminder is the only thing that ever declares an order overdue, and one
+   * that was armed and then lost — a handler that threw past the queue's
+   * patience is the way that happens — is an order nothing will ever close and
+   * a buyer nothing will ever refund. A clock that has run out on an order
+   * still sitting in the state it belongs to is the fact that says so.
+   *
+   * Repeating it is safe in the machine rather than here: an expiry for a
+   * deadline that is not running is refused, and so is one claiming an instant
+   * the deadline has not reached. So a second reminder for an order the first
+   * one already moved finds nothing to do.
+   */
+  async #sweepTheClocks(record: StoredOrder, now: number): Promise<number> {
+    let rearmed = 0;
+    for (const deadline of deadlines(record.order)) {
+      if (deadline.at > now) {
+        continue;
+      }
+      await this.#runtime.queue.remind(
+        {
+          kind: "deadline",
+          orderId: record.order.id,
+          deadline: deadline.kind,
+          at: deadline.at,
+        },
+        0,
+      );
+      rearmed += 1;
+    }
+    return rearmed;
   }
 
   /**
@@ -352,10 +549,74 @@ export class OrderRunner {
     }
   }
 
-  /** Carries out the effects, and hands back the answer the merchant is owed. */
-  async #run(
+  /**
+   * The writes that go into the same hold as the order, out of the effects one
+   * transition asked for.
+   *
+   * Everything here is at least once and every receiver of it already tolerates
+   * a repeat: the wire promises a merchant the same order can reach him twice,
+   * and a receipt is keyed by its order, so writing it again writes the same
+   * row. That is not incidental — the sweep re-drives exactly these, so an
+   * effect that could not survive arriving twice could not be one of them.
+   */
+  #writesWithTheOrder(
     record: StoredOrder,
     before: Order,
+    effects: readonly Effect[],
+    at: number,
+  ): WithTheOrder[] {
+    const writes: WithTheOrder[] = [];
+
+    for (const effect of effects) {
+      switch (effect.kind) {
+        // Which stream an envelope goes on comes off the order and is never
+        // guessed at: the merchant on it was settled when the order was made,
+        // from the card it was made against, so a redelivery an hour later
+        // reaches the same worker as the first hand-over did.
+        case "dispatch_order":
+          writes.push({
+            kind: "envelope",
+            merchantId: record.merchantId,
+            envelope: this.#orderEnvelope(record, at),
+          });
+          break;
+
+        case "redeliver_order":
+          writes.push({
+            kind: "envelope",
+            merchantId: record.merchantId,
+            envelope: this.#orderEnvelope(record, at),
+            afterMs: effect.delayMs,
+          });
+          break;
+
+        case "emit_merchant_event":
+          writes.push({
+            kind: "envelope",
+            merchantId: record.merchantId,
+            envelope: this.#eventEnvelope(record, effect.event, at),
+          });
+          break;
+
+        case "issue_receipt":
+          writes.push({
+            kind: "receipt",
+            merchantId: record.merchantId,
+            receipt: this.#receiptFor(record, before, at),
+          });
+          break;
+
+        default:
+          break;
+      }
+    }
+
+    return writes;
+  }
+
+  /** Carries out the effects that were not written down, and hands back the answer the merchant is owed. */
+  async #run(
+    record: StoredOrder,
     effects: readonly Effect[],
     at: number,
   ): Promise<MerchantAnswer | null> {
@@ -385,25 +646,18 @@ export class OrderRunner {
           await this.#settle(record, at);
           break;
 
-        // Which stream an envelope goes on comes off the order and is never
-        // guessed at: the merchant on it was settled when the order was made,
-        // from the card it was made against, so a redelivery an hour later
-        // reaches the same worker as the first hand-over did.
         case "dispatch_order":
-          await this.#runtime.queue.publish(record.merchantId, this.#orderEnvelope(record, at));
-          break;
-
         case "redeliver_order":
-          await this.#runtime.queue.publish(
-            record.merchantId,
-            this.#orderEnvelope(record, at),
-            effect.delayMs,
-          );
-          break;
-
+        case "emit_merchant_event":
         case "issue_receipt":
-          await this.#issueReceipt(record, before, at);
-          break;
+          // These were written down with the state that implies them and are
+          // not carried out again here (ADR-0013). Reaching this means a caller
+          // handed them over without taking them out first, and doing them a
+          // second time would put a duplicate on a merchant's stream while
+          // looking exactly like the code working.
+          throw new Error(
+            `${effect.kind} on ${record.order.id} was written down with the order and must not be carried out again`,
+          );
 
         case "mark_refund_due":
           // The order's own state is the record of the debt, and the merchant
@@ -416,13 +670,6 @@ export class OrderRunner {
           // without ever having released any, so there is no receipt here to
           // bring into line. A merchant reconciling money that came in and went
           // back out has the order and the event and no receipt for it.
-          break;
-
-        case "emit_merchant_event":
-          await this.#runtime.queue.publish(
-            record.merchantId,
-            this.#eventEnvelope(record, effect.event, at),
-          );
           break;
 
         case "answer_merchant":
@@ -546,7 +793,15 @@ export class OrderRunner {
     };
   }
 
-  async #issueReceipt(record: StoredOrder, before: Order, at: number): Promise<void> {
+  /**
+   * The receipt for one order, as it should stand.
+   *
+   * It builds rather than writes, because writing it is the store's to do
+   * inside the same hold as the order (ADR-0013). The sweep asks for the same
+   * receipt and writes it on its own, which is why this takes the instants it
+   * needs rather than reading a clock.
+   */
+  #receiptFor(record: StoredOrder, before: Order, at: number): Receipt {
     const price = record.order.price;
     if (price === null) {
       throw new Error(`a receipt was asked for on ${record.order.id}, which has no price`);
@@ -563,7 +818,7 @@ export class OrderRunner {
     // rather than looked up through the card: a card can be republished or
     // taken off sale, and a receipt names who made the sale whatever became of
     // the catalog afterwards.
-    await this.#runtime.store.putReceipt(record.merchantId, {
+    return {
       id: this.#runtime.ids("rcp"),
       order_id: record.order.id,
       item_id: record.itemId,
@@ -577,7 +832,7 @@ export class OrderRunner {
       paid_at: asTimestamp(paidAt),
       outcome: receiptOutcomeOf(record.order),
       test: record.order.test,
-    });
+    };
   }
 
   #orderEnvelope(record: StoredOrder, at: number): WorkerEnvelope {

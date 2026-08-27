@@ -47,7 +47,7 @@ import type { Reminder } from "../ports/queue.js";
 import type { StoredCard, StoredOrder } from "../ports/store.js";
 import { orderCallResponseOf } from "./answers.js";
 import { keyDigest } from "./merchants.js";
-import { OrderRunner, orderDocumentOf } from "./runner.js";
+import { OrderRunner, orderDocumentOf, SWEEP_EFFECTS } from "./runner.js";
 import {
   modeForCard,
   policyFor,
@@ -166,6 +166,12 @@ export class Gateway {
     // are two processes. Registering the same name replaces what was there, so
     // a restart does not accumulate schedules.
     await this.runtime.queue.everyDay(SWEEP_CLAIMS, () => this.forgetOldClaims());
+
+    // And what the orders are still owed, on the same scheduler and for the
+    // same reasons (ADR-0013). It asks the orders themselves what is missing
+    // rather than keeping a second record of what was meant to happen, and it
+    // is written to be safe run twice, because it will be.
+    await this.runtime.queue.everyDay(SWEEP_EFFECTS, () => this.runner.sweep());
   }
 
   /** One reminder, turned into one event and nothing more. */

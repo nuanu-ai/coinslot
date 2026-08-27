@@ -19,11 +19,12 @@
  * answer from where the caller stands.
  */
 
-import type { Card, Receipt } from "@coinslot/contracts";
+import type { Card, Receipt, WorkerEnvelope } from "@coinslot/contracts";
 import { isOpen, MERCHANT_SELLING, type MerchantSelling } from "@coinslot/core";
-import { and, eq, isNull, lt, sql } from "drizzle-orm";
+import { and, eq, exists, isNull, lt, not, sql } from "drizzle-orm";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
+import type { DrizzleTransactionLike } from "pg-boss";
 import type { Ids } from "../../ports/clock.js";
 import type {
   CatalogEntry,
@@ -39,13 +40,61 @@ import type {
 } from "../../ports/store.js";
 import { cards, merchantKeys, merchants, orders, paymentClaims, receipts } from "./schema.js";
 
+/**
+ * How an envelope that has to be written with an order gets onto a merchant's
+ * stream (ADR-0013).
+ *
+ * Two calls rather than one, and the second is not an afterthought. `within`
+ * writes the job as part of the transaction the order is being written in, so
+ * the two commit or roll back together; nothing can see that job until the
+ * commit, a poll parked in this process included. `committed` is what tells
+ * those parked polls to look again, and it runs after the transaction has
+ * actually committed — woken any earlier they would fetch, find nothing, and
+ * have spent the wake that ADR-0004 §4 exists to give them.
+ */
+export interface Envelopes {
+  within(
+    tx: DrizzleTransactionLike,
+    merchantId: string,
+    envelope: WorkerEnvelope,
+    afterMs?: number,
+  ): Promise<void>;
+  /** The transaction those envelopes were written in has committed. */
+  committed(merchantIds: readonly string[]): void;
+}
+
+/**
+ * The answer for a store that was built without one.
+ *
+ * The command-line verbs make a store to list merchants and issue keys with,
+ * and none of them writes an order. Refusing out loud is the alternative to a
+ * store that quietly drops a merchant's work.
+ */
+export const noEnvelopes: Envelopes = {
+  async within(_tx, _merchantId, envelope) {
+    throw new Error(
+      `this store was built with nowhere to put the envelope ${envelope.id}: a store that writes orders is given a stream`,
+    );
+  },
+  committed() {},
+};
+
+/**
+ * Somewhere a statement can be run: the pool, or a transaction on it. Drizzle
+ * hands the two the same query builder, and the difference is the only thing
+ * this file cares about.
+ */
+type Queries = NodePgDatabase | Parameters<Parameters<NodePgDatabase["transaction"]>[0]>[0];
+
 export class PostgresStore implements Store {
   readonly #db: NodePgDatabase;
   readonly #ids: Ids;
+  readonly #envelopes: Envelopes;
 
-  constructor(db: NodePgDatabase, ids: Ids) {
+  constructor(db: NodePgDatabase, ids: Ids, envelopes: Envelopes = noEnvelopes) {
     this.#db = db;
     this.#ids = ids;
+    this.#envelopes = envelopes;
   }
 
   // --- merchants and their keys ---------------------------------------------
@@ -304,12 +353,49 @@ export class PostgresStore implements Store {
     return rows.map((row) => row.record);
   }
 
+  async openOrders(): Promise<readonly StoredOrder[]> {
+    const rows = await this.#db
+      .select()
+      .from(orders)
+      .where(eq(orders.open, true))
+      .orderBy(orders.createdAt);
+    return rows.map((row) => row.record);
+  }
+
+  async deliveredWithoutReceipt(): Promise<readonly StoredOrder[]> {
+    // The absence is asked in the predicate rather than by reading the orders
+    // and then the receipts: the answer is normally empty, and a version that
+    // read every delivered order to find that out would grow with the history
+    // of the gateway rather than with what is wrong with it.
+    const rows = await this.#db
+      .select()
+      .from(orders)
+      .where(
+        and(
+          eq(orders.state, "delivered"),
+          not(
+            exists(
+              this.#db
+                .select({ one: sql`1` })
+                .from(receipts)
+                .where(eq(receipts.orderId, orders.id)),
+            ),
+          ),
+        ),
+      )
+      .orderBy(orders.createdAt);
+    return rows.map((row) => row.record);
+  }
+
   async withOrder<T>(
     id: string,
     change: (found: StoredOrder) => Promise<OrderChange<T>> | OrderChange<T>,
     scope?: MerchantScope,
   ): Promise<OrderLookup<T>> {
-    return this.#db.transaction(async (tx) => {
+    // Which streams were written to inside the transaction, so that the polls
+    // parked on them can be woken once it has committed and not before.
+    const streams: string[] = [];
+    const lookup = await this.#db.transaction(async (tx): Promise<OrderLookup<T>> => {
       // The lock is taken on the row itself, so a second decision about this
       // order waits here rather than reading the same order and writing over
       // whatever the first one decided. Where a merchant is named, whose order
@@ -332,6 +418,22 @@ export class PostgresStore implements Store {
       }
 
       const decided = await change(row.record);
+
+      // The writes that must not be lost go in this transaction, so that a
+      // process that dies mid-flight either did both or did neither (ADR-0013).
+      // pg-boss takes a handle in its send options whose whole contract is
+      // running one statement, and `fromDrizzle` makes one out of this
+      // transaction — so the job insert is on this connection, inside this
+      // transaction, and rolls back with the order if anything below fails.
+      for (const write of decided.alongside ?? []) {
+        if (write.kind === "receipt") {
+          await this.#putReceiptWithin(tx, write.merchantId, write.receipt);
+          continue;
+        }
+        await this.#envelopes.within(tx, write.merchantId, write.envelope, write.afterMs);
+        streams.push(write.merchantId);
+      }
+
       if (decided.save !== undefined) {
         // The merchant is taken from the row rather than from what came back.
         // It is settled at the birth of an order and never again, and this is
@@ -354,6 +456,13 @@ export class PostgresStore implements Store {
       }
       return { found: true, result: decided.result };
     });
+
+    // Committed: the jobs written above are visible now, so a poll parked in
+    // this process is told to look rather than waiting out its polling
+    // interval. Nothing depends on this happening — another process finds the
+    // work by polling — which is why it is after the transaction and not in it.
+    this.#envelopes.committed(streams);
+    return lookup;
   }
 
   async claimPayment(fingerprint: string, orderId: string): Promise<PaymentClaim> {
@@ -400,14 +509,26 @@ export class PostgresStore implements Store {
   // --- receipts -------------------------------------------------------------
 
   async putReceipt(merchantId: string, receipt: Receipt): Promise<void> {
-    await this.#db
+    await this.#putReceiptWithin(this.#db, merchantId, receipt);
+  }
+
+  /**
+   * The one statement that writes a receipt, on whichever handle it is given —
+   * the pool for a caller of its own, or the transaction an order is being
+   * written in. One statement rather than two, so that a receipt written beside
+   * an order and a receipt written by the sweep cannot come to disagree about
+   * whose sale it was.
+   */
+  async #putReceiptWithin(on: Queries, merchantId: string, receipt: Receipt): Promise<void> {
+    await on
       .insert(receipts)
       .values({ orderId: receipt.order_id, merchantId, receipt, updatedAt: new Date() })
       .onConflictDoUpdate({
         target: receipts.orderId,
         // The merchant is not in this set. A receipt belongs to whoever made
         // the sale, and writing it again — which is what the machine does when
-        // an order moves on — is not an occasion for it to change hands.
+        // an order moves on, and what the sweep does for one that has none — is
+        // not an occasion for it to change hands.
         set: { receipt, updatedAt: sql`now()` },
       });
   }

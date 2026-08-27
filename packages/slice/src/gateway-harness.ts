@@ -99,11 +99,15 @@ export async function bootGateway(
   env: Record<string, string> = sliceEnv(),
 ): Promise<Booted> {
   const config = loadConfig(env);
-  const store = new MemoryStore(randomIds, systemClock);
   const queue = new MemoryQueue({
     attempts: config.reminderAttempts,
     retryDelayMs: config.reminderRetryDelayMs,
   });
+  // The queue is made first because the store publishes through it: an envelope
+  // that must not be lost is written where the order is (ADR-0013).
+  const store = new MemoryStore(randomIds, systemClock, (merchantId, envelope, afterMs) =>
+    queue.publish(merchantId, envelope, afterMs),
+  );
 
   const runtime: Runtime = {
     config,

@@ -98,7 +98,11 @@ function paymentLayer(): Facilitator {
 
 const runtime: Runtime = {
   config,
-  store: new PostgresStore(db, randomIds),
+  // The store is given the queue's way of writing an envelope inside its own
+  // transaction: an envelope that must not be lost is written where the order
+  // is, so a process that dies mid-flight either did both or did neither
+  // (ADR-0013). Both live in the same Postgres, which is what makes it possible.
+  store: new PostgresStore(db, randomIds, queue.envelopes()),
   queue,
   facilitator: paymentLayer(),
   clock: systemClock,
