@@ -294,12 +294,13 @@ one is for orders, with `coinslot.on('event', ...)`, and it sends nothing back
 — an event tells you something happened and asks for no answer.
 
 An event is sent once and is never sent again, and that is the opposite of the
-rule for orders on the same subscription. An order is acknowledged by the call
-that closes it, so we can tell whether it arrived and send it out again when it
-did not. An event is acknowledged by nothing, so we cannot tell — and an event
-that went into a batch your process never received is gone. Nothing brings it
-back, and nothing afterwards announces that a message went missing. So the guard
-an order needs is against a repeat, and the guard an event needs is against a
+rule for orders on the same subscription. Your answer is what acknowledges an
+order — any of the three, including taking it on — so we can tell whether it
+arrived and send it out again when it did not. An event is the price of asking
+for no answer: nothing on our side is waiting for a reply to it, so one that
+went into a batch your process never received is simply gone. Nothing brings it
+back, and nothing afterwards announces that one went missing. So the guard an
+order needs is against a repeat, and the guard an event needs is against a
 silence; a handler written for one of those rules and pointed at the other gets
 that one wrong.
 
