@@ -117,11 +117,19 @@ describe("npx coinslot verify", () => {
     // an absent call after the call had been added. The tense is pinned too.
     // "passed on the day they went out" is the claim the code can support;
     // "have passed" would be a promise about a schema that is allowed to move.
+    //
+    // The message is also addressed to whoever ran the command, and most of
+    // them reached it through `npx` with no idea that a repository exists.
+    // So it says "you" throughout and never "a merchant", and it talks about
+    // the command they typed rather than about a package in a workspace.
     const { code, said } = await verifying("verify");
 
     expect(said).toMatch(/takes no key and no address/);
     expect(said).toMatch(/list_merchant_cards/);
     expect(said).toMatch(/passed this check on the day they went out/);
+    // Wrapped across lines in the message, so the wrap is not what is pinned.
+    expect(said).toMatch(/where you keep the cards\s+you\s+publish from/);
+    expect(said).not.toMatch(/a merchant/);
     expect(said).toMatch(/Name the card files instead/);
     expect(code).toBe(VERIFY_EXIT.COULD_NOT_RUN);
   });
