@@ -152,6 +152,11 @@ services:
       interval: 3s
       timeout: 3s
       retries: 20
+      # A process starting through tsx refuses connections for the first few
+      # seconds, and those refusals are not news. Without this they are counted
+      # against the retries, so the budget that is meant to cover a slow start
+      # is partly spent on the start itself.
+      start_period: 15s
 
   cabinet:
     <<: *app
@@ -205,6 +210,9 @@ services:
       interval: 3s
       timeout: 3s
       retries: 20
+      # As above: the refusals while the process is still starting are expected
+      # and should not be spending the retry budget.
+      start_period: 15s
 
   # A merchant on the other side, so the surface has something to show. It is
   # the mock merchant of the offline gate — the same two cards, the same price
@@ -238,11 +246,25 @@ services:
       # not: it is a build, and it comes from the image.
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./apps/landing/public:/srv/landing:ro
+    # Waited for, but not required. Caddy in front of a process that has not
+    # finished starting answers 502 to the first person who looks, so waiting
+    # for a health check rather than for a container is right — and a service
+    # that never becomes healthy must not take this one down with it. Without
+    # `required: false`, `docker compose up` aborts the whole command with
+    # "dependency failed to start", and the landing and the documentation, which
+    # need nothing from either of these, do not come up at all. They are the two
+    # pages somebody reads while working out why the third is broken.
+    #
+    # What that costs when a dependency really is down: /cabinet and /v0 answer
+    # 502 until it is up, and then they work, because Caddy resolves the service
+    # name per request rather than at startup.
     depends_on:
       gateway:
-        condition: service_started
+        condition: service_healthy
+        required: false
       cabinet:
         condition: service_healthy
+        required: false
 
 volumes:
   coinslot-postgres:
