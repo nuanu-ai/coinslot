@@ -175,7 +175,12 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
   });
 
   app.post(`${base}/sign-in`, async (request, response) => {
-    const form = request.body as { email?: unknown; password?: unknown };
+    // `?? {}` and not a cast alone: express leaves `body` undefined when the
+    // content type is not the one the form parser handles, and reading a field
+    // off that throws — so a request that is merely malformed would land on the
+    // page that says something in the cabinet is broken, with a stack trace in
+    // the log for every scanner that ever posts JSON at this address.
+    const form = (request.body ?? {}) as { email?: unknown; password?: unknown };
     const email = typeof form.email === "string" ? form.email : "";
     const password = typeof form.password === "string" ? form.password : "";
     if (email.trim() === "" || password === "") {
@@ -282,7 +287,7 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
 
   app.post(`${base}/password`, async (request, response) => {
     const person = whoIs(request);
-    const form = request.body as { current?: unknown; fresh?: unknown };
+    const form = (request.body ?? {}) as { current?: unknown; fresh?: unknown };
     const current = typeof form.current === "string" ? form.current : "";
     const fresh = typeof form.fresh === "string" ? form.fresh : "";
 

@@ -86,6 +86,8 @@ interface Visit {
 interface Browser {
   get(path: string): Promise<Visit>;
   post(path: string, form?: Record<string, string>): Promise<Visit>;
+  /** A post of a body this cabinet's forms never send, as a scanner would. */
+  postRaw(path: string, contentType: string, body: string): Promise<Visit>;
   /**
    * Signs in as a person and follows the redirect, the way a browser does.
    * The account every test in this file starts with is the default.
@@ -197,7 +199,11 @@ async function attachedTo(url: string, basePath: string): Promise<Browser> {
     method: string,
     path: string,
     form?: Record<string, string>,
-    sent: { readonly cookie?: string; readonly origin?: string } = {},
+    sent: {
+      readonly cookie?: string;
+      readonly origin?: string;
+      readonly raw?: { readonly contentType: string; readonly body: string };
+    } = {},
   ): Promise<Visit> => {
     const cookie = sent.cookie ?? [...jar].map(([name, value]) => `${name}=${value}`).join("; ");
     const answered = await fetch(`${url}${path}`, {
@@ -207,8 +213,10 @@ async function attachedTo(url: string, basePath: string): Promise<Browser> {
         ...(cookie === "" ? {} : { cookie }),
         ...(sent.origin === undefined ? {} : { origin: sent.origin }),
         ...(form === undefined ? {} : { "content-type": "application/x-www-form-urlencoded" }),
+        ...(sent.raw === undefined ? {} : { "content-type": sent.raw.contentType }),
       },
       ...(form === undefined ? {} : { body: new URLSearchParams(form).toString() }),
+      ...(sent.raw === undefined ? {} : { body: sent.raw.body }),
     });
 
     for (const line of answered.headers.getSetCookie()) {
@@ -235,6 +243,8 @@ async function attachedTo(url: string, basePath: string): Promise<Browser> {
   const browser: Browser = {
     get: (path) => call("GET", path),
     post: (path, form) => call("POST", path, form ?? {}),
+    postRaw: (path, contentType, body) =>
+      call("POST", path, undefined, { raw: { contentType, body } }),
     async signIn(email = PERSON, password = PASSWORD) {
       const posted = await call("POST", `${basePath}/sign-in`, { email, password });
       return posted.to === null ? posted : call("GET", posted.to);
@@ -355,6 +365,26 @@ describe("getting into the cabinet", () => {
       const refused = await browser.post("/sign-in", form as Record<string, string>);
       expect(refused.status).toBe(400);
       expect(refused.headers.getSetCookie()).toStrictEqual([]);
+    }
+  });
+
+  it("refuses a sign-in that is not a form rather than saying the cabinet is broken", async () => {
+    // Express leaves `body` undefined when the content type is not the one the
+    // form parser handles, so reading a field off it throws — and a request
+    // that is merely malformed lands on the page that says something here is
+    // broken, with a stack trace in the log for every scanner that ever posts
+    // JSON at this address.
+    const { browser } = await started();
+    // Signed in, or the password page is answered by the gate and this would
+    // never reach the handler it is about. It did not, at first: the mutation
+    // that undoes the fix survived, because a 303 from the gate is not a 500.
+    await browser.signIn();
+
+    for (const at of ["/sign-in", "/password"]) {
+      const answered = await browser.postRaw(at, "application/json", '{"email":"x"}');
+      expect(answered.status, at).not.toBe(500);
+      expect(answered.to, at).toBeNull();
+      expect(readable(answered.html), at).not.toContain("broken");
     }
   });
 
