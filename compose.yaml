@@ -168,6 +168,13 @@ services:
       # in: machine to machine, out of configuration. Rotating it is now a
       # separate act from signing anybody out.
       MERCHANT_API_KEY: local-sandbox-merchant-key
+      # Off, and named rather than left to the default, because this is the one
+      # line a deployment has to change. This stack is plain http on localhost,
+      # where a Secure cookie is never sent back and nobody can sign in at all;
+      # anywhere the cabinet is reached over https this is "true", and a server
+      # that leaves it off is handing a merchant's session to anybody on the
+      # path.
+      COOKIE_SECURE: "false"
       # Its own process, reaching the gateway over the same public API a
       # merchant's own code uses (ADR-0005 §2) — this is the service name on the
       # internal network, not the origin a browser types.
