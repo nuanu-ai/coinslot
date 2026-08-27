@@ -293,9 +293,17 @@ a second refund out of your own wallet.
 
 | Event | What happened |
 | --- | --- |
-| An order was marked as needing a refund | you did not deliver in time, or refused after the charge |
+| An order was marked as needing a refund | you did not deliver in time, you refused after the charge, or a charge we had given up on reported in late |
 | A confirmed order was not paid for | you answered that you would deliver and the agent did not pay in its own time; you are free |
-| A payment did not execute after a synchronous delivery | you delivered and the money never arrived |
+| A payment did not execute after a synchronous delivery | you delivered, and the charge either failed or went unanswered |
+
+The last cause of a refund is the one that will not match your own record: a
+charge we had written off as never having happened reports in afterwards, and
+the buyer is owed the money back through no fault of yours. That event carries
+a short reason beside the sum, and for this cause it reads as a deadline —
+ours, on the charge, rather than yours on the goods. The vocabulary has three
+words and none of them is for this, and inventing a fourth on the wire is a
+decision nobody has taken.
 
 ## You delivered and the payment did not execute
 
@@ -304,25 +312,46 @@ first and execute it as the last step, after your delivery; between the check
 and the execution the funds can leave the buyer's wallet for something else.
 Then you have produced the goods and there is no money for them.
 
-In this case the order is marked delivered and unpaid, and an event reaches you
-— there is no need to go looking for such cases by reconciling transfers. For
-the agent the purchase did not happen: we hand the goods over after the payment
-executes, so it received neither the goods nor a charge. The order stays open
-on your side.
+In this case the goods are recorded and the money is not, and an event reaches
+you — there is no need to go looking for such cases by reconciling transfers.
+For the agent the purchase did not happen: we hand the goods over after the
+payment executes, so it received neither the goods nor a charge. The order
+stays open on your side.
 
-A repeat purchase is what closes it: the agent repeats it under the same key,
-the payment executes, and the order closes on the delivery you have already
-made — there is no need to deliver a second time. Whether to revoke what you
-gave out or to wait for the repeat is yours to decide; the size of the risk is
-bounded by the price of one purchase, and the owner of the business is told
-about that risk on [Money](/money).
+Two situations reach you through that one event, and they part on what the
+payment network finally said. The order carries the word that tells them apart,
+so read it back before you act on either.
+
+Where the charge came back failed, the order reads `delivered_unpaid`, and a
+repeat purchase closes it: the agent repeats it under the same key, the payment
+executes, and the order closes on the delivery you have already made — there is
+no need to deliver a second time.
+
+Where the payment network was asked and never answered, nobody can say whether
+the buyer was charged, and we do not pretend to. A repeat is refused there,
+because a second charge on top of a first one nobody has heard from would be
+spending the buyer's money on a guess about the first. The order reads
+`in_progress`, the same word as an order still waiting for you, and nothing on
+our side asks the payment network again — so it can sit there indefinitely. If
+a late answer does arrive and it says the money moved, the order closes as
+delivered and the agent gets its goods; if it says the money did not move, the
+order becomes one a repeat purchase can close.
+
+In both cases the goods are already recorded on our side, so there is nothing
+to deliver again: a second delivery is answered as a success and nothing it
+carries is written down. Whether to revoke what you gave out or to wait is
+yours to decide; the size of the risk is bounded by the price of one purchase,
+and the owner of the business is told about that risk on [Money](/money).
 
 ## How an order can end
 
 An order always closes — with a delivery, with a refusal or on a deadline — and
-the agent sees which. Three cases stay open, and all three are rare: the money
-was charged and no delivery happened; you delivered and the payment did not
-execute; and the payment network never said whether the charge went through.
+the agent sees which. Three cases leave the money unsettled, and all three are
+rare: the money was charged and no delivery happened; you delivered and the
+payment did not execute; and the payment network never said whether the charge
+went through. The first two keep the order open. The third closes it, on the
+guess that the money did not move — and if the charge reports in afterwards
+saying that it did, that closed order becomes a refund you owe.
 
 | Situation | Where the money is | What the agent sees |
 | --- | --- | --- |
@@ -333,7 +362,7 @@ execute; and the payment network never said whether the charge went through.
 | You left | for what was not delivered, [you send it back](/money) | an unpaid order is closed; a paid one waits for your refund |
 | The money was charged and no delivery happened | with you | the order is waiting for a refund |
 | You delivered synchronously and the payment did not execute | never arrived | the purchase did not happen; a repeat drives the payment home |
-| The payment network did not say whether the money was charged | not known — we are finding out and will tell you when we do | "the outcome of the payment is not known", not "refused": a repeat under the same key is safe |
+| The payment network did not say whether the money was charged | not known — and nothing on our side is asking again | "the outcome of the payment is not known", not "refused": a repeat under the same key is safe |
 
 A pause closes no orders: cards stop selling, and the orders already taken on
 play out in the ordinary way. Only leaving closes the ones that are open.

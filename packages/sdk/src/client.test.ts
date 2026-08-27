@@ -7,6 +7,8 @@ import {
   CALL_DID_NOT_REACH_US,
   createClient,
   OUTCOME_UNKNOWN,
+  WORKER_PROBLEM_KINDS,
+  type WorkerProblem,
 } from "./index.js";
 import { type FakeGateway, startFakeGateway } from "./testing/fake-gateway.js";
 import { REACH, type Reach, reachOf, type TransportFailure, whatIsKnown } from "./transport.js";
@@ -195,6 +197,50 @@ describe("closing an order the merchant took on", () => {
     expect(gateway?.callsTo("deliver_order")[0]?.body).toStrictEqual({
       access_url: "https://example.com/a",
     });
+  });
+
+  it("says when a delivered field will be dropped, on this road as well", async () => {
+    // The one silent loss the contract documents, and it was reported on one
+    // of the two roads to the gateway. The worker warns about a handler's
+    // answer; this call is the other road, and the one a merchant delivering
+    // asynchronously takes — the portal's own loop over open orders ends in
+    // it. A field lost here told nobody at all, and the merchant's handler had
+    // no way to learn that what it sent is not what went out.
+    const problems: WorkerProblem[] = [];
+    const coinslot = await gatewayServing({
+      deliver_order: () => ({ body: { ok: true, result: "delivered" } }),
+    });
+
+    coinslot.on("problem", (problem) => problems.push(problem));
+
+    const result = await coinslot.orders
+      .forId("order-1")
+      .deliver(JSON.parse('{"access_url": "https://a.example", "__proto__": "gone"}'));
+
+    expect(problems[0]?.kind).toBe(WORKER_PROBLEM_KINDS.DELIVERY_FIELD_DROPPED);
+    expect(problems[0]?.subject).toBe("order-1");
+    expect(problems[0]?.fatal).toBe(false);
+    // A warning and not a refusal: the rest of the delivery is good and the
+    // call goes through, which is the same thing the worker does with it.
+    expect(result).toStrictEqual({ ok: true, result: "delivered" });
+  });
+
+  it("says nothing about an ordinary delivery", async () => {
+    // The negative control. A reporter that fired on every delivery would be
+    // noise a merchant learns to ignore, and the one warning worth having
+    // would go with it.
+    const problems: WorkerProblem[] = [];
+    const coinslot = await gatewayServing({
+      deliver_order: () => ({ body: { ok: true, result: "delivered" } }),
+      refuse_order: () => ({ body: { ok: true, result: "refused" } }),
+    });
+
+    coinslot.on("problem", (problem) => problems.push(problem));
+
+    await coinslot.orders.forId("order-1").deliver({ access_url: "https://a.example" });
+    await coinslot.orders.forId("order-1").refuse({ code: "out_of_stock", message: "none left" });
+
+    expect(problems).toStrictEqual([]);
   });
 
   it("returns a refusal of the call rather than throwing it", async () => {

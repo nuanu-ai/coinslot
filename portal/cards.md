@@ -63,8 +63,19 @@ the point of connection that survives you publishing your cards again.
 ### Title
 
 A short line by which the product is told apart from its neighbours in a
-catalogue's listing. Catalogues have their own limits on length and on the
-characters allowed, and we fit the title to them at publication.
+listing. It reaches the agent in our own catalogue, beside the description and
+the price.
+
+It does not reach a catalogue outside ours. Those carry one field of prose for
+a product where a card has two, and joining your headline to your description
+with punctuation of our own would be us writing your listing for you — so what
+goes out there is the description, the field a card writes for a program to
+read.
+
+A title has to be there and it has to be more than blank space. Nothing else is
+checked: no length is measured and nothing is shortened, so what you write is
+what an agent is shown, whole, and a title long enough to be a paragraph is one
+nothing on our side will stop. What the limits ought to be is not settled.
 
 ### Description
 
@@ -124,6 +135,10 @@ field that does not arrive is a mismatch, and so is a field the card never
 declared. A mismatch does not reach the agent — we refuse the delivery, name
 the fields that are wrong and leave the order where it was, so your handler can
 send the right thing. It is the merchant who finds out, not the buyer.
+
+Where that order has already ended — its deadline ran out while the handler was
+being fixed — the refusal names the ending as well as the fields, rather than
+inviting another attempt at a sale there is nothing left to deliver against.
 
 Where a handler has got everything wrong at once, the refusal is held to a
 single line rather than allowed to grow into a paragraph nobody reads. A field
@@ -258,20 +273,32 @@ In full it looks like this:
 ```
 
 The mark `as_of` says which moment the answer is true for, and it separates
-"went and checked just now" from "handed over what was in the cache". We decide
-from it how far the answer can be trusted, and the same moment ends up in the
-record of the sale. A price handler is given it as the last argument; a call
-made without it stamps the moment of the answer itself, which is right only if
-you really did look just then. An answer out of a cache is dated by the moment
-that cache was filled, as in the example above.
+"went and checked just now" from "handed over what was in the cache". A price
+handler is given it as the last argument; a call made without it stamps the
+moment of the answer itself, which is right only if you really did look just
+then. An answer out of a cache is dated by the moment that cache was filled, as
+in the example above.
+
+We carry the mark and we do not yet weigh it. It travels into the order your
+handler is given and into the record of the sale, so whoever reconciles a
+charge afterwards can see how old the number behind it was — but nothing
+compares it against anything. An answer stamped a year ago is honoured for
+exactly as long as one stamped a second ago, because a price's life runs from
+the moment your answer reached us rather than from the moment it says it was
+true. So nothing here catches a stale price on your behalf: a handler answering
+out of a cache is the one deciding how old that cache may get.
 
 An `available: false` answer to a purchase closes it before any money moves,
 and no order appears on your side. The price from an answer lives until
 `expires_at`: how long a price holds is set by us and is the same across the
 system, and what happens once it has passed is in [Time ran out](/orders).
 
-We hold down the load on your side ourselves, limiting how often the questions
-go out.
+Nothing on our side holds down how often these questions go out. One purchase
+asks one question and that question is put on your stream once, so the rate
+your price handler meets is the rate agents buy at, and that is the number to
+size it against. The thresholds that would hold the rate down are among what is
+not settled below; until they exist there is nothing between a burst of
+purchases and your handler.
 
 Coinslot keeps no stock counts: only you know how much of anything there is. So
 a product that can run out is worth listing with a check, because without one
@@ -342,6 +369,8 @@ what that ought to be is not settled.
   yet.
 - The thresholds that limit how often price questions go out, and how long we
   wait for an answer.
+- Whether an answer whose `as_of` is too old is refused rather than honoured,
+  what counts as too old, and what a sale does when one arrives.
 - The price hook. We do not call the address a card names, and when we do, your
   side will need something to check a request against to know that it came from
   us. A price handler has neither question — the subscription channel is

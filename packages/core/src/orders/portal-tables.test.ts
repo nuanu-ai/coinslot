@@ -228,6 +228,55 @@ describe('portal/orders.md, "How an order can end"', () => {
 
     expect(outcomeFor(closed)).toBe("delivered");
   });
+
+  it(`${ENDINGS[6]}: where the charge went unanswered instead, the repeat waits`, () => {
+    // The other half of the portal's "You delivered and the payment did not
+    // execute", and the half the page used to leave out. The same merchant
+    // event carries both, so the page sends the merchant to the order's own
+    // word to tell them apart — and the two words have to be the two below,
+    // or a merchant follows the wrong paragraph.
+    const { order, effects } = must(reach("fulfilled"), {
+      kind: "deadline_expired",
+      at: T0 + 999_999,
+      deadline: "settle_response",
+    });
+
+    expect(order.state).toBe("delivered_unpaid");
+    expect(order.payment).toBe("outcome_unknown");
+    expect(effects).toContainEqual({
+      kind: "emit_merchant_event",
+      event: "order.payment_failed_after_delivery",
+    });
+    // The word the page tells him to read: not `delivered_unpaid`, which is
+    // the paragraph above this one and the paragraph with the repeat in it.
+    expect(outcomeFor(order)).toBe("in_progress");
+
+    // "A repeat is refused there": no second charge goes out on a guess about
+    // the first.
+    const repeated = transition(order, { kind: "purchase_repeated", at: T0 + 1_000_000 });
+
+    expect(repeated.ok).toBe(false);
+    if (repeated.ok) return;
+    expect(repeated.rejection.code).toBe("settle_in_flight");
+
+    // "If a late answer does arrive and it says the money moved, the order
+    // closes as delivered and the agent gets its goods."
+    const paid = must(order, { kind: "payment_settled", at: T0 + 2_000_000 });
+
+    expect(outcomeFor(paid.order)).toBe("delivered");
+    expect(kinds(paid.effects)).toContain("release_goods_to_agent");
+
+    // "If it says the money did not move, the order becomes one a repeat
+    // purchase can close."
+    const unpaid = walk(order, [
+      { kind: "payment_settle_failed", at: T0 + 2_000_000 },
+      { kind: "purchase_repeated", at: T0 + 2_000_001 },
+      { kind: "payment_verified", at: T0 + 2_000_002 },
+      { kind: "payment_settled", at: T0 + 2_000_003 },
+    ]);
+
+    expect(outcomeFor(unpaid)).toBe("delivered");
+  });
 });
 
 // --- portal/orders.md, "Time ran out" --------------------------------------
@@ -517,7 +566,7 @@ describe("the portal and this machine cannot drift apart quietly", () => {
       "for what was not delivered, [you send it back](/money)",
       "with you",
       "never arrived",
-      "not known — we are finding out and will tell you when we do",
+      "not known — and nothing on our side is asking again",
     ]);
   });
 
@@ -565,9 +614,9 @@ describe("the portal and this machine cannot drift apart quietly", () => {
     // The event name is the wire word; the second column is what the merchant
     // is told it means, and it is the half he acts on.
     expect(tableRows(ORDERS_PAGE, "Events on the same subscription", 2)).toStrictEqual([
-      "you did not deliver in time, or refused after the charge",
+      "you did not deliver in time, you refused after the charge, or a charge we had given up on reported in late",
       "you answered that you would deliver and the agent did not pay in its own time; you are free",
-      "you delivered and the money never arrived",
+      "you delivered, and the charge either failed or went unanswered",
     ]);
   });
 

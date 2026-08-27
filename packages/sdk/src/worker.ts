@@ -173,6 +173,79 @@ export interface WorkerProblem {
 export type ProblemReporter = (problem: WorkerProblem) => void;
 
 /**
+ * Calls a merchant's reporter and lets nothing it does escape.
+ *
+ * Reporting must not be able to end the loop that reports. A merchant's
+ * reporter is their code — a logger over a stream that closed during shutdown,
+ * a client that was never configured — and an exception out of it would
+ * otherwise unwind the worker and, from the worker's own last-resort handler,
+ * escape as an unhandled rejection and take the host process down with it.
+ * There is nowhere left to report a reporter that throws, so it is swallowed.
+ *
+ * Both ways of throwing, and the second is the one that hid. A reporter
+ * declared `void` may still be an `async` function — TypeScript allows it, and
+ * a merchant shipping problems to an HTTP logger will write one — and such a
+ * reporter does not throw, it returns a promise that rejects a turn later, past
+ * this `catch`, with nothing holding it. That is the unhandled rejection this
+ * comment claims not to allow, arriving by the door the `try` does not cover.
+ * So what comes back is settled too, and its failure dropped in the same
+ * silence and for the same reason.
+ *
+ * It is at the top of the file rather than inside the loop because the loop is
+ * not the only thing that reports: a merchant calling `deliver` on an order
+ * directly has a reporter too, and the same reasoning covers it exactly.
+ */
+export const reportSafely = (reporter: ProblemReporter, problem: WorkerProblem): void => {
+  try {
+    // Anything with a `then` and not only a real Promise: a reporter built on
+    // another library's promise, or one from another realm, fails in exactly
+    // the same way and must be settled in exactly the same silence.
+    const reporting = reporter(problem) as { then?: unknown } | undefined;
+
+    if (typeof reporting?.then === "function") {
+      void Promise.resolve(reporting).catch(() => {});
+    }
+  } catch {
+    // Nowhere to say it. See above.
+  }
+};
+
+/**
+ * The one loss in this contract that nobody is told about, said out loud here
+ * because this is the place it would reach the agent.
+ *
+ * A field named `__proto__` is removed while a delivery is parsed, before any
+ * check runs — it is neither carried nor refused, and the merchant's handler
+ * has no way to know that what it returned is not what went out. The contracts
+ * package names the delivery as the place the loss lands in what the agent is
+ * handed — `DeliverySchema` in its `handler.ts` — and a delivery is written
+ * here, so this file says it too.
+ *
+ * No card can declare such a field, so nothing legitimate reaches here; a
+ * merchant only meets it by delivering a name nobody asked for.
+ *
+ * It is one function because there are two roads to the same gateway and the
+ * loss is the same on both: the worker answering with what a handler returned,
+ * and a merchant calling `deliver` on an order himself. Written twice, one of
+ * them would drift or, as it did, never be written at all.
+ */
+export const droppedFieldWarning = (
+  orderId: string,
+  delivered: Readonly<Record<string, unknown>> | undefined,
+): WorkerProblem | null => {
+  if (delivered === undefined || !Object.hasOwn(delivered, PROTOTYPE_KEY_IS_DROPPED)) {
+    return null;
+  }
+
+  return {
+    kind: WORKER_PROBLEM_KINDS.DELIVERY_FIELD_DROPPED,
+    fatal: false,
+    subject: orderId,
+    message: `the delivery for order ${orderId} carried a field named ${PROTOTYPE_KEY_IS_DROPPED}, which is removed before anything can check it: the agent will not receive it, and no card can declare it`,
+  };
+};
+
+/**
  * Which registration each kind on the stream is answered by, in the word a
  * merchant passes to `on`.
  *
@@ -381,37 +454,7 @@ export const startWorker = (
   let stopping = false;
   let ended = false;
 
-  /**
-   * Reporting must not be able to end the worker. A merchant's reporter is
-   * their code — a logger over a stream that closed during shutdown, a client
-   * that was never configured — and an exception out of it would otherwise
-   * unwind the loop and, from the loop's own last-resort handler, escape as an
-   * unhandled rejection and take the host process down with it. There is
-   * nowhere left to report a reporter that throws, so it is swallowed.
-   *
-   * Both ways of throwing, and the second is the one that hid. A reporter
-   * declared `void` may still be an `async` function — TypeScript allows it,
-   * and a merchant shipping problems to an HTTP logger will write one — and
-   * such a reporter does not throw, it returns a promise that rejects a turn
-   * later, past this `catch`, with nothing holding it. That is the unhandled
-   * rejection this comment claims not to allow, arriving by the door the
-   * `try` does not cover. So what comes back is settled too, and its failure
-   * dropped in the same silence and for the same reason.
-   */
-  const report = (problem: WorkerProblem): void => {
-    try {
-      // Anything with a `then` and not only a real Promise: a reporter built
-      // on another library's promise, or one from another realm, fails in
-      // exactly the same way and must be settled in exactly the same silence.
-      const reporting = handlers.problem(problem) as { then?: unknown } | undefined;
-
-      if (typeof reporting?.then === "function") {
-        void Promise.resolve(reporting).catch(() => {});
-      }
-    } catch {
-      // Nowhere to say it. See above.
-    }
-  };
+  const report = (problem: WorkerProblem): void => reportSafely(handlers.problem, problem);
 
   const rest = async (ms: number): Promise<void> => {
     if (ms > 0) await clock.sleep(ms, controller.signal);
@@ -458,31 +501,14 @@ export const startWorker = (
     }
   };
 
-  /**
-   * The one loss in this contract that nobody is told about, said out loud
-   * here because this is the place it would reach the agent.
-   *
-   * A field named `__proto__` is removed while a delivery is parsed, before
-   * any check runs — it is neither carried nor refused, and the merchant's
-   * handler has no way to know that what it returned is not what went out.
-   * The contracts package names the delivery as the place the loss lands in
-   * what the agent is handed — `DeliverySchema` in its `handler.ts` — and a
-   * delivery is written here, so this file says it too.
-   *
-   * No card can declare such a field, so nothing legitimate reaches here; a
-   * merchant only meets it by delivering a name nobody asked for.
-   */
+  /** See `droppedFieldWarning`: the same loss, on the handler's road. */
   const warnAboutTheDroppedKey = (order: Order, answer: HandlerAnswer): void => {
-    const delivered = "delivered" in answer ? answer.delivered : undefined;
+    const dropped = droppedFieldWarning(
+      order.id,
+      "delivered" in answer ? answer.delivered : undefined,
+    );
 
-    if (delivered !== undefined && Object.hasOwn(delivered, PROTOTYPE_KEY_IS_DROPPED)) {
-      report({
-        kind: WORKER_PROBLEM_KINDS.DELIVERY_FIELD_DROPPED,
-        fatal: false,
-        subject: order.id,
-        message: `the delivery for order ${order.id} carried a field named ${PROTOTYPE_KEY_IS_DROPPED}, which is removed before anything can check it: the agent will not receive it, and no card can declare it`,
-      });
-    }
+    if (dropped !== null) report(dropped);
   };
 
   const handleOrder = async (order: Order): Promise<void> => {
