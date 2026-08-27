@@ -118,15 +118,22 @@ actually buying.
 
 We pass the delivery to the agent as it is: the handler returns JSON to this
 shape, and we neither rewrite it nor rename anything in it. So the declaration
-has to match what the handler really sends. A mismatch does not reach the agent
-— we refuse the delivery, name the fields that are wrong and leave the order
-where it was, so your handler can send the right thing. It is the merchant who
-finds out, not the buyer.
+has to match what the handler really sends, in both directions: a promised
+field that does not arrive is a mismatch, and so is a field the card never
+declared. A mismatch does not reach the agent — we refuse the delivery, name
+the fields that are wrong and leave the order where it was, so your handler can
+send the right thing. It is the merchant who finds out, not the buyer. Where a
+handler has got everything wrong at once, the refusal names the first few and
+says how many more there are, rather than growing into a paragraph nobody
+reads.
 
 Every field of the result is required until you mark it `required: false`. The
 result is a promise, and a delivery missing a promised field does not go
-through as a delivery. Purchase parameters run the other way round: a parameter
-is required only where it is marked `required: true`.
+through as a delivery; a promised string that arrives empty counts as missing,
+because an empty access code is not a shorter access code but nothing under the
+name of something. Purchase parameters run the other way round: a parameter is
+required only where it is marked `required: true`, and one the agent leaves
+empty is left empty, since that is input it chose to give.
 
 A card declares at least one field here, and at least one of them has to arrive
 every time. A result that might be entirely absent tells the agent nothing
