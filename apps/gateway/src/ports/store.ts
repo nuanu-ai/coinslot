@@ -179,18 +179,20 @@ export interface PaymentWord {
  * that held a transaction handle would be holding a Postgres in a port that
  * has never known about one.
  *
- * Only two things are on this list and adding a third is a decision rather than
- * a detail.
+ * Two shapes of write are on this list — an envelope for a merchant and a
+ * receipt — and adding a third shape is a decision rather than a detail.
  *
- * What is on it is not the same as what the sweep may write again afterwards,
- * and running the two together is the mistake worth naming here. Landing with
- * the state is about an effect that cannot be re-driven once the order has
- * moved past it. Being re-drivable is about what its receiver was promised: a
- * merchant's handler is told the same order can reach it twice, and a receipt
- * is one row keyed by its order, but a merchant event is delivered at most once
- * and must never be sent a second time. All three are written here; only the
- * first two have an arm in the sweep, and that is a decision rather than an
- * omission.
+ * What is on the list is not the same as what the sweep may write again
+ * afterwards, and running the two together is the mistake worth naming here.
+ * Landing with the state is about an effect that cannot be re-driven once the
+ * order has moved past it. Being re-drivable is about what its receiver was
+ * promised, and by that reading the two shapes carry three receivers between
+ * them: an order envelope, whose merchant is told his handler can see the same
+ * order twice; a receipt, which is one row keyed by its order, so writing it
+ * again writes the same row; and an event envelope, which is delivered at most
+ * once and must never be sent a second time. All three land with the state.
+ * Only the first two have an arm in the sweep, and that is a decision rather
+ * than an omission.
  */
 export type WithTheOrder =
   | {
@@ -217,6 +219,16 @@ export interface OrderChange<T> {
   readonly alongside?: readonly WithTheOrder[];
   readonly result: T;
 }
+
+/**
+ * What came of asking to run something nobody else is running: the answer, or
+ * the news that somebody else has it.
+ *
+ * Finding it taken is an ordinary outcome rather than a failure — that is the
+ * mechanism working — so it is a value the caller reads, exactly as an order
+ * that is not there is.
+ */
+export type Ran<T> = { readonly ran: true; readonly result: T } | { readonly ran: false };
 
 /**
  * An order that is not there. It is a value rather than a thrown error because
@@ -495,6 +507,30 @@ export interface Store {
    * the same fault seen from another angle rather than a second one.
    */
   openOrders(): Promise<readonly StoredOrder[]>;
+
+  /**
+   * Runs `work` if nothing anywhere in the gateway is already running the work
+   * called `name`, and otherwise runs nothing and says so.
+   *
+   * The one caller is the sweep, and what it buys is the thing the sweep is
+   * for. Every arm of it reads the world and then acts on what it read — is
+   * this order's envelope still on the stream, does this delivered order have a
+   * receipt — so two runs at once both read "missing" and both act. The
+   * dispatch arm doing that is the double hand-over the arm exists to prevent,
+   * arrived at by the thing meant to prevent it, and it spends one of that
+   * order's deliveries.
+   *
+   * It has to hold across processes and not merely across this one, because the
+   * overlap that makes it necessary is two gateways, or one gateway handed its
+   * own job again after the queue's window ran out.
+   *
+   * It is a lock and not a record: nothing about having run is written down,
+   * nothing has to be cleaned up, and a process that dies holding it leaves the
+   * work free for the next one rather than blocked. What it does not promise is
+   * fairness or a queue — the caller that finds it taken does not wait, it goes
+   * away, because the work it wanted is already being done.
+   */
+  runAlone<T>(name: string, work: () => Promise<T>): Promise<Ran<T>>;
 
   /**
    * Every order that ended delivered with no receipt written against it,

@@ -882,6 +882,75 @@ if (databaseUrl === null) {
       });
     });
 
+    it("lets one gateway run the sweep and tells the other it is taken", async () => {
+      // The lock has to hold across processes and not merely across one,
+      // because the overlap that makes it necessary is two gateways — or one
+      // gateway handed its own job again after the queue's window ran out. So
+      // this is two stores on two pools, which is as close to two processes as
+      // one test gets, and the in-memory flag that stands in for this offline
+      // could never show it.
+      //
+      // What it costs to be wrong: both runs read the world, both find the same
+      // envelope missing, and both send it. That spends one of the order's
+      // deliveries, and the closure at the attempt cap is a refund.
+      const onePool = new Pool({ connectionString: databaseUrl, max: 2 });
+      const otherPool = new Pool({ connectionString: databaseUrl, max: 2 });
+      try {
+        const one = new PostgresStore(drizzle(onePool), countedIds());
+        const other = new PostgresStore(drizzle(otherPool), countedIds());
+
+        // The first is held inside the work, so the second arrives while it is
+        // genuinely still running rather than after it.
+        let letGo: () => void = () => undefined;
+        const holding = new Promise<void>((resolve) => {
+          letGo = resolve;
+        });
+        let started: () => void = () => undefined;
+        const hasStarted = new Promise<void>((resolve) => {
+          started = resolve;
+        });
+
+        const first = one.runAlone("a_test_sweep", async () => {
+          started();
+          await holding;
+          return "the one that ran";
+        });
+        await hasStarted;
+
+        const second = await other.runAlone("a_test_sweep", async () => "should not happen");
+        expect(second).toStrictEqual({ ran: false });
+
+        letGo();
+        expect(await first).toStrictEqual({ ran: true, result: "the one that ran" });
+
+        // And it is let go afterwards rather than held for the life of the
+        // process: the next run finds it free. A lock that leaked would stop
+        // every sweep from here on, silently.
+        expect(await other.runAlone("a_test_sweep", async () => "free again")).toStrictEqual({
+          ran: true,
+          result: "free again",
+        });
+      } finally {
+        await onePool.end();
+        await otherPool.end();
+      }
+    }, 30_000);
+
+    it("lets go of the lock when the work it was holding for throws", async () => {
+      // A sweep that failed part-way is a sweep that has to be able to run
+      // tomorrow. Held past a failure, the lock would turn one bad run into a
+      // repair that never happens again for as long as the process lives.
+      const failing = store.runAlone("a_failing_sweep", async () => {
+        throw new Error("the sweep fell over");
+      });
+      await expect(failing).rejects.toThrow("the sweep fell over");
+
+      expect(await store.runAlone("a_failing_sweep", async () => "free")).toStrictEqual({
+        ran: true,
+        result: "free",
+      });
+    }, 30_000);
+
     describe("the sweep of what an order is still owed", () => {
       const asyncCard: Card = {
         merchant_item_id: "swept-esim",
@@ -928,8 +997,11 @@ if (databaseUrl === null) {
         now += gateway.runtime.config.sweepDispatchGraceMs + 60_000;
 
         const first = await gateway.runner.sweep();
-        expect(first.dispatched).toBe(1);
-        expect(first.refused).toBe(0);
+        // Nothing else is running it, so it ran. `null` is how a run says it
+        // found the work already in somebody else's hands.
+        expect(first).not.toBeNull();
+        expect(first?.dispatched).toBe(1);
+        expect(first?.refused).toBe(0);
 
         // The merchant's worker takes the order, which is what the envelope was
         // for and what makes the order no longer one that has reached nobody.
@@ -969,12 +1041,12 @@ if (databaseUrl === null) {
         expect(await store.receiptForOrder(orderId)).toBeNull();
 
         const first = await gateway.runner.sweep();
-        expect(first.receipted).toBe(1);
+        expect(first?.receipted).toBe(1);
         const written = await store.receiptForOrder(orderId);
         expect(written?.outcome).toBe("delivered");
 
         const second = await gateway.runner.sweep();
-        expect(second.receipted).toBe(0);
+        expect(second?.receipted).toBe(0);
         expect(await store.receiptForOrder(orderId)).toStrictEqual(written);
       }, 30_000);
     });

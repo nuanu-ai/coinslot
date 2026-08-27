@@ -32,6 +32,7 @@ import type {
   OrderChange,
   OrderLookup,
   PaymentClaim,
+  Ran,
   Store,
   StoredCard,
   StoredKey,
@@ -86,12 +87,23 @@ export const noEnvelopes: Envelopes = {
  */
 type Queries = NodePgDatabase | Parameters<Parameters<NodePgDatabase["transaction"]>[0]>[0];
 
+/**
+ * The drizzle handle together with the pool it was built over, which is what
+ * `drizzle(pool)` hands back.
+ *
+ * The pool is named in the type because one method needs a connection it can
+ * keep rather than a statement it can run: a session-level advisory lock
+ * belongs to the session that took it, and a pool would hand the unlock to a
+ * different one.
+ */
+export type Database = NodePgDatabase & { readonly $client: Pool };
+
 export class PostgresStore implements Store {
-  readonly #db: NodePgDatabase;
+  readonly #db: Database;
   readonly #ids: Ids;
   readonly #envelopes: Envelopes;
 
-  constructor(db: NodePgDatabase, ids: Ids, envelopes: Envelopes = noEnvelopes) {
+  constructor(db: Database, ids: Ids, envelopes: Envelopes = noEnvelopes) {
     this.#db = db;
     this.#ids = ids;
     this.#envelopes = envelopes;
@@ -360,6 +372,46 @@ export class PostgresStore implements Store {
       .where(eq(orders.open, true))
       .orderBy(orders.createdAt);
     return rows.map((row) => row.record);
+  }
+
+  async runAlone<T>(name: string, work: () => Promise<T>): Promise<Ran<T>> {
+    // An advisory lock, and one connection held for as long as the work runs.
+    // The connection is the whole reason this is not two statements on the
+    // pool: a session lock belongs to the session that took it, and a pool
+    // hands out whichever connection is free, so an unlock issued on a
+    // different one would release nothing and the work would be blocked until
+    // the process ended.
+    //
+    // A session lock rather than a transaction one, because the alternative
+    // means holding a transaction open for the length of the work — an idle
+    // transaction keeping a snapshot alive for as long as a sweep takes — and
+    // the work here writes through other connections anyway.
+    //
+    // The key is hashed from a name of ours under a prefix of ours. pg-boss
+    // takes advisory locks in this same database, from its own namespace, and
+    // a collision would only cost one skipped run rather than anything wrong.
+    const client = await this.#db.$client.connect();
+    try {
+      const taken = await client.query<{ got: boolean }>(
+        "select pg_try_advisory_lock(hashtext($1)) as got",
+        [`coinslot.${name}`],
+      );
+      if (taken.rows[0]?.got !== true) {
+        return { ran: false };
+      }
+
+      try {
+        return { ran: true, result: await work() };
+      } finally {
+        // Let go however the work ended. A lock left behind on a live
+        // connection outlives the failure that caused it and would keep every
+        // later run out for as long as the process lives — and the pool would
+        // hand that connection on to somebody else still holding it.
+        await client.query("select pg_advisory_unlock(hashtext($1))", [`coinslot.${name}`]);
+      }
+    } finally {
+      client.release();
+    }
   }
 
   async deliveredWithoutReceipt(): Promise<readonly StoredOrder[]> {
@@ -651,7 +703,7 @@ function rowFor(record: StoredOrder) {
  * It is logged and the pool goes on; a failure that actually stops the work
  * surfaces on the next query, where somebody is waiting for an answer.
  */
-export function connect(databaseUrl: string): { db: NodePgDatabase; pool: Pool } {
+export function connect(databaseUrl: string): { db: Database; pool: Pool } {
   const pool = new Pool({ connectionString: databaseUrl });
   pool.on("error", (error) => {
     console.error("[gateway] an idle database connection failed", error);
