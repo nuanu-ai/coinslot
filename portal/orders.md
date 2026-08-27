@@ -25,10 +25,9 @@ working names and can still change before the pilot.
 
 The mode is declared in the card, and the agent knows it before it pays. The
 product decides which mode it is, and the channel only narrows the choice: a
-connected
-API delivers both synchronously and asynchronously, while an order that
-arrived as a message is never synchronous. What the moment of charging means for the
-owner of the business is on [Money](/money).
+connected API delivers both synchronously and asynchronously, while an order
+that arrived as a message is never synchronous. What the moment of charging
+means for the owner of the business is on [Money](/money).
 
 The third mode is not open during the pilot. A card cannot be published with
 `fulfillment: 'confirm'`, because the request that asks you to confirm has no

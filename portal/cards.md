@@ -146,7 +146,8 @@ is on [Orders and fulfillment modes](/orders).
 The check answers one question: what the product costs and whether it is there
 right now. We ask it at the moment of purchase. It has two transports, the
 fields of the question and of the answer are the same for both, and what
-differs is only where your code stands. The forms below are working ones and can change before the pilot.
+differs is only where your code stands. The forms below are working ones and
+can change before the pilot.
 
 By default the question travels the same channel as the orders: you put a
 price handler beside the order handler, in the same process. Nothing of yours
