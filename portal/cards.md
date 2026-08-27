@@ -35,19 +35,27 @@ working names and can still change before the pilot.
 | `result` | the shape of what the agent receives on delivery | required | `{ access_url: { type: 'string' } }` |
 | `tags` | words that describe this product in a catalogue: at most five, each 1 to 32 characters of plain typewriter text — unaccented letters, digits, spaces and the punctuation on a keyboard, so a curly quote or a long dash is refused — with no space at either end and no two the same but for their case. A card with no tags leaves the field out rather than sending an empty list | optional | `['esim', 'telecom']` |
 | `fulfillment` | `'sync'` or `'async'`; `'confirm'` is not published during the pilot | required | `'sync'` |
-| `fulfill_deadline_seconds` | how long you may take to deliver | on an asynchronous card only | `86400` |
+| `fulfill_deadline_seconds` | how long you may take to deliver | optional, and only on an asynchronous card | `86400` |
 
-An asynchronous card carries one deadline of your own: how long you may take to
-deliver. It runs from the moment the buyer is charged, which for an
+An asynchronous card can carry one deadline of your own: how long you may take
+to deliver. It runs from the moment the buyer is charged, which for an
 asynchronous product is the moment of purchase — so the clock is already going
 when the order reaches your handler, and it covers every attempt we make to
-deliver that order to you. The agent sees the deadline before it buys, and what
-happens when it runs out is in [Time ran out](/orders). A synchronous card has
-no such field, because how long to wait for a synchronous answer is set by us,
-the same for every product. That one runs from the moment of purchase rather
-than from the moment your handler is called, so the price question and the
-payment check come out of it first. The confirmation mode has a deadline of its
-own and it arrives together with the mode.
+deliver that order to you. Name it, and the agent sees it before it buys.
+
+Leaving it out does not leave you off a clock. A default of ours applies
+instead, an order that runs past it is marked as needing a refund exactly as one
+past a number of your own would be, and the agent is shown no deadline at all —
+so the clock you are held to is one neither of you ever saw. That number is
+among the ones [not settled yet](#what-is-not-settled-yet), and until it is,
+naming your own is the only way either side knows what it is. What happens when
+a delivery deadline runs out is in [Time ran out](/orders).
+
+A synchronous card has no such field, because how long to wait for a synchronous
+answer is set by us, the same for every product. That one runs from the moment
+of purchase rather than from the moment your handler is called, so the price
+question and the payment check come out of it first. The confirmation mode has a
+deadline of its own and it arrives together with the mode.
 
 ### Two identifiers
 
@@ -357,7 +365,9 @@ what that ought to be is not settled.
 - The exact shape that describes the purchase parameters and the delivery
   result.
 - The delivery deadline's numbers: what it defaults to when a card leaves it
-  out, and how long it may be.
+  out, and how long it may be. And whether an asynchronous card ought to be
+  required to name one at all, rather than fall to a default that is shown to
+  neither the seller nor the buying program.
 - The shape of the field a card declares a price check in and chooses a
   transport with.
 - Whether the vocabulary of recommended codes grows beyond three: we decide

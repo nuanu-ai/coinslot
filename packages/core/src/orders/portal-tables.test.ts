@@ -392,6 +392,16 @@ describe('portal/orders.md, "Events on the same subscription"', () => {
     expect(effects).toContainEqual({ kind: "emit_merchant_event", event: "order.refund_due" });
   });
 
+  it(`${EVENTS[0]}: sent when the merchant left with the money and the goods undelivered`, () => {
+    // The third cause in the row, and the one the row used to leave out. A
+    // departure closes the open orders, and one that took money and delivered
+    // nothing leaves a debt behind exactly as a passed deadline does — so the
+    // merchant is owed the same notice, and it is the same event.
+    const { effects } = must(paidAsync(), { kind: "merchant_departed", at: T0 + 5 });
+
+    expect(effects).toContainEqual({ kind: "emit_merchant_event", event: "order.refund_due" });
+  });
+
   it(`${EVENTS[1]}: sent when the agent did not pay in his time`, () => {
     const { effects } = must(reach("confirmed"), {
       kind: "deadline_expired",
@@ -614,7 +624,7 @@ describe("the portal and this machine cannot drift apart quietly", () => {
     // The event name is the wire word; the second column is what the merchant
     // is told it means, and it is the half he acts on.
     expect(tableRows(ORDERS_PAGE, "Events on the same subscription", 2)).toStrictEqual([
-      "you did not deliver in time, you refused after the charge, or a charge we had given up on reported in late",
+      "you did not deliver in time, you refused after the charge, you left with a paid order still open, or a charge we had given up on reported in late",
       "you answered that you would deliver and the agent did not pay in its own time; you are free",
       "you delivered, and the charge either failed or went unanswered",
     ]);

@@ -52,8 +52,8 @@ describe("order", () => {
 
   it("carries a sale price with both moments", () => {
     // The price in the order is the price the sale went through at, which is
-    // not always the price in the card. `at` says when the purchase happened
-    // and `as_of` how fresh the price behind it was.
+    // not always the price in the card. `at` says when that price was fixed for
+    // this sale and `as_of` how fresh the price behind it was.
     for (const field of ["amount", "currency", "at", "as_of"]) {
       const price = Object.fromEntries(
         Object.entries(order.price).filter(([name]) => name !== field),

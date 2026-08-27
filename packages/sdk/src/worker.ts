@@ -27,18 +27,23 @@
  * not ask for work.
  *
  * What happens when a handler throws is the design decision the rest follows
- * from: nothing is sent. Delivery is at least once with redelivery on the
- * gateway's visibility timeout, so an envelope nobody answered comes back on
- * its own, and that is the machine's own meaning of "not delivered". A retry
- * written on this side would be a second machine with a second opinion about
- * how many times a merchant's handler may run, and the two would disagree the
- * first time one of them restarted. The same holds for a handler that answers
- * with something the contract refuses, and for an envelope that arrives with
- * no handler registered for its kind: the merchant is told through the problem
- * channel, and an order or a price question comes back on its own. An event is
- * the exception and it is worth knowing about — it carries no acknowledgement,
- * so nothing here can ask for one again, and whether the gateway sends it a
- * second time is the gateway's business and not something this SDK knows.
+ * from: nothing is sent. An order nobody answered comes back on its own,
+ * because the gateway's own order machine is watching for that answer and
+ * decides there should be another attempt — that is the machine's meaning of
+ * "not delivered". A retry written on this side would be a second machine with
+ * a second opinion about how many times a merchant's handler may run, and the
+ * two would disagree the first time one of them restarted. The same holds for a
+ * handler that answers with something the contract refuses, and for an envelope
+ * that arrives with no handler registered for its kind: the merchant is told
+ * through the problem channel, and an order or a price question comes back on
+ * its own.
+ *
+ * An event is the exception and it is worth knowing about. It carries no
+ * acknowledgement, so nothing here can ask for one again and nothing on the
+ * other side is waiting for a reply to notice that it went unanswered. The
+ * contract makes no promise that one is ever sent a second time, and whether a
+ * particular gateway sends one anyway is that gateway's business. A handler
+ * that throws on an event has lost what it carried.
  *
  * The transport failures are the one thing this loop does retry, because there
  * is nothing else to do with them: a poll that did not reach the gateway
@@ -96,9 +101,10 @@ export type QuoteDispatch = (question: QuoteRequest) => QuoteResponse | Promise<
 /**
  * How this delivery of a message is named, for the one kind that needs it.
  *
- * `id` names the message and does not change when it is delivered again;
- * `sent_at` names this delivery of it and does. The pair is how a repeat is
- * told from a new message without looking inside the payload.
+ * `id` names this message and `sent_at` names when it went out. What the pair is
+ * not is a dependable way to recognise a repeat: a gateway sending an order
+ * again builds a fresh envelope around it under a fresh `id`, and what holds
+ * still across such a repeat is the order's own identifier in the payload.
  */
 export interface Delivered {
   readonly id: string;
@@ -108,18 +114,17 @@ export interface Delivered {
 /**
  * What the merchant's code does with something that happened to an order.
  *
- * The second argument is the reason this signature is not just the event. An
- * order is answered against its own identifier and a price question against
- * its `price_id`, so for those two a repeat is harmless by construction. An
- * event has neither — nothing acknowledges it, and the contract gives every
- * envelope an identifier and a delivery time precisely so that a worker can
- * recognise a repeat. Passing that pair on is what makes recognising one
- * possible at all.
+ * The second argument is this delivery's own name, and it is the reason this
+ * signature is not just the event. An order is answered against its own
+ * identifier and a price question against its `price_id`; an event is answered
+ * against nothing at all, so this pair is the only thing naming the message
+ * itself rather than the order it is about, which is what a log line or a
+ * question to us afterwards needs.
  *
- * This SDK does not do it itself, and that is a decision rather than an
- * oversight: telling a repeat from a new message means remembering what has
- * been seen, across restarts, and a library that kept that state would be
- * keeping it in the wrong process. The merchant already has a database.
+ * It is not there to be deduplicated against. Nothing acknowledges an event, so
+ * nothing asks for one again, and the contract makes no promise that one is ever
+ * sent twice — which means the risk an event handler is written against is a
+ * message that never arrives rather than one that arrives twice.
  */
 export type EventHandler = (event: OrderEvent, delivered: Delivered) => void | Promise<void>;
 

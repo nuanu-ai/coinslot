@@ -53,7 +53,7 @@ and payments that failed their check never reach your handler.
 | `id` | the order's identifier, and its idempotency key: the same across every repeat |
 | `merchant_item_id` | your own key for the product, the one it has in your database |
 | `params` | the purchase parameters, already checked against the card's declaration |
-| `price` | the sale price: the amount, the currency, the moment of purchase, and the `as_of` of the price it was worked out from |
+| `price` | the sale price: the amount, the currency, the moment that price was fixed for this sale, and the `as_of` of the price it was worked out from |
 | `price_id` | the identifier of the price question this sale came out of, absent where the card has no price check |
 | `test` | the mark of a test order |
 
@@ -64,11 +64,19 @@ it arrives again — and the sum the access was sold for.
 
 The price is in the order because the sale may not have gone at the card's
 price: where a product has a price check, the sale went at the check's answer.
-You get the final sum, its currency, the moment of purchase and the `as_of` of
-the answer it was worked out from, which is enough to record the sale on your
-side without looking the card up. There is no need to compare that sum against
-your own price list and refuse on a mismatch — we catch a mismatch before the
-order leaves for you.
+You get the final sum, its currency, the moment that price was fixed for this
+sale and the `as_of` of the answer it was worked out from, which is enough to
+record the sale on your side without looking the card up. There is no need to
+compare that sum against your own price list and refuse on a mismatch — we catch
+a mismatch before the order leaves for you.
+
+The two moments are worth keeping apart, and neither of them is the moment the
+money moved. On a card with no price check the price is fixed the instant the
+agent asks to buy, and its `as_of` is when that card price was published. On a
+card with a price check it is fixed when your answer comes back, its `as_of` is
+whatever your answer said the price was true as of, and the agent may spend a
+while after that deciding whether to pay. When the money actually moved is on
+the receipt, under a name of its own.
 
 The field `price_id` ties the order to your own answer about the price: if you
 set stock aside against the price you named, this is the moment to write it
@@ -134,12 +142,16 @@ with the offending fields named, and the order does not move at all — nothing
 of what you sent is written down, no receipt is issued, and no deadline of
 yours moves. Fix what the refusal names and deliver again.
 
-What that refusal does not tell you is whether the order is still there to
-finish. Goods are weighed against the card and never against the state of the
-order, so one that ran out of time, one you refused yourself and one whose
-refund has already gone out all answer a bad delivery in the same words as an
-order that is still open. Your handler's fault is what you hear about first,
-and where the order stands is what the call after it tells you.
+That refusal also tells you whether the order is still there to finish, and it
+is worth reading before you make the goods again. Goods are weighed against the
+card and never against the state of the order, so the fault in your handler is
+what you hear about first either way. But an order still yours to finish is
+refused with the words that it stands where it did, marked as worth calling
+again: fix the handler and deliver. An order that has ended — one that ran out
+of time, one you refused yourself, one whose refund has gone out — is refused
+with its ending named and marked as not worth calling again, and the fields that
+did not fit are still listed. There is nothing left to deliver against, and a
+handler that ignores that mark makes the goods once for every attempt.
 
 The check stands in front of every delivery that could put goods on the order,
 whether it comes back from your handler or from a `deliver` call, and whether
@@ -281,29 +293,40 @@ that happened to an order without you. A handler for them is declared the way
 one is for orders, with `coinslot.on('event', ...)`, and it sends nothing back
 — an event tells you something happened and asks for no answer.
 
-An event can therefore reach you twice. An order is acknowledged by the call
-that closes it and a price question by its answer, and an event has neither, so
-nothing on our side can tell that you already have one. Your handler is given
-the message's own identifier beside the event, and that identifier does not
-change when the same message is delivered again; telling a repeat from a new
-message is yours to do, because it means remembering what you have seen across
-restarts and that belongs in your database rather than in our tools. The event
-to guard first is the one saying an order needs a refund: acted on twice, it is
-a second refund out of your own wallet.
+An event is sent once and is never sent again, and that is the opposite of the
+rule for orders on the same subscription. Your answer is what acknowledges an
+order — any of the three, including taking it on — so we can tell whether it
+arrived and send it out again when it did not. An event is the price of asking
+for no answer: nothing on our side is waiting for a reply to it, so one that
+went into a batch your process never received is simply gone. Nothing brings it
+back, and nothing afterwards announces that one went missing. So the guard an
+order needs is against a repeat, and the guard an event needs is against a
+silence; a handler written for one of those rules and pointed at the other gets
+that one wrong.
+
+The silence that costs money is the notice that an order needs a refund. The
+buyer has paid, the goods did not go out, the one message that would have told
+you did not arrive — and the money sits with you while nobody asks for it. What
+closes that hole is the list of open orders. Every order still owed something is
+on it, an order marked as needing a refund included, so walking that list finds
+what a lost event would otherwise have been your only word of. Walk it on a
+schedule and not only after a restart: a process that stayed up loses an event
+the same way one that went down does, and it has no restart to prompt it.
 
 | Event | What happened |
 | --- | --- |
-| An order was marked as needing a refund | you did not deliver in time, you refused after the charge, or a charge we had given up on reported in late |
+| An order was marked as needing a refund | you did not deliver in time, you refused after the charge, you left with a paid order still open, or a charge we had given up on reported in late |
 | A confirmed order was not paid for | you answered that you would deliver and the agent did not pay in its own time; you are free |
 | A payment did not execute after a synchronous delivery | you delivered, and the charge either failed or went unanswered |
 
 The last cause of a refund is the one that will not match your own record: a
 charge we had written off as never having happened reports in afterwards, and
 the buyer is owed the money back through no fault of yours. That event carries
-a short reason beside the sum, and for this cause it reads as a deadline —
-ours, on the charge, rather than yours on the goods. The vocabulary has three
-words and none of them is for this, and inventing a fourth on the wire is a
-decision nobody has taken.
+a short reason beside the sum, and the reasons are three where the causes above
+are four: a refusal has its own word and a departure has its own, while both the
+deadline you ran past and this late charge arrive as the deadline — ours, on the
+charge, rather than yours on the goods. The vocabulary has no word for that last
+one, and inventing a fourth on the wire is a decision nobody has taken.
 
 ## You delivered and the payment did not execute
 
@@ -312,11 +335,14 @@ first and execute it as the last step, after your delivery; between the check
 and the execution the funds can leave the buyer's wallet for something else.
 Then you have produced the goods and there is no money for them.
 
-In this case the goods are recorded and the money is not, and an event reaches
-you — there is no need to go looking for such cases by reconciling transfers.
-For the agent the purchase did not happen: we hand the goods over after the
-payment executes, so it received neither the goods nor a charge. The order
-stays open on your side.
+In this case the goods are recorded and the money is not, and an event goes out
+to you, so there is no need to go looking for such cases by reconciling
+transfers. Like every event it is sent once and can be lost on the way
+([Events on the same subscription](#events-on-the-same-subscription)), and what
+survives that is the order itself: it stays open on your side, and the list of
+open orders shows it whether the event arrived or not. For the agent the
+purchase did not happen: we hand the goods over after the payment executes, so
+it received neither the goods nor a charge.
 
 Two situations reach you through that one event, and they part on what the
 payment network finally said. The order carries the word that tells them apart,
@@ -376,10 +402,12 @@ refusal.
 An order whose deadline has passed does not hang in the air. It closes, and the
 agent sees how it ended. What happens depends on which step the waiting was at.
 
-We name the numbers before the pilot. An asynchronous card carries one deadline
-of yours, on the delivery, counted from the moment the buyer was charged, and
-the agent sees it before it buys; the confirmation mode has a deadline of its
-own and it arrives together with the mode. How long to wait for a synchronous
+We name the numbers before the pilot. An asynchronous card can carry one
+deadline of yours, on the delivery, counted from the moment the buyer was
+charged; name it and the agent sees it before it buys, leave it out and a
+default of ours applies that neither of you is shown
+([The product card](/cards)). The confirmation mode has a deadline of its own
+and it arrives together with the mode. How long to wait for a synchronous
 answer is set by us and no card carries it. It runs from the moment the agent
 buys rather than from the moment your handler is called, so asking your price
 and checking the payment come out of it first. It is not the whole of the
@@ -479,9 +507,10 @@ passed too.
 
 Being late is not in itself an error and does not come back as an exception.
 The goods are read before the state of the order is, so a late answer whose
-goods do not fit the card is refused for that and the lateness never comes up:
-the fault in your handler is what you are told about first, and that refusal
-does reach you, because the tools report the answers we refuse.
+goods do not fit the card is refused for the goods — and the refusal names the
+ending as well, and marks itself not worth calling again, so you are not left
+fixing a handler for a sale that is already over. That refusal does reach you,
+because the tools report the answers we refuse.
 
 Fixing the handler tells you nothing further. A synchronous answer leaves
 through the tools rather than through a call of your own, and an answer whose
