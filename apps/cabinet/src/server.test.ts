@@ -1340,10 +1340,20 @@ describe("what the cabinet writes down about what people do", () => {
     const said = await logged(async () => {
       await browser.post("/selling/pause");
       await browser.post(`/cards/${encodeURIComponent(itemId)}/pause`);
+      await browser.post(`/cards/${encodeURIComponent(itemId)}/resume`);
+      await browser.post("/selling/resume");
     });
 
-    expect(said).toContain(PERSON);
+    // All four switches, not one of them: the ADR says every action that
+    // changes something names the person, and a merchant asking who put their
+    // selling back on is asking the same question as who stopped it.
     expect(said).toMatch(/stopped all selling/i);
+    expect(said).toMatch(/started selling again/i);
+    expect(said).toMatch(/paused the card/i);
+    expect(said).toMatch(/resumed the card/i);
+    for (const line of said.split("\n").filter((one) => /selling|card/.test(one))) {
+      expect(line, line).toContain(PERSON);
+    }
     expect(said).toContain(itemId);
   });
 

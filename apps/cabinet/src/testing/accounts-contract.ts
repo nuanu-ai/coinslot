@@ -115,6 +115,29 @@ export function describeAccounts(name: string, open: () => Promise<Accounts>): v
         ).resolves.not.toBeNull();
       });
 
+      it("is not given more time by being used", async () => {
+        // ADR-0009 §6: twelve hours from the moment it opens, never extended.
+        // A store that pushed the expiry forward on every read would be a
+        // sliding window, which is the arrangement that decision refuses — a
+        // session that never ends as long as somebody keeps a tab in front of
+        // them is the case the twelve hours exist to catch.
+        const accounts = await fresh();
+        const at = new Date("2026-08-27T09:00:00.000Z");
+        const person = await accounts.add("dmitry@example.com", "hash-one", at);
+        const until = new Date(+at + HOUR);
+        await accounts.open("laptop", person?.id ?? "", at, until);
+
+        // Used, repeatedly, right up to the last minute.
+        for (const minutes of [10, 20, 30, 40, 50, 59]) {
+          await expect(
+            accounts.whose("laptop", new Date(+at + minutes * 60 * 1_000)),
+            `${minutes} minutes in`,
+          ).resolves.not.toBeNull();
+        }
+
+        await expect(accounts.whose("laptop", until)).resolves.toBeNull();
+      });
+
       it("is nobody's once it has been ended", async () => {
         const accounts = await fresh();
         const at = new Date("2026-08-27T09:00:00.000Z");
