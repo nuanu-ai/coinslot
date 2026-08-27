@@ -260,9 +260,10 @@ crashed without answering](/failures)). What you threw goes to your problem
 handler and no further — the agent never sees it.
 
 Besides the purchase parameters, the order carries the sale price — the amount,
-the currency, the moment of purchase and the `as_of` of the price it was worked
-out from — and a `test` flag that tells a test order from a live one. What an
-order is made of in full is in [What an order is made of](/orders).
+the currency, the moment that price was fixed for this sale and the `as_of` of
+the price it was worked out from — and a `test` flag that tells a test order
+from a live one. What an order is made of in full is in [What an order is made
+of](/orders).
 
 Orders are delivered at least once, which means the same order can reach your
 handler again: after a network break, after your process restarted, after a

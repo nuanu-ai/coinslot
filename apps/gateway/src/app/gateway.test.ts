@@ -1785,10 +1785,14 @@ describe("the claims on payments", () => {
 
 describe("an order sent out again", () => {
   it("carries the instant of this delivery, under the identifier of the same message", async () => {
-    // A worker tells a repeat from a new message by exactly that pair: the
-    // identifier names the message and does not change, the instant names this
-    // delivery and does. Sent out again with its original stamp, a repeat looks
-    // like the delivery that had already been.
+    // This is the one path where an envelope goes back on the stream with its
+    // identifier untouched: it was drawn and handed to nobody, so no worker has
+    // seen that identifier and none will see it twice. The stamp still has to
+    // move — put back with its original one, it would name a moment that has
+    // passed. What this is not is how a worker recognises a repeat: an order
+    // the gateway decides to send again is wrapped in a fresh envelope with a
+    // fresh identifier, and the only thing two attempts have in common is the
+    // order they carry (`envelope.ts`).
     const harnessed = await started({
       QUOTE_RESPONSE_MS: "50",
       SYNC_RESPONSE_MS: "400",

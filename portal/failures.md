@@ -98,9 +98,11 @@ the asynchronous mode does.
 
 Say you have allowed a day for delivering an asynchronous product (an example
 figure). The day passes with no confirmation of a delivery from you — the order
-is marked as needing a refund, and the money for it is already with you. You
-set the deadline for asynchronous delivery yourself, in the card, and the agent
-sees it before it buys; how long to wait for a synchronous answer is set by us.
+is marked as needing a refund, and the money for it is already with you. An
+asynchronous card can carry a delivery deadline of yours: name it and the agent
+sees it before it buys, leave it out and a default of ours applies that neither
+of you is shown ([The product card](/cards)). How long to wait for a synchronous
+answer is set by us and no card carries it.
 
 It works this way because an order that waits forever is worse than an honest
 refusal: the agent holds its budget tied up and can neither buy from your

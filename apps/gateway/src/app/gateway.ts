@@ -661,10 +661,14 @@ export class Gateway {
 
       const orderId = delivery.envelope.payload.id;
       const at = clock();
-      // A token for this hand-over rather than for the message. The envelope's
-      // own identifier names the order and stays the same however many times it
-      // goes out, which is what lets a worker tell a repeat from a new message;
-      // telling one hand-over from another is ours, and needs its own name.
+      // A token for this hand-over, and neither of the two names already in
+      // hand would do. The envelope's identifier names this envelope, and a
+      // redelivery is built as a fresh one, so it does not last long enough to
+      // be matched against. The order's identifier does last, and is the same
+      // for every attempt, so it cannot tell one hand-over from another. That
+      // distinction is exactly what the reminder needs — whether the delivery
+      // it was armed for is still the one the order is waiting on — so it is
+      // minted per hand-over and stored as `openDeliveryId`.
       const handOver = this.runtime.ids("dlv");
       let applied: Awaited<ReturnType<OrderRunner["apply"]>>;
       try {
@@ -1221,12 +1225,18 @@ function refusedCall(rejection: TransitionRejection): OrderCallError {
 }
 
 /**
- * The same message, going out again now.
+ * The same envelope, going back on the stream now.
  *
- * The identifier names the message and does not change when it is delivered
- * again; the instant names this delivery of it and does. A worker tells a
- * repeat from a new message by exactly that pair, and one sent out again with
- * its original stamp would look like the delivery that had already been.
+ * Both callers are paths where it was drawn and then handed to nobody — the
+ * hand-over could not be recorded, or the machine will take it but not yet. No
+ * worker has seen this envelope, so the identifier it keeps costs nothing. The
+ * stamp is what would be wrong: left alone it would date the message to a draw
+ * that came to nothing.
+ *
+ * This is not how a merchant is sent an order a second time. That decision is
+ * the machine's, and it produces a fresh envelope with a fresh identifier
+ * (`redeliver_order` in runner.ts). So nothing here gives a worker a way to
+ * recognise a repeat; the order's own identifier is what does that.
  */
 function sentNow(envelope: WorkerEnvelope, at: number): WorkerEnvelope {
   return { ...envelope, sent_at: asTimestamp(at) };
