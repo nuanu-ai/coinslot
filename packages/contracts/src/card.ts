@@ -145,9 +145,11 @@ export const ServiceNameSchema = listedText("service name").meta({
  */
 export const TagsSchema = z
   .array(listedText("tag"))
-  // Not an empty list. A card that names no tags leaves the field out; an
-  // empty list is a value a catalog renders, and the two would be one thing
-  // written two ways with nothing to tell them apart.
+  // Not an empty list. To the catalog an empty list and no tags at all are the
+  // same thing — it drops the field either way — so accepting both would give
+  // one meaning two spellings, and the merchant who wrote the brackets could
+  // reasonably think they had said something. One way to say it, and it is
+  // leaving the field out.
   .min(1, "a card that names no tags leaves the field out rather than sending an empty list")
   .max(LISTED_TAGS_MAX, `a card carries at most ${LISTED_TAGS_MAX} tags`)
   .refine(

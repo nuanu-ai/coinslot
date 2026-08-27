@@ -782,13 +782,14 @@ describe("a card as a discovery channel reads it", () => {
 });
 
 describe("the tags a card may carry, against the listing's own rules", () => {
-  // Each of these is a value our schema used to take and the catalog then
-  // quietly changed — a duplicate folded away, an empty list rendered, padding
-  // kept so that one word had two spellings. Nothing here runs the catalog's
+  // Each of these is a value our schema used to take and the catalog then made
+  // something else of — a duplicate folded away, an empty list dropped so that
+  // it says exactly what no tags at all says, padding kept so that one word has
+  // two spellings. Nothing here runs the catalog's
   // own code: this package depends on zod and nothing else, deliberately. What
-  // runs it is `apps/gateway/src/http/x402.test.ts`, which puts the widest
-  // values these schemas allow through the catalog's own sanitiser and checks
-  // that it hands all of them back. These say what our side refuses; that one
+  // runs it is `apps/gateway/src/http/x402.test.ts`, which puts the longest
+  // name and the most tags these schemas allow through the catalog's own
+  // sanitiser and checks that it hands all of them back. These say what our side refuses; that one
   // says their side keeps what our side sends.
   const tagged = (tags: unknown) => CardSchema.safeParse({ ...syncCard, tags });
 
