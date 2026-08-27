@@ -55,6 +55,7 @@ const SCHEMAS = [
   "pgboss_envelope_delay",
   "pgboss_every_day",
   "pgboss_queue_names",
+  "pgboss_queue_settings",
 ] as const;
 
 if (databaseUrl === undefined || databaseUrl === "") {
@@ -349,6 +350,29 @@ if (databaseUrl === undefined || databaseUrl === "") {
       );
       expect(rows.map((row) => row.state)).toStrictEqual(["failed"]);
     }, 60_000);
+
+    it("makes both queues on the library's own settings, and the window is fifteen minutes", async () => {
+      // Every other test here that cares about the visibility window makes the
+      // queue itself with a window of one second, so none of them ever sees the
+      // window production runs with. This is that number, read back off a queue
+      // the adapter made the way `start()` makes it.
+      //
+      // Fifteen minutes is how long a delivery may be held by a process that
+      // has died before the queue takes it back. For a reminder that is how
+      // late an overdue order can be declared when the gateway carrying its
+      // deadline goes down, so it is a number somebody may well want to change
+      // — and the note beside `createQueue` says why that cannot be done by
+      // passing options there. Changing it should break this test and send
+      // whoever changed it to that note.
+      const { boss, queue } = await labQueue("pgboss_queue_settings");
+      queue.onReminder(async () => undefined);
+      await queue.start();
+
+      for (const name of [ENVELOPES, REMINDERS]) {
+        const made = await boss.getQueue(name);
+        expect(made?.expireInSeconds, name).toBe(900);
+      }
+    }, 30_000);
 
     it("holds a delayed envelope back, and reaches a poll in another process when it lands", async () => {
       // Two promises that only a second process can show, and both are made in
