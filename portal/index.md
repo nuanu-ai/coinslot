@@ -1,128 +1,136 @@
-# Подключение к Coinslot
+# Connecting to Coinslot
 
-*Предварительная версия контракта — до пилота формулировки могут уточняться.*
+*A preliminary contract: the wording can still change before the pilot.*
 
-Вы держите интернет-бизнес и решаете, стоит ли выставлять свои товары туда,
-где покупают программы. Здесь то, из чего это решение складывается: кто там
-покупает, о чём мы вас спросим, что берём на себя мы и с чего начинается
-подключение.
+You run an online business, and you are deciding whether it is worth putting
+your goods where programs do the buying. This page is what that decision is
+made of: who buys there, what we will ask you, what we take on ourselves, and
+how connecting begins.
 
-## Кто здесь покупает
+## Who buys here
 
-Coinslot выставляет товары обычного интернет-бизнеса в каталоги, где покупают
-AI-агенты. Агент — это программа, которой человек поручил задачу и выдал
-бюджет; чтобы задачу закрыть, она сама находит нужный товар, сама платит и
-сама получает купленное.
+Coinslot puts the goods of an ordinary online business into the catalogues
+where AI agents buy. An agent is a program that a person handed a task and a
+budget; to finish the task it finds the goods it needs, pays for them and
+takes delivery, all by itself.
 
-Для вас это выход на новую площадку. Ассортимент менять не нужно, цены
-остаются вашими, магазин продолжает работать так же, как работал вчера.
-Меняется одно: по другую сторону сделки вместо человека, открывавшего сайт и
-жавшего кнопки, оказывается программа. Картинок она не смотрит и отзывов не
-читает: покупать или нет, она решает по тексту карточки. От того, насколько
-точно там сказано, что покупатель получает, зависит, сколько продаж придётся
-потом разбирать руками.
+For you that is one more place to sell. Your range does not have to change,
+the prices stay yours, and your shop goes on working the way it works now. One
+thing is different: on the other side of the sale, in place of a person who
+opened your site and pressed the buttons, there is a program. It looks at no
+pictures and reads no reviews. Whether to buy is decided from the card — the
+text that describes one of your products in the catalogue — and how precisely
+that text says what the buyer gets is what decides how many sales you end up
+sorting out by hand.
 
-Деньги идут с кошелька покупателя прямо на ваш, по отдельному переводу на
-каждую продажу. Через наши счета они не проходят, и процента с них у нас нет.
-Момент, в который у покупателя списываются деньги, у разных товаров разный: у
-одних они приходят после того, как вы выдали, у других — сразу при покупке.
-Это и всё остальное про деньги — на странице [«Деньги»](/money).
+The money goes from the buyer's wallet straight to yours, one transfer per
+sale. It never passes through our accounts, and we take no percentage of it.
+The moment the buyer is charged is not the same for every product: for some
+the money arrives after you have delivered, for others at the moment of
+purchase. That, and the rest of what there is to say about the money, is on
+[Money](/money).
 
-## О чём мы вас спросим
+## What we will ask you
 
-Разговор о подключении сводится к четырём вопросам, и после ответов на них
-вопросы к вам заканчиваются.
+The conversation about connecting comes down to four questions, and once you
+have answered them we have no more questions for you.
 
-1. Что вы продаёте. Достаточно ссылки на сайт, каталог или документацию —
-   карточки товаров по этим материалам пишем мы. Карточка — это то, что агент
-   видит в каталоге и покупает: название, описание, цена и перечень того, что
-   нужно указать при покупке. Готовую карточку вы проверяете и утверждаете.
-   Утверждение идёт перепиской, а не кнопкой: карточку мы присылаем вам,
-   вы отвечаете «да» или говорите, что поправить. Последнее слово остаётся
-   за вами, потому что карточка продаёт под вашим именем и по вашим ценам.
-2. Куда переводить деньги. Нужен адрес вашего кошелька — на него приходят
-   платежи покупателей. Ничего не копится у нас и не выплачивается раз в
-   неделю.
-3. Выдержит ли товар повторную выдачу. Один и тот же заказ может прийти к вам
-   дважды: связь оборвалась, ответ не дошёл, мы повторили попытку. Доступ,
-   ключ, ссылку, подписку вы выдаёте второй раз тому же покупателю без потерь,
-   а единица со склада или разовый код из ограниченной пачки так не
-   переживают. На пилоте мы берём товары только первого рода, и это наше
-   ограничение, а не свойство вашего каталога: механика возврата денег у нас
-   ещё не выбрана, поэтому мы продаём то, что почти наверняка сумеем выдать.
-   Появится способ возврата — ограничение снимется ([«Деньги»](/money)).
-4. Как выдавать товар. Здесь три пути, и вы выбираете тот, который ближе к
-   тому, как ваш бизнес устроен сейчас:
-   - у вас есть API — рядом с ним появляется обработчик, который принимает
-     оплаченные заказы и отдаёт по ним товар;
-   - у вас есть интернет-магазин — оплаченные заказы появляются в нём как
-     обычные, и вы обрабатываете их как всегда;
-   - нет ни того ни другого — заказ приходит вам сообщением, вы подтверждаете
-     и выдаёте; этот путь мы включаем после пилота.
+1. What you sell. A link to your site, your catalogue or your documentation is
+   enough — we write the cards from those materials. A card carries the title,
+   the description, the price and the list of what has to be given at
+   purchase. You check the finished card and approve it. Approval goes by
+   correspondence rather than by a button: we send you the card, and you
+   either say yes or say what to fix. The last word stays with you, because
+   the card sells under your name and at your prices.
+2. Where to send the money. We need the address of your wallet — buyers'
+   payments arrive there. Nothing accumulates on our side, and nothing is paid
+   out once a week.
+3. Whether the product survives being delivered twice. The same order can
+   reach you twice: a connection dropped, an answer never landed, we tried
+   again. Access, a key, a link, a subscription go out a second time to the
+   same buyer without loss; a unit off a shelf or a one-off code from a
+   limited batch does not. During the pilot we take on goods of the first kind
+   only, and that is our limit rather than a property of your catalogue: we
+   have not chosen how money goes back yet, so we sell what we are almost
+   certain we can deliver. Once there is a way to send money back, the limit
+   comes off ([Money](/money)).
+4. How the goods are delivered. There are three paths, and you take the one
+   closest to the way your business already works:
+   - you have an API — a handler appears beside it that takes paid orders and
+     gives out the goods for them;
+   - you have an online shop — paid orders show up in it as ordinary ones, and
+     you deal with them as you always have;
+   - you have neither — the order reaches you as a message, you confirm it and
+     deliver; this path we switch on after the pilot.
 
-## Своими руками или нашими
+## Your hands or ours
 
-Писать код нужно только на первом пути. Обработчик к вашему API может
-написать ваш инженер: инструменты для этого готовы, а весь путь от пустого
-проекта до тестовой продажи показан на странице
-[«Первая тестовая продажа»](/quickstart). Если своего инженера нет или он занят
-другим, обработчик пишем и держим у себя мы — тогда от вас нужны доступ к
-вашему API и утверждение карточек. На самих продажах этот выбор не
-сказывается.
+You only have to write code on the first path. Your own engineer can write the
+handler against your API: the tools are ready, and the whole path from an
+empty project to a test sale is on [The first test sale](/quickstart). If you
+have no engineer of your own, or they are busy with something else, we write
+the handler and run it ourselves — then what we need from you is access to
+your API and your approval of the cards. Either way the sales themselves work
+the same.
 
-На втором пути, через интернет-магазин, вашей стороне делать нечего: связку с
-вашей админкой мы настраиваем и держим сами, инженерной работы она не требует.
+On the second path, through an online shop, your side has nothing to build: we
+set up the link to your shop's admin and run it ourselves, and it asks no
+engineering work of you.
 
-Третий путь, заказ сообщением, мы спроектировали, но пока не запустили. Мы
-включим его после пилота, и обещать по нему сроки рано.
+The third path, the order that arrives as a message, is designed and not yet
+switched on. It comes after the pilot, and it is too early to promise a date
+for it.
 
-## После подключения
+## After you are connected
 
-Дальше основная часть работы остаётся на нас. Карточки ведём мы и после
-подключения: поменялся товар, состав или цена — правки вносим мы, вам
-достаточно сообщить. Новые каталоги мы подключаем без участия с вашей
-стороны, так что вы оказываетесь в них просто по факту; когда меняются
-форматы обмена, мы переносим всех разом, не трогая вашу сторону.
+Most of the work from there stays with us. We keep the cards up after you are
+connected too: the product, what is in it or its price changes, you tell us,
+and we make the edit. We connect new catalogues without asking anything of
+your side, so you find yourself in them without doing anything; when the
+formats we exchange in change, we move everyone at once and your side is not
+touched.
 
-Продажи можно остановить в любой момент и своими руками. Кабинет — это страница
-на нашей стороне, куда вы входите своим ключом: в ней видно ваши карточки,
-заказы и чеки. В нём есть пауза на каждой карточке и одна кнопка, которая
-останавливает продажи целиком. На
-паузе карточки перестают продаваться и пропадают из каталогов, а уже принятые
-заказы доигрываются обычным порядком; чтобы открытых заказов не осталось,
-нужно уйти совсем.
+You can stop the sales yourself at any moment. The cabinet is a page on our
+side that you sign in to with your key, and it shows your cards, your orders
+and the receipts for the sales that went through. It carries a pause on each
+card and one button that stops selling altogether. Paused, a card stops
+selling and disappears from the catalogues, while the orders already taken on
+play out in the ordinary way; to be left with no open orders at all you have
+to leave entirely.
 
-Остановиться продажи могут и без вашей просьбы, автоматически: когда ваша
-сторона перестала отвечать или когда она слишком часто отвечает «нет в
-наличии» — для покупателя это выглядит как обещание каталога, которое не
-сбылось. Устроена такая остановка так же, как поставленная руками: карточки
-перестают продаваться, уже принятые заказы доигрываются. И признаки молчания,
-и предел по отсутствию товара мы назовём до пилота; сама остановка описана на
-странице [«Что может пойти не так»](/failures).
+Selling can also stop without your asking, automatically: when your side stops
+answering, or when it answers too often that the goods are gone — to the buyer
+that looks like a promise the catalogue did not keep. Such a stop works the
+same way as one you set by hand: cards stop selling, and the orders already
+taken on play out. What counts as silence, and where the limit on missing
+goods sits, we name before the pilot; the stop itself is described on
+[What can go wrong](/failures).
 
-Ответы на короткие вопросы — сколько это стоит, что с возвратами, кто
-разбирает споры — собраны в [частых вопросах](/faq).
+Short answers — what this costs, what happens about refunds, who settles a
+dispute — are collected in the [common questions](/faq).
 
-## Как начать
+## How to start
 
-На пилоте подключение начинается разговором с нами. Мы вместе проходим четыре
-вопроса выше, смотрим на ваш каталог и решаем, какие товары выставить первыми
-и как их продавать. Дальше карточки пишем мы, вы их утверждаете, и после
-тестовой покупки товары становятся видны в каталогах. Регистрации по кнопке
-пока нет: пилот мы ведём руками, чтобы своими глазами увидеть, где вам
-неудобно.
+During the pilot, connecting starts with a conversation. We go through the
+four questions above together, look at your catalogue and decide which
+products go out first and how they are sold. Then we write the cards, you
+approve them, and after a test purchase the products become visible in the
+catalogues. There is no sign-up button yet: we run the pilot by hand so that
+we see for ourselves where it is awkward for you.
 
-## Что ещё не решено
+## What is not settled yet
 
-- Куда писать, чтобы начать разговор: ни почты, ни формы заявки у нас ещё
-  нет.
-- Сколько стоит подписка и что в неё входит.
-- Сверка денег. Заказы видны в кабинете, но чек мы записываем в момент выдачи
-  товара: оплаченный и ещё не выданный заказ в чеках не появляется. Деньги
-  приходят прямо к вам на кошелёк, и сводить одно с другим пока приходится вам.
-- Что происходит, когда купленный срок кончается: продление подписок и
-  повторную покупку доступа мы ещё не спроектировали.
-- Что мы обещаем вам, когда замолкаем сами. Про молчание вашей стороны
-  сказано много, про наше — ничего.
-- Признаки, по которым мы считаем вашу сторону замолчавшей, предел по доле
-  ответов «нет в наличии» и порядок возврата к продажам.
+- Where to write to start the conversation: we have neither an address nor an
+  application form yet.
+- What the subscription costs and what it covers.
+- Reconciling the money. Orders are visible in the cabinet, but we write a
+  receipt at the moment the goods are delivered, so an order that is paid for
+  and not yet delivered appears among the orders and not among the receipts.
+  The money arrives straight in your wallet, and putting the two together is
+  still yours to do.
+- What happens when a purchased period runs out: renewing a subscription and
+  buying the same access again are not designed yet.
+- What we promise you when it is our side that goes quiet. There is a great
+  deal here about your side falling silent and nothing about ours.
+- What counts as your side having gone quiet, the limit on the share of "the
+  goods are gone" answers, and how selling comes back.
