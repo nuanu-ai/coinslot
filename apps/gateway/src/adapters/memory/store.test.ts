@@ -585,7 +585,10 @@ describe("MemoryStore receipts", () => {
     } as const;
 
     await store.putReceipt(A, receipt);
-    await store.putReceipt(A, { ...receipt, outcome: "refund_due" });
+    // Written again, and named for the wrong merchant. The rewrite lands and
+    // the ownership does not move: what the machine is doing here is bringing a
+    // receipt into line with an order, not selling it to somebody else.
+    await store.putReceipt(B, { ...receipt, outcome: "refund_due" });
 
     expect((await store.receipts(A)).map((held) => held.outcome)).toStrictEqual(["refund_due"]);
     expect(await store.receipts(B)).toStrictEqual([]);

@@ -8,10 +8,16 @@
  *
  * Almost every question here is asked on behalf of one merchant, and asks so
  * out loud: the merchant is a parameter rather than something the store is
- * configured with, so a read that forgot whose it was would not compile. The
- * four that are unscoped say why in their own words, and all four have the
- * same reason — the caller is an agent buying, or a clock of ours, and neither
- * has a key.
+ * configured with, so a read that forgot whose it was would not compile.
+ *
+ * The ones that name no merchant fall into three groups, and each says which it
+ * is in its own words. Four are the buying surface: `cardById`,
+ * `catalogEntries`, `orderById` and `receiptForOrder` answer an agent, or a
+ * clock of ours, and neither has a key. Three are the claims on payments —
+ * `claimPayment`, `releaseClaim`, `forgetClaimsBefore` — which are deliberately
+ * across the whole gateway, for the reason written beside the first of them.
+ * The rest are the merchants and their keys, whose caller is somebody at a
+ * terminal or the door itself, and none of them is reachable from a request.
  *
  * One method is not an accessor and is the reason this is an interface rather
  * than three maps. `withOrder` holds an order still while a decision is made
@@ -294,6 +300,13 @@ export interface Store {
    * Disabling a key that is already disabled keeps the instant it was first
    * revoked at rather than moving it: the first revocation is the true one, and
    * a retry after a dropped connection must not rewrite history.
+   *
+   * It names a key and no merchant, and that is safe only because nothing
+   * reachable from a request calls it — the callers are the command somebody
+   * types and the test harness. The cabinet's screens for making and revoking
+   * keys are the step after this one (ADR-0010), and whatever serves them has
+   * to hold the caller's merchant against the key's own before calling this, or
+   * add the merchant here: an identifier alone is not permission to revoke.
    */
   disableKey(id: string, at: number): Promise<StoredKey | null>;
 

@@ -1,10 +1,11 @@
 /**
  * The command that makes an account, and the three that keep one.
  *
- * ADR-0009: no self-serve sign-up and no reset by mail, because the pilot has
- * one merchant we create by hand. That makes this the only door into the
- * cabinet, which is why it is a tested module with the terminal handed to it
- * rather than a script that prints as it goes.
+ * ADR-0009: no self-serve sign-up and no reset by mail. Registration with an
+ * address is a decision nobody has taken (ADR-0010), so an account exists
+ * because somebody ran this. That makes it the only door into the cabinet,
+ * which is why it is a tested module with the terminal handed to it rather than
+ * a script that prints as it goes.
  *
  * A password is never taken as an argument. One typed on a command line is in
  * the shell's history, in the process list of everybody on the machine, and in

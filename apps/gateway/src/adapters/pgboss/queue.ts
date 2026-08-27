@@ -82,6 +82,19 @@ export const REMINDERS = "coinslot_reminders";
  * is the default, `createQueue` is an insert into its `queue` table and every
  * job lives in the one table underneath — so this is a row per merchant and not
  * a table per merchant.
+ *
+ * The name changed, and what that costs is named here rather than left to be
+ * found. Nothing draws from the bare `coinslot_envelopes` any more. An
+ * installation that had jobs sitting on it when this went out — an order
+ * dispatch nobody had polled yet, a redelivery waiting out its own delay, a
+ * hand-over pushed back because a charge was in flight — has those jobs on a
+ * queue with no reader, and they are not moved by any migration. Those orders
+ * are not lost sight of: the deadline reminders that would close them live on
+ * `coinslot_reminders`, which is untouched, so each one still reaches its
+ * ending and its refund. But the merchant is never handed the work. Draining
+ * the old queue before the upgrade — bring the gateway down, let the workers
+ * finish what they hold — is what avoids it, and there is nothing in code that
+ * can do it afterwards.
  */
 export const streamOf = (merchantId: string): string => {
   if (!A_NAME_PG_BOSS_ACCEPTS.test(merchantId)) {

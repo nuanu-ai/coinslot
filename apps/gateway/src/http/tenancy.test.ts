@@ -265,40 +265,50 @@ describe("what a key can do", () => {
     expect((stillB.body as { status: string }).status).toBe("in_progress");
   });
 
-  it("will not let one merchant price the other's purchase", async () => {
-    // A card that asks its merchant what it costs. The question goes to B, and
-    // A holding the identifier out of a log must not be able to answer it.
-    const { served, harnessed } = await started();
+  it("will not let one merchant price the other's purchase while it is still open", async () => {
+    // A card that asks its merchant what it costs. The question is B's, and it
+    // has to be live when A answers it — a question already answered prices
+    // nothing whoever sends it, so answering after the fact would be a test
+    // that passes with the ownership check taken out.
+    //
+    // So B's worker draws the question and does not answer it. A answers it
+    // instead, with a price of its own, and then B answers the same question
+    // properly: the sale settles at B's number and never at A's.
+    const { served, harnessed } = await started({ QUOTE_RESPONSE_MS: "4000" });
     const a = await harnessed.addMerchant("Merchant A");
     const b = await harnessed.addMerchant("Merchant B");
     const asked: Card = { ...cardFor("b-asks", "B's priced room"), price_check: "handler" };
     const cardB = await publish(served, b, asked);
 
-    let priceId = "";
-    const bought = buyOverHttp(harnessed, served, cardB, {
-      merchantId: b.id,
-      onOrder: () => ({ delivered: { access_code: "let-me-in" } }),
-      onQuote: (question) => {
-        priceId = question.price_id;
-        return { available: true, price: { amount: "90.00", currency: "USD" }, as_of: NOW };
-      },
-    });
+    // Not awaited: this call is parked on the answer to the price question.
+    const purchase = served.call("POST", `/v0/items/${cardB}/purchase`, { body: { params: {} } });
 
-    await bought;
+    const drawn = await harnessed.gateway.poll(b.id, 10, 2_000);
+    const question = drawn.envelopes.find((envelope) => envelope.kind === "quote_request");
+    const priceId = question?.kind === "quote_request" ? question.payload.price_id : "";
     expect(priceId).not.toBe("");
 
-    // A answering the very question B was asked, after the fact: the question is
-    // not A's, so it prices nothing.
     const asA = await served.call("POST", `/v0/quotes/${priceId}/answer`, {
       body: { available: true, price: { amount: "1.00", currency: "USD" }, as_of: NOW },
       headers: keyOf(a),
     });
+    // Answered in the words a question nobody is holding gets: A learns nothing
+    // about whether the identifier names a live sale of somebody else's.
     expect(asA.status).toBe(200);
     expect((asA.body as { used: boolean }).used).toBe(false);
 
-    const receipts = await served.call("GET", "/v0/receipts", { headers: keyOf(b) });
-    const paid = (receipts.body as { receipts: Receipt[] }).receipts[0]?.price.amount;
-    expect(paid).toBe("90.00");
+    const asB = await served.call("POST", `/v0/quotes/${priceId}/answer`, {
+      body: { available: true, price: { amount: "90.00", currency: "USD" }, as_of: NOW },
+      headers: keyOf(b),
+    });
+    expect((asB.body as { used: boolean }).used).toBe(true);
+
+    const challenged = await purchase;
+    expect(challenged.status).toBe(402);
+    const orders = await served.call("GET", "/v0/orders", { headers: keyOf(b) });
+    expect(
+      (orders.body as { orders: { price: { amount: string } }[] }).orders[0]?.price.amount,
+    ).toBe("90.00");
   });
 
   it("keeps one merchant's stop-selling off the other's catalog", async () => {
@@ -312,6 +322,25 @@ describe("what a key can do", () => {
     const ids = (catalog.body as { items: { id: string }[] }).items.map((item) => item.id);
     expect(ids).not.toContain(cardA);
     expect(ids).toContain(cardB);
+  });
+
+  it("keeps one merchant's stop-selling out of the other's purchases", async () => {
+    // The catalog is a listing; this is the money. What the order machine is
+    // given at the birth of an order is one word for whether the merchant is
+    // selling, and whose word it is comes off the card the purchase was made
+    // against. Read from the wrong merchant, A pausing would refuse B's sales
+    // — or, the other way round, sell A's stock while A had stopped.
+    const { served, harnessed } = await started();
+    const { a, cardA, cardB } = await twoMerchants(served, harnessed);
+    await served.call("POST", "/v0/selling/pause", { headers: keyOf(a) });
+
+    const ofA = await served.call("POST", `/v0/items/${cardA}/purchase`, { body: { params: {} } });
+    const ofB = await served.call("POST", `/v0/items/${cardB}/purchase`, { body: { params: {} } });
+
+    expect(ofA.status).toBe(409);
+    expect((ofA.body as { error: { code: string } }).error.code).toBe("not_selling");
+    // And B, who paused nothing, is still open for business.
+    expect(ofB.status).toBe(402);
   });
 
   it("lets two merchants use the same identifier for different products", async () => {
@@ -432,14 +461,30 @@ describe("the merchant's door", () => {
     ).toBe(200);
   });
 
-  it("never lets one merchant's key resolve to the other", async () => {
+  it("resolves every one of a merchant's keys to that merchant and none to another", async () => {
+    // That A's own key answers with A's cards is the first test in this file.
+    // What is here instead is the part it cannot reach: a merchant with more
+    // than one key. Each of them is a separate row and each has to name the
+    // same merchant, or a merchant issuing a second key for a second worker
+    // would find that worker looking at somebody else's catalog.
     const { served, harnessed } = await started();
     const { a, b, cardA, cardB } = await twoMerchants(served, harnessed);
+    const secondOfA = await harnessed.addKey(a.id, "a second worker of A's");
+    const secondOfB = await harnessed.addKey(b.id, "a second worker of B's");
 
-    const asA = await served.call("GET", "/v0/cards", { headers: keyOf(a) });
-    const asB = await served.call("GET", "/v0/cards", { headers: keyOf(b) });
+    const idsSeenWith = async (key: string) => {
+      const answered = await served.call("GET", "/v0/cards", {
+        headers: { authorization: `Bearer ${key}` },
+      });
+      expect(answered.status).toBe(200);
+      return (answered.body as MerchantCardList).cards.map((card) => card.id);
+    };
 
-    expect((asA.body as MerchantCardList).cards.map((card) => card.id)).toStrictEqual([cardA]);
-    expect((asB.body as MerchantCardList).cards.map((card) => card.id)).toStrictEqual([cardB]);
+    expect(await idsSeenWith(secondOfA)).toStrictEqual([cardA]);
+    expect(await idsSeenWith(secondOfB)).toStrictEqual([cardB]);
+    // And the first keys still answer the same way, so this is two keys naming
+    // one merchant rather than the second having replaced the first.
+    expect(await idsSeenWith(a.key)).toStrictEqual([cardA]);
+    expect(await idsSeenWith(b.key)).toStrictEqual([cardB]);
   });
 });

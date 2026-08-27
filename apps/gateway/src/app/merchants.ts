@@ -142,6 +142,14 @@ export type SeedOutcome =
  * needed: the migration is the only thing that can assign existing rows to it,
  * and this is the only thing that exists for a store with no migrations behind
  * it at all — which is every test and the end-to-end harness.
+ *
+ * Two processes starting at the same instant both find no key and both write
+ * one, and the digest is unique — so one of them is refused by the database.
+ * That is caught rather than thrown on, and the answer is the same one a
+ * sequential second run gets, because it is the same fact: the key is there.
+ * Left to propagate, it would take the losing process down at start-up with an
+ * error about the database being unreachable, which is the one thing that had
+ * not happened.
  */
 export async function seedSandboxKey(
   store: Store,
@@ -149,24 +157,43 @@ export async function seedSandboxKey(
   secret: string,
   at: number,
 ): Promise<SeedOutcome> {
+  const digest = keyDigest(secret);
   await store.addMerchant(SEEDED_MERCHANT, at);
 
   // Looked up in whatever state it is in, not through the door's own lookup:
   // the door answers nothing for a disabled key, and issuing a second key with
   // a digest already taken is what that silence would lead to here.
-  const existing = await store.keyByDigest(keyDigest(secret));
-  if (existing !== null) {
-    return existing.disabledAt === null ? { kind: "already_there" } : { kind: "disabled" };
+  const found = await store.keyByDigest(digest);
+  if (found !== null) {
+    return standingOf(found.disabledAt);
   }
 
-  await store.addKey(
-    {
-      id: ids("mk"),
-      merchantId: SEEDED_MERCHANT.id,
-      label: "the sandbox key from the compose file",
-      digest: keyDigest(secret),
-    },
-    at,
-  );
+  try {
+    await store.addKey(
+      {
+        id: ids("mk"),
+        merchantId: SEEDED_MERCHANT.id,
+        label: "the sandbox key from the compose file",
+        digest,
+      },
+      at,
+    );
+  } catch (thrown) {
+    // Somebody wrote it between the read above and this line, or the write
+    // failed for a reason that has nothing to do with a race. The two are told
+    // apart by asking again: a key that is there now is the first answer,
+    // whoever wrote it, and anything else is a failure this cannot repair and
+    // must not swallow.
+    const raced = await store.keyByDigest(digest);
+    if (raced === null) {
+      throw thrown;
+    }
+    return standingOf(raced.disabledAt);
+  }
   return { kind: "issued", merchantId: SEEDED_MERCHANT.id };
+}
+
+/** Where a key that is already there stands, in the word the caller prints. */
+function standingOf(disabledAt: number | null): SeedOutcome {
+  return disabledAt === null ? { kind: "already_there" } : { kind: "disabled" };
 }

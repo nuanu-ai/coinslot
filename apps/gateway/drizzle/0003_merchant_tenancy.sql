@@ -32,6 +32,14 @@ ALTER TABLE "merchants" ADD COLUMN "created_at" timestamp with time zone;--> sta
 -- row that carries the selling word keeps it: the name and the creation time
 -- are filled in around it, and nothing here puts a merchant who had paused back
 -- on sale.
+--
+-- That last sentence rests on the identifier. The only writer that ever existed
+-- used 'the_merchant' and nothing else, so a row under any other name is one
+-- somebody edited by hand — and such a row is kept, given a name, and then left
+-- beside a fresh 'the_merchant' that every card, order and receipt is assigned
+-- to. A pause recorded under that other name is not carried across, and nothing
+-- below would say so. Check the table before applying this to a database whose
+-- history you do not know.
 UPDATE "merchants" SET "name" = coalesce("name", "id"), "created_at" = coalesce("created_at", "updated_at");--> statement-breakpoint
 INSERT INTO "merchants" ("id", "name", "selling", "created_at", "updated_at")
 VALUES ('the_merchant', 'The pilot merchant', 'open', now(), now())

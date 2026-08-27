@@ -679,8 +679,42 @@ if (databaseUrl === null) {
       expect((await store.orders(B)).map((held) => held.order.id)).toStrictEqual([theirOrder]);
       expect((await store.receipts(A)).map((held) => held.id)).not.toContain("rcp_theirs");
       expect((await store.receipts(B)).map((held) => held.id)).toStrictEqual(["rcp_theirs"]);
+      // A receipt written again is brought into line with its order, not sold
+      // to somebody else. The merchant is deliberately left out of the upsert's
+      // set clause, which is a rule expressed by omission and therefore one
+      // nothing else would catch.
+      await store.putReceipt(A, {
+        id: "rcp_theirs",
+        order_id: theirOrder,
+        item_id: theirs.id,
+        price: {
+          amount: "80.00",
+          currency: "USD",
+          at: "2026-08-26T12:00:00.000Z",
+          as_of: "2026-08-26T12:00:00.000Z",
+        },
+        paid_at: "2026-08-26T12:00:00.000Z",
+        outcome: "refund_due",
+        test: true,
+      });
+      expect((await store.receipts(A)).map((held) => held.id)).not.toContain("rcp_theirs");
+      expect((await store.receipts(B)).map((held) => held.outcome)).toStrictEqual(["refund_due"]);
       expect(await store.merchantOrder(A, theirOrder)).toBeNull();
       expect((await store.merchantOrder(B, theirOrder))?.order.id).toBe(theirOrder);
+      // Pausing is a write, and the same predicate guards it: another
+      // merchant's card is neither changed nor reported, which is the same
+      // answer a card that is not there gets.
+      expect(await store.setCardPaused(A, theirs.id, true)).toBeNull();
+      expect((await store.cardById(theirs.id))?.paused).toBe(false);
+      // Republishing is the other write. The merchant is half of the conflict
+      // target, so a publish only ever edits the publisher's own card.
+      const mineAgain = await store.publishCard(
+        A,
+        { ...syncCard, merchant_item_id: "scoped-b", title: "A's own, under B's identifier" },
+        now,
+      );
+      expect(mineAgain.id).not.toBe(theirs.id);
+      expect((await store.cardById(theirs.id))?.card.title).toBe(syncCard.title);
       // And the hold on an order finds nothing where the order is not this
       // merchant's — the ownership is part of the same read as the lock.
       expect(

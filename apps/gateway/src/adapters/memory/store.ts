@@ -324,7 +324,15 @@ export class MemoryStore implements Store {
   // --- receipts -------------------------------------------------------------
 
   async putReceipt(merchantId: string, receipt: Receipt): Promise<void> {
-    this.#receipts.set(receipt.order_id, { merchantId, receipt: Object.freeze({ ...receipt }) });
+    // The merchant is written once and never again. The machine writes a
+    // receipt again as an order moves on, and that is not an occasion for the
+    // sale to belong to somebody else — the Postgres adapter leaves the column
+    // out of its upsert for the same reason, and the two have to agree.
+    const held = this.#receipts.get(receipt.order_id);
+    this.#receipts.set(receipt.order_id, {
+      merchantId: held?.merchantId ?? merchantId,
+      receipt: Object.freeze({ ...receipt }),
+    });
   }
 
   async receiptForOrder(orderId: string): Promise<Receipt | null> {

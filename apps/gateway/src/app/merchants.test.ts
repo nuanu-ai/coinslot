@@ -105,6 +105,43 @@ describe("seeding the sandbox", () => {
     expect(await store.merchantForKey(keyDigest("the-sandbox-key"))).toBeNull();
   });
 
+  it("survives two processes seeding the same key at the same instant", async () => {
+    // Both read no key and both write one, and the digest is unique — so the
+    // database refuses one of them. Left to propagate, that refusal takes the
+    // losing process down at start-up with an error about a database that did
+    // not answer, which is the one thing that had not gone wrong.
+    const store = aStore();
+    const ids = countedIds();
+
+    const [first, second] = await Promise.all([
+      seedSandboxKey(store, ids, "the-sandbox-key", 1_000),
+      seedSandboxKey(store, ids, "the-sandbox-key", 1_000),
+    ]);
+
+    expect([first.kind, second.kind].sort()).toStrictEqual(["already_there", "issued"]);
+    expect(await store.keysOf(SEEDED_MERCHANT.id)).toHaveLength(1);
+    expect(await store.merchantForKey(keyDigest("the-sandbox-key"))).toBe(SEEDED_MERCHANT.id);
+  });
+
+  it("throws when the write failed for a reason that is not a race", async () => {
+    // The catch above is narrow on purpose. A store that cannot write is a
+    // start-up failure somebody has to see, and swallowing it would leave a
+    // gateway up with a key that opens nothing.
+    const store = aStore();
+    const broken = {
+      ...store,
+      addMerchant: store.addMerchant.bind(store),
+      keyByDigest: async () => null,
+      addKey: async () => {
+        throw new Error("the disk is full");
+      },
+    } as unknown as MemoryStore;
+
+    await expect(seedSandboxKey(broken, countedIds(), "the-sandbox-key", 1_000)).rejects.toThrow(
+      "the disk is full",
+    );
+  });
+
   it("does not put a merchant who had paused back on sale", async () => {
     // The seed runs on every boot, and the selling word is the merchant's own.
     // A seed that reset it would be a restart that started selling on somebody
