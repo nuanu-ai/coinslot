@@ -390,6 +390,24 @@ describe("the cards screen", () => {
     expect(text).toContain("selling");
   });
 
+  it("shows every promise a card makes, not the first one it finds", async () => {
+    // A card can both have its price asked at purchase and owe a delivery
+    // inside a window. Showing only the first leaves the merchant reading a row
+    // that never mentions the deadline they are answerable for.
+    const { browser, gateway } = await started();
+    await publish(gateway, {
+      ...esimCard,
+      merchant_item_id: "esim-live-priced",
+      price_check: "handler",
+      fulfill_deadline_seconds: 3_600,
+    });
+
+    const text = readable((await browser.signIn(KEY)).html);
+
+    expect(text).toContain("Price asked at purchase");
+    expect(text).toContain("delivery within 1 hour");
+  });
+
   it("says so plainly when a merchant has published nothing", async () => {
     const { browser } = await started();
 
@@ -610,7 +628,12 @@ describe("the receipts screen", () => {
     expect(text).toMatch(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC/);
     // And the moment the money actually moved, which is not when the purchase
     // happened and is the column a merchant matches wallet transfers against.
+    // Counted rather than named, because a header with no cell under it would
+    // satisfy a check that only looked for the word: a receipt row carries
+    // three moments, and dropping one leaves two.
     expect(text).toContain("Paid");
+    const row = text.slice(text.indexOf("rcp_"));
+    expect(row.match(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC/g)).toHaveLength(3);
     // And the summary above the table, which counts what it can stand behind.
     expect(text).toContain("Delivered 1 of 1 paid");
   });
@@ -631,8 +654,13 @@ describe("the receipts screen", () => {
 
     expect(receipts).toContain("Every receipt here is a test purchase");
     expect(receipts).toContain("no money moved");
-    expect(receipts).toContain("test");
     expect(orders).toContain("Every order here is a test purchase");
+    // The mark is on the sum itself as well as in the sentence above the
+    // table. The sentence alone stops carrying it the moment one real payment
+    // lands beside the tests, which is exactly when telling them apart starts
+    // to matter.
+    expect(receipts).toContain("80.00 USD test");
+    expect(orders).toContain("80.00 USD test");
     // And it never calls the summary a record of takings.
     expect(receipts).not.toContain("paid in USD");
   });
