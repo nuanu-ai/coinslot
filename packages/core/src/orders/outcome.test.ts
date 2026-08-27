@@ -94,6 +94,38 @@ describe("what the agent is told an order came to", () => {
     expect(outcomeFor(silent)).not.toBe(outcomeFor(reported));
   });
 
+  it("turns a charge that finally reports in into the debt it is", () => {
+    // The order was closed as refused because the payment network went silent,
+    // and then it answered: the money had moved after all. The machine reopens
+    // the order as a debt and tells the merchant so. The agent has to be told
+    // the same thing. "Nobody can say whether you were charged" about an order
+    // the machine has just written a refund against is the fifth gate turned
+    // inside out — ignorance claimed where there is knowledge — and it hides a
+    // debt owed to the buyer behind a word that sounds like bad luck.
+    const silent = walk(newOrder("async"), [
+      { kind: "payment_verified", at: T0 + 1 },
+      { kind: "deadline_expired", at: T0 + 999_999, deadline: "settle_response" },
+    ]);
+
+    expect(outcomeFor(silent)).toBe("payment_unresolved");
+
+    const owed = walk(silent, [{ kind: "payment_settled", at: T0 + 1_000_000 }]);
+
+    // The machine keeps the old closure on purpose: it is the record of why
+    // the order was closed in the first place. The projection may not read
+    // that record as a claim that the money is still lost.
+    expect(owed.state).toBe("refund_due");
+    expect(owed.payment).toBe("settled");
+    expect(owed.closure).toStrictEqual({ cause: "payment_outcome_unknown" });
+    expect(outcomeFor(owed)).toBe("refund_due");
+
+    // And once the debt is paid back, that is what the agent hears — not that
+    // the machine still does not know where his money went.
+    const repaid = walk(owed, [{ kind: "refund_settled", at: T0 + 1_000_001 }]);
+
+    expect(outcomeFor(repaid)).toBe("refunded");
+  });
+
   it("shows the two endings where money is owed as what they are", () => {
     expect(outcomeFor(reach("refund_due"))).toBe("refund_due");
     expect(outcomeFor(reach("delivered_unpaid"))).toBe("delivered_unpaid");
