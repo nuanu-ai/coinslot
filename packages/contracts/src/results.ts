@@ -66,8 +66,14 @@ import { IdentifierSchema } from "./primitives.js";
  * generated from the JSON Schema export — reads an unknown word as a document
  * it cannot parse rather than as a success it cannot name, and reports the
  * call as having gone wrong. So a word added here has to reach those clients
- * before the gateway starts sending it, and the version they check at startup
- * is what tells them the two ends have diverged.
+ * before the gateway starts sending it. The version handshake would be the
+ * place to catch that, and today it does not: `CONTRACT_VERSION` is `"0"` and
+ * does not move while nothing is published, so an old client passes the
+ * startup check and fails on the first answer carrying a word it lacks. That
+ * is deliberate and survivable only because every client is in this
+ * repository — `docs/decisions/0006-wire-version.md` says what starts the
+ * clock, and whether this schema should read an unknown word leniently is an
+ * open question named there.
  *
  * `debt_closed_by_delivery` says the delivery deadline had already passed and
  * the goods went out anyway, closing a debt instead of completing a sale; the

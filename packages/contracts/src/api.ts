@@ -218,12 +218,15 @@ export const OrderCallResponseSchema = z.discriminatedUnion("ok", [
  *
  * The success carries no word, and that is a choice rather than a gap. The
  * published results include `accepted`, so there is a word to carry; this
- * route just has nothing for it to tell apart. It is asked one question and
- * answers it, where the answer route carries whichever of the three things a
- * handler returned and its success has to name which — that is what the word
- * is for. `ok: true` here is a whole sentence on its own: true is true in
- * every language, and the shape leaves room to add a word beside it if this
- * route ever succeeds in more than one way.
+ * route declines to carry it. Underneath, taking on an order that is waiting
+ * and taking on one already delivered are two different answers, and this
+ * route reports both as the same bare success — a merchant who takes on an
+ * order they have already finished learns nothing new here, which is what
+ * makes a repeat harmless. The answer route is where the word earns its
+ * place, because it carries whichever of the three things a handler returned
+ * and its success has to name which. `ok: true` here is a whole sentence on
+ * its own: true is true in every language, and the shape leaves room for a
+ * word beside it the day this route needs to tell two successes apart.
  *
  * Repeats are ordinary here. Delivery is at least once, so an order already
  * taken on is taken on again every time it is redelivered, and an answer with
@@ -530,7 +533,7 @@ export const API_ROUTES = Object.freeze({
     path: "/v0/orders/:order_id/accept",
     auth: "merchant_key",
     description:
-      "Takes an order on: the merchant will deliver, and says how long they expect it to take when they know. An empty body is a complete answer. The same order is taken on again every time it is redelivered, and the success carries no word because this route succeeds in only one way — the answer route, which carries whichever of the three things a handler returned, names that one accepted.",
+      "Takes an order on: the merchant will deliver, and says how long they expect it to take when they know. An empty body is a complete answer. The same order is taken on again every time it is redelivered, and the success carries no word: taking on an order that is already delivered succeeds here too, and this route does not tell the two apart. The answer route does, because it carries whichever of the three things a handler returned.",
     request: AcceptanceSchema,
     response: { document: OrderAcceptResponseSchema },
   },

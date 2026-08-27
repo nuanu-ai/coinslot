@@ -345,11 +345,12 @@ describe("what answering for an order comes back as", () => {
 
 describe("what taking an order on comes back as", () => {
   it("succeeds without a word for what happened", () => {
-    // This route succeeds in only one way, so a word would have nothing to
-    // tell apart; the answer route, which carries whichever of the three
-    // things a handler returned, is where the word earns its place. An answer
-    // with no word in it also has nothing to get wrong when the same order is
-    // redelivered and taken on again, which is ordinary here.
+    // This route reports every success the same bare way, including taking on
+    // an order that was already delivered — it declines to tell those apart.
+    // The answer route is where a word earns its place, because it carries
+    // whichever of the three things a handler returned. An answer with no word
+    // in it also has nothing to get wrong when the same order is redelivered
+    // and taken on again, which is ordinary here.
     expect(OrderAcceptResponseSchema.parse({ ok: true })).toStrictEqual({ ok: true });
   });
 
