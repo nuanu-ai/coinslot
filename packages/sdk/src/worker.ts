@@ -198,7 +198,7 @@ export interface HandlerRegistry {
  * this file compiling until it has a registration of its own. The `switch` in
  * `dispatch` below is the second half of the same guard.
  */
-export const REGISTERED_AS: { readonly [Kind in WorkerEnvelopeKind]: string } = {
+const REGISTERED_AS: { readonly [Kind in WorkerEnvelopeKind]: string } = {
   order: "order",
   quote_request: "quote",
   order_event: "event",
