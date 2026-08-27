@@ -1,5 +1,5 @@
 import type { AddressInfo } from "node:net";
-import type { Card } from "@coinslot/contracts";
+import type { Card, MerchantCardList, Receipt } from "@coinslot/contracts";
 import { API_ROUTES, mountableRoutes } from "@coinslot/contracts";
 import { decodePaymentRequiredHeader, encodePaymentSignatureHeader } from "@x402/core/http";
 import { afterEach, describe, expect, it } from "vitest";
@@ -761,5 +761,258 @@ describe("the worker's calls over HTTP", () => {
 
     expect(answered.status).toBe(404);
     expect((answered.body as { error: { code: string } }).error.code).toBe("no_such_order");
+  });
+});
+
+describe("the merchant's own catalog and the pause switch", () => {
+  // The promise: a merchant can see their cards, stop selling one or all of
+  // them, and start again — and a pause stops new orders without touching the
+  // orders already open. The words come back the way the machine keeps them,
+  // because a screen and a machine that disagree about whether a product is on
+  // sale is the one thing a switch like this must never do.
+  const vpnCard: Card = {
+    merchant_item_id: "vpn-monthly",
+    title: "VPN, one month",
+    description: "Thirty days from the moment it is delivered",
+    price: { amount: "5.00", currency: "USD" },
+    result: { access_url: { type: "string" } },
+    fulfillment: "sync",
+  };
+
+  const cardsOf = (body: unknown) => (body as MerchantCardList).cards;
+
+  const stateOf = (body: unknown, id: string) => cardsOf(body).find((card) => card.id === id);
+
+  const buy = (served: Served, itemId: string) =>
+    served.call("POST", `/v0/items/${itemId}/purchase`, { body: { params: {} } });
+
+  it("shows the merchant the cards they published, whole, and refuses a caller with no key", async () => {
+    const { served } = await started();
+    const itemId = await publish(served, syncCard);
+
+    const mine = await served.call("GET", "/v0/cards", { headers: asMerchant });
+    const stranger = await served.call("GET", "/v0/cards");
+
+    expect(mine.status).toBe(200);
+    expect(mine.body).toMatchObject({ selling: "open" });
+    expect(stateOf(mine.body, itemId)).toMatchObject({ selling: "open", paused: false });
+    // The card itself, not a projection of it: the merchant's own key is here,
+    // which the public catalog deliberately never carries.
+    expect(cardsOf(mine.body)[0]?.card).toStrictEqual(syncCard);
+    expect(stranger.status).toBe(401);
+  });
+
+  it("stops new orders for a paused card and leaves the others selling", async () => {
+    const { served } = await started();
+    const paused = await publish(served, syncCard);
+    const selling = await publish(served, vpnCard);
+
+    const answered = await served.call("POST", `/v0/cards/${paused}/pause`, {
+      headers: asMerchant,
+    });
+
+    expect(answered.status).toBe(200);
+    expect(answered.body).toMatchObject({ id: paused, selling: "paused", paused: true });
+    expect((await buy(served, paused)).status).toBe(409);
+    expect((await buy(served, paused)).body).toMatchObject({ error: { code: "not_selling" } });
+    // The negative control: the switch is per card, so the other one is
+    // untouched and still answers a purchase with a price.
+    expect((await buy(served, selling)).status).toBe(402);
+  });
+
+  it("takes a paused card out of the catalog rather than offering what it will refuse", async () => {
+    // A catalog is an offer. An entry every purchase of which comes back
+    // "not selling" is an offer we would not honour, and the agent finds out
+    // after it has chosen this product over somebody else's.
+    const { served } = await started();
+    const itemId = await publish(served, syncCard);
+
+    await served.call("POST", `/v0/cards/${itemId}/pause`, { headers: asMerchant });
+    const listed = await served.call("GET", "/v0/catalog");
+
+    expect((listed.body as { items: unknown[] }).items).toStrictEqual([]);
+  });
+
+  it("does not touch an order that was already open when the pause began", async () => {
+    // The whole shape of a pause, and the thing a merchant most needs to be
+    // true: the guard is at the birth of an order and nowhere else, so a sale
+    // already under way completes exactly as it would have.
+    const { served, harnessed } = await started();
+    const itemId = await publish(served, syncCard);
+    const priced = await buy(served, itemId);
+    const requirements = decodePaymentRequiredHeader(
+      priced.headers.get(PAYMENT_REQUIRED_HEADER) ?? "",
+    ).accepts[0];
+    if (requirements === undefined) throw new Error("no payment option was offered");
+
+    await served.call("POST", "/v0/selling/pause", { headers: asMerchant });
+
+    const worker = workUntilStopped(harnessed, {
+      onOrder: () => ({ delivered: { access_code: "SESAME" } }),
+    });
+    const bought = await served.call("POST", `/v0/items/${itemId}/purchase`, {
+      body: { params: {} },
+      headers: {
+        [PAYMENT_SIGNATURE_HEADER]: encodePaymentSignatureHeader({
+          x402Version: 2,
+          accepted: requirements,
+          payload: { signature: "0xsigned" },
+        }),
+      },
+    });
+    await worker.stop();
+
+    expect(bought.status).toBe(200);
+    expect(bought.body).toMatchObject({ delivered: { access_code: "SESAME" } });
+  });
+
+  it("stops every card at once and says which pause each one is under", async () => {
+    const { served } = await started();
+    const ownPause = await publish(served, syncCard);
+    const swept = await publish(served, vpnCard);
+    await served.call("POST", `/v0/cards/${ownPause}/pause`, { headers: asMerchant });
+
+    const stopped = await served.call("POST", "/v0/selling/pause", { headers: asMerchant });
+
+    expect(stopped.body).toMatchObject({ selling: "paused" });
+    // Both refuse a purchase, and the two are still told apart: one is paused
+    // in its own right and one is only swept up by the merchant's switch.
+    expect(stateOf(stopped.body, ownPause)).toMatchObject({ selling: "paused", paused: true });
+    expect(stateOf(stopped.body, swept)).toMatchObject({ selling: "paused", paused: false });
+    expect((await buy(served, swept)).status).toBe(409);
+  });
+
+  it("puts back only the cards the merchant did not take off themselves", async () => {
+    // Resuming everything must not sell a product its merchant took off sale.
+    // The card that was paused in its own right is still paused, and the one
+    // that was only swept up is selling again.
+    const { served } = await started();
+    const ownPause = await publish(served, syncCard);
+    const swept = await publish(served, vpnCard);
+    await served.call("POST", `/v0/cards/${ownPause}/pause`, { headers: asMerchant });
+    await served.call("POST", "/v0/selling/pause", { headers: asMerchant });
+
+    const resumed = await served.call("POST", "/v0/selling/resume", { headers: asMerchant });
+
+    expect(resumed.body).toMatchObject({ selling: "open" });
+    expect(stateOf(resumed.body, ownPause)).toMatchObject({ selling: "paused", paused: true });
+    expect(stateOf(resumed.body, swept)).toMatchObject({ selling: "open", paused: false });
+    expect((await buy(served, ownPause)).status).toBe(409);
+    expect((await buy(served, swept)).status).toBe(402);
+  });
+
+  it("tells a merchant resuming one card that the catalog is still stopped", async () => {
+    // The case a merchant is most likely to misread: they press resume on a
+    // card while all selling is stopped, and nothing appears to happen. The
+    // answer says both facts, so the screen can say which switch is holding it.
+    const { served } = await started();
+    const itemId = await publish(served, syncCard);
+    await served.call("POST", `/v0/cards/${itemId}/pause`, { headers: asMerchant });
+    await served.call("POST", "/v0/selling/pause", { headers: asMerchant });
+
+    const answered = await served.call("POST", `/v0/cards/${itemId}/resume`, {
+      headers: asMerchant,
+    });
+
+    expect(answered.body).toMatchObject({ selling: "paused", paused: false });
+    expect((await buy(served, itemId)).status).toBe(409);
+  });
+
+  it("leaves a card paused when its merchant republishes it", async () => {
+    // Republishing is how a card is changed. A merchant editing a price is not
+    // asking for a product they took off sale to go back on it, and a pause
+    // that evaporated on the next publish would put stock they do not have in
+    // front of an agent.
+    const { served } = await started();
+    const itemId = await publish(served, syncCard);
+    await served.call("POST", `/v0/cards/${itemId}/pause`, { headers: asMerchant });
+
+    await publish(served, { ...syncCard, price: { amount: "90.00", currency: "USD" } });
+    const mine = await served.call("GET", "/v0/cards", { headers: asMerchant });
+
+    expect(stateOf(mine.body, itemId)).toMatchObject({ selling: "paused", paused: true });
+    expect(cardsOf(mine.body)[0]?.card.price).toStrictEqual({ amount: "90.00", currency: "USD" });
+  });
+
+  it("answers the same way when the same switch is pressed twice", async () => {
+    // The call says what the merchant wants to be true rather than asking for a
+    // change, so a retry after a dropped connection is safe.
+    const { served } = await started();
+    const itemId = await publish(served, syncCard);
+
+    const first = await served.call("POST", `/v0/cards/${itemId}/pause`, { headers: asMerchant });
+    const again = await served.call("POST", `/v0/cards/${itemId}/pause`, { headers: asMerchant });
+
+    expect(again.status).toBe(200);
+    expect(again.body).toStrictEqual(first.body);
+  });
+
+  it("says there is no such product rather than pausing nothing quietly", async () => {
+    const { served } = await started();
+
+    const answered = await served.call("POST", "/v0/cards/itm_nope/pause", {
+      headers: asMerchant,
+    });
+
+    expect(answered.status).toBe(404);
+    expect((answered.body as { error: { code: string } }).error.code).toBe("no_such_item");
+  });
+});
+
+describe("the merchant's receipts", () => {
+  it("lists the receipt of a sale that went through, and nothing before one does", async () => {
+    // The promise: a merchant reconciles their wallet against this list. A
+    // receipt exists from the moment the money moves, so an empty list before
+    // any sale is the true answer and not a broken call.
+    const { served, harnessed } = await started();
+    const itemId = await publish(served, syncCard);
+
+    const before = await served.call("GET", "/v0/receipts", { headers: asMerchant });
+    expect(before.body).toStrictEqual({ receipts: [] });
+
+    const priced = await served.call("POST", `/v0/items/${itemId}/purchase`, {
+      body: { params: {} },
+    });
+    const requirements = decodePaymentRequiredHeader(
+      priced.headers.get(PAYMENT_REQUIRED_HEADER) ?? "",
+    ).accepts[0];
+    if (requirements === undefined) throw new Error("no payment option was offered");
+
+    const worker = workUntilStopped(harnessed, {
+      onOrder: () => ({ delivered: { access_code: "SESAME" } }),
+    });
+    const bought = await served.call("POST", `/v0/items/${itemId}/purchase`, {
+      body: { params: {} },
+      headers: {
+        [PAYMENT_SIGNATURE_HEADER]: encodePaymentSignatureHeader({
+          x402Version: 2,
+          accepted: requirements,
+          payload: { signature: "0xsigned" },
+        }),
+      },
+    });
+    await worker.stop();
+
+    const after = await served.call("GET", "/v0/receipts", { headers: asMerchant });
+    const receipts = (after.body as { receipts: Receipt[] }).receipts;
+
+    expect(after.status).toBe(200);
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0]).toMatchObject({
+      order_id: (bought.body as { order: { id: string } }).order.id,
+      outcome: "delivered",
+      item_id: itemId,
+    });
+    // Both moments, which is what the price on a receipt is for: when the
+    // purchase happened, and the instant the price behind it was true.
+    expect(receipts[0]?.price).toMatchObject({ amount: "80.00", currency: "USD" });
+    expect(receipts[0]?.price.at).toBeTruthy();
+    expect(receipts[0]?.price.as_of).toBeTruthy();
+  });
+
+  it("refuses a caller with no key", async () => {
+    const { served } = await started();
+
+    expect((await served.call("GET", "/v0/receipts")).status).toBe(401);
   });
 });

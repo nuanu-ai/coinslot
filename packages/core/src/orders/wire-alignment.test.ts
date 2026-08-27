@@ -23,8 +23,8 @@ import {
   ORDER_CALL_RESULTS,
   ORDER_EVENT_TYPES,
   ORDER_STATUSES,
-  RECOMMENDED_REFUSAL_CODES as WIRE_REFUSAL_CODES,
   SELLING_STATES,
+  RECOMMENDED_REFUSAL_CODES as WIRE_REFUSAL_CODES,
 } from "@coinslot/contracts";
 import { describe, expect, it } from "vitest";
 

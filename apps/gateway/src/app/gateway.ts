@@ -10,13 +10,10 @@
  * merchant was silent", and whether silence sells is decided elsewhere, by
  * mode, exactly as ADR-0002 §3 says.
  *
- * Two things in stage one are narrower than the model and are written here
- * rather than discovered later. Every order is a test order, because the
- * separation of the sandbox from the real thing is stage two of the pilot plan
- * and there is nothing yet to tell them apart with. And the merchant is always
- * selling, because the pause switch lives in a cabinet that does not exist yet;
- * the machine's guard for it is in place and takes the answer from here the day
- * there is one.
+ * One thing in stage one is narrower than the model and is written here rather
+ * than discovered later: every order is a test order, because the separation of
+ * the sandbox from the real thing is stage two of the pilot plan and there is
+ * nothing yet to tell them apart with.
  */
 
 import {
@@ -26,6 +23,8 @@ import {
   CONTRACT_VERSION,
   type Delivery,
   type HandlerAnswer,
+  type MerchantCard,
+  type MerchantCardList,
   type OrderAcceptResponse,
   type OrderCallError,
   type OrderCallResponse,
@@ -35,11 +34,12 @@ import {
   purchaseCheckFor,
   type QuoteAnswerAck,
   type QuoteResponse,
+  type ReceiptList,
   type Refusal,
   type WorkerEnvelope,
   type WorkerPollResponse,
 } from "@coinslot/contracts";
-import type { TransitionRejection } from "@coinslot/core";
+import type { MerchantSelling, TransitionRejection } from "@coinslot/core";
 import { createOrder, fulfillmentDeadline, isOpen, outcomeFor } from "@coinslot/core";
 import { asTimestamp } from "../ports/clock.js";
 import type { Reminder } from "../ports/queue.js";
@@ -52,6 +52,7 @@ import {
   priceCheckOf,
   quoteReachesTheMerchant,
   type Runtime,
+  sellingFor,
 } from "./runtime.js";
 import { purchaseOf, Waiting } from "./waiting.js";
 
@@ -60,13 +61,6 @@ import { purchaseOf, Waiting } from "./waiting.js";
  * the live network is stage two, so every order is marked as what it is.
  */
 const STAGE_ONE_ORDERS_ARE_TESTS = true;
-
-/**
- * Stage one has no cabinet and therefore no pause switch. The machine refuses
- * new orders for a paused or departed merchant; this is the answer it gets
- * until there is somewhere for a merchant to say otherwise.
- */
-const STAGE_ONE_MERCHANT_IS_SELLING = "open" as const;
 
 /** The queue's name for the daily sweep of claims on payments. */
 export const SWEEP_CLAIMS = "coinslot_forget_old_claims";
@@ -202,13 +196,70 @@ export class Gateway {
     return { ok: { id: stored.id } };
   }
 
+  /**
+   * The catalog an agent reads, which is the cards that are actually for sale.
+   *
+   * A paused card is left out rather than listed and then refused. A catalog is
+   * an offer, and an entry every purchase of which comes back `not_selling` is
+   * an offer we would not honour — the agent budgets against it, chooses it
+   * over a competitor, and finds out at the till. That is the same reason the
+   * portal tells the merchant a pause means their cards stop selling rather
+   * than that they stop working.
+   */
   async catalog(): Promise<CatalogPage> {
+    const selling = await this.runtime.store.selling();
     const cards = await this.runtime.store.cards();
     return {
-      items: cards.map((stored) =>
-        publicCardOf(stored.card, { id: stored.id, as_of: asTimestamp(stored.asOf) }),
-      ),
+      items: cards
+        .filter((stored) => sellingFor(selling, stored) === "open")
+        .map((stored) =>
+          publicCardOf(stored.card, { id: stored.id, as_of: asTimestamp(stored.asOf) }),
+        ),
     };
+  }
+
+  // --- the merchant's own catalog -------------------------------------------
+
+  /** Every card this merchant published, with the word each is selling under. */
+  async merchantCards(): Promise<MerchantCardList> {
+    const selling = await this.runtime.store.selling();
+    const cards = await this.runtime.store.cards();
+    return { selling, cards: cards.map((stored) => merchantCardOf(stored, selling)) };
+  }
+
+  /**
+   * Takes one card off sale, or puts it back. Null where there is no such card.
+   *
+   * Nothing about the orders already open is touched, and that is the whole
+   * shape of a pause: the guard the machine keeps is at the birth of an order
+   * and nowhere else, so an order accepted a minute ago plays out exactly as it
+   * would have.
+   */
+  async setCardPaused(itemId: string, paused: boolean): Promise<MerchantCard | null> {
+    const stored = await this.runtime.store.setCardPaused(itemId, paused);
+    if (stored === null) {
+      return null;
+    }
+    return merchantCardOf(stored, await this.runtime.store.selling());
+  }
+
+  /**
+   * Stops all selling for this merchant, or starts it again.
+   *
+   * Resuming does not put back the cards that were paused in their own right.
+   * Stopping everything did not forget which those were, and putting them all
+   * on sale would sell products their merchant took off — the answer carries
+   * the whole catalog so which cards actually came back is a fact rather than
+   * something to infer.
+   */
+  async setSelling(selling: MerchantSelling): Promise<MerchantCardList> {
+    await this.runtime.store.setSelling(selling);
+    return this.merchantCards();
+  }
+
+  /** Every receipt this merchant has. */
+  async receipts(): Promise<ReceiptList> {
+    return { receipts: [...(await this.runtime.store.receipts())] };
   }
 
   // --- buying ---------------------------------------------------------------
@@ -249,7 +300,10 @@ export class Gateway {
         asOf: stored.asOf,
       },
       test: STAGE_ONE_ORDERS_ARE_TESTS,
-      selling: STAGE_ONE_MERCHANT_IS_SELLING,
+      // One word out of the two switches a merchant has: the whole catalog, and
+      // this card. Whichever of them is off, the machine hears the same word
+      // and refuses the same way — the orders already accepted are untouched.
+      selling: sellingFor(await this.runtime.store.selling(), stored),
     });
 
     if (!created.ok) {
@@ -803,6 +857,26 @@ function refusedCall(rejection: TransitionRejection): OrderCallError {
  */
 function sentNow(envelope: WorkerEnvelope, at: number): WorkerEnvelope {
   return { ...envelope, sent_at: asTimestamp(at) };
+}
+
+/**
+ * One stored card as its own merchant reads it.
+ *
+ * The two selling fields come from different places on purpose. `selling` is
+ * what a purchase of this card would actually meet, which is the merchant's own
+ * word and the card's pause folded into one by `sellingFor` — the same fold the
+ * order machine is given. `paused` is the card's own flag, untouched, so a
+ * merchant can still see which cards they took off themselves while everything
+ * is stopped.
+ */
+function merchantCardOf(stored: StoredCard, merchant: MerchantSelling): MerchantCard {
+  return {
+    id: stored.id,
+    as_of: asTimestamp(stored.asOf),
+    card: stored.card,
+    selling: sellingFor(merchant, stored),
+    paused: stored.paused,
+  };
 }
 
 /** Zod's account of what is wrong, in the shape the contract publishes. */

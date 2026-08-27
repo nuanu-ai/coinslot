@@ -1,6 +1,6 @@
 /**
- * One product, in the two shapes it has: the card the merchant publishes, and
- * the card an agent reads in a catalog.
+ * One product, in the shapes it has: the card the merchant publishes, the card
+ * an agent reads in a catalog, and the card its own merchant reads back.
  *
  * The published card comes first and everything the agent sees is drawn from
  * it. The requirement that runs through every field follows from that: an
@@ -12,16 +12,23 @@
  * card is published and hand it back in the result, so a card arriving with
  * one is a card whose author is guessing at our numbering.
  *
- * The two shapes share this file rather than being separated by audience,
- * because what they have to be is in step with each other. Anything a merchant
- * may publish has to project into something an agent can read, and anything
- * the projection copies is a claim we make to whoever spends money on it. Kept
- * apart, the rule that ties them would live in neither file.
+ * The first two shapes share this file rather than being separated by
+ * audience, because what they have to be is in step with each other. Anything a
+ * merchant may publish has to project into something an agent can read, and
+ * anything the projection copies is a claim we make to whoever spends money on
+ * it. Kept apart, the rule that ties them would live in neither file.
+ *
+ * The third is not a projection at all and is here for the opposite reason: a
+ * merchant reading their own catalog is reading what they wrote, so the card
+ * travels whole, wrapped in the two facts they cannot have — the identifier we
+ * issued and the word it is selling under. A second projection would be one
+ * more shape to keep in step for no gain to anybody.
  */
 
 import { z } from "zod";
 import { ParamSpecSchema, paramSpecToValidator } from "./param-spec.js";
 import { IdentifierSchema, MoneySchema, TimestampSchema } from "./primitives.js";
+import { SellingStateSchema } from "./selling.js";
 
 /**
  * When the product reaches the agent, and therefore when the money moves.
@@ -384,3 +391,51 @@ export const publicCardOf = (
       };
   }
 };
+
+/**
+ * One card as the merchant who published it reads it back.
+ *
+ * The public catalog answers none of what a merchant needs from their own
+ * catalog. It is unscoped, so nothing in it says which entries are theirs; it
+ * carries our identifier in place of their key; and a card that is off sale is
+ * not in it at all, which is precisely the card a merchant is looking for when
+ * they go to put it back on sale.
+ *
+ * So the card travels whole rather than as a third projection. Everything the
+ * merchant wrote is theirs already, and copying a subset of it here would be
+ * one more shape to hold in step with the published card — the drift the
+ * projection above exists to prevent once, repeated for no gain.
+ *
+ * Two fields say where the card stands, and they are two rather than one for a
+ * reason that is invisible from the shape. `selling` is what a purchase of this
+ * card meets right now, and it is the same word the order machine is given at
+ * the birth of an order, so a card reading "paused" here is a card that refuses
+ * new orders there. `paused` says whether the pause is this card's own. They
+ * differ exactly when the merchant has stopped all selling: every card then
+ * reads `selling: "paused"`, and only the ones with `paused: true` are still
+ * paused after the merchant starts selling again. A merchant given only the
+ * first would press resume on a card and watch nothing change.
+ */
+export const MerchantCardSchema = z
+  .strictObject({
+    /** Our catalog identifier, the one a purchase, a receipt and a status use. */
+    id: IdentifierSchema,
+
+    /** When this version of the card was published. */
+    as_of: TimestampSchema,
+
+    /** The card exactly as its merchant published it. */
+    card: CardSchema,
+
+    /** What a purchase of this card meets right now. */
+    selling: SellingStateSchema,
+
+    /** Whether the pause is this card's own, rather than the whole catalog's. */
+    paused: z.boolean(),
+  })
+  .meta({
+    description:
+      'One card as the merchant who published it reads it back: the card whole, the catalog identifier we issued for it, and where it stands. selling is what a purchase of this card meets right now and is the same word the order machine is given, so a card reading "paused" refuses new orders and lets the orders already accepted play out. paused says whether the pause is this card\'s own. The two differ when the merchant has stopped all selling: every card then reads selling "paused", and only the cards with paused true are still paused once the merchant starts selling again — so a resume on a card whose paused is already false changes nothing until all selling is resumed.',
+  });
+
+export type MerchantCard = z.infer<typeof MerchantCardSchema>;

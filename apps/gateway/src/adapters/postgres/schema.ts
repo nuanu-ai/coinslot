@@ -35,6 +35,27 @@ export const cards = pgTable("cards", {
   card: jsonb("card").$type<Card>().notNull(),
   /** When this version of the card was published. */
   asOf: timestamp("as_of", { withTimezone: true, mode: "date" }).notNull(),
+  /**
+   * Whether this card is off sale in its own right. A column and not a field
+   * inside the document, because republishing writes the document whole and a
+   * pause kept in there would be erased by the next edit to a price.
+   */
+  paused: boolean("paused").notNull().default(false),
+});
+
+/**
+ * The merchant, of which stage one has one.
+ *
+ * One row and one fact: whether they are taking new orders. It is a table
+ * rather than a setting in the environment because a merchant presses it and
+ * it has to survive a restart — configuration is what the operator sets, and
+ * this is what the merchant sets.
+ */
+export const merchants = pgTable("merchants", {
+  id: text("id").primaryKey(),
+  /** The order machine's own word: open, paused or departed. */
+  selling: text("selling").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull(),
 });
 
 export const orders = pgTable(

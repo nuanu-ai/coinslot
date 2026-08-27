@@ -99,6 +99,41 @@ describe("MemoryStore cards", () => {
   it("has nothing to say about a card nobody published", async () => {
     expect(await new MemoryStore(counted()).cardById("item_nope")).toBeNull();
   });
+
+  it("publishes a card selling, and keeps a pause across the next publish", async () => {
+    // A merchant editing a price is not asking for a product they took off sale
+    // to go back on it. A pause that evaporated on the next publish would put
+    // stock they do not have in front of an agent, and nothing would say so.
+    const store = new MemoryStore(counted());
+    const first = await store.publishCard(card("sku-1", "A room"), 1_000);
+    expect(first.paused).toBe(false);
+
+    await store.setCardPaused(first.id, true);
+    const again = await store.publishCard(card("sku-1", "A room, dearer"), 2_000);
+
+    expect(again.paused).toBe(true);
+    expect((await store.cardById(first.id))?.paused).toBe(true);
+  });
+
+  it("says there is no such card rather than pausing nothing quietly", async () => {
+    expect(await new MemoryStore(counted()).setCardPaused("item_nope", true)).toBeNull();
+  });
+
+  it("has a merchant selling until somebody says otherwise, and remembers when they do", async () => {
+    // There is no state of the world in which we hold a merchant's cards and
+    // cannot say whether they are selling, so this never answers "I do not
+    // know" — and the answer it gives before anybody has pressed anything is
+    // the one the order machine has been given all along.
+    const store = new MemoryStore(counted());
+
+    expect(await store.selling()).toBe("open");
+
+    await store.setSelling("paused");
+    expect(await store.selling()).toBe("paused");
+
+    await store.setSelling("open");
+    expect(await store.selling()).toBe("open");
+  });
 });
 
 describe("MemoryStore orders", () => {

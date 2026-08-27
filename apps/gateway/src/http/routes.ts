@@ -68,6 +68,24 @@ export function handlersFor(gateway: Gateway): Partial<Record<RouteName, Mounted
 
     list_catalog: { serve: async () => ({ status: OK, document: await gateway.catalog() }) },
 
+    list_merchant_cards: {
+      serve: async () => ({ status: OK, document: await gateway.merchantCards() }),
+    },
+
+    pause_card: { serve: (call) => cardPaused(gateway, call, true) },
+
+    resume_card: { serve: (call) => cardPaused(gateway, call, false) },
+
+    pause_selling: {
+      serve: async () => ({ status: OK, document: await gateway.setSelling("paused") }),
+    },
+
+    resume_selling: {
+      serve: async () => ({ status: OK, document: await gateway.setSelling("open") }),
+    },
+
+    list_receipts: { serve: async () => ({ status: OK, document: await gateway.receipts() }) },
+
     get_order: {
       serve: async ({ params, response }) => {
         const record = await gateway.orderById(params.order_id ?? "");
@@ -187,6 +205,26 @@ export function handlersFor(gateway: Gateway): Partial<Record<RouteName, Mounted
 
     purchase_item: { serve: (call) => purchase(gateway, edge, call) },
   };
+}
+
+/**
+ * One card taken off sale or put back, answered with where it now stands.
+ *
+ * Pausing a card that is already paused answers the same way as pausing one
+ * that was selling, and that is deliberate: the call says what the merchant
+ * wants to be true rather than asking for a change, so a retry after a dropped
+ * connection is safe and needs no note kept of what was already pressed.
+ */
+async function cardPaused(
+  gateway: Gateway,
+  { params, response }: RouteCall,
+  paused: boolean,
+): Promise<RouteAnswer> {
+  const card = await gateway.setCardPaused(params.item_id ?? "", paused);
+  if (card === null) {
+    return written(response, NOT_FOUND, refusal("no_such_item", "there is no such product"));
+  }
+  return { status: OK, document: card };
 }
 
 /** A merchant's call, answered with the document the machine produced. */

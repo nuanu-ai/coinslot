@@ -14,7 +14,7 @@
  */
 
 import type { Card, Receipt } from "@coinslot/contracts";
-import { isOpen } from "@coinslot/core";
+import { isOpen, MERCHANT_SELLING, type MerchantSelling } from "@coinslot/core";
 import { and, eq, lt, sql } from "drizzle-orm";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
@@ -27,7 +27,17 @@ import type {
   StoredCard,
   StoredOrder,
 } from "../../ports/store.js";
-import { cards, orders, paymentClaims, receipts } from "./schema.js";
+import { cards, merchants, orders, paymentClaims, receipts } from "./schema.js";
+
+/**
+ * The one merchant of stage one, under a key rather than a row we have to find.
+ *
+ * The pilot plan's stage one is one merchant with one key, and the gateway
+ * holds exactly one merchant API key to prove it. When there is a second
+ * merchant this constant is what stops working, loudly, which is better than a
+ * query that quietly picks whichever row came first.
+ */
+const THE_MERCHANT = "the_merchant";
 
 export class PostgresStore implements Store {
   readonly #db: NodePgDatabase;
@@ -53,6 +63,10 @@ export class PostgresStore implements Store {
       })
       .onConflictDoUpdate({
         target: cards.merchantItemId,
+        // `paused` is deliberately not in this set. A merchant editing a price
+        // is not asking for a product they took off sale to go back on it, and
+        // a pause that evaporated on the next publish would put stock they do
+        // not have in front of an agent.
         set: { card, asOf: new Date(at) },
       })
       .returning();
@@ -60,17 +74,56 @@ export class PostgresStore implements Store {
     if (row === undefined) {
       throw new Error(`publishing ${card.merchant_item_id} wrote no row`);
     }
-    return { id: row.id, card: row.card, asOf: row.asOf.getTime() };
+    return storedCardOf(row);
   }
 
   async cardById(id: string): Promise<StoredCard | null> {
     const [row] = await this.#db.select().from(cards).where(eq(cards.id, id)).limit(1);
-    return row === undefined ? null : { id: row.id, card: row.card, asOf: row.asOf.getTime() };
+    return row === undefined ? null : storedCardOf(row);
   }
 
   async cards(): Promise<readonly StoredCard[]> {
     const rows = await this.#db.select().from(cards).orderBy(cards.asOf);
-    return rows.map((row) => ({ id: row.id, card: row.card, asOf: row.asOf.getTime() }));
+    return rows.map(storedCardOf);
+  }
+
+  async setCardPaused(id: string, paused: boolean): Promise<StoredCard | null> {
+    const [row] = await this.#db.update(cards).set({ paused }).where(eq(cards.id, id)).returning();
+    return row === undefined ? null : storedCardOf(row);
+  }
+
+  async selling(): Promise<MerchantSelling> {
+    const [row] = await this.#db
+      .select()
+      .from(merchants)
+      .where(eq(merchants.id, THE_MERCHANT))
+      .limit(1);
+
+    if (row === undefined) {
+      // Nobody has ever pressed the switch. A merchant we hold cards for is
+      // selling until they say otherwise; there is no state of the world in
+      // which this has to answer "I do not know".
+      return "open";
+    }
+    if (!(MERCHANT_SELLING as readonly string[]).includes(row.selling)) {
+      // A word the machine does not know reached the column — a hand-edited
+      // row, or a value from a version of this code that is not this one.
+      // Guessing here would be guessing about whether somebody is selling.
+      throw new Error(
+        `the merchant's selling state is "${row.selling}", which is not one of ${MERCHANT_SELLING.join(", ")}`,
+      );
+    }
+    return row.selling as MerchantSelling;
+  }
+
+  async setSelling(selling: MerchantSelling): Promise<void> {
+    await this.#db
+      .insert(merchants)
+      .values({ id: THE_MERCHANT, selling, updatedAt: new Date() })
+      .onConflictDoUpdate({
+        target: merchants.id,
+        set: { selling, updatedAt: sql`now()` },
+      });
   }
 
   async addOrder(record: StoredOrder): Promise<void> {
@@ -178,6 +231,11 @@ export class PostgresStore implements Store {
     const rows = await this.#db.select().from(receipts).orderBy(receipts.updatedAt);
     return rows.map((row) => row.receipt);
   }
+}
+
+/** One card row as the rest of the gateway reads it. */
+function storedCardOf(row: { id: string; card: Card; asOf: Date; paused: boolean }): StoredCard {
+  return { id: row.id, card: row.card, asOf: row.asOf.getTime(), paused: row.paused };
 }
 
 /** The columns, written from the document so they cannot disagree with it. */

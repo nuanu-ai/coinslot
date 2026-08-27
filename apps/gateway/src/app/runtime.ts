@@ -1,6 +1,6 @@
 /**
- * What every flow is given, and the two translations from a card to the
- * machine's vocabulary.
+ * What every flow is given, and the translations from a card to the machine's
+ * vocabulary.
  *
  * The policy is built here rather than anywhere further in, because it is the
  * one place where our numbers and the merchant's meet. Ours come from the
@@ -11,13 +11,13 @@
  */
 
 import type { Card } from "@coinslot/contracts";
-import type { OrderMode, OrderPolicy } from "@coinslot/core";
+import type { MerchantSelling, OrderMode, OrderPolicy } from "@coinslot/core";
 import { modeOf } from "@coinslot/core";
 import type { GatewayConfig } from "../config.js";
 import type { Clock, Ids } from "../ports/clock.js";
 import type { Facilitator } from "../ports/facilitator.js";
 import type { Queue } from "../ports/queue.js";
-import type { Store } from "../ports/store.js";
+import type { Store, StoredCard } from "../ports/store.js";
 
 export interface Runtime {
   readonly config: GatewayConfig;
@@ -73,4 +73,23 @@ export function priceCheckOf(card: Card): "none" | "merchant" {
 /** Whether the price question can actually be put to this merchant today. */
 export function quoteReachesTheMerchant(card: Card): boolean {
   return card.price_check === "handler";
+}
+
+/**
+ * The one word the order machine is given about whether this card may be sold.
+ *
+ * There are two switches a merchant can press — one card off sale, or the whole
+ * catalog — and there is exactly one guard in the machine. This is where the
+ * two become the one, and it is a translation rather than a second notion of
+ * pausing: what comes out is the machine's own vocabulary, and a card that
+ * comes out `paused` refuses new orders through the guard that already exists,
+ * with the rejection and the message that already exist.
+ *
+ * A departed merchant stays departed whatever a card says. Leaving is not a
+ * pause a card can be excused from, and reading a card as merely paused would
+ * be the difference between "no new orders" and "the open ones closed and the
+ * money for the undelivered is yours to return".
+ */
+export function sellingFor(merchant: MerchantSelling, card: StoredCard): MerchantSelling {
+  return merchant === "open" && card.paused ? "paused" : merchant;
 }

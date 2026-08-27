@@ -20,7 +20,7 @@
  */
 
 import type { Card, Receipt } from "@coinslot/contracts";
-import { isOpen } from "@coinslot/core";
+import { isOpen, type MerchantSelling } from "@coinslot/core";
 import type { Clock, Ids } from "../../ports/clock.js";
 import type {
   OrderChange,
@@ -35,6 +35,8 @@ export class MemoryStore implements Store {
   readonly #cards = new Map<string, StoredCard>();
   /** The merchant's own key for a product, to the catalog identifier we issued. */
   readonly #cardIdByMerchantKey = new Map<string, string>();
+  /** One merchant in stage one, so one word. Nobody has paused them yet. */
+  #selling: MerchantSelling = "open";
   readonly #orders = new Map<string, StoredOrder>();
   readonly #receipts = new Map<string, Receipt>();
   /** Which order owns which payment, so no payment is spent on two. */
@@ -55,7 +57,10 @@ export class MemoryStore implements Store {
     // why the catalog identifier survives the edit.
     const existing = this.#cardIdByMerchantKey.get(card.merchant_item_id);
     const id = existing ?? this.#ids("item");
-    const stored: StoredCard = Object.freeze({ id, card, asOf: at });
+    // A pause survives the edit. A merchant changing a price is not asking for
+    // a product they took off sale to go back on it.
+    const paused = existing === undefined ? false : (this.#cards.get(existing)?.paused ?? false);
+    const stored: StoredCard = Object.freeze({ id, card, asOf: at, paused });
 
     this.#cardIdByMerchantKey.set(card.merchant_item_id, id);
     this.#cards.set(id, stored);
@@ -68,6 +73,24 @@ export class MemoryStore implements Store {
 
   async cards(): Promise<readonly StoredCard[]> {
     return [...this.#cards.values()];
+  }
+
+  async setCardPaused(id: string, paused: boolean): Promise<StoredCard | null> {
+    const found = this.#cards.get(id);
+    if (found === undefined) {
+      return null;
+    }
+    const stored: StoredCard = Object.freeze({ ...found, paused });
+    this.#cards.set(id, stored);
+    return stored;
+  }
+
+  async selling(): Promise<MerchantSelling> {
+    return this.#selling;
+  }
+
+  async setSelling(selling: MerchantSelling): Promise<void> {
+    this.#selling = selling;
   }
 
   async addOrder(record: StoredOrder): Promise<void> {

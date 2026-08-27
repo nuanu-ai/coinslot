@@ -8,9 +8,9 @@ import {
   expandPath,
   HTTP_METHODS,
   MERCHANT_KEY_HEADER,
+  MerchantCardListSchema,
   merchantKeyFrom,
   merchantKeyHeaderValue,
-  MerchantCardListSchema,
   mountableRoutes,
   OrderAcceptResponseSchema,
   OrderCallResponseSchema,
@@ -241,7 +241,10 @@ describe("the merchant's own receipts", () => {
   it("holds every receipt in the list to the receipt document", () => {
     // A row missing the moment the price behind it was true is a row a
     // merchant cannot reconcile, and it must not travel as a receipt.
-    const withoutAsOf = { ...receipt, price: { amount: "5.00", currency: "USD", at: receipt.paid_at } };
+    const withoutAsOf = {
+      ...receipt,
+      price: { amount: "5.00", currency: "USD", at: receipt.paid_at },
+    };
 
     expect(ReceiptListSchema.safeParse({ receipts: [withoutAsOf] }).success).toBe(false);
   });
@@ -964,7 +967,7 @@ describe("the route table", () => {
     // It closes the open orders and leaves the merchant owing refunds on
     // whatever was paid for and never delivered. That is a decision with its
     // own design, not a value in a body, so no route here takes one.
-    const switches = [
+    const switches: RouteDefinition[] = [
       API_ROUTES.pause_card,
       API_ROUTES.resume_card,
       API_ROUTES.pause_selling,

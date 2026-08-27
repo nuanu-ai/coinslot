@@ -17,7 +17,7 @@
  */
 
 import type { Card, Delivery, Receipt } from "@coinslot/contracts";
-import type { Order } from "@coinslot/core";
+import type { MerchantSelling, Order } from "@coinslot/core";
 
 /** A card as its merchant published it, under the catalog identifier we issued. */
 export interface StoredCard {
@@ -25,6 +25,18 @@ export interface StoredCard {
   readonly card: Card;
   /** When this version of the card was published. */
   readonly asOf: number;
+  /**
+   * Whether this card is off sale in its own right.
+   *
+   * It is a flag on the card and not a second kind of pause. What the order
+   * machine is given at the birth of an order is one word for whether the
+   * merchant is selling, and a card paused on its own is that word being
+   * "paused" for purchases of this card and nothing else — same guard, same
+   * refusal, same message. The alternative was a second notion of pause with
+   * its own rejection, which is how two switches end up disagreeing about
+   * whether a product is for sale.
+   */
+  readonly paused: boolean;
 }
 
 /**
@@ -154,6 +166,31 @@ export interface Store {
   publishCard(card: Card, at: number): Promise<StoredCard>;
   cardById(id: string): Promise<StoredCard | null>;
   cards(): Promise<readonly StoredCard[]>;
+
+  /**
+   * Takes one card off sale, or puts it back, and hands back the card as it
+   * now stands. Null where there is no such card.
+   *
+   * Republishing does not touch this: a merchant editing a price is not asking
+   * for a product they took off sale to go back on it, and a pause that
+   * evaporated on the next publish would put stock they do not have in front
+   * of an agent.
+   */
+  setCardPaused(id: string, paused: boolean): Promise<StoredCard | null>;
+
+  /**
+   * Whether the merchant is taking new orders at all — the word the order
+   * machine is given at the birth of every order.
+   *
+   * One merchant in stage one, so one answer. A merchant nobody has ever
+   * paused is selling, which is what an absent record means and why this
+   * cannot answer "I do not know": there is no state of the world in which we
+   * hold cards for a merchant and cannot say whether they are selling.
+   */
+  selling(): Promise<MerchantSelling>;
+
+  /** Stops all selling, or starts it again. */
+  setSelling(selling: MerchantSelling): Promise<void>;
 
   /** Writes an order that is not there yet. */
   addOrder(record: StoredOrder): Promise<void>;
