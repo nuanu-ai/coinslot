@@ -940,15 +940,29 @@ if (databaseUrl === null) {
       // A sweep that failed part-way is a sweep that has to be able to run
       // tomorrow. Held past a failure, the lock would turn one bad run into a
       // repair that never happens again for as long as the process lives.
-      const failing = store.runAlone("a_failing_sweep", async () => {
-        throw new Error("the sweep fell over");
-      });
-      await expect(failing).rejects.toThrow("the sweep fell over");
+      //
+      // The second store is on a pool of its own, and that is the whole test
+      // rather than scenery. Postgres hands the same session an advisory lock
+      // it already holds without complaint, so a retry that happened to get the
+      // same connection back would be told yes whether the first run had let go
+      // or not — and this passed, wrongly, until it asked from somewhere else.
+      const otherPool = new Pool({ connectionString: databaseUrl, max: 1 });
+      try {
+        const other = new PostgresStore(drizzle(otherPool), countedIds());
 
-      expect(await store.runAlone("a_failing_sweep", async () => "free")).toStrictEqual({
-        ran: true,
-        result: "free",
-      });
+        await expect(
+          store.runAlone("a_failing_sweep", async () => {
+            throw new Error("the sweep fell over");
+          }),
+        ).rejects.toThrow("the sweep fell over");
+
+        expect(await other.runAlone("a_failing_sweep", async () => "free")).toStrictEqual({
+          ran: true,
+          result: "free",
+        });
+      } finally {
+        await otherPool.end();
+      }
     }, 30_000);
 
     describe("the sweep of what an order is still owed", () => {

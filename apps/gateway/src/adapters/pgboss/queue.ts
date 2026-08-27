@@ -281,6 +281,14 @@ export class PgBossQueue implements Queue {
     // that was never written. That is the honest answer rather than a gap, and
     // the sweep covers part of it with patience instead.
     //
+    // One difference from how the library hands work out, harmless today and
+    // worth knowing before it is not: fetching also excludes a job whose
+    // dependencies have not finished, and this does not. Nothing here ever
+    // makes a dependent job — an envelope is a plain send — so no job on a
+    // stream can be in that state. The day one could be, this would answer
+    // "held" for an envelope nobody will ever be handed, and the sweep would
+    // leave that order alone for good.
+    //
     // The match is on what the envelope carries rather than on its identifier,
     // because the caller knows the order and not which envelope was written for
     // it. Containment on the document is the library's own filter, so the
