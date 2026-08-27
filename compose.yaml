@@ -1,8 +1,8 @@
 # The whole thing, on one command.
 #
 # ADR-0005 §7: `docker compose up` brings up everything a merchant's engineer
-# would look at — the landing, the documentation and the gateway, all
-# on http://localhost:8080, with one Postgres behind them (ADR-0003 §6).
+# would look at — the landing, the documentation, the cabinet and the
+# gateway, all on http://localhost:8080, with one Postgres behind them (ADR-0003 §6).
 # Nothing here needs a build on the host first: the documentation is built
 # inside its image and the two Node processes run their TypeScript through tsx,
 # the same way `pnpm --filter @coinslot/gateway start` does on a laptop.
@@ -15,9 +15,12 @@
 # existing database is brought up to date rather than found to be a version
 # behind on the first query.
 #
-# The cabinet is the one thing not here yet: it is being written, and the
-# route to it in deploy/Caddyfile answers with a bad gateway until its service
-# joins this file.
+# Nothing is bought by itself. The merchant publishes its catalogue and waits;
+# a purchase is an explicit command, so a sale in the cabinet is one somebody
+# made:
+#
+#   pnpm buy                      # the first card in the catalogue
+#   pnpm buy esim-eu-5gb-30d      # the asynchronous one
 #
 # The passwords and the key are in this file and that is deliberate. This
 # stack holds a developer's own test orders and talks to a test network, and a
@@ -101,6 +104,42 @@ services:
       timeout: 3s
       retries: 20
 
+  cabinet:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.app
+    command: ["pnpm", "--filter", "@coinslot/cabinet", "start"]
+    environment:
+      PORT: "3001"
+      # Its own process, reaching the gateway over the same public API a
+      # merchant's own code uses (ADR-0005 §2) — this is the service name on the
+      # internal network, not the origin a browser types.
+      GATEWAY_URL: http://gateway:3000
+      # Caddy passes /cabinet through without stripping it, so the process sees
+      # the path the browser asked for and builds its links from the same string
+      # (deploy/Caddyfile).
+      BASE_PATH: /cabinet
+    depends_on:
+      gateway:
+        condition: service_started
+
+  # A merchant on the other side, so the surface has something to show. It is
+  # the mock merchant of the offline gate — the same two cards, the same price
+  # desk, the same handlers — pointed at this gateway instead of one booted in
+  # its own process, which makes it the code a merchant's engineer would write
+  # rather than a demonstration written to look like it.
+  merchant:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.app
+    command: ["pnpm", "--filter", "@coinslot/slice", "serve"]
+    environment:
+      GATEWAY_URL: http://gateway:3000
+      MERCHANT_API_KEY: local-sandbox-merchant-key
+    depends_on:
+      gateway:
+        condition: service_healthy
+
   web:
     build:
       context: .
@@ -115,6 +154,8 @@ services:
       - ./apps/landing/public:/srv/landing:ro
     depends_on:
       gateway:
+        condition: service_started
+      cabinet:
         condition: service_started
 
 volumes:

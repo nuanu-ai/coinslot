@@ -17,7 +17,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json && pnpm -r run typecheck",
     "test": "vitest run",
     "test:db": "vitest run --config vitest.db.config.ts",
-    "smoke": "pnpm --filter @coinslot/slice run smoke"
+    "smoke": "pnpm --filter @coinslot/slice run smoke",
+    "buy": "pnpm --filter @coinslot/slice run buy"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.10",
