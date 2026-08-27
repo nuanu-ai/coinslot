@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { A_NAME_PG_BOSS_ACCEPTS, ENVELOPES, REMINDERS } from "./queue.js";
+import { A_NAME_PG_BOSS_ACCEPTS, ENVELOPES, REMINDERS, streamOf } from "./queue.js";
 
 /**
  * The one thing about this adapter that can be checked without a database.
@@ -34,5 +34,23 @@ describe("the queue names", () => {
     // One queue for both would hand a worker polling for orders the reminders
     // the gateway left itself.
     expect(ENVELOPES).not.toBe(REMINDERS);
+  });
+
+  it("give two merchants two different streams", () => {
+    // Two merchants sharing a stream is the failure ADR-0010 is about, in the
+    // one place a filter could not repair it: an envelope drawn to be looked at
+    // is one its own merchant is not offered until it is finished.
+    expect(streamOf("mch_a")).not.toBe(streamOf("mch_b"));
+    expect(streamOf("mch_a")).toMatch(A_NAME_PG_BOSS_ACCEPTS);
+    expect(streamOf("mch_a").startsWith(ENVELOPES)).toBe(true);
+  });
+
+  it("refuse a merchant whose identifier could not name a queue", () => {
+    // Left to pg-boss, this would not be a start-up error somebody sees. It
+    // would be one merchant whose orders reach nobody, discovered at the first
+    // sale, with the failure looking like a worker that is not connected.
+    expect(() => streamOf("a merchant")).toThrow(/cannot name a queue/);
+    expect(() => streamOf("mch:a")).toThrow(/cannot name a queue/);
+    expect(() => streamOf("")).toThrow(/cannot name a queue/);
   });
 });

@@ -78,18 +78,34 @@ export type Reminder = (
 };
 
 export interface Queue {
-  /** Puts one envelope on the merchant's stream, now or after a wait. */
-  publish(envelope: WorkerEnvelope, afterMs?: number): Promise<void>;
+  /**
+   * Puts one envelope on one merchant's stream, now or after a wait.
+   *
+   * The merchant is a parameter and not something inside the envelope: no
+   * document on the wire carries a merchant, and a buyer has no reason to be
+   * shown whose stream their order went on. So the stream is named here, where
+   * only the gateway can see it.
+   */
+  publish(merchantId: string, envelope: WorkerEnvelope, afterMs?: number): Promise<void>;
 
   /**
-   * Draws at most `max` envelopes, holding the call open until one arrives or
-   * `waitMs` runs out. An empty batch is the ordinary answer to a quiet window
-   * and not a failure.
+   * Draws at most `max` envelopes off one merchant's stream, holding the call
+   * open until one arrives or `waitMs` runs out. An empty batch is the ordinary
+   * answer to a quiet window and not a failure.
+   *
+   * A worker draws its own merchant's envelopes and cannot reach anybody
+   * else's — not by filtering what came back, which would consume somebody
+   * else's message to look at it, but by drawing from that merchant's stream
+   * in the first place.
    */
-  draw(max: number, waitMs: number): Promise<readonly DrawnEnvelope[]>;
+  draw(merchantId: string, max: number, waitMs: number): Promise<readonly DrawnEnvelope[]>;
 
-  /** This delivery has been answered; it does not come round again. */
-  finish(handle: string): Promise<void>;
+  /**
+   * This delivery has been answered; it does not come round again. The merchant
+   * is named because a handle names a delivery on one stream, and the streams
+   * are separate things.
+   */
+  finish(merchantId: string, handle: string): Promise<void>;
 
   /** Asks to be reminded of something once, `afterMs` from now. */
   remind(reminder: Reminder, afterMs: number): Promise<void>;

@@ -388,7 +388,9 @@ export type HttpMethod = (typeof HTTP_METHODS)[number];
 /**
  * Which door a call is behind.
  *
- * `merchant_key` is the merchant's API key, the stage-one minimum. `none` is a
+ * `merchant_key` is a key the merchant holds, sent as a bearer token; it names
+ * the merchant it belongs to, and a call behind this door acts on that
+ * merchant's cards, orders and receipts and on nobody else's. `none` is a
  * call anybody may make — the catalog an agent browses, and the purchase,
  * where the payment is what stands in for authorisation.
  *
@@ -418,8 +420,7 @@ export type AuthMode = (typeof AUTH_MODES)[number];
  * the one place both sides already import, and a change to either is a change in
  * one file rather than a silent drift between two.
  *
- * The name is `authorization` and the scheme is `Bearer`: the stage-one minimum
- * of the pilot plan, one merchant with one key sent as a bearer token. The name
+ * The name is `authorization` and the scheme is `Bearer`. The name
  * is lower-case because that is how a client writes a header and how the wire
  * carries it; a reader on the gateway matches it without regard to case anyway.
  */
@@ -522,7 +523,7 @@ export const API_ROUTES = Object.freeze({
     path: "/v0/cards",
     auth: "merchant_key",
     description:
-      "The cards published under the key this call was made with, each whole and with the word it is selling under, together with whether the merchant is taking new orders at all. It is not the public catalog: that one is unscoped, carries our identifier in place of the merchant's key, and leaves out a card that is off sale — which is the one card a merchant goes looking for when they want it back on sale. During the pilot there is one merchant and one key, so this is every card the gateway holds; when there is a second merchant, scoping it to the caller is a change to whoever serves this and not to the shape of the answer.",
+      "The cards published under the key this call was made with, each whole and with the word it is selling under, together with whether the merchant is taking new orders at all. It is the catalog of the one merchant that key belongs to and of nobody else. It is not the public catalog: that one is unscoped, spans every merchant, carries our identifier in place of the merchant's key, and leaves out a card that is off sale — which is the one card a merchant goes looking for when they want it back on sale.",
     response: { document: MerchantCardListSchema },
   },
 
@@ -586,7 +587,7 @@ export const API_ROUTES = Object.freeze({
     path: "/v0/receipts",
     auth: "merchant_key",
     description:
-      "The receipts belonging to the key this call was made with: what was paid, when the payment executed, when the purchase happened, the moment the price behind it was true, and what became of the order. Every receipt says whether the money behind it was real, and a reader reconciling against a wallet has to read that field rather than assume. Two silences are the receipt's own — a purchase that ended before any payment leaves no receipt, and none is written while it is unknown whether the buyer was charged. A third belongs to whoever serves this and is not a property of the shape: a gateway decides when it writes a receipt, and one that writes them only as goods are released has none for a payment that executed at the purchase and has not been delivered yet. That is money taken with nothing here to show it, so this list is not by itself an account of what was received. During the pilot there is one merchant and one key, so this is every receipt the gateway holds.",
+      "The receipts belonging to the key this call was made with: what was paid, when the payment executed, when the purchase happened, the moment the price behind it was true, and what became of the order. Every receipt says whether the money behind it was real, and a reader reconciling against a wallet has to read that field rather than assume. Two silences are the receipt's own — a purchase that ended before any payment leaves no receipt, and none is written while it is unknown whether the buyer was charged. A third belongs to whoever serves this and is not a property of the shape: a gateway decides when it writes a receipt, and one that writes them only as goods are released has none for a payment that executed at the purchase and has not been delivered yet. That is money taken with nothing here to show it, so this list is not by itself an account of what was received. Whose receipts these are is settled by the key: the merchant it belongs to, and nobody else.",
     response: { document: ReceiptListSchema },
   },
 

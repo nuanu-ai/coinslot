@@ -12,6 +12,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "start": "tsx src/main.ts",
+    "merchant": "tsx src/merchant.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/migrate.ts"
   },

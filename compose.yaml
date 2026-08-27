@@ -120,7 +120,15 @@ services:
     environment:
       DATABASE_URL: postgres://coinslot:coinslot@postgres:5432/coinslot
       PORT: "3000"
-      MERCHANT_API_KEY: local-sandbox-merchant-key
+      # The key this sandbox comes up selling with. Keys are rows in the
+      # database (ADR-0010), and this is not one the gateway compares anything
+      # against: on start it makes sure a row for this key exists on the
+      # merchant every card, order and receipt here belongs to, so that the two
+      # services below are recognised without anybody running a command. A
+      # second boot writes nothing, and a key disabled at a terminal stays
+      # disabled. No deployment sets this — a key in an environment cannot be
+      # revoked without a deployment, which is what moving keys into rows fixed.
+      SANDBOX_MERCHANT_KEY: local-sandbox-merchant-key
       # The address an agent is sent back to in order to pay, which is the door
       # Caddy answers and not the port this process listens on. Given the
       # process's own port here, a payment challenge would name a door that is
@@ -171,10 +179,11 @@ services:
       # nothing about a merchant's data — every card, order and receipt on every
       # screen still comes from the API.
       DATABASE_URL: postgres://coinslot:coinslot@postgres:5432/coinslot
-      # The key the cabinet reaches the gateway with. It is the gateway's own
-      # key and it is here rather than typed into a form by whoever is signing
-      # in: machine to machine, out of configuration. Rotating it is now a
-      # separate act from signing anybody out.
+      # The key the cabinet reaches the gateway with — the one the gateway
+      # seeded above, which is what makes it resolve to the merchant whose cards
+      # and receipts these screens show. It is here rather than typed into a
+      # form by whoever is signing in: machine to machine, out of configuration.
+      # Rotating it is now a separate act from signing anybody out.
       MERCHANT_API_KEY: local-sandbox-merchant-key
       # Off, and named rather than left to the default, because this is the one
       # line a deployment has to change. This stack is plain http on localhost,

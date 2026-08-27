@@ -6,6 +6,21 @@
  * written here is therefore the smallest set of questions the flows actually
  * ask, in the words of the domain, and nothing about tables.
  *
+ * Almost every question here is asked on behalf of one merchant, and asks so
+ * out loud: the merchant is a parameter rather than something the store is
+ * configured with, so a read that forgot whose it was would not compile.
+ *
+ * The ones that name no merchant fall into three groups, and each says which it
+ * is in its own words. Four are the buying surface: `cardById`,
+ * `catalogEntries`, `orderById` and `receiptForOrder` answer an agent, or a
+ * clock of ours, and neither has a key. Three are the claims on payments —
+ * `claimPayment`, `releaseClaim`, `forgetClaimsBefore` — which are deliberately
+ * across the whole gateway, for the reason written beside the first of them.
+ * The rest are the merchants and their keys, whose caller is somebody at a
+ * terminal or the door itself, and none of them is reachable from a request.
+ * `withOrder` is in none of the three: it takes the merchant when there is one
+ * to take and says in its own place what leaving it out means.
+ *
  * One method is not an accessor and is the reason this is an interface rather
  * than three maps. `withOrder` holds an order still while a decision is made
  * about it. Two events about the same order arrive from different places all
@@ -22,6 +37,8 @@ import type { MerchantSelling, Order } from "@coinslot/core";
 /** A card as its merchant published it, under the catalog identifier we issued. */
 export interface StoredCard {
   readonly id: string;
+  /** Whose card it is. Every card has one, and it is never guessed at. */
+  readonly merchantId: string;
   readonly card: Card;
   /** When this version of the card was published. */
   readonly asOf: number;
@@ -50,6 +67,17 @@ export interface StoredCard {
  */
 export interface StoredOrder {
   readonly order: Order;
+  /**
+   * Whose sale this is: the merchant who published the card it was made
+   * against, settled at the birth of the order and never afterwards.
+   *
+   * It is on the order rather than looked up through the card because the two
+   * questions it answers are asked when there is no card in hand — which
+   * stream this order's envelopes go on, and whether the key asking about it
+   * is the one entitled to. A card can also be republished, and a sale belongs
+   * to the merchant who made it whatever happens to the catalog afterwards.
+   */
+  readonly merchantId: string;
   /** Our catalog identifier for the product. */
   readonly itemId: string;
   /** The merchant's own identifier for it, so they need no mapping table. */
@@ -157,55 +185,234 @@ export type PaymentClaim =
   | { readonly claimed: true }
   | { readonly claimed: false; readonly heldBy: string };
 
+/**
+ * A merchant: a row with an identity, and the one fact the order machine asks
+ * about them.
+ *
+ * The name is what a person reads in a list at a terminal, and nothing on the
+ * wire carries it. Registration — an address, a confirmation, a password — is
+ * a decision nobody has taken (ADR-0010), so there is no column here standing
+ * in for one.
+ */
+export interface StoredMerchant {
+  readonly id: string;
+  readonly name: string;
+  readonly selling: MerchantSelling;
+  readonly createdAt: number;
+}
+
+/**
+ * One key a merchant opens the door with.
+ *
+ * The secret itself is not here and never comes back out of the store: what is
+ * kept is its SHA-256 digest, and a request is resolved by looking that digest
+ * up. Whoever generated the key showed it to its owner once and has nothing
+ * left that can be read back.
+ *
+ * `disabledAt` carries the flag and the instant together. A boolean would
+ * answer "does this key work" and nothing else, and the question somebody
+ * actually asks after an incident is when it stopped.
+ */
+export interface StoredKey {
+  readonly id: string;
+  readonly merchantId: string;
+  /** What its owner called it, so one of several can be told from the others. */
+  readonly label: string;
+  readonly createdAt: number;
+  /** When it was revoked, or null while it still opens the door. */
+  readonly disabledAt: number | null;
+}
+
+/** One card in the public catalog, with the word its own merchant sells under. */
+export interface CatalogEntry {
+  readonly card: StoredCard;
+  /** The card's own merchant's word, which is not every merchant's word. */
+  readonly merchant: MerchantSelling;
+}
+
+/** Which merchant an order belongs to, where a read is one merchant's alone. */
+export interface MerchantScope {
+  readonly merchantId: string;
+}
+
 export interface Store {
-  /**
-   * Publishes one card. Republishing under the same `merchant_item_id` changes
-   * the card that is there rather than adding a second one, which is what the
-   * portal promises, so the catalog identifier stays what it was.
-   */
-  publishCard(card: Card, at: number): Promise<StoredCard>;
-  cardById(id: string): Promise<StoredCard | null>;
-  cards(): Promise<readonly StoredCard[]>;
+  // --- merchants and their keys ---------------------------------------------
 
   /**
-   * Takes one card off sale, or puts it back, and hands back the card as it
-   * now stands. Null where there is no such card.
+   * Writes down a merchant that is not there yet, or answers null where that
+   * identifier is taken.
+   *
+   * Null rather than a thrown error because the one caller is a command
+   * somebody typed, and running it twice is a thing people do.
+   */
+  addMerchant(
+    merchant: { readonly id: string; readonly name: string },
+    at: number,
+  ): Promise<StoredMerchant | null>;
+
+  merchantById(id: string): Promise<StoredMerchant | null>;
+
+  /** Every merchant, for the command that lists them. */
+  merchants(): Promise<readonly StoredMerchant[]>;
+
+  /** Writes down one key of one merchant. The digest is what is kept, not the key. */
+  addKey(
+    key: {
+      readonly id: string;
+      readonly merchantId: string;
+      readonly label: string;
+      readonly digest: string;
+    },
+    at: number,
+  ): Promise<StoredKey>;
+
+  /**
+   * Which merchant a working key belongs to, by the digest of the key
+   * presented — and nothing at all where there is no such key or where the key
+   * there is has been disabled.
+   *
+   * The two silences are deliberately the same one. A door that answered "that
+   * key exists but is off" differently from "that is not a key" would be a way
+   * of confirming which guesses were once real keys, which is the thing a
+   * revoked key must never leak.
+   *
+   * This is what makes the check constant-time by construction: nothing here
+   * compares a secret with a secret. What travels is a digest, always the same
+   * size, and what answers is an index.
+   */
+  merchantForKey(digest: string): Promise<string | null>;
+
+  /**
+   * The key with this digest, working or not.
+   *
+   * Separate from {@link merchantForKey} because the two questions are
+   * different and only one of them is asked at the door: this one is for the
+   * command that would otherwise issue a second key with a digest already
+   * taken, and it is never reachable from a request.
+   */
+  keyByDigest(digest: string): Promise<StoredKey | null>;
+
+  /** Every key of one merchant, disabled ones included, never their secrets. */
+  keysOf(merchantId: string): Promise<readonly StoredKey[]>;
+
+  /**
+   * Stops one key working and hands back where it now stands. Null where there
+   * is no such key.
+   *
+   * Disabling a key that is already disabled keeps the instant it was first
+   * revoked at rather than moving it: the first revocation is the true one, and
+   * a retry after a dropped connection must not rewrite history.
+   *
+   * It names a key and no merchant, and that is safe only because nothing
+   * reachable from a request calls it — the callers are the command somebody
+   * types, where one identifier already names the row, and the test harness.
+   * The cabinet's screens for making and revoking keys are the step after this
+   * one (ADR-0010), and what serves them wants a second method that takes the
+   * merchant, the way every other scoped write here does. Checking the caller's
+   * merchant against the key's own before calling this would work — nothing
+   * ever moves a key between merchants — but it is a fact a reader has to go
+   * and establish, and it is the shape this change removed everywhere else.
+   */
+  disableKey(id: string, at: number): Promise<StoredKey | null>;
+
+  // --- the catalog ----------------------------------------------------------
+
+  /**
+   * Publishes one card for one merchant. Republishing under the same
+   * `merchant_item_id` changes that merchant's card that is there rather than
+   * adding a second one, which is what the portal promises, so the catalog
+   * identifier stays what it was.
+   *
+   * The merchant's own identifier is unique inside their catalog and nowhere
+   * else, which is what the card contract has always said it means: two
+   * merchants may both sell a "sku-1", and neither publish touches the other.
+   */
+  publishCard(merchantId: string, card: Card, at: number): Promise<StoredCard>;
+
+  /**
+   * One card by the catalog identifier, whoever published it.
+   *
+   * Deliberately unscoped: this is the buying surface, and an agent has no key
+   * and no merchant. The card that comes back carries whose it is, and that is
+   * how a purchase reaches the right merchant.
+   */
+  cardById(id: string): Promise<StoredCard | null>;
+
+  /** The cards one merchant published, and nobody else's. */
+  cards(merchantId: string): Promise<readonly StoredCard[]>;
+
+  /**
+   * Every card the gateway holds, each with the word its own merchant is
+   * selling under — the one catalog the public surface is built from.
+   *
+   * The merchant's word travels with the card because it is per merchant: one
+   * merchant stopping all selling takes their own cards out of the catalog and
+   * leaves everybody else's exactly where they were.
+   */
+  catalogEntries(): Promise<readonly CatalogEntry[]>;
+
+  /**
+   * Takes one of this merchant's cards off sale, or puts it back, and hands
+   * back the card as it now stands. Null where this merchant has no such card
+   * — which is the same answer as no such card anywhere, on purpose.
    *
    * Republishing does not touch this: a merchant editing a price is not asking
    * for a product they took off sale to go back on it, and a pause that
    * evaporated on the next publish would put stock they do not have in front
    * of an agent.
    */
-  setCardPaused(id: string, paused: boolean): Promise<StoredCard | null>;
+  setCardPaused(merchantId: string, id: string, paused: boolean): Promise<StoredCard | null>;
 
   /**
-   * Whether the merchant is taking new orders at all — the word the order
-   * machine is given at the birth of every order.
+   * Whether this merchant is taking new orders at all — the word the order
+   * machine is given at the birth of every order made against their cards.
    *
-   * One merchant in stage one, so one answer. A merchant nobody has ever
-   * paused is selling, which is what an absent record means and why this
-   * cannot answer "I do not know": there is no state of the world in which we
-   * hold cards for a merchant and cannot say whether they are selling.
+   * A merchant nobody has ever paused is selling. This cannot answer "I do not
+   * know": there is no state of the world in which we hold a merchant's cards
+   * and cannot say whether they are selling.
    */
-  selling(): Promise<MerchantSelling>;
+  selling(merchantId: string): Promise<MerchantSelling>;
 
-  /** Stops all selling, or starts it again. */
-  setSelling(selling: MerchantSelling): Promise<void>;
+  /** Stops this merchant's selling, or starts it again. */
+  setSelling(merchantId: string, selling: MerchantSelling): Promise<void>;
 
-  /** Writes an order that is not there yet. */
+  // --- orders ---------------------------------------------------------------
+
+  /** Writes an order that is not there yet. The record says whose it is. */
   addOrder(record: StoredOrder): Promise<void>;
+
+  /**
+   * One order by its identifier, whoever it belongs to.
+   *
+   * Unscoped because two callers have no merchant to be scoped to: the payment
+   * route, which takes no key and is answered by the payment itself, and the
+   * gateway's own clocks, which act on an order rather than for somebody.
+   * A merchant's own read of one order is {@link merchantOrder}.
+   */
   orderById(id: string): Promise<StoredOrder | null>;
-  /** Every order, or with `open` only the ones still owed work or money. */
-  orders(query?: { readonly open?: boolean }): Promise<readonly StoredOrder[]>;
+
+  /** One of this merchant's orders. Another merchant's order is not found. */
+  merchantOrder(merchantId: string, id: string): Promise<StoredOrder | null>;
+
+  /** This merchant's orders, or with `open` only the ones still owed work or money. */
+  orders(merchantId: string, query?: { readonly open?: boolean }): Promise<readonly StoredOrder[]>;
 
   /**
    * Holds one order still, hands it to `change`, and writes back whatever
    * `change` asks to be written. Nothing else touches that order in between.
+   *
+   * Given a `scope`, an order belonging to another merchant is not found at
+   * all — the ownership is part of the same read as the lock, so a merchant's
+   * call can never move a stranger's order and there is no window between
+   * checking whose it is and acting on it.
    */
   withOrder<T>(
     id: string,
     change: (found: StoredOrder) => Promise<OrderChange<T>> | OrderChange<T>,
+    scope?: MerchantScope,
   ): Promise<OrderLookup<T>>;
+
+  // --- payments -------------------------------------------------------------
 
   /**
    * Binds one payment to one order, once and for all.
@@ -218,6 +425,14 @@ export interface Store {
    * charge fails. This is what stops that: the first order to present a payment
    * owns it, and the same payment presented for a second order is refused
    * before anything is verified or dispatched.
+   *
+   * A claim is the one thing here that is deliberately not per merchant, and
+   * the reason is the failure it guards. The two orders one signature would
+   * buy are just as likely to be at two different merchants as at one — an
+   * agent walking the public catalog is not shopping inside a tenant — and a
+   * claim scoped to a merchant would let the same authorisation be spent once
+   * at each. So the fingerprint is unique across the gateway, and nothing
+   * about which merchant is asking enters into it.
    */
   claimPayment(fingerprint: string, orderId: string): Promise<PaymentClaim>;
 
@@ -251,7 +466,17 @@ export interface Store {
    */
   forgetClaimsBefore(instant: number): Promise<number>;
 
-  putReceipt(receipt: Receipt): Promise<void>;
+  /** Writes down one merchant's receipt for one order. */
+  putReceipt(merchantId: string, receipt: Receipt): Promise<void>;
+
+  /**
+   * The receipt for one order, whoever it belongs to.
+   *
+   * Unscoped for the same reason {@link orderById} is: the agent's own answer
+   * to its purchase carries the receipt, and the agent has no key.
+   */
   receiptForOrder(orderId: string): Promise<Receipt | null>;
-  receipts(): Promise<readonly Receipt[]>;
+
+  /** This merchant's receipts, and nobody else's. */
+  receipts(merchantId: string): Promise<readonly Receipt[]>;
 }

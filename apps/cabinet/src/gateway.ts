@@ -52,10 +52,13 @@ export interface GatewayClient {
 /**
  * A client bound to one merchant's key.
  *
- * The key is per request rather than per process: the cabinet is signed into
- * by a merchant, and a client that held one key for the life of the process
- * would be a cabinet that could only ever serve the merchant it was started
- * for.
+ * The key is a parameter rather than something this module reads, so a client
+ * can be built per request the day the cabinet has a key per request. It does
+ * not today: `buildApp` builds one from `MERCHANT_API_KEY` for the life of the
+ * process, so this cabinet serves the one merchant that key resolves to at the
+ * gateway. What changes that is accounts naming their own merchant, which is a
+ * step still to come (ADR-0010); the shape here is what makes it a change to
+ * where the key comes from rather than to this file.
  */
 export const gatewayFor = (baseUrl: string, key: string): GatewayClient => {
   const call = async <T>(

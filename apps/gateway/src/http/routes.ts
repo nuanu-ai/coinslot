@@ -49,6 +49,25 @@ const NOT_FOUND = 404;
 const CONFLICT = 409;
 const UNPROCESSABLE = 422;
 
+/**
+ * The merchant whose key opened this call.
+ *
+ * Every handler that asks is on a route the contract puts behind the merchant's
+ * key, and the mounting loop resolves that key before any handler runs and
+ * answers 401 where it resolves to nobody. So null cannot arrive here — it
+ * would mean the route table and this file disagree about which calls are the
+ * merchant's, and the safe thing then is to stop rather than to act for a
+ * merchant this line had to invent.
+ */
+function merchantOf({ merchantId }: RouteCall): string {
+  if (merchantId === null) {
+    throw new Error(
+      "this call was served as one of the merchant's and reached its handler with no merchant behind it",
+    );
+  }
+  return merchantId;
+}
+
 export function handlersFor(gateway: Gateway): Partial<Record<RouteName, MountedRoute>> {
   const { config } = gateway.runtime;
   const edge = new PaymentEdge(config.payment, config.publicBaseUrl, config.payment.timeoutSeconds);
@@ -59,8 +78,8 @@ export function handlersFor(gateway: Gateway): Partial<Record<RouteName, Mounted
       // everything wrong with it comes back in the contract's own list of
       // findings — which is the whole point of that branch existing.
       checksItsOwnBody: true,
-      serve: async ({ body }) => {
-        const published = await gateway.publishCard(body);
+      serve: async (call) => {
+        const published = await gateway.publishCard(merchantOf(call), call.body);
         return { status: "ok" in published ? OK : UNPROCESSABLE, document: published };
       },
     },
@@ -68,22 +87,31 @@ export function handlersFor(gateway: Gateway): Partial<Record<RouteName, Mounted
     list_catalog: { serve: async () => ({ status: OK, document: await gateway.catalog() }) },
 
     list_merchant_cards: {
-      serve: async () => ({ status: OK, document: await gateway.merchantCards() }),
+      serve: async (call) => ({
+        status: OK,
+        document: await gateway.merchantCards(merchantOf(call)),
+      }),
     },
 
     pause_card: { serve: (call) => cardPaused(gateway, call, true) },
 
     resume_card: { serve: (call) => cardPaused(gateway, call, false) },
 
-    pause_selling: { serve: ({ response }) => sellingSet(gateway, response, "paused") },
+    pause_selling: { serve: (call) => sellingSet(gateway, call, "paused") },
 
-    resume_selling: { serve: ({ response }) => sellingSet(gateway, response, "open") },
+    resume_selling: { serve: (call) => sellingSet(gateway, call, "open") },
 
-    list_receipts: { serve: async () => ({ status: OK, document: await gateway.receipts() }) },
+    list_receipts: {
+      serve: async (call) => ({ status: OK, document: await gateway.receipts(merchantOf(call)) }),
+    },
 
     get_order: {
-      serve: async ({ params, response }) => {
-        const record = await gateway.orderById(params.order_id ?? "");
+      serve: async (call) => {
+        const { params, response } = call;
+        // The merchant's own read of one order, and another merchant's order is
+        // not found — the same answer an identifier naming nothing gets, so a
+        // stranger learns nothing by guessing.
+        const record = await gateway.merchantOrder(merchantOf(call), params.order_id ?? "");
         if (record === null) {
           return written(response, NOT_FOUND, refusal("no_such_order", "there is no such order"));
         }
@@ -122,12 +150,13 @@ export function handlersFor(gateway: Gateway): Partial<Record<RouteName, Mounted
     // a sale price and those orders have none. They are readable one at a time
     // by identifier, where the refusal says what became of them.
     list_orders: {
-      serve: async ({ query }) => {
+      serve: async (call) => {
         // Only "true" narrows the list. Anything else asks for everything, which
         // is what the contract says and what a merchant reconciling their books
-        // has to be able to rely on.
-        const asked = (query as OrderListQuery | undefined)?.open;
-        const records = await gateway.orders(asked === "true" ? true : undefined);
+        // has to be able to rely on — everything of theirs, that is: the
+        // merchant is in the query and nobody else's order is read at all.
+        const asked = (call.query as OrderListQuery | undefined)?.open;
+        const records = await gateway.orders(merchantOf(call), asked === "true" ? true : undefined);
         return {
           status: OK,
           document: {
@@ -140,11 +169,16 @@ export function handlersFor(gateway: Gateway): Partial<Record<RouteName, Mounted
     },
 
     poll_worker: {
-      serve: async ({ body }) => {
-        const asked = body as WorkerPollRequest;
+      serve: async (call) => {
+        const asked = call.body as WorkerPollRequest;
         return {
           status: OK,
+          // A worker draws its own merchant's stream. It is not a filter over
+          // what came back: the stream is named by the merchant the key
+          // resolved to, so a stranger's envelope is never drawn and so never
+          // held out of reach of the worker it was meant for.
           document: await gateway.poll(
+            merchantOf(call),
             asked.max ?? gateway.runtime.config.worker.pollMaxEnvelopes,
             asked.wait_seconds === undefined
               ? gateway.runtime.config.worker.pollWaitMs
@@ -155,29 +189,61 @@ export function handlersFor(gateway: Gateway): Partial<Record<RouteName, Mounted
     },
 
     answer_order: {
-      serve: async ({ params, body, response }) =>
-        answeredOrder(response, await gateway.answerOrder(params.order_id ?? "", body as never)),
+      serve: async (call) =>
+        answeredOrder(
+          call.response,
+          await gateway.answerOrder(
+            merchantOf(call),
+            call.params.order_id ?? "",
+            call.body as never,
+          ),
+        ),
     },
 
     deliver_order: {
-      serve: async ({ params, body, response }) =>
-        answeredOrder(response, await gateway.deliverOrder(params.order_id ?? "", body as never)),
+      serve: async (call) =>
+        answeredOrder(
+          call.response,
+          await gateway.deliverOrder(
+            merchantOf(call),
+            call.params.order_id ?? "",
+            call.body as never,
+          ),
+        ),
     },
 
     refuse_order: {
-      serve: async ({ params, body, response }) =>
-        answeredOrder(response, await gateway.refuseOrder(params.order_id ?? "", body as never)),
+      serve: async (call) =>
+        answeredOrder(
+          call.response,
+          await gateway.refuseOrder(
+            merchantOf(call),
+            call.params.order_id ?? "",
+            call.body as never,
+          ),
+        ),
     },
 
     accept_order: {
-      serve: async ({ params, body, response }) =>
-        answeredOrder(response, await gateway.acceptOrder(params.order_id ?? "", body as never)),
+      serve: async (call) =>
+        answeredOrder(
+          call.response,
+          await gateway.acceptOrder(
+            merchantOf(call),
+            call.params.order_id ?? "",
+            call.body as never,
+          ),
+        ),
     },
 
     answer_quote: {
-      serve: async ({ params, body }) => ({
+      serve: async (call) => ({
         status: OK,
-        document: await gateway.answerQuote(params.price_id ?? "", body as never),
+        document: await gateway.answerQuote(
+          merchantOf(call),
+          call.params.price_id ?? "",
+          call.body as never,
+        ),
       }),
     },
 
@@ -196,12 +262,15 @@ export function handlersFor(gateway: Gateway): Partial<Record<RouteName, Mounted
  */
 async function sellingSet(
   gateway: Gateway,
-  response: RouteCall["response"],
+  call: RouteCall,
   selling: "open" | "paused",
 ): Promise<RouteAnswer> {
-  const changed = await gateway.setSelling(selling);
+  // One merchant's switch and nobody else's: stopping all selling takes this
+  // merchant's cards out of the public catalog and leaves every other
+  // merchant's exactly where they were.
+  const changed = await gateway.setSelling(merchantOf(call), selling);
   if (!changed.ok) {
-    return written(response, CONFLICT, refusal("merchant_departed", changed.why));
+    return written(call.response, CONFLICT, refusal("merchant_departed", changed.why));
   }
   return { status: OK, document: changed.cards };
 }
@@ -216,12 +285,14 @@ async function sellingSet(
  */
 async function cardPaused(
   gateway: Gateway,
-  { params, response }: RouteCall,
+  call: RouteCall,
   paused: boolean,
 ): Promise<RouteAnswer> {
-  const card = await gateway.setCardPaused(params.item_id ?? "", paused);
+  const card = await gateway.setCardPaused(merchantOf(call), call.params.item_id ?? "", paused);
   if (card === null) {
-    return written(response, NOT_FOUND, refusal("no_such_item", "there is no such product"));
+    // A card of another merchant's is refused in the words a card that is not
+    // there gets. Pausing is not a way of finding out what somebody else sells.
+    return written(call.response, NOT_FOUND, refusal("no_such_item", "there is no such product"));
   }
   return { status: OK, document: card };
 }

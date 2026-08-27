@@ -14,6 +14,10 @@ const envelope = (id: string): WorkerEnvelope => ({
   },
 });
 
+/** Whose stream. Every call names one, because there is one stream per merchant. */
+const A = "mch_a";
+const B = "mch_b";
+
 const started = async (fire: (reminder: Reminder) => Promise<void> = async () => undefined) => {
   const queue = new MemoryQueue();
   queue.onReminder(fire);
@@ -35,10 +39,10 @@ describe("MemoryQueue delivery", () => {
     // keeps the price question of a synchronous purchase — the one an agent is
     // sitting on — bounded by the network rather than by a poll interval.
     const queue = await started();
-    const parked = queue.draw(10, 25_000);
+    const parked = queue.draw(A, 10, 25_000);
 
     await vi.advanceTimersByTimeAsync(5);
-    await queue.publish(envelope("env_1"));
+    await queue.publish(A, envelope("env_1"));
 
     const drawn = await parked;
     expect(drawn.map((d) => d.envelope.id)).toStrictEqual(["env_1"]);
@@ -48,7 +52,7 @@ describe("MemoryQueue delivery", () => {
     // A worker that read an empty batch as a failure would tear down and
     // rebuild its subscription every time nothing happened.
     const queue = await started();
-    const parked = queue.draw(10, 1_000);
+    const parked = queue.draw(A, 10, 1_000);
 
     await vi.advanceTimersByTimeAsync(1_000);
 
@@ -59,33 +63,33 @@ describe("MemoryQueue delivery", () => {
     // A worker shutting down asks for a drain, and a drain that parked for
     // twenty-five seconds would hold the shutdown open for twenty-five seconds.
     const queue = await started();
-    await queue.publish(envelope("env_1"));
+    await queue.publish(A, envelope("env_1"));
 
-    expect((await queue.draw(10, 0)).map((d) => d.envelope.id)).toStrictEqual(["env_1"]);
-    expect(await queue.draw(10, 0)).toStrictEqual([]);
+    expect((await queue.draw(A, 10, 0)).map((d) => d.envelope.id)).toStrictEqual(["env_1"]);
+    expect(await queue.draw(A, 10, 0)).toStrictEqual([]);
   });
 
   it("hands out no more than the batch that was asked for, and keeps the rest", async () => {
     const queue = await started();
-    await queue.publish(envelope("env_1"));
-    await queue.publish(envelope("env_2"));
-    await queue.publish(envelope("env_3"));
+    await queue.publish(A, envelope("env_1"));
+    await queue.publish(A, envelope("env_2"));
+    await queue.publish(A, envelope("env_3"));
 
-    expect((await queue.draw(2, 0)).map((d) => d.envelope.id)).toStrictEqual(["env_1", "env_2"]);
-    expect((await queue.draw(2, 0)).map((d) => d.envelope.id)).toStrictEqual(["env_3"]);
+    expect((await queue.draw(A, 2, 0)).map((d) => d.envelope.id)).toStrictEqual(["env_1", "env_2"]);
+    expect((await queue.draw(A, 2, 0)).map((d) => d.envelope.id)).toStrictEqual(["env_3"]);
   });
 
   it("keeps a delayed envelope back until its time", async () => {
     // The order machine's redelivery carries a wait, and a queue that ignored
     // it would hammer a merchant who is already failing.
     const queue = await started();
-    await queue.publish(envelope("env_1"), 500);
+    await queue.publish(A, envelope("env_1"), 500);
 
     await vi.advanceTimersByTimeAsync(499);
-    expect(await queue.draw(10, 0)).toStrictEqual([]);
+    expect(await queue.draw(A, 10, 0)).toStrictEqual([]);
 
     await vi.advanceTimersByTimeAsync(1);
-    expect((await queue.draw(10, 0)).map((d) => d.envelope.id)).toStrictEqual(["env_1"]);
+    expect((await queue.draw(A, 10, 0)).map((d) => d.envelope.id)).toStrictEqual(["env_1"]);
   });
 
   it("does not put a drawn envelope back on the stream by itself", async () => {
@@ -94,36 +98,62 @@ describe("MemoryQueue delivery", () => {
     // whether another could still land inside the deadline. A queue with its
     // own opinion would be a second one over the top of it.
     const queue = await started();
-    await queue.publish(envelope("env_1"));
+    await queue.publish(A, envelope("env_1"));
 
-    expect(await queue.draw(10, 0)).toHaveLength(1);
+    expect(await queue.draw(A, 10, 0)).toHaveLength(1);
 
     await vi.advanceTimersByTimeAsync(600_000);
-    expect(await queue.draw(10, 0)).toStrictEqual([]);
+    expect(await queue.draw(A, 10, 0)).toStrictEqual([]);
   });
 
   it("takes a second answer to an answered delivery without complaining", async () => {
     // The portal promises the merchant that repeating a call is safe, and a
     // repeat carries the handle of a delivery that is already finished.
     const queue = await started();
-    await queue.publish(envelope("env_1"));
-    const [drawn] = await queue.draw(10, 0);
+    await queue.publish(A, envelope("env_1"));
+    const [drawn] = await queue.draw(A, 10, 0);
 
     if (drawn === undefined) throw new Error("nothing was drawn");
-    await queue.finish(drawn.handle);
-    await expect(queue.finish(drawn.handle)).resolves.toBeUndefined();
-    await expect(queue.finish("a handle from nowhere")).resolves.toBeUndefined();
+    await queue.finish(A, drawn.handle);
+    await expect(queue.finish(A, drawn.handle)).resolves.toBeUndefined();
+    await expect(queue.finish(A, "a handle from nowhere")).resolves.toBeUndefined();
   });
 
   it("gives two deliveries of one envelope two handles", async () => {
     // Delivery is at least once, so the same envelope can go out twice; a
     // shared handle would let the answer to one delivery finish the other.
     const queue = await started();
-    await queue.publish(envelope("env_1"));
-    await queue.publish(envelope("env_1"));
+    await queue.publish(A, envelope("env_1"));
+    await queue.publish(A, envelope("env_1"));
 
-    const [first, second] = await queue.draw(10, 0);
+    const [first, second] = await queue.draw(A, 10, 0);
     expect(first?.handle).not.toBe(second?.handle);
+  });
+
+  it("never hands one merchant's envelope to another merchant's worker", async () => {
+    // One stream per merchant, and not one stream filtered on the way out: a
+    // filter would have to draw a stranger's envelope in order to look at it,
+    // and a drawn envelope is one its own merchant is not offered until it is
+    // finished. So the promise is two things at once — B never sees A's
+    // envelope, and A still finds it afterwards.
+    const queue = await started();
+    await queue.publish(A, envelope("env_1"));
+
+    expect(await queue.draw(B, 10, 0)).toStrictEqual([]);
+    expect((await queue.draw(A, 10, 0)).map((d) => d.envelope.id)).toStrictEqual(["env_1"]);
+  });
+
+  it("does not send another merchant's parked worker back to an empty stream", async () => {
+    // Waking every parked poll on every publish would have each of them come
+    // back with nothing, over and over, on a busy gateway.
+    const queue = await started();
+    const parkedOnB = queue.draw(B, 10, 1_000);
+
+    await vi.advanceTimersByTimeAsync(5);
+    await queue.publish(A, envelope("env_1"));
+    await vi.advanceTimersByTimeAsync(995);
+
+    expect(await parkedOnB).toStrictEqual([]);
   });
 });
 
@@ -186,7 +216,7 @@ describe("MemoryQueue reminders", () => {
 
   it("lets go of a parked poll when it stops", async () => {
     const queue = await started();
-    const parked = queue.draw(10, 25_000);
+    const parked = queue.draw(A, 10, 25_000);
 
     await queue.stop();
 

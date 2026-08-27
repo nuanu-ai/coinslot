@@ -92,14 +92,32 @@ const environmentSchema = z.object({
     .default(3000),
 
   /**
-   * The merchant's key, the stage-one minimum of the pilot plan. One merchant,
-   * one key. The length floor is not security theatre: the comparison this key
-   * goes through is constant-time over equal lengths, and a key short enough to
-   * guess makes the care taken over the comparison pointless.
+   * A key to make sure exists when this process starts, so that a sandbox comes
+   * up selling from one command and nobody has to run anything by hand.
+   *
+   * This is not the key the door checks against — there is no such variable any
+   * more (ADR-0010). Keys are rows: this one is written into the row for the
+   * merchant everything in a database of this age belongs to, if it is not
+   * there already, and after that the door reads it the way it reads every
+   * other key. What it buys is the sandbox in `compose.yaml`, where the same
+   * string is also given to the cabinet and to the merchant process, next to
+   * the database password and for the same reason.
+   *
+   * Unset it anywhere that is not a sandbox. A key in an environment is a key
+   * that cannot be revoked without a deployment, which is the thing keys became
+   * rows in order to fix, and a key nobody typed is a key nobody meant to
+   * issue. Absent, this process writes nothing and every key is one somebody
+   * made deliberately.
+   *
+   * The length floor is a floor on what a sandbox is allowed to hand out, not
+   * on what a real key looks like: a real one is generated with thirty-two
+   * bytes behind it and never chosen by anybody.
    */
-  MERCHANT_API_KEY: z
+  SANDBOX_MERCHANT_KEY: z
     .string({ error: absentOrWrong("must be a string") })
-    .min(16, "must be at least 16 characters"),
+    .min(16, "must be at least 16 characters")
+    .nullable()
+    .default(null),
 
   /** How long we wait for the merchant to say what the goods cost. */
   QUOTE_RESPONSE_MS: durationMs(5_000),
@@ -270,7 +288,8 @@ export interface PaymentConfig {
 export interface GatewayConfig {
   readonly databaseUrl: string;
   readonly port: number;
-  readonly merchantApiKey: string;
+  /** A key the sandbox is seeded with at start-up, or nothing at all. */
+  readonly sandboxMerchantKey: string | null;
   readonly publicBaseUrl: string;
   /** How many times a reminder that failed is delivered again. */
   readonly reminderAttempts: number;
@@ -397,7 +416,7 @@ export function loadConfig(environment: Record<string, string | undefined>): Gat
   return {
     databaseUrl: environmentValues.DATABASE_URL,
     port: environmentValues.PORT,
-    merchantApiKey: environmentValues.MERCHANT_API_KEY,
+    sandboxMerchantKey: environmentValues.SANDBOX_MERCHANT_KEY,
     publicBaseUrl: environmentValues.PUBLIC_BASE_URL,
     reminderAttempts: environmentValues.REMINDER_ATTEMPTS,
     reminderRetryDelayMs: environmentValues.REMINDER_RETRY_DELAY_MS,

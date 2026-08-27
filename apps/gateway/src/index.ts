@@ -23,6 +23,17 @@ export { PgBossQueue, queueOn } from "./adapters/pgboss/queue.js";
 export { connect, PostgresStore } from "./adapters/postgres/store.js";
 export { X402Facilitator } from "./adapters/x402/facilitator.js";
 export { Gateway, type PurchaseAttempt } from "./app/gateway.js";
+export {
+  type IssuedKey,
+  issueKey,
+  KEY_PREFIX,
+  keyDigest,
+  makeMerchant,
+  newKeySecret,
+  SEEDED_MERCHANT,
+  type SeedOutcome,
+  seedSandboxKey,
+} from "./app/merchants.js";
 export { type Applied, OrderRunner, orderDocumentOf, type PresentResult } from "./app/runner.js";
 export {
   modeForCard,
@@ -46,11 +57,15 @@ export { asTimestamp, type Clock, type Ids, randomIds, systemClock } from "./por
 export type { Charge, Facilitator, SettleOutcome, VerifyOutcome } from "./ports/facilitator.js";
 export type { DrawnEnvelope, Queue, Reminder } from "./ports/queue.js";
 export type {
+  CatalogEntry,
+  MerchantScope,
   OrderChange,
   OrderLookup,
   PaymentClaim,
   PaymentWord,
   Store,
   StoredCard,
+  StoredKey,
+  StoredMerchant,
   StoredOrder,
 } from "./ports/store.js";
