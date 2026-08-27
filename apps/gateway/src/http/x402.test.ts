@@ -553,6 +553,43 @@ describe("the shape a live validation once accepted", () => {
     },
   };
 
+  /**
+   * The schema half of the same accepted answer, recorded the same way.
+   *
+   * It is here for one fact that is invisible without it: the dialect is named
+   * once, at the root. The rest differs from ours legitimately — the spike wrote
+   * its body schema by hand and ours is rendered from the card's own check, so
+   * ours says `type` and closes the object where the spike's said neither.
+   */
+  const acceptedSchemaOnPost = {
+    $schema: "https://json-schema.org/draft/2020-12/schema",
+    properties: {
+      input: {
+        additionalProperties: false,
+        properties: {
+          body: {
+            properties: {
+              country: { description: "ISO 3166-1 alpha-2 country code", type: "string" },
+            },
+            required: ["country"],
+          },
+          bodyType: { enum: ["json", "form-data", "text"], type: "string" },
+          method: { enum: ["POST"], type: "string" },
+          type: { const: "http", type: "string" },
+        },
+        required: ["type", "method", "bodyType", "body"],
+        type: "object",
+      },
+      output: {
+        properties: { example: { type: "object" }, type: { type: "string" } },
+        required: ["type"],
+        type: "object",
+      },
+    },
+    required: ["input"],
+    type: "object",
+  };
+
   /** Every path through an object, with the leaves replaced by their types. */
   const skeleton = (value: unknown, at = ""): string[] => {
     if (Array.isArray(value)) {
@@ -620,25 +657,27 @@ describe("the shape a live validation once accepted", () => {
       "output.example.number: string",
       "output.type: string",
     ]);
-    // And the accepted one, read the same way, differs only in the leaves that
-    // describe a different product.
+    // And the accepted one, read the same way. The literal above is what makes
+    // this test fail on a change of ours; this is what makes it fail on a
+    // change that walks away from the shape that passed.
     expect(unique(skeleton(acceptedOnGet).map(named))).toStrictEqual(
       unique(skeleton(ourDeclaration("GET").info).map(named)),
     );
   });
 
-  it("names the schema dialect once, at the top, the way the accepted shape does", () => {
-    // The schema that came back from the accepted validation carries `$schema`
-    // exactly once, at its root. Ours is built partly from a document rendered
-    // on its own — the purchase body — and such a document names its dialect at
-    // the top, which nested inside another schema is a second declaration in a
-    // place the accepted shape has none. It is dropped on the way in, and this
-    // is what says so: a comparison against a shape that passed.
-    const dialects = skeleton(ourDeclaration("POST").schema).filter((path) =>
-      path.includes("$schema"),
-    );
+  it("names the schema dialect where the accepted shape names it, and nowhere else", () => {
+    // Ours is built partly from a document rendered on its own — the purchase
+    // body — and a document rendered on its own names its dialect at the top.
+    // Nested inside another schema that is a second declaration, in a place the
+    // accepted shape has none. It is dropped on the way in, and the accepted
+    // schema recorded above is what says where it belongs.
+    const dialectsIn = (schema: unknown) =>
+      skeleton(schema).filter((path) => path.includes("$schema"));
 
-    expect(dialects).toStrictEqual(["$schema: string"]);
+    expect(dialectsIn(ourDeclaration("POST").schema)).toStrictEqual(["$schema: string"]);
+    expect(dialectsIn(acceptedSchemaOnPost)).toStrictEqual(
+      dialectsIn(ourDeclaration("POST").schema),
+    );
   });
 
   it("puts the same fields in the same places as the POST probe that was accepted", () => {

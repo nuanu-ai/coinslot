@@ -244,12 +244,13 @@ export class PaymentEdge {
  * demands a method and has none to find.
  *
  * The hook wants a transport context, and what it reads out of one is the
- * method and, where a route carries path parameters it was told about, the
- * values in them. It is given the method and a path that answers for itself.
- * Our own route does carry a path parameter — the product — but naming it here
- * would put the identifier into the declaration a second time, where it is
- * already the resource's own address, so no route pattern is passed and the
- * hook adds nothing but the method.
+ * method and, where it is also given a route pattern, the values of that
+ * pattern's parameters. No route pattern is passed: our own route does carry
+ * one — the product — but naming it would put the identifier into the
+ * declaration a second time, where it is already the resource's own address.
+ * So the hook adds nothing but the method, and the empty path below is never
+ * read. It is there because the hook decides whether it has a transport
+ * context at all by looking for the two keys, and one of them is `adapter`.
  */
 function discoveryExtensionOf(
   declared: BazaarDeclaration,

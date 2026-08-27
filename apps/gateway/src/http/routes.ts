@@ -339,10 +339,15 @@ async function purchase(
     if (offered.selling !== "open") {
       // A card that is off sale answers no challenge, and the reason is not
       // tidiness. A challenge carries the declaration a discovery catalog is
-      // built from, and a catalog lists what answers 402 and drops what stops:
-      // kept up here, a paused card would stay listed while every purchase
-      // behind the listing came back refused. The word an agent gets is the
-      // same word the order machine would have given it a moment later.
+      // built from; kept up here, a paused card would go on inviting an agent
+      // to pay for something every purchase of which comes back refused. The
+      // word an agent gets is the same word the order machine would have given
+      // it a moment later.
+      //
+      // What a catalog does with a resource that stops answering is its own
+      // business and we have not measured it: the CDP documentation says such a
+      // resource is eventually removed, and `docs/research/04-spike-bazaar-listing.md`
+      // records that as read rather than as timed.
       return written(
         response,
         CONFLICT,
@@ -352,9 +357,9 @@ async function purchase(
     response.setHeader(
       PAYMENT_REQUIRED_HEADER,
       edge.challengeFor(
-        { amount: offered.card.card.price.amount, currency: offered.card.card.price.currency },
+        { amount: offered.stored.card.price.amount, currency: offered.stored.card.price.currency },
         null,
-        { itemId: offered.card.id, card: offered.card.card, serviceName: offered.serviceName },
+        { itemId: offered.stored.id, card: offered.stored.card, serviceName: offered.serviceName },
         "GET",
         "this resource is paid for; the price here is the published one and a purchase is priced when it is made",
       ),
@@ -465,11 +470,12 @@ async function answerPurchase(
         throw new Error(`the order ${attempt.order.order.id} was offered for sale with no price`);
       }
       // The product this order is for, read from the order rather than from the
-      // address the call came in on. They are the same address in the ordinary
-      // case, and where they are not — a payment naming an order for another
-      // product — what a challenge has to describe is the product being paid
-      // for. The resource an agent is invited to pay for and the resource a
-      // catalog lists are the same string, so it cannot come from the request.
+      // address the call came in on. The two are the same today: this step is
+      // only reached for an order this call just opened against the product in
+      // the address. Reading it off the order anyway costs nothing and settles
+      // the question for whoever later lets a payment name an order made
+      // elsewhere — the resource an agent is invited to pay for and the
+      // resource a catalog lists are one string, and it belongs to the order.
       const offered = await gateway.paidResource(attempt.order.itemId);
       if (offered === null) {
         throw new Error(
@@ -481,7 +487,11 @@ async function answerPurchase(
         edge.challengeFor(
           price,
           attempt.order.order.id,
-          { itemId: offered.card.id, card: offered.card.card, serviceName: offered.serviceName },
+          {
+            itemId: offered.stored.id,
+            card: offered.stored.card,
+            serviceName: offered.serviceName,
+          },
           "POST",
           why,
         ),

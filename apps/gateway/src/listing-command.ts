@@ -28,7 +28,7 @@
  */
 
 import type { CatalogPage } from "@coinslot/contracts";
-import { API_ROUTES, expandPath } from "@coinslot/contracts";
+import { API_ROUTES, CatalogPageSchema, expandPath } from "@coinslot/contracts";
 
 /** Where the public validation endpoint lives. No key, no cost. */
 export const VALIDATE_ENDPOINT = "https://api.cdp.coinbase.com/platform/v2/x402/validate";
@@ -250,7 +250,11 @@ export const overTheNetwork = (): Reach => ({
     if (!answered.ok) {
       throw new Error(`${at} answered ${answered.status}`);
     }
-    return (await answered.json()) as CatalogPage;
+    // Parsed rather than asserted. An answer that is JSON and is not a catalog
+    // is something in front of the gateway answering instead of it, and the
+    // caller has a sentence ready for that; cast, it would come out further
+    // down as a stack trace about reading a property of undefined.
+    return CatalogPageSchema.parse(await answered.json()) as CatalogPage;
   },
   validate: async (resource, method) => {
     try {

@@ -773,3 +773,35 @@ describe("a card as a discovery channel reads it", () => {
     expect(declared(syncCard, at)).toStrictEqual(declared(syncCard, at));
   });
 });
+
+describe("the tags a card may carry, against the listing's own rules", () => {
+  // The negative control this pair of schemas most needed: values our schema
+  // takes, put through the catalog's own function, to see whether anything of
+  // the merchant's disappears on the way in. Two of these used to.
+  const tagged = (tags: unknown) => CardSchema.safeParse({ ...syncCard, tags });
+
+  it("refuses two tags the listing would fold into one", () => {
+    expect(errorOf(CardSchema, { ...syncCard, tags: ["Access", "access"] })).toContain("case");
+    expect(tagged(["access", "subscription"]).success).toBe(true);
+  });
+
+  it("refuses an empty list rather than sending one", () => {
+    expect(tagged([]).success).toBe(false);
+    expect(tagged(undefined).success).toBe(true);
+  });
+
+  it("refuses a tag padded with spaces, which the listing keeps as written", () => {
+    expect(tagged([" access"]).success).toBe(false);
+    expect(tagged(["access "]).success).toBe(false);
+    expect(tagged(["one two"]).success).toBe(true);
+  });
+
+  it("says the rules it cannot check in a document, for the reader who has only that", () => {
+    const document = toJsonSchemas().tags;
+
+    expect(document.maxItems).toBe(5);
+    expect(document.minItems).toBe(1);
+    expect(document.uniqueItems).toBe(true);
+    expect(document.description).toContain("case");
+  });
+});

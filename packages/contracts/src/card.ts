@@ -113,7 +113,11 @@ const listedText = (what: string) =>
     .min(1, `a ${what} must not be empty`)
     .max(LISTED_TEXT_MAX, `a ${what} is at most ${LISTED_TEXT_MAX} characters`)
     .regex(/^[\x20-\x7e]*$/, `a ${what} is printable ASCII, which is all the listing carries`)
-    .regex(/\S/, `a ${what} must not be blank`);
+    // Blank and padded in one rule. A space at either end survives the listing
+    // untouched, which is worse than being dropped: it makes two spellings of
+    // one word, and a merchant comparing what they typed with what they see
+    // finds them identical.
+    .regex(/^\S(?:[\s\S]*\S)?$/, `a ${what} must not be blank or padded with spaces`);
 
 /**
  * The name the seller of a card is listed under, wherever a catalog names a
@@ -139,10 +143,26 @@ export const ServiceNameSchema = listedText("service name").meta({
  */
 export const TagsSchema = z
   .array(listedText("tag"))
+  // Not an empty list. A card that names no tags leaves the field out; an
+  // empty list is a value a catalog renders, and the two would be one thing
+  // written two ways with nothing to tell them apart.
+  .min(1, "a card that names no tags leaves the field out rather than sending an empty list")
   .max(LISTED_TAGS_MAX, `a card carries at most ${LISTED_TAGS_MAX} tags`)
+  .refine(
+    // The catalog folds tags together without regard to case and keeps the
+    // first of each, so "Access" and "access" published together become one
+    // tag and the merchant is never told which of the two survived. Refusing
+    // the pair is the version of that a merchant can act on.
+    (tags) => new Set(tags.map((tag) => tag.toLowerCase())).size === tags.length,
+    "two tags that differ only in case are one tag to the listing, so both cannot be published",
+  )
   .meta({
     description:
-      "Words describing this product for an agent searching a discovery catalog. At most 5, each at most 32 characters of printable ASCII, because that is what the catalog keeps; anything beyond is refused here rather than dropped there in silence.",
+      "Words describing this product for an agent searching a discovery catalog. Between 1 and 5 of them, each 1 to 32 characters of printable ASCII with no space at either end, and no two the same without regard to case — because that is what the catalog keeps, and it drops the rest in silence. A card with no tags leaves the field out.",
+    // The case rule is a refinement and zod drops those when it renders a
+    // document. This much of it does cross, so a generated client refuses at
+    // least the identical pair.
+    uniqueItems: true,
   });
 
 /**
@@ -333,11 +353,21 @@ export const deliveryCheckFor = (card: Card): z.ZodType =>
  * with no moment behind it cannot be judged stale, and this is the only
  * freshness claim a catalog makes.
  *
+ * `tags` are gone as well, and that one is a decision rather than an omission.
+ * They are words a merchant chose so that a search in a discovery catalog finds
+ * this product, held to that catalog's own rule about length and alphabet. Our
+ * own catalog is not searched that way — an agent reading it has the whole
+ * page — so carrying them here would put a foreign catalog's constraint in
+ * front of a reader who has no use for it.
+ *
  * One thing an agent might reasonably want is not here, and saying so is
  * better than leaving it to be discovered: nothing in this document names who
- * is selling. There is no shape in this contract for a merchant's public
- * identity, and inventing one here would answer a question — who "we" are to
- * the buyer, and who the merchant is — that is still open.
+ * is selling. There is a shape in this contract for one name a seller carries —
+ * `ServiceNameSchema`, the name a discovery catalog lists them under — and it
+ * is deliberately not this. That name exists to satisfy one channel's rules,
+ * a merchant may have none, and standing it in for a public identity would
+ * answer a question — who "we" are to the buyer, and who the merchant is —
+ * that is still open.
  */
 const PublicCardFieldsSchema = z.strictObject({
   /** Our catalog identifier, the one a purchase, a receipt and a status use. */

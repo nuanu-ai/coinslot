@@ -336,7 +336,11 @@ describe("the contract as JSON Schema", () => {
     // says `card.result` rather than naming the projection too. Rename either
     // entry so that it sorts first and the path here changes without anything
     // being wrong; that is a reason to read the failure, not to distrust it.
-    expect(refinedSchemaPaths().sort()).toStrictEqual(["card", "card.result"]);
+    //
+    // `card.tags` is the same story: the rule that two tags differing only in
+    // case are one tag to a discovery listing cannot be said in JSON Schema,
+    // so it is a refinement here and a sentence in the document.
+    expect(refinedSchemaPaths().sort()).toStrictEqual(["card", "card.result", "card.tags"]);
   });
 
   it("would notice an undescribed refinement, including a nested one", () => {

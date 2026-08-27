@@ -83,7 +83,8 @@ export type SellingChange =
  * its seller is listed under where one has been set.
  */
 export interface PaidResource {
-  readonly card: StoredCard;
+  /** The card as it is held, under the catalog identifier we issued for it. */
+  readonly stored: StoredCard;
   /** What a purchase of this card would meet right now. */
   readonly selling: MerchantSelling;
   /** The seller's name in a discovery catalog, or nothing where none is set. */
@@ -282,7 +283,7 @@ export class Gateway {
     }
     const merchant = await this.runtime.store.merchantById(stored.merchantId);
     return {
-      card: stored,
+      stored,
       // The same fold every other reader of this question gets, and the same
       // one the machine is given: the merchant's word and the card's own pause
       // become one word. A merchant the store cannot find is a card with no

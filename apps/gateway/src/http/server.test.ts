@@ -4,6 +4,7 @@ import { API_ROUTES, mountableRoutes } from "@coinslot/contracts";
 import { decodePaymentRequiredHeader, encodePaymentSignatureHeader } from "@x402/core/http";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
+import { setServiceName } from "../app/merchants.js";
 import { type Harness, harness, type Served, serve, workUntilStopped } from "../testing/harness.js";
 import { buildApp } from "./server.js";
 import { ORDER_ID_IN_EXTRA, PAYMENT_REQUIRED_HEADER, PAYMENT_SIGNATURE_HEADER } from "./x402.js";
@@ -1156,7 +1157,7 @@ describe("a product that is declared and a product that is not", () => {
     // else on the wire carries a seller's name, so a challenge that lost it on
     // the way out would list every product of ours under nobody.
     const { served, harnessed } = await started();
-    await harnessed.store.setServiceName(harnessed.merchant.id, "The pilot merchant", Date.now());
+    await setServiceName(harnessed.store, harnessed.merchant.id, "The pilot merchant", Date.now());
     const itemId = await publish(served, syncCard);
 
     const answered = await served.call("GET", `/v0/items/${itemId}/purchase`);

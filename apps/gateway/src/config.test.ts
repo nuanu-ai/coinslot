@@ -254,6 +254,22 @@ describe("loadConfig", () => {
     );
   });
 
+  it("gives one address for the gateway however the variable was written", () => {
+    // A path is joined onto this string. Written with a trailing slash it
+    // produced an address with two slashes in the middle — a second spelling of
+    // every product, which a discovery catalog reads as a second resource, and
+    // the operator who typed the slash would have no way of seeing it.
+    const of = (PUBLIC_BASE_URL: string) =>
+      loadConfig({ ...required, PUBLIC_BASE_URL }).publicBaseUrl;
+
+    expect(of("https://coinslot.example")).toBe("https://coinslot.example");
+    expect(of("https://coinslot.example/")).toBe("https://coinslot.example");
+    expect(of("https://coinslot.example//")).toBe("https://coinslot.example");
+    // A path in the base is left exactly as written: it is somebody's mount
+    // point, not a stray keystroke, and taking it off would move every product.
+    expect(of("https://coinslot.example/gateway/")).toBe("https://coinslot.example/gateway");
+  });
+
   it("names both arithmetic problems at once when both are wrong", () => {
     const broken = () =>
       loadConfig({
