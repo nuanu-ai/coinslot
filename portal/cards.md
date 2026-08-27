@@ -3,22 +3,22 @@
 *A preliminary contract: the wording can still change before the pilot.*
 
 If you keep the cards yourself, this reference is yours. By default we write
-them and the owner of the business approves them; the whole path, from an
-empty project to a test sale, is on [The first test sale](/quickstart).
+them and the owner of the business approves them; the whole path, from an empty
+project to a test sale, is on [The first test sale](/quickstart).
 
-The working words — handler, order, agent — are defined on
-[The first test sale](/quickstart).
+The working words — handler, order, agent — are defined on [The first test
+sale](/quickstart).
 
 A card is the description of one product in a catalogue: everything the agent
 sees before buying, and everything it decides to buy from. From that follows
-the requirement that runs through every field at once — an agent has to be
-able to buy from the card, which means assembling a correct purchase and
-getting back what it expected.
+the requirement that runs through every field at once — an agent has to be able
+to buy from the card, which means assembling a correct purchase and getting
+back what it expected.
 
 ::: warning The field names are preliminary
 What is fixed is the model and not the signatures. Of the machine names `id`,
-`merchant_item_id` and `as_of` are final; the other names in this reference
-are working names and can still change before the pilot.
+`merchant_item_id` and `as_of` are final; the other names in this reference are
+working names and can still change before the pilot.
 :::
 
 ## Fields
@@ -36,28 +36,28 @@ are working names and can still change before the pilot.
 | `fulfillment` | `'sync'` or `'async'`; `'confirm'` is not published during the pilot | required | `'sync'` |
 | `fulfill_deadline_seconds` | how long you may take to deliver | on an asynchronous card only | `86400` |
 
-An asynchronous card carries one deadline of your own: how long you may take
-to deliver. It runs from the moment the buyer is charged, which for an
+An asynchronous card carries one deadline of your own: how long you may take to
+deliver. It runs from the moment the buyer is charged, which for an
 asynchronous product is the moment of purchase — so the clock is already going
 when the order reaches your handler, and it covers every attempt we make to
-deliver that order to you. The agent sees the deadline before it buys, and
-what happens when it runs out is in [Time ran out](/orders). A synchronous
-card has no such field, because how long to wait for a synchronous answer is
-our own ceiling on how long an agent waits, the same for every product. That
-one runs from the moment of purchase, so the price question and the payment
-check come out of it before your handler is called. The confirmation mode has a deadline of its own and it arrives
-together with the mode.
+deliver that order to you. The agent sees the deadline before it buys, and what
+happens when it runs out is in [Time ran out](/orders). A synchronous card has
+no such field, because how long to wait for a synchronous answer is our own
+ceiling on how long an agent waits, the same for every product. That one runs
+from the moment of purchase, so the price question and the payment check come
+out of it before your handler is called. The confirmation mode has a deadline
+of its own and it arrives together with the mode.
 
 ### Two identifiers
 
 A product has two keys, and they appear at the same moment. Our catalogue `id`
 is issued when the card is published, and it is what lives in the catalogues,
-in the orders and in the receipts. Your `merchant_item_id` is set by you: it
-is the identifier the product already has in your database.
+in the orders and in the receipts. Your `merchant_item_id` is set by you: it is
+the identifier the product already has in your database.
 
 The second key saves you a lookup table. An order arrives carrying your own
-key, so there is nothing to translate from our numbering into yours. It is
-also the point of connection that survives you publishing your cards again.
+key, so there is nothing to translate from our numbering into yours. It is also
+the point of connection that survives you publishing your cards again.
 
 ### Title
 
@@ -67,11 +67,11 @@ characters allowed, and we fit the title to them at publication.
 
 ### Description
 
-The description is read by the buying program, so you write it differently
-from one meant for a person. A program needs facts that distinguish: what
-exactly the buyer receives, what task it is good for, what is not included,
-what the limits are. "The best offer on the market" is empty to a machine,
-while "incoming messages only" settles whether the product fits.
+The description is read by the buying program, so you write it differently from
+one meant for a person. A program needs facts that distinguish: what exactly
+the buyer receives, what task it is good for, what is not included, what the
+limits are. "The best offer on the market" is empty to a machine, while
+"incoming messages only" settles whether the product fits.
 
 ### Price
 
@@ -98,10 +98,10 @@ agent decides from it whether to look any further.
 
 The list of what the agent has to give at purchase: an email address, a
 country, a period, any other input without which the delivery is impossible.
-Each parameter has a type — `string`, `number`, `integer` or `boolean` — a
-mark saying whether it is required, and an explanation a person can read of
-what it is for. Those four are the whole language today, so a date, a list or
-a choice from a set travels as one of them.
+Each parameter has a type — `string`, `number`, `integer` or `boolean` — a mark
+saying whether it is required, and an explanation a person can read of what it
+is for. Those four are the whole language today, so a date, a list or a choice
+from a set travels as one of them.
 
 Nothing checks this field against your delivery, and it is where the card's
 main requirement breaks. A parameter your delivery needs and the card does not
@@ -123,13 +123,12 @@ discovers after it has paid.
 
 Every field of the result is required until you mark it `required: false`. The
 result is a promise, and a delivery missing a promised field does not go
-through as a delivery. Purchase parameters run the other way round: a
-parameter is required only where it is marked `required: true`.
+through as a delivery. Purchase parameters run the other way round: a parameter
+is required only where it is marked `required: true`.
 
-A card declares at least one field here, and at least one of them has to
-arrive every time. A result that might be entirely absent tells the agent
-nothing about what it is paying for, and a card carrying one is refused at
-publication.
+A card declares at least one field here, and at least one of them has to arrive
+every time. A result that might be entirely absent tells the agent nothing
+about what it is paying for, and a card carrying one is refused at publication.
 
 ```ts
 result: {
@@ -146,15 +145,15 @@ pays. With `'sync'` the goods leave in the answer to the purchase; with
 the sale behaves when something fails.
 
 A third mode, `'confirm'`, puts your confirmation before the delivery: you are
-asked whether you will deliver, and the buyer is charged after your yes. A
-card cannot be published in it during the pilot — the request that asks you
-has no shape on the wire yet, so a handler could not tell one from a paid
-order, and publishing such a card would sell you a mode we cannot serve.
+asked whether you will deliver, and the buyer is charged after your yes. A card
+cannot be published in it during the pilot — the request that asks you has no
+shape on the wire yet, so a handler could not tell one from a paid order, and
+publishing such a card would sell you a mode we cannot serve.
 
 The product decides the mode. The channel only narrows the choice: an order
 that arrived as a message is never synchronous, while a connected API delivers
-both synchronously and asynchronously. What happens inside each mode
-is on [Orders and fulfillment modes](/orders).
+both synchronously and asynchronously. What happens inside each mode is on
+[Orders and fulfillment modes](/orders).
 
 ## Asking the price and availability
 
@@ -165,8 +164,8 @@ differs is only where your code stands. The forms below are working ones and
 can change before the pilot.
 
 The question travels the same channel as the orders: you put a price handler
-beside the order handler, in the same process. Nothing of yours faces outward
-— no address, no open ports. This is the transport we serve.
+beside the order handler, in the same process. Nothing of yours faces outward —
+no address, no open ports. This is the transport we serve.
 
 ```ts
 coinslot.on('quote', async (q) => {
@@ -207,12 +206,12 @@ POST https://api.example.com/quote
 }
 ```
 
-The field `purpose` says why we are asking. Today it always reads
-`"purchase"`: there is an agent behind the question, buying right now. Its
-other value, `"poll"`, belongs to a scheduled refresh between purchases —
-nothing sends it yet, and a handler should accept it all the same. Where the
-two are told apart, an expensive stock lookup is worth spending on a purchase
-and worth skipping on a poll.
+The field `purpose` says why we are asking. Today it always reads `"purchase"`:
+there is an agent behind the question, buying right now. Its other value,
+`"poll"`, belongs to a scheduled refresh between purchases — nothing sends it
+yet, and a handler should accept it all the same. Where the two are told apart,
+an expensive stock lookup is worth spending on a purchase and worth skipping on
+a poll.
 
 The field `price_id` identifies this one price question, and it is good once —
 no more than one order goes through under a single `price_id`. The same
@@ -220,8 +219,8 @@ no more than one order goes through under a single `price_id`. The same
 sale. Beside it comes `expires_at`, the moment up to which the price you name
 will be honoured: if you have set stock aside against it, there is no need to
 hold that stock any longer, and we send no separate message when the moment
-passes. Nobody is obliged to reserve anything — without a reservation the
-check stays an answer to a question rather than a commitment.
+passes. Nobody is obliged to reserve anything — without a reservation the check
+stays an answer to a question rather than a commitment.
 
 The answer has three parts:
 
@@ -242,12 +241,12 @@ In full it looks like this:
 ```
 
 The mark `as_of` says which moment the answer is true for, and it separates
-"went and checked just now" from "handed over what was in the cache". We
-decide from it how far the answer can be trusted, and the same moment ends up
-in the record of the sale. A price handler is given it as the last argument; a
-call made without it stamps the moment of the answer itself, which is correct
-exactly when you were looking at that moment. An answer out of a cache is
-dated by the moment that cache was filled, as in the example above.
+"went and checked just now" from "handed over what was in the cache". We decide
+from it how far the answer can be trusted, and the same moment ends up in the
+record of the sale. A price handler is given it as the last argument; a call
+made without it stamps the moment of the answer itself, which is right only if
+you really did look just then. An answer out of a cache is dated by the moment
+that cache was filled, as in the example above.
 
 An `available: false` answer to a purchase closes it before any money moves,
 and no order appears on your side. The price from an answer lives until
@@ -257,17 +256,17 @@ system, and what happens once it has passed is in [Time ran out](/orders).
 We hold down the load on your side ourselves, limiting how often the questions
 go out.
 
-Coinslot keeps no stock counts: only you know how much of anything there is.
-So a product that can run out is worth listing with a check, because without
-one we sell at the card's price and hear that it has run out only from your
-refusal at delivery.
+Coinslot keeps no stock counts: only you know how much of anything there is. So
+a product that can run out is worth listing with a check, because without one
+we sell at the card's price and hear that it has run out only from your refusal
+at delivery.
 
 ## Refusal codes
 
 A handler's refusal carries a short code and a reason a person can read. The
-code is read by us and by the agent; the reason is read by the person who
-works on the case afterwards. What happens to the order after a refusal is on
-[Orders and fulfillment modes](/orders); here is the vocabulary of codes.
+code is read by us and by the agent; the reason is read by the person who works
+on the case afterwards. What happens to the order after a refusal is on [Orders
+and fulfillment modes](/orders); here is the vocabulary of codes.
 
 The set is open, and a code of your own is fine where none of the common ones
 fits. Three we understand the same way every time, and those are the ones to
@@ -297,14 +296,14 @@ second.
 ## Updating a card, and taking one off sale
 
 Updating is the call that created it. Publishing again under the same
-`merchant_item_id` updates the card that is there rather than creating a
-second one: the key is yours, and we find what is already published by it. So
-a card can be uploaded from a script without checking first whether we have it.
+`merchant_item_id` updates the card that is there rather than creating a second
+one: the key is yours, and we find what is already published by it. So a card
+can be uploaded from a script without checking first whether we have it.
 
 Taking a card off sale is the pause in the cabinet rather than a call. Paused,
 the card stops being visible in the catalogues, and the orders still open
-against it play out in the ordinary way. Nothing removes a card altogether,
-and what that ought to be is not settled.
+against it play out in the ordinary way. Nothing removes a card altogether, and
+what that ought to be is not settled.
 
 ## What is not settled yet
 
@@ -326,9 +325,8 @@ and what that ought to be is not settled.
   yet.
 - The thresholds that limit how often price questions go out, and how long we
   wait for an answer.
-- The price hook. We do not call the address a card names, and when we do,
-  your side will need something to check a request against to know that it
-  came from us. A price handler has neither question — the subscription
-  channel is authenticated when it connects.
-- How a card is removed altogether rather than paused, and how long that
-  takes.
+- The price hook. We do not call the address a card names, and when we do, your
+  side will need something to check a request against to know that it came from
+  us. A price handler has neither question — the subscription channel is
+  authenticated when it connects.
+- How a card is removed altogether rather than paused, and how long that takes.

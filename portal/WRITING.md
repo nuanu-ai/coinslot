@@ -110,13 +110,13 @@ Plain and unnarrated (Dmitry's rule, 2026-08-26; the specimen defect was
   conversation", a page does not "lead" anybody, honesty does not "work".
   People and systems act: "you only have to write code on the first path".
 - Metaphor and imagery are barred from the guides and the references; in the
-  explanations an everyday example is allowed, but not imagery. A sentence
-  that reads as a translation is rewritten as English: actor, verb, object.
+  explanations an everyday example is allowed, but not imagery. A sentence that
+  reads as a translation is rewritten as English: actor, verb, object.
 - The essayist's connectives ("and here is where this comes from", "it has a
   second role too", "let us be frank") are replaced by plain ones: "because",
   "for example", "and".
-- The test: a sentence you would not say to a colleague across the desk in
-  your own voice gets rewritten.
+- The test: a sentence you would not say to a colleague across the desk in your
+  own voice gets rewritten.
 - Rhythm comes from the length and the structure of sentences, not from
   imagery.
 
@@ -128,8 +128,8 @@ Plain and unnarrated (Dmitry's rule, 2026-08-26; the specimen defect was
    walks the path to a test purchase from the texts alone, and names every
    place where they got stuck. The portal is ready when both roles reach the
    end and their questions match the "What is not settled yet" sections.
-2. **Content review with clean context** — contradictions between the pages
-   and with the canon, claims beyond their evidence.
+2. **Content review with clean context** — contradictions between the pages and
+   with the canon, claims beyond their evidence.
 3. **A technical writer's pass** — who each page speaks to, what kind of page
    it is, the vocabulary, tables against prose, links against repetition.
 4. **The humanisation filter** — machine rhythm is rewritten, not softened.

@@ -4,16 +4,16 @@
 
 You run an online business, and you are deciding whether it is worth putting
 your goods where programs do the buying. The money side of that decision is
-collected here: where the payments arrive, at what moment the buyer is
-charged, what you are risking while that happens, and what we take.
+collected here: where the payments arrive, at what moment the buyer is charged,
+what you are risking while that happens, and what we take.
 
 ## Where the money arrives
 
 The money goes from the buyer's wallet — the buyer is a program, buying on
-behalf of a person — straight to your wallet. Coinslot never holds it: we
-check the payment and we set it going, and it passes through no account of
-ours on the way. So there is no payout here, no settlement period, and no
-balance sitting with us that has to be withdrawn.
+behalf of a person — straight to your wallet. Coinslot never holds it: we check
+the payment and we set it going, and it passes through no account of ours on
+the way. So there is no payout here, no settlement period, and no balance
+sitting with us that has to be withdrawn.
 
 Every payment arrives as its own transfer. A hundred sales are a hundred
 incoming transfers: if your accounting is used to one line per period, there
@@ -22,36 +22,35 @@ will be as many lines here as there were sales.
 ## What they pay in
 
 Buyers pay in a stablecoin — a digital dollar, meaning money whose rate is
-pegged to the dollar. For you that means the sum the buyer saw at the moment
-of purchase and the sum that lands in your wallet are the same: nothing is
+pegged to the dollar. For you that means the sum the buyer saw at the moment of
+purchase and the sum that lands in your wallet are the same: nothing is
 converted at a rate in between.
 
-These payments have one more property worth knowing in advance: the transfer
-is final. A buyer cannot reverse it the way a charge on a bank card is
-reversed, because these payments have no such mechanism at all. The case
-familiar from bank cards, where money is taken back off your account a month
-after the sale and you are left proving the goods went out, does not happen
-here. Whatever you give back,
-you give back yourself and by your own decision.
+These payments have one more property worth knowing in advance: the transfer is
+final. A buyer cannot reverse it the way a charge on a bank card is reversed,
+because these payments have no such mechanism at all. The case familiar from
+bank cards, where money is taken back off your account a month after the sale
+and you are left proving the goods went out, does not happen here. Whatever you
+give back, you give back yourself and by your own decision.
 
 Which digital dollar we use, and which network the transfers run over, is not
-chosen yet. Who pays the network fee and how that fee sits against the price
-of the goods follows from the same question; both are in the list at the
-bottom of this page.
+chosen yet. Who pays the network fee and how that fee sits against the price of
+the goods follows from the same question; both are in the list at the bottom of
+this page.
 
 ## When the money reaches you
 
 It depends on the product. For some goods the money arrives after you have
 delivered: the payment executes as the last step of the purchase, and if the
-delivery did not work out, the purchase simply did not happen — the buyer
-spent nothing and you owe nobody anything. For the rest the money arrives at
-the moment of purchase, ahead of your delivery, and then a product that was
-never delivered leaves a debt: such an order is marked as needing a refund.
+delivery did not work out, the purchase simply did not happen — the buyer spent
+nothing and you owe nobody anything. For the rest the money arrives at the
+moment of purchase, ahead of your delivery, and then a product that was never
+delivered leaves a debt: such an order is marked as needing a refund.
 
-Which of the two comes first is your choice, and you make it product by
-product — it is written in the card for that product, the description a
-catalogue shows a buyer, alongside its price. There is no switch for the whole shop: one product can be paid for
-after delivery and the one next to it before.
+Which of the two comes first is your choice, and you make it product by product
+— it is written in the card for that product, the description a catalogue shows
+a buyer, alongside its price. There is no switch for the whole shop: one
+product can be paid for after delivery and the one next to it before.
 
 Say you sell a month of access for five dollars (an example figure). If the
 access goes to the buyer in the answer to the purchase, those five dollars
@@ -65,11 +64,10 @@ until you answer yes nothing is charged, and after your yes the money arrives
 at once, with the delivery still ahead of it.
 
 One rule covers all three. While your answer comes before the money, your
-silence costs the buyer nothing. After the charge, that same silence
-leaves them without the goods — what that looks like in each separate failure
-is on [What can go wrong](/failures). The exact moments of charging are
-collected in a table for your engineer on
-[Orders and fulfillment modes](/orders).
+silence costs the buyer nothing. After the charge, that same silence leaves
+them without the goods — what that looks like in each separate failure is on
+[What can go wrong](/failures). The exact moments of charging are collected in
+a table for your engineer on [Orders and fulfillment modes](/orders).
 
 ## You delivered and the money did not arrive
 
@@ -94,10 +92,10 @@ the card, and we do not set a general rule on your behalf.
 
 ## What proves a sale happened
 
-A sale that went through leaves a receipt — a record of the payment, written
-at the moment the goods are released. It shows what was bought and for how
-much; to the buyer it is proof of payment, to you it is the record a dispute
-is settled from. The price the sale went through at goes into the receipt and
+A sale that went through leaves a receipt — a record of the payment, written at
+the moment the goods are released. It shows what was bought and for how much;
+to the buyer it is proof of payment, to you it is the record a dispute is
+settled from. The price the sale went through at goes into the receipt and
 stays there unchanged even after your price has moved.
 
 An order paid for and never delivered leaves no receipt, because no goods went
@@ -105,19 +103,19 @@ out. What you have for that case is the order itself and the event telling you
 a refund is owed.
 
 Receipts matter for repeats too. The answer to a purchase is sometimes lost on
-the way: the buyer paid and the goods did not reach them because the
-connection dropped. The agent then repeats the purchase and receives what has
-already been delivered. There is no second charge, and we do not ask you for a
-second delivery. Which key we recognise a repeat by is in
-[Telling a repeat apart](/orders).
+the way: the buyer paid and the goods did not reach them because the connection
+dropped. The agent then repeats the purchase and receives what has already been
+delivered. There is no second charge, and we do not ask you for a second
+delivery. Which key we recognise a repeat by is in [Telling a repeat
+apart](/orders).
 
 ## If the buyer did not get the goods
 
 You return the money for an undelivered product to the buyer yourself, out of
-your own wallet. It cannot be otherwise: the payment came from them straight
-to you, it never passed through our accounts, and we are in no position to
-give back what we never held. Our part of the work is to record the obligation
-and hand you the record — which order, for how much, and why it was left
+your own wallet. It cannot be otherwise: the payment came from them straight to
+you, it never passed through our accounts, and we are in no position to give
+back what we never held. Our part of the work is to record the obligation and
+hand you the record — which order, for how much, and why it was left
 undelivered. That covers both the orders you did not manage to deliver in time
 and the orders still open at the moment you leave.
 
@@ -144,13 +142,13 @@ this page.
 
 ## What is not settled yet
 
-- Which digital dollar and which transfer network; who pays the network fee
-  and how it sits against the price of the goods.
+- Which digital dollar and which transfer network; who pays the network fee and
+  how it sits against the price of the goods.
 - How you send money back for an undelivered order, and how we learn that you
   have.
 - Reconciling what came in against what was sold. A receipt follows the goods,
   so an order paid for and not delivered has none, and matching the transfers
   into your wallet against the orders is still yours to do by hand.
 - The price of the subscription and what it covers.
-- Who counts as the seller on paper, what document your accounting receives
-  for a sale, and how a stablecoin payment is reported.
+- Who counts as the seller on paper, what document your accounting receives for
+  a sale, and how a stablecoin payment is reported.
