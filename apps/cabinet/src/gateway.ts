@@ -60,7 +60,25 @@ export interface GatewayClient {
  * step still to come (ADR-0010); the shape here is what makes it a change to
  * where the key comes from rather than to this file.
  */
-export const gatewayFor = (baseUrl: string, key: string): GatewayClient => {
+/**
+ * How long the cabinet waits for the gateway before giving up on one call.
+ *
+ * A number here rather than in the configuration on purpose: this is not the
+ * kind of waiting the order machine takes from an environment, where the value
+ * is policy somebody decides. It is a guard on a client, and its only job is to
+ * be shorter than a person's patience with a page that has stopped.
+ *
+ * It is an argument with this as its default so that the promise can be tested
+ * against a server that never answers without the suite waiting ten seconds to
+ * find out. Nothing in the cabinet passes it.
+ */
+const ANSWER_WITHIN_MS = 10_000;
+
+export const gatewayFor = (
+  baseUrl: string,
+  key: string,
+  answerWithinMs: number = ANSWER_WITHIN_MS,
+): GatewayClient => {
   const call = async <T>(
     route: { readonly method: string; readonly path: string },
     schema: { parse: (value: unknown) => T },
@@ -74,13 +92,21 @@ export const gatewayFor = (baseUrl: string, key: string): GatewayClient => {
       answered = await fetch(url, {
         method: route.method,
         headers: { [MERCHANT_KEY_HEADER]: merchantKeyHeaderValue(key) },
+        signal: AbortSignal.timeout(answerWithinMs),
       });
     } catch (thrown) {
       // Nothing answered. Said as its own thing, because "the gateway is not
       // there" and "the gateway says you have nothing" are different news and
       // only one of them means the merchant should do something.
-      console.error("[cabinet] the gateway could not be reached", thrown);
-      return { ok: false, status: 0, why: "the gateway could not be reached" };
+      //
+      // And a third: a connection that was accepted and then went quiet. It
+      // reaches here only because of the deadline above — without one this call
+      // never returns, and the page a merchant is holding is sometimes the one
+      // that stops their selling.
+      const late = thrown instanceof Error && thrown.name === "TimeoutError";
+      const why = late ? "the gateway did not answer in time" : "the gateway could not be reached";
+      console.error(`[cabinet] ${why}`, thrown);
+      return { ok: false, status: 0, why };
     }
 
     if (!answered.ok) {
