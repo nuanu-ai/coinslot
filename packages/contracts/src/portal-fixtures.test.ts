@@ -230,6 +230,20 @@ type Fixture =
        * that the page does write fails the test.
        */
       suppliedBySdk?: string[];
+      /**
+       * The SDK call the example makes to build this document, where it makes
+       * one.
+       *
+       * Without it a fixture can end up tied to nothing of its own. The two
+       * price answers share a fence, and `{ available: false }` has exactly two
+       * names in it: `available`, which the *other* branch's `q.available(…)`
+       * satisfies, and `as_of`, which the SDK supplies. Delete the whole
+       * "there is none" example from the page and every remaining token still
+       * occurs — the fixture would go on certifying a document the portal no
+       * longer shows anybody. Naming the call is what puts that branch's own
+       * line back under the check.
+       */
+      builtBy?: string;
     });
 
 /**
@@ -296,6 +310,7 @@ const fixtures: Fixture[] = [
     what: "a handler refusing a synchronous order",
     fence: { file: "portal/quickstart.md", language: "ts", index: 2 },
     schema: HandlerAnswerSchema,
+    builtBy: "refused",
     value: { refused: { code: "out_of_stock", message: "Мест на тарифе нет" } },
   },
   {
@@ -303,6 +318,7 @@ const fixtures: Fixture[] = [
     what: "a handler delivering a synchronous order",
     fence: { file: "portal/quickstart.md", language: "ts", index: 2 },
     schema: HandlerAnswerSchema,
+    builtBy: "delivered",
     computed: ["access_url"],
     value: { delivered: { access_url: "https://example.com/a/9f2c4a" } },
   },
@@ -311,6 +327,7 @@ const fixtures: Fixture[] = [
     what: "the price handler in the field reference, answering that the item is there",
     fence: { file: "portal/cards.md", language: "ts", index: 1 },
     schema: QuoteResponseSchema,
+    builtBy: "available",
     // Both answers share this fence, so each branch's names keep the other's
     // alive: renaming the unavailable branch's fields left every token of its
     // own fixture still occurring, in the other branch. The reverse check is
@@ -331,6 +348,7 @@ const fixtures: Fixture[] = [
     what: "the same price handler, answering that it is not",
     fence: { file: "portal/cards.md", language: "ts", index: 1 },
     schema: QuoteResponseSchema,
+    builtBy: "unavailable",
     computed: ["available", "as_of"],
     suppliedBySdk: ["as_of"],
     value: { available: false, as_of: "2026-08-26T10:15:00Z" },
@@ -340,6 +358,7 @@ const fixtures: Fixture[] = [
     what: "a handler taking an asynchronous order on",
     fence: { file: "portal/quickstart.md", language: "ts", index: 3 },
     schema: HandlerAnswerSchema,
+    builtBy: "accepted",
     value: { accepted: { eta_seconds: 60 } },
   },
   {
@@ -361,6 +380,7 @@ const fixtures: Fixture[] = [
     what: "a price handler answering that the item is there",
     fence: { file: "portal/quickstart.md", language: "ts", index: 5 },
     schema: QuoteResponseSchema,
+    builtBy: "available",
     // The available branch names every field the fence writes on a line of
     // its own, so it can be held to the example in both directions.
     completeKeys: true,
@@ -377,6 +397,7 @@ const fixtures: Fixture[] = [
     what: "the same price handler answering that it is not",
     fence: { file: "portal/quickstart.md", language: "ts", index: 5 },
     schema: QuoteResponseSchema,
+    builtBy: "unavailable",
     // No `completeKeys` here: one fence carries both answers, and `price`
     // belongs to the other one. Asking this fixture to account for every name
     // on the page would be asking it about a payload that is not its own.
@@ -555,6 +576,16 @@ describe("the portal's examples pass the schemas", () => {
             occursIn(text, { kind: "key", text: name, key: name }),
             `the example writes "${name}" after all, so it no longer belongs in this fixture's suppliedBySdk list`,
           ).toBe(false);
+        }
+
+        // And the call this document is built by has to be on the page, which
+        // is what ties a fixture to its own line rather than to whatever else
+        // shares the fence with it.
+        if (fixture.builtBy !== undefined) {
+          expect(
+            occursIn(text, { kind: "key", text: fixture.builtBy, key: fixture.builtBy }),
+            `the example no longer calls ${fixture.builtBy}(), so nothing on the page produces this document any more`,
+          ).toBe(true);
         }
 
         // The transcription is only worth as much as its likeness to the page.

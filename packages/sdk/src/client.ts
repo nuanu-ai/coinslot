@@ -27,7 +27,8 @@
  * made hours later and from anywhere in their code, and they exist on the
  * order rather than beside it so that a merchant never holds an identifier of
  * ours. The same calls are on every order this client hands back — off the
- * stream, off `orders.get`, off `orders.list` — because a process that
+ * stream, off `orders.get`, off `orders.list`, and off `orders.forId` for the
+ * process that kept nothing but the identifier — because a process that
  * restarted has no object left to hold, and that is exactly the moment
  * juggling identifiers would come back.
  *
@@ -78,7 +79,9 @@ import {
   type EventHandler,
   type HandlerRegistry,
   type ProblemReporter,
+  REGISTERED_AS,
   type RunningWorker,
+  type StreamHandlerKind,
   startWorker,
   type WorkerProblem,
 } from "./worker.js";
@@ -209,9 +212,12 @@ export type QuoteHandler = (question: LiveQuoteRequest) => QuoteResponse | Promi
  *
  * A map rather than four methods, because the stream is one stream and this is
  * the list of what travels on it. The day the contract carries a fourth kind —
- * the confirmation request, whose shape it does not carry yet — that kind is
- * an entry here and an arm in the worker's dispatch, and nothing else about
- * this surface moves.
+ * the confirmation request, whose shape it does not carry yet — `REGISTERED_AS`
+ * in `worker.ts` gains its word, and from that word every list in this file
+ * follows: what `on` accepts, what `start` counts as an answer, and the
+ * sentence that names a missing registration. What does not follow is what
+ * answers it, so this map gains an entry and the worker's dispatch gains an
+ * arm, and both refuse to compile until they do.
  *
  * `problem` is on the same list although nothing on the wire carries it. It is
  * one registration per process, exactly like the other three, and a second
@@ -225,15 +231,31 @@ export interface Handlers {
   problem: ProblemReporter;
 }
 
-export type HandlerKind = keyof Handlers;
+/** The word for the reporter, which nothing on the wire carries. */
+const PROBLEM = "problem";
+
+export type HandlerKind = StreamHandlerKind | typeof PROBLEM;
 
 /**
- * The words `on` accepts, as a map over the handlers themselves.
+ * Whether a type is a union of more than one thing.
+ *
+ * Here for one purpose, at `on` below: to tell a kind that is one kind from a
+ * kind that is any of several, because only the first can say which handler is
+ * the right one.
+ */
+type IsUnion<Kind, Each = Kind> = Kind extends unknown
+  ? [Each] extends [Kind]
+    ? false
+    : true
+  : never;
+
+/**
+ * The words `on` accepts, as a map over the kinds themselves.
  *
  * A merchant working outside TypeScript, or one who wrote `orders`, would
  * otherwise register a handler that is never called and hear nothing about it.
- * Written as a mapped type so that a kind added to `Handlers` and forgotten
- * here stops this file compiling.
+ * Written as a mapped type so that a kind the stream grows and this file
+ * forgets stops it compiling.
  */
 const HANDLER_KINDS: { readonly [Kind in HandlerKind]: true } = Object.freeze({
   order: true,
@@ -241,6 +263,15 @@ const HANDLER_KINDS: { readonly [Kind in HandlerKind]: true } = Object.freeze({
   event: true,
   problem: true,
 });
+
+/**
+ * Every word `on` accepts, in the order this file lists them, for the sentence
+ * a merchant reads when they wrote one that is not on the list.
+ */
+const everyKind = (): string[] => Object.keys(HANDLER_KINDS).map((kind) => `'${kind}'`);
+
+/** The words that answer something on the stream, which `problem` does not. */
+const streamKinds = (): StreamHandlerKind[] => Object.values(REGISTERED_AS);
 
 export interface CatalogNamespace {
   /**
@@ -299,8 +330,22 @@ export interface CoinslotClient {
    *
    * Handlers may be registered before or after `start`; the loop reads them
    * when an envelope arrives, not when it begins.
+   *
+   * The condition on the second parameter is what makes the two halves agree,
+   * and it is worth the sentence it costs. Written plainly as
+   * `(kind: Kind, handler: Handlers[Kind])`, a call whose kind is not a
+   * literal — a loop over `['order', 'quote']`, a kind held in a variable —
+   * infers `Kind` as the union, and `Handlers[Kind]` is then the union of
+   * handlers, so an order handler registered under `'quote'` type-checks. It
+   * fails at the first price question, where the handler calls a method the
+   * question does not have, and every sale of that card quietly falls back to
+   * the card's own price. So a kind that is not one kind admits no handler at
+   * all, and the call has to be narrowed to one of them first.
    */
-  on<Kind extends HandlerKind>(kind: Kind, handler: Handlers[Kind]): void;
+  on<Kind extends HandlerKind>(
+    kind: Kind,
+    handler: IsUnion<Kind> extends true ? never : Handlers[Kind],
+  ): void;
 
   /**
    * Opens the subscription and returns once it is running.
@@ -581,11 +626,7 @@ export const createClient = (options: ClientOptions): CoinslotClient => {
     on(kind, handler) {
       if (!Object.hasOwn(HANDLER_KINDS, kind)) {
         throw new TypeError(
-          `on() was given ${JSON.stringify(kind)}, which is not a kind this stream carries: the kinds are ${Object.keys(
-            HANDLER_KINDS,
-          )
-            .map((known) => `'${known}'`)
-            .join(", ")}`,
+          `on() was given ${JSON.stringify(kind)}, which is not a kind this stream carries: the kinds are ${everyKind().join(", ")}`,
         );
       }
 
@@ -648,13 +689,17 @@ export const createClient = (options: ClientOptions): CoinslotClient => {
         );
       }
 
-      if (
-        registry.order === undefined &&
-        registry.quote === undefined &&
-        registry.event === undefined
-      ) {
+      // Read off the vocabulary rather than written out, so a kind the stream
+      // grows is counted as an answer here without anybody remembering to add
+      // it — a process that answered only the new kind would otherwise be
+      // refused a start on the grounds that it answers nothing.
+      if (!streamKinds().some((kind) => registry[kind] !== undefined)) {
         throw new TypeError(
-          "this client has nothing registered to answer with: register at least one of on('order'), on('quote') or on('event') before start(), or the loop would take work off the queue that nobody answers",
+          `this client has nothing registered to answer with: register at least one of ${streamKinds()
+            .map((kind) => `on('${kind}')`)
+            .join(
+              ", ",
+            )} before start(), or the loop would take work off the queue that nobody answers`,
         );
       }
 
@@ -668,10 +713,13 @@ export const createClient = (options: ClientOptions): CoinslotClient => {
       // returning is what lets a shutdown routine call this unconditionally.
       if (owned === undefined) return;
 
-      // One promise for every caller, so a shutdown routine and a signal
-      // handler that both call stop() both wait for the same ending rather
-      // than the second one returning at once and letting the process exit
-      // with a delivery still in flight.
+      // One promise for every caller — a shutdown routine and a signal handler
+      // both calling stop() is ordinary — and what it buys is the bookkeeping
+      // rather than the waiting. Each of them would wait out the same loop
+      // either way, because the worker's own stop() awaits the one promise the
+      // loop ends on. What must happen once is the clearing below: two of them
+      // racing it is two of them deciding whether this client still has a
+      // worker, and the last one to answer wins.
       stopping ??= owned.stop().finally(() => {
         if (worker === owned) worker = undefined;
         stopping = undefined;

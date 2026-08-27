@@ -63,8 +63,11 @@ declare global {
    */
   const order: LiveOrder;
   const orderId: string;
+  /** An identifier the merchant kept in their own record, without the order. */
+  const savedId: string;
   const url: string;
   const until: string;
+  function accessFor(orderId: string): Promise<{ url: string } | null>;
   function grantAccess(
     recipient: unknown,
     options: { idempotencyKey: string },
@@ -96,7 +99,7 @@ interface Page {
 
 const PAGES: readonly Page[] = [
   { file: "portal/quickstart.md", fences: 6 },
-  { file: "portal/orders.md", fences: 3 },
+  { file: "portal/orders.md", fences: 4 },
   { file: "portal/cards.md", fences: 2, pieces: { 0: asCardResult } },
 ];
 
@@ -248,6 +251,7 @@ describe("the portal's TypeScript examples", () => {
       "order.accepted(",
       "order.deliver(",
       "order.refuse(",
+      "coinslot.orders.forId(",
       "coinslot.orders.get",
       "coinslot.orders.list",
     ]) {

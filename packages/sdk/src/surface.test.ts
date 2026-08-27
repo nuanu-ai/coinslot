@@ -10,11 +10,16 @@
  * merchant delivers hours later, from another part of their code and often
  * from another process life, and every one of those places used to be a place
  * where the wrong string could be passed back to us.
+ *
+ * The block at the end of this file is checked by the compiler rather than by
+ * vitest, and it is there because one of the things this surface promises is a
+ * promise only the compiler can keep: that the kind a handler is registered
+ * under and the handler itself have to agree.
  */
 
 import type { Card, Order, OrderEvent, OrderWithStatus, QuoteRequest } from "@coinslot/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { OrderCalls } from "./client.js";
+import type { CoinslotClient, HandlerKind, OrderCalls } from "./client.js";
 import { contractVersion } from "./contract.js";
 import { createClient } from "./index.js";
 import { type FakeGateway, type GatewayAnswer, startFakeGateway } from "./testing/fake-gateway.js";
@@ -179,6 +184,52 @@ describe("the lifecycle a merchant drives", () => {
     // A reporter alone is not an answer to anything on the stream.
     coinslot.on("problem", () => {});
     await expect(coinslot.start()).rejects.toThrow(/on\(/);
+  });
+
+  it("dispatches to a handler registered after the loop was already running", async () => {
+    // The documented promise, and the one a merchant relies on without
+    // noticing: handlers belong to the client and the loop reads them when an
+    // envelope arrives. A loop that took a copy of them at start() would
+    // register this price handler onto nothing, and the sale would fall back
+    // to the card's own price with no problem reported.
+    const parked = new Promise<GatewayAnswer>(() => {});
+    let releaseTheQuote: (() => void) | undefined;
+    const quoteMayArrive = new Promise<void>((resolve) => {
+      releaseTheQuote = resolve;
+    });
+
+    const seen: string[] = [];
+
+    const coinslot = await clientOver({
+      poll_worker: async (_call, index) => {
+        if (index === 0) return batch(envelopes.order);
+        if (index === 1) {
+          await quoteMayArrive;
+          return batch(envelopes.quote);
+        }
+        return parked;
+      },
+      answer_order: () => ({ body: { ok: true, result: "delivered" } }),
+      answer_quote: () => ({ body: { used: true } }),
+    });
+
+    coinslot.on("order", (arrived) => {
+      seen.push(`order ${arrived.id}`);
+      return arrived.delivered({ access_url: "https://a.example" });
+    });
+
+    running = coinslot;
+    await coinslot.start();
+    await waitUntil(() => seen.length === 1, "the loop to be running");
+
+    coinslot.on("quote", (asked) => {
+      seen.push(`quote ${asked.price_id}`);
+      return asked.unavailable(AT);
+    });
+    releaseTheQuote?.();
+
+    await waitUntil(() => seen.length === 2, "the later handler to receive a question");
+    expect(seen[1]).toBe("quote price-1");
   });
 
   it("refuses a second start rather than running two loops for one client", async () => {
@@ -585,6 +636,48 @@ describe("where problems go", () => {
     expect(said[1]).not.toMatch(/on\('order'\)|on\('quote'\)/);
   });
 
+  it("survives a reporter that fails a turn later, not only one that throws", async () => {
+    // A merchant shipping problems to an HTTP logger writes an async reporter,
+    // and TypeScript lets them: a function returning a promise satisfies a
+    // signature returning nothing. Such a reporter does not throw — it returns
+    // a promise that rejects after the call has returned, past any try/catch
+    // around it — and an unhandled rejection ends the host process under
+    // Node's default. So the merchant loses their whole worker the first time
+    // their logger is unreachable, which is most likely during the shutdown
+    // where the reporter is busiest.
+    const escaped: unknown[] = [];
+    const noticed = (reason: unknown): void => {
+      escaped.push(reason);
+    };
+
+    process.on("unhandledRejection", noticed);
+
+    try {
+      const reported: WorkerProblem[] = [];
+      const coinslot = await clientOver({ poll_worker: polling(batch(envelopes.order)) });
+
+      coinslot.on("quote", (asked) => asked.unavailable(AT));
+      coinslot.on("problem", async (problem) => {
+        reported.push(problem);
+        await Promise.resolve();
+        throw new Error("the merchant's logger was closed during shutdown");
+      });
+
+      running = coinslot;
+      await coinslot.start();
+
+      await waitUntil(() => reported.length > 0, "the problem to reach the reporter");
+
+      // Long enough for a rejection to be noticed as unhandled, which happens
+      // a turn after the promise settles rather than at the throw.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(escaped).toStrictEqual([]);
+    } finally {
+      process.off("unhandledRejection", noticed);
+    }
+  });
+
   it("goes to the error console when the merchant registered none", async () => {
     // A worker that stopped in silence is a merchant who hears about it from a
     // buyer, and a library writing to the console is the cheaper rudeness.
@@ -622,3 +715,51 @@ describe("what the surface still does without a stream", () => {
     expect(await coinslot.orders.list()).toStrictEqual([]);
   });
 });
+
+/**
+ * What the compiler refuses, written as code because the compiler is the only
+ * thing that can assert it.
+ *
+ * None of this runs. `tsc` is the assertion: every `@ts-expect-error` fails
+ * the build the day the line under it starts compiling, and every line
+ * without one fails the build the day it stops.
+ */
+const compilerHoldsTheseTrue = (coinslot: CoinslotClient, kind: HandlerKind): void => {
+  // What a handler receives and what it may return are inferred from the kind,
+  // with no annotation anywhere. This is the whole ergonomic claim.
+  coinslot.on("order", (order) => order.delivered({ access_url: order.id }));
+  coinslot.on("quote", (question) => question.available({ amount: "1.00", currency: "USD" }));
+  coinslot.on("event", (event) => {
+    void event.order_id;
+  });
+  coinslot.on("problem", (problem) => {
+    void problem.kind;
+  });
+
+  // A handler for one kind registered under another. It would compile until
+  // the first message arrived and then die calling a method that message does
+  // not carry — every price question failing, and every sale of that card
+  // falling back to the card's own price.
+  // @ts-expect-error an order handler is not what answers a price question
+  coinslot.on("quote", (order) => order.delivered({ access_url: order.id }));
+
+  // A kind that is not known at the call site cannot say which handler is
+  // right, so it admits none.
+  // @ts-expect-error the kind has to be narrowed to one kind first
+  coinslot.on(kind, (order) => order.delivered({ access_url: order.id }));
+
+  for (const each of ["order", "quote"] as const) {
+    // @ts-expect-error and the same holds for a loop over several of them
+    coinslot.on(each, (order) => order.delivered({ access_url: order.id }));
+  }
+
+  // The answer a handler returns is held to the three the contract carries.
+  // @ts-expect-error a bare delivery is not one of them
+  coinslot.on("order", (order) => ({ access_url: order.id }));
+
+  // And a word nothing on the stream is registered under.
+  // @ts-expect-error there is no such kind
+  coinslot.on("orders", () => {});
+};
+
+void compilerHoldsTheseTrue;
