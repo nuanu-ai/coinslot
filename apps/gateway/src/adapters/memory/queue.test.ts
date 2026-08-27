@@ -121,9 +121,9 @@ describe("MemoryQueue delivery", () => {
 
   it("gives two deliveries of one envelope two handles", async () => {
     // Nothing here offers a drawn envelope again, but one envelope still
-    // reaches a stream twice — the order machine asks for another delivery
-    // after a silence, and the poll puts back a hand-over it could not record.
-    // A shared handle would let the answer to one of those finish the other.
+    // reaches a stream twice: the poll puts back the one whose hand-over it
+    // could not record. A shared handle would let the answer to one of those
+    // two arrivals finish the other, which nobody has answered.
     const queue = await started();
     await queue.publish(A, envelope("env_1"));
     await queue.publish(A, envelope("env_1"));

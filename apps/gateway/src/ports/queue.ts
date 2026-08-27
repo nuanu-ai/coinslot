@@ -46,13 +46,14 @@ export interface DrawnEnvelope {
    * The handle for this delivery, not for the envelope.
    *
    * One envelope really can be drawn twice, and never because the queue offered
-   * it again — this port does not do that, as the header above says. It is put
-   * on the stream a second time by somebody: the order machine asking for
-   * another delivery after a silence, or the poll itself putting back an
-   * envelope whose hand-over it could not record. Each of those is a fresh
-   * arrival with a handle of its own, and finishing one does not finish the
-   * other; a shared handle would let the answer to one delivery close a
-   * delivery nobody had answered.
+   * it again — this port does not do that, as the header above says. There is
+   * one way it happens: the poll draws an envelope, cannot record the hand-over
+   * or is told the machine will take it but not yet, and puts that same
+   * envelope back on the stream. A merchant being sent an order a second time
+   * is not this; that is the machine's decision and it produces a fresh
+   * envelope with an identifier of its own. So the two arrivals that share an
+   * identifier need two handles between them, because finishing one must not
+   * finish a delivery nobody has answered.
    */
   readonly handle: string;
 }
