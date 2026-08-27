@@ -465,8 +465,9 @@ export const startWorker = (
    * A field named `__proto__` is removed while a delivery is parsed, before
    * any check runs — it is neither carried nor refused, and the merchant's
    * handler has no way to know that what it returned is not what went out.
-   * `PROTOTYPE_KEY_IS_DROPPED` in the contracts package names this file as
-   * where the loss actually costs something, so this file says it.
+   * The contracts package names the delivery as the place the loss lands in
+   * what the agent is handed — `DeliverySchema` in its `handler.ts` — and a
+   * delivery is written here, so this file says it too.
    *
    * No card can declare such a field, so nothing legitimate reaches here; a
    * merchant only meets it by delivering a name nobody asked for.

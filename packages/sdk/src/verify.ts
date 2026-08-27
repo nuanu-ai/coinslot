@@ -126,33 +126,47 @@ const USAGE = [
 ].join("\n");
 
 /**
- * Why the bare command the documentation shows cannot work yet.
+ * Why the bare command the documentation shows does not run.
  *
  * `coinslot verify` with nothing after it would check the cards the merchant
  * has already published. The binding reason it cannot is the plainest one:
  * this command takes no key and no address, builds no client and asks the
- * gateway nothing, so it has no way to see anything that was published. That
- * is not a gap somebody forgot to fill either — there is no call on the
- * surface that hands a merchant their own published cards back. The one route
- * that lists a catalog answers with what an agent sees, and it is the agent's
- * projection rather than the cards as their author wrote them.
+ * gateway nothing, so it has no way to see anything that was published.
+ *
+ * The call it would have needed does exist, and saying so is the honest half
+ * of the answer: `list_merchant_cards` returns published cards whole, each of
+ * them the card its author wrote rather than an agent's projection of it. What
+ * that route promises is worth repeating exactly, because every part of it is
+ * easy to overstate. Whose cards it returns is not settled — its own
+ * description says that during the pilot there is one merchant and one key, so
+ * it answers with every card the gateway holds, and scoping it to the caller
+ * is a change still to come. A card reaches that list by being accepted at
+ * `publish_card`, which parses the same `CardSchema` this package parses, so
+ * the cards on it passed this check on the day they went out — which is not
+ * the same as passing it now, because the schema can move, nothing parses a
+ * stored card again on the way back out, and a command that builds no client
+ * can never learn which version of the contract the gateway is speaking. And
+ * publishing is more than this check: it can refuse a card for reasons no
+ * schema carries, which `checkCard` says in its own words.
  *
  * So this is a stop and not a scolding, and it is answered with the code that
- * means "did not run". The way through it is to name the card files, which
- * checks the same cards from the source the merchant edits.
+ * means "did not run". The way through it is to name the card files, which are
+ * the copy the merchant can still change — the file is what the next publish
+ * carries, whether the card is new or an edit to one already out.
  */
 const NOTHING_TO_CHECK = [
-  "coinslot verify was given no card files, and it cannot find them on its own:",
+  "coinslot verify was given no card files, and it does not go looking for them:",
   "  - this command takes no key and no address and builds no client, so it",
   "    cannot ask us anything about what you have published",
-  "  - and there is nothing to ask: no call returns a merchant's own published",
-  "    cards, and the one route that lists a catalog answers with the agent's",
-  "    projection of a card rather than the card its author wrote",
+  "  - the call that would answer such a question does exist, list_merchant_cards,",
+  "    and it returns published cards whole — but a card reaches that list by",
+  "    being accepted at publish, which runs this same check, so what comes back",
+  "    is cards that passed this check on the day they went out",
   "  - nothing in this package or in the contract says where a merchant keeps",
   "    the cards they publish from, and looking for a file name or a directory",
   "    would invent a convention nobody agreed to",
-  "Name the card files instead, and the same cards are checked from the source",
-  "you edit.",
+  "Name the card files instead. The file is what your next publish carries,",
+  "whether the card is new or an edit to one already out.",
 ].join("\n");
 
 const checkFile = (path: string): CardFile => {
