@@ -159,6 +159,12 @@ if (databaseUrl === undefined || databaseUrl === "") {
 
     afterAll(async () => {
       await gateway.stop();
+      // Taken away again, the way the queue suite next door takes its own away,
+      // so that a developer opening this database finds the gateway's tables
+      // and not a test run's pg-boss beside them. The drop in beforeAll is what
+      // makes the suite repeatable and stays there: a run that dies in the
+      // middle leaves this behind, and the next run must not care.
+      await pool.query(`drop schema if exists ${QUEUE_SCHEMA} cascade`);
       await pool.end();
     });
 
