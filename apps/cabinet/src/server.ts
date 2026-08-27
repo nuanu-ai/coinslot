@@ -1,6 +1,6 @@
 /**
- * The cabinet's own HTTP surface: three screens, a sign-in, and the four
- * switches that stop and start selling.
+ * The cabinet's own HTTP surface: three screens, a sign-in, a password, and the
+ * four switches that stop and start selling.
  *
  * It is server-rendered with no client framework and no build step, which is
  * ADR-0005 §4. Every page is one GET and every change is one form post
@@ -11,28 +11,55 @@
  * handler is a translation between one request and one or two calls on the
  * gateway's public API, and the pages are drawn from what those calls answered
  * (ADR-0005 §3). A screen that cannot be drawn is API the merchant does not
- * have either — which is the whole point of the cabinet holding no database.
+ * have either.
+ *
+ * Who is allowed in is one middleware and not a check per handler, and that is
+ * ADR-0009 §5. The gate sits above every route below it, so a page added later
+ * is guarded because it is a page rather than because somebody remembered — and
+ * a visitor with no session is answered identically at every address, including
+ * the ones that do not exist, so the cabinet's inventory of pages is not
+ * something a stranger can read off it.
  */
 
 import { readFileSync } from "node:fs";
 import express, { type Express, type Request, type Response } from "express";
+import type { Account, Accounts } from "./accounts.js";
 import type { CabinetConfig } from "./config.js";
+import {
+  fingerprintOf,
+  hashPassword,
+  MINIMUM_PASSWORD_LENGTH,
+  newSessionToken,
+  passwordMatches,
+} from "./credentials.js";
 import { type Answer, type GatewayClient, gatewayFor } from "./gateway.js";
 import { bare, escaped } from "./html.js";
-import { cardsScreen, ordersScreen, receiptsScreen } from "./screens.js";
-import { signInScreen } from "./sign-in.js";
+import { cardsScreen, ordersScreen, receiptsScreen, type Viewer } from "./screens.js";
+import { passwordScreen, signInScreen } from "./sign-in.js";
 
 /** The name the session cookie travels under. */
-const SESSION = "coinslot_key";
+const SESSION = "coinslot_session";
 
 /**
- * How long a merchant stays signed in.
+ * The cookie the cabinet used to keep a live merchant key in.
  *
- * A working day and a bit, so a merchant who signed in at nine is still signed
- * in at six and one who left a browser open over a weekend is not. It is a
- * number in one place rather than a constant beside the cookie, and it is here
- * rather than in the configuration because nothing about a deployment changes
- * what it should be.
+ * Nothing reads it any more. It is cleared at the sign-in because everybody who
+ * ever signed into the old cabinet still has one in their browser, and what it
+ * holds is exactly the credential ADR-0009 exists to get out of browsers.
+ */
+const RETIRED_SESSION = "coinslot_key";
+
+/**
+ * How long a person stays signed in, from the moment they sign in.
+ *
+ * A working day and a bit, so somebody who signed in at nine is still signed in
+ * at six and somebody who left a browser open over a weekend is not. It is
+ * never extended: a sliding window would mean a session that never ends as long
+ * as a tab stays in front of somebody, which is the case it exists to catch.
+ *
+ * It is a number here rather than in the configuration because nothing about a
+ * deployment changes what it should be, and ADR-0009 §6 names what would: a
+ * merchant working from a machine other people use.
  */
 const SESSION_HOURS = 12;
 
@@ -77,20 +104,42 @@ function readTokens(): string {
 }
 const STYLESHEET = `${TOKENS}\n${readFileSync(new URL("./coinslot.css", import.meta.url), "utf8")}`;
 
+/** What the cabinet is built out of, beyond its configuration. */
+export interface CabinetParts {
+  /** Where the people who sign in, and their sessions, are kept. */
+  readonly accounts: Accounts;
+  /**
+   * How the gateway is reached, with the real client as the default.
+   *
+   * One client for the life of the process, because there is one key and it is
+   * the cabinet's own configuration now rather than a visitor's cookie. Only a
+   * test ever passes anything else, and what a deployment runs is the client
+   * that speaks the contract's route table.
+   */
+  readonly gateway?: GatewayClient;
+}
+
 /**
- * The whole cabinet on an express app.
+ * Whose session a request arrived on.
  *
- * `connect` is a parameter with the real client as its default so that a test
- * can drive the pages without a gateway on a socket. Nothing but a test ever
- * passes anything else, and what a deployment runs is the client that speaks
- * the contract's route table.
+ * A map keyed by the request rather than a field written onto it: express hands
+ * every middleware the same object and a property added to it is a property no
+ * type knows about, so the next reader of this file would have to take the
+ * cabinet's word for who is signed in.
  */
-export function buildApp(
-  config: CabinetConfig,
-  connect: (key: string) => GatewayClient = (key) => gatewayFor(config.gatewayUrl, key),
-): Express {
+const people = new WeakMap<Request, Account>();
+
+/** The whole cabinet on an express app. */
+export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
   const app = express();
   const base = config.basePath;
+  const accounts = parts.accounts;
+  const gateway = parts.gateway ?? gatewayFor(config.gatewayUrl, config.merchantApiKey);
+  const cookiePath = base === "" ? "/" : base;
+
+  const forget = (response: Response): void => {
+    response.clearCookie(SESSION, { path: cookiePath });
+  };
 
   app.disable("x-powered-by");
   // No `trust proxy` here on purpose: nothing in the cabinet reads the client's
@@ -113,12 +162,12 @@ export function buildApp(
     response.type("text/css").send(STYLESHEET);
   });
 
-  app.get(`${base}/`, (request, response) => {
-    response.redirect(303, keyIn(request) === null ? `${base}/sign-in` : `${base}/cards`);
-  });
+  app.get(`${base}/sign-in`, async (request, response) => {
+    // Cleared here rather than anywhere else, because this is the one page
+    // everybody who used the old cabinet lands on next.
+    response.clearCookie(RETIRED_SESSION, { path: cookiePath });
 
-  app.get(`${base}/sign-in`, (request, response) => {
-    if (keyIn(request) !== null) {
+    if ((await whoseSession(request, accounts)) !== null) {
       response.redirect(303, `${base}/cards`);
       return;
     }
@@ -126,112 +175,219 @@ export function buildApp(
   });
 
   app.post(`${base}/sign-in`, async (request, response) => {
-    const key = String((request.body as { key?: unknown })?.key ?? "");
-    if (key === "") {
-      response.status(400).type("html").send(signInScreen(base, "Enter your merchant key."));
+    const form = request.body as { email?: unknown; password?: unknown };
+    const email = typeof form.email === "string" ? form.email : "";
+    const password = typeof form.password === "string" ? form.password : "";
+    if (email.trim() === "" || password === "") {
+      response
+        .status(400)
+        .type("html")
+        .send(signInScreen(base, "Enter your address and your password."));
       return;
     }
 
-    // The key is tried against the API before it is kept. A cabinet that
-    // accepted anything typed into the box would sign a merchant in and then
-    // show them three screens of nothing, which reads as "you have no cards".
-    const tried = await connect(key).cards();
-    if (!tried.ok) {
+    const person = await accounts.byEmail(email);
+    // The comparison happens whether or not there is an account, and that is
+    // the point of passing it a null: an answer that came back at once for an
+    // address nobody has would make this form a list of who has an account.
+    const right = await passwordMatches(password, person?.passwordHash ?? null);
+    if (person === null || !right) {
+      // The address is named only when we have an account for it. The email box
+      // is where a password lands when somebody types into the wrong field, and
+      // a refusal that echoed whatever was typed would put that password in the
+      // log; an address we do know is a real account being attacked and is
+      // worth saying.
+      console.log(
+        person === null
+          ? "[cabinet] a sign-in was refused: no account at the address given"
+          : `[cabinet] a sign-in for ${person.email} was refused: wrong password`,
+      );
       response
-        .status(tried.status === 401 ? 401 : 502)
+        .status(401)
+        .type("html")
+        .send(signInScreen(base, "That address and password do not match an account."));
+      return;
+    }
+
+    // A fresh identifier every time. Nothing here can adopt an identifier the
+    // visitor arrived holding, which is what makes a session handed to somebody
+    // in a link impossible rather than merely unlikely.
+    const token = newSessionToken();
+    const now = new Date();
+    await accounts.open(
+      fingerprintOf(token),
+      person.id,
+      now,
+      new Date(+now + SESSION_HOURS * 60 * 60 * 1_000),
+    );
+    response.cookie(SESSION, token, {
+      httpOnly: true,
+      sameSite: "strict",
+      secure: config.cookieSecure,
+      path: cookiePath,
+      maxAge: SESSION_HOURS * 60 * 60 * 1_000,
+    });
+    console.log(`[cabinet] ${person.email} signed in`);
+    response.redirect(303, `${base}/cards`);
+  });
+
+  /**
+   * The gate. Everything below this line needs a session; everything above it
+   * is the sign-in, the stylesheet and the health probe.
+   *
+   * A visitor without one is answered the same way at every address, which is
+   * why this is a middleware and not a check inside each handler: a page added
+   * below is guarded by being below, and a stranger cannot tell which addresses
+   * this cabinet serves from which it does not.
+   */
+  app.use((request, response, next) => {
+    void (async () => {
+      try {
+        const person = await whoseSession(request, accounts);
+        if (person === null) {
+          // The cookie is cleared on the way out, so somebody whose session was
+          // ended lands on a sign-in they can use rather than being bounced
+          // through this gate again on every click.
+          forget(response);
+          response.redirect(303, `${base}/sign-in`);
+          return;
+        }
+        people.set(request, person);
+        next();
+      } catch (thrown) {
+        next(thrown);
+      }
+    })();
+  });
+
+  app.get(`${base}/`, (_request, response) => {
+    response.redirect(303, `${base}/cards`);
+  });
+
+  app.post(`${base}/sign-out`, async (request, response) => {
+    // The row goes, not merely the cookie. Clearing a cookie asks the browser
+    // to forget something; anybody who copied the value still holds a session.
+    const token = tokenIn(request);
+    if (token !== null) {
+      await accounts.end(fingerprintOf(token));
+    }
+    console.log(`[cabinet] ${whoIs(request).email} signed out`);
+    forget(response);
+    response.redirect(303, `${base}/sign-in`);
+  });
+
+  app.get(`${base}/password`, (request, response) => {
+    response.type("html").send(passwordScreen(base, whoIs(request).email, MINIMUM_PASSWORD_LENGTH));
+  });
+
+  app.post(`${base}/password`, async (request, response) => {
+    const person = whoIs(request);
+    const form = request.body as { current?: unknown; fresh?: unknown };
+    const current = typeof form.current === "string" ? form.current : "";
+    const fresh = typeof form.fresh === "string" ? form.fresh : "";
+
+    // The current password first, so that somebody who sat down at an
+    // unattended tab learns nothing at all — not even what this cabinet asks of
+    // a password — without knowing the one that is already set.
+    if (!(await passwordMatches(current, person.passwordHash))) {
+      response
+        .status(401)
         .type("html")
         .send(
-          signInScreen(
+          passwordScreen(
             base,
-            tried.status === 401
-              ? "That key was not accepted. It is the key your gateway is configured with."
-              : tried.status === 0
-                ? `The gateway did not answer: ${tried.why}`
-                : tried.why,
+            person.email,
+            MINIMUM_PASSWORD_LENGTH,
+            "That is not your current password.",
+          ),
+        );
+      return;
+    }
+    if (fresh.length < MINIMUM_PASSWORD_LENGTH) {
+      response
+        .status(400)
+        .type("html")
+        .send(
+          passwordScreen(
+            base,
+            person.email,
+            MINIMUM_PASSWORD_LENGTH,
+            `A new password has to be at least ${MINIMUM_PASSWORD_LENGTH} characters.`,
           ),
         );
       return;
     }
 
-    response.cookie(SESSION, key, {
-      httpOnly: true,
-      sameSite: "strict",
-      secure: config.cookieSecure,
-      path: base === "" ? "/" : base,
-      maxAge: SESSION_HOURS * 60 * 60 * 1_000,
-    });
-    response.redirect(303, `${base}/cards`);
-  });
-
-  app.post(`${base}/sign-out`, (_request, response) => {
-    response.clearCookie(SESSION, { path: base === "" ? "/" : base });
+    // Every session that person had goes with it, including this one. A
+    // password is changed because the old one is not trusted, and a session
+    // opened with it is exactly what must not outlive it.
+    await accounts.setPassword(person.email, await hashPassword(fresh));
+    console.log(`[cabinet] ${person.email} changed their password; every session of theirs ended`);
+    forget(response);
     response.redirect(303, `${base}/sign-in`);
   });
 
-  app.get(`${base}/cards`, (request, response) =>
-    signedIn(request, response, base, connect, async (gateway) => {
-      const cards = await gateway.cards();
-      if (!cards.ok) {
-        return trouble(response, base, cards);
-      }
-      response.type("html").send(cardsScreen(base, cards.document));
-    }),
-  );
+  app.get(`${base}/cards`, async (request, response) => {
+    const cards = await gateway.cards();
+    if (!cards.ok) {
+      return trouble(response, base, cards);
+    }
+    response.type("html").send(cardsScreen(viewing(request, base), cards.document));
+  });
 
-  app.get(`${base}/orders`, (request, response) =>
-    signedIn(request, response, base, connect, async (gateway) => {
-      // Only the exact word narrows the list, which is what the contract says
-      // and what a merchant reconciling their books relies on.
-      const open = request.query.open === "true";
-      const [cards, orders] = await Promise.all([gateway.cards(), gateway.orders(open)]);
-      if (!cards.ok) {
-        return trouble(response, base, cards);
-      }
-      if (!orders.ok) {
-        return trouble(response, base, orders);
-      }
-      response.type("html").send(ordersScreen(base, cards.document, orders.document, open));
-    }),
-  );
+  app.get(`${base}/orders`, async (request, response) => {
+    // Only the exact word narrows the list, which is what the contract says
+    // and what a merchant reconciling their books relies on.
+    const open = request.query.open === "true";
+    const [cards, orders] = await Promise.all([gateway.cards(), gateway.orders(open)]);
+    if (!cards.ok) {
+      return trouble(response, base, cards);
+    }
+    if (!orders.ok) {
+      return trouble(response, base, orders);
+    }
+    response
+      .type("html")
+      .send(ordersScreen(viewing(request, base), cards.document, orders.document, open));
+  });
 
-  app.get(`${base}/receipts`, (request, response) =>
-    signedIn(request, response, base, connect, async (gateway) => {
-      const [cards, receipts] = await Promise.all([gateway.cards(), gateway.receipts()]);
-      if (!cards.ok) {
-        return trouble(response, base, cards);
-      }
-      if (!receipts.ok) {
-        return trouble(response, base, receipts);
-      }
-      response.type("html").send(receiptsScreen(base, cards.document, receipts.document));
-    }),
-  );
+  app.get(`${base}/receipts`, async (request, response) => {
+    const [cards, receipts] = await Promise.all([gateway.cards(), gateway.receipts()]);
+    if (!cards.ok) {
+      return trouble(response, base, cards);
+    }
+    if (!receipts.ok) {
+      return trouble(response, base, receipts);
+    }
+    response
+      .type("html")
+      .send(receiptsScreen(viewing(request, base), cards.document, receipts.document));
+  });
 
   for (const [verb, paused] of [
     ["pause", true],
     ["resume", false],
   ] as const) {
-    app.post(`${base}/cards/:item_id/${verb}`, (request, response) =>
-      signedIn(request, response, base, connect, async (gateway) => {
-        const switched = await gateway.pauseCard(request.params.item_id ?? "", paused);
-        if (!switched.ok) {
-          return trouble(response, base, switched);
-        }
-        // Back to the list rather than answering the post with a page: a
-        // merchant who then reloads must not press the switch again.
-        response.redirect(303, `${base}/cards`);
-      }),
-    );
+    app.post(`${base}/cards/:item_id/${verb}`, async (request, response) => {
+      const itemId = request.params.item_id ?? "";
+      const switched = await gateway.pauseCard(itemId, paused);
+      if (!switched.ok) {
+        return trouble(response, base, switched);
+      }
+      noted(whoIs(request), `${paused ? "paused" : "resumed"} the card ${itemId}`);
+      // Back to the list rather than answering the post with a page: a
+      // merchant who then reloads must not press the switch again.
+      response.redirect(303, `${base}/cards`);
+    });
 
-    app.post(`${base}/selling/${verb}`, (request, response) =>
-      signedIn(request, response, base, connect, async (gateway) => {
-        const switched = await gateway.setSelling(!paused);
-        if (!switched.ok) {
-          return trouble(response, base, switched);
-        }
-        response.redirect(303, `${base}/cards`);
-      }),
-    );
+    app.post(`${base}/selling/${verb}`, async (request, response) => {
+      const switched = await gateway.setSelling(!paused);
+      if (!switched.ok) {
+        return trouble(response, base, switched);
+      }
+      noted(whoIs(request), paused ? "stopped all selling" : "started selling again");
+      response.redirect(303, `${base}/cards`);
+    });
   }
 
   app.use((_request, response) => {
@@ -271,13 +427,15 @@ export function buildApp(
 /**
  * Turns away a form post that came from somewhere else.
  *
- * The session cookie is a live API key and the forms it authorises include
- * "stop all selling", so a page on another site must not be able to make a
- * merchant's browser submit one. SameSite=Strict on the cookie is the first
- * answer and the main one; this is the second, and it exists because SameSite
- * is scoped to the registrable domain rather than to the origin — the day
- * anything at all is served from a sibling subdomain, that page is "same site"
- * and can forge every switch here.
+ * The forms this protects include "stop all selling" and the sign-in itself, so
+ * a page on another site must not be able to make a browser submit one — not
+ * the switches, because that is a merchant's selling, and not the sign-in,
+ * because signing somebody into an account of the attacker's choosing is a way
+ * of getting them to do their work in a session somebody else can read.
+ * SameSite=Strict on the cookie is the first answer and the main one; this is
+ * the second, and it exists because SameSite is scoped to the registrable
+ * domain rather than to the origin — the day anything at all is served from a
+ * sibling subdomain, that page is "same site" and can forge every switch here.
  *
  * A missing Origin is allowed through. Browsers send it on every cross-origin
  * form post, which is the case being refused; what they historically omit it
@@ -317,28 +475,58 @@ function sameOriginUnder(base: string) {
 }
 
 /**
- * Runs `draw` with a client bound to this merchant's key, or sends them to
- * sign in.
+ * Whose session this request arrived on, having asked the store.
  *
- * A key that the gateway turns away lands here as a 401 from whichever call
- * was made, and the merchant is sent back to the sign-in with the cookie
- * cleared — a key that was revoked while a tab was open would otherwise leave
- * them clicking a cabinet that answers nothing.
+ * Null covers every way of not being signed in and does not distinguish them:
+ * no cookie, a cookie that is not readable, an identifier nothing was ever
+ * opened under, a session that has been ended, and one whose twelve hours are
+ * up. They are one answer to the visitor, and there is nothing any of them
+ * should be told beyond the sign-in page.
  */
-async function signedIn(
-  request: Request,
-  response: Response,
-  base: string,
-  connect: (key: string) => GatewayClient,
-  draw: (gateway: GatewayClient) => Promise<void>,
-): Promise<void> {
-  const key = keyIn(request);
-  if (key === null) {
-    response.redirect(303, `${base}/sign-in`);
-    return;
-  }
-  await draw(connect(key));
+async function whoseSession(request: Request, accounts: Accounts): Promise<Account | null> {
+  const token = tokenIn(request);
+  return token === null ? null : await accounts.whose(fingerprintOf(token), new Date());
 }
+
+/**
+ * The person this request belongs to.
+ *
+ * Only ever called below the gate, which is what makes the absence a defect
+ * rather than a case: a handler running without a person behind it would be a
+ * page reachable by nobody in particular, and it should stop rather than draw
+ * something.
+ */
+function whoIs(request: Request): Account {
+  const person = people.get(request);
+  if (person === undefined) {
+    throw new Error(
+      "a handler below the gate ran with no session behind it, which means the gate was" +
+        " bypassed — this is a defect in how the routes are ordered, not a visitor's problem",
+    );
+  }
+  return person;
+}
+
+/** Who is looking at this page, and where the cabinet is mounted. */
+const viewing = (request: Request, base: string): Viewer => ({
+  base,
+  who: whoIs(request).email,
+});
+
+/**
+ * One line saying who changed something.
+ *
+ * ADR-0009 §7 is honest about what this is: a process log, not an audit trail.
+ * It rotates, it goes with the container, and it is written by the same process
+ * it is a record of. What it answers is "who stopped the selling", which before
+ * there was a person in the system could not be answered at all.
+ *
+ * What never goes in: a password, a session identifier, the merchant key. A log
+ * goes places the environment does not.
+ */
+const noted = (person: Account, did: string): void => {
+  console.log(`[cabinet] ${person.email} ${did}`);
+};
 
 /** What a merchant is shown when the gateway would not answer. */
 function trouble(response: Response, base: string, answer: Answer<unknown>): void {
@@ -346,8 +534,21 @@ function trouble(response: Response, base: string, answer: Answer<unknown>): voi
     return;
   }
   if (answer.status === 401) {
-    response.clearCookie(SESSION, { path: base === "" ? "/" : base });
-    response.redirect(303, `${base}/sign-in`);
+    // The key is the cabinet's own configuration now (ADR-0009 §4), so this is
+    // a broken cabinet rather than a person who should sign in again. Signing
+    // them out here would send them to type a password that cannot fix it and
+    // land them straight back on this page, with nothing said about the fault.
+    response
+      .status(502)
+      .type("html")
+      .send(
+        problemPage(
+          base,
+          "The gateway did not accept this cabinet's merchant key. Nothing you do here" +
+            " changes that: the key the cabinet is configured with has to be one the gateway" +
+            " knows. Your sign-in is unaffected.",
+        ),
+      );
     return;
   }
   if (answer.status === 0) {
@@ -379,13 +580,17 @@ function problemPage(base: string, said: string): string {
 }
 
 /**
- * The merchant's key out of the session cookie, or null.
+ * The session identifier out of the cookie, or null.
  *
  * The cookie header is parsed here rather than by a middleware, because one
  * cookie read in one place is smaller than a dependency and this is the only
- * cookie the cabinet has.
+ * cookie the cabinet reads.
+ *
+ * What comes out is 32 random bytes and nothing else — no address, no account,
+ * nothing that could be edited into somebody else's identity. Whose session it
+ * is is a question for the store.
  */
-function keyIn(request: Request): string | null {
+function tokenIn(request: Request): string | null {
   const header = request.headers.cookie;
   if (header === undefined) {
     return null;

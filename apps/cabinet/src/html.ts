@@ -25,6 +25,14 @@ export type Tab = "cards" | "orders" | "receipts";
 export interface Chrome {
   /** Where the cabinet is mounted, "" when it is at the root of its origin. */
   readonly base: string;
+  /**
+   * The address of the person signed in.
+   *
+   * On every page, in the corner, because a merchant with two people has to be
+   * able to tell whose screen this is before pressing the control that stops
+   * all their selling.
+   */
+  readonly who: string;
   readonly tab: Tab;
   readonly title: string;
   /** The merchant's own selling word, for the light in the corner. */
@@ -74,6 +82,7 @@ export const page = (chrome: Chrome): string => `<!doctype html>
     </div>
     <div class="whoami">
       <span class="state ${chrome.selling.tone}"><span class="dot"></span>${escaped(chrome.selling.text)}</span>
+      <a class="who" href="${escaped(chrome.base)}/password">${escaped(chrome.who)}</a>
       <form class="inline" method="post" action="${escaped(chrome.base)}/sign-out">
         <button type="submit">Sign out</button>
       </form>

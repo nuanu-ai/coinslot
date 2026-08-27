@@ -17,7 +17,10 @@
 import type { OrderList, ReceiptList } from "@coinslot/contracts";
 import { MerchantCardListSchema, OrderListSchema, ReceiptListSchema } from "@coinslot/contracts";
 import { describe, expect, it } from "vitest";
-import { ordersScreen, receiptsScreen } from "./screens.js";
+import { ordersScreen, receiptsScreen, type Viewer } from "./screens.js";
+
+/** A page is drawn for somebody now, and every screen says who (ADR-0009). */
+const SEEN_BY: Viewer = { base: "", who: "dmitry@example.com" };
 
 const cards = MerchantCardListSchema.parse({
   selling: "open",
@@ -85,7 +88,7 @@ describe("a list where some of the money was real and some was not", () => {
       orders: [order("ord_1", true), order("ord_2", false), order("ord_3", false)],
     });
 
-    const text = readable(ordersScreen("", cards, orders, false));
+    const text = readable(ordersScreen(SEEN_BY, cards, orders, false));
 
     expect(text).toContain("1 order here is a test purchase");
     expect(text).not.toContain("Every order here is a test purchase");
@@ -96,7 +99,7 @@ describe("a list where some of the money was real and some was not", () => {
       receipts: [receipt("rcp_1", true), receipt("rcp_2", false)],
     });
 
-    const html = receiptsScreen("", cards, receipts);
+    const html = receiptsScreen(SEEN_BY, cards, receipts);
     const rows = html.slice(html.indexOf("<tbody>")).split("<tr");
 
     expect(readable(html)).toContain("1 receipt here is a test purchase");
@@ -111,11 +114,11 @@ describe("a list where some of the money was real and some was not", () => {
     });
     const orders: OrderList = OrderListSchema.parse({ orders: [order("ord_1", false)] });
 
-    const onReceipts = readable(receiptsScreen("", cards, receipts));
-    const onOrders = readable(ordersScreen("", cards, orders, false));
+    const onReceipts = readable(receiptsScreen(SEEN_BY, cards, receipts));
+    const onOrders = readable(ordersScreen(SEEN_BY, cards, orders, false));
 
     expect(onReceipts).not.toContain("test purchase");
     expect(onOrders).not.toContain("test purchase");
-    expect(receiptsScreen("", cards, receipts)).not.toContain('class="tag"');
+    expect(receiptsScreen(SEEN_BY, cards, receipts)).not.toContain('class="tag"');
   });
 });

@@ -12,6 +12,7 @@
     "check": "biome check .",
     "check:fix": "biome check --write .",
     "check:decisions": "./scripts/check-decisions.sh",
+    "db:migrate": "pnpm --filter @coinslot/gateway db:migrate && pnpm --filter @coinslot/cabinet db:migrate",
     "worktrees": "./scripts/worktrees.sh list",
     "worktrees:clean": "./scripts/worktrees.sh clean",
     "typecheck": "tsc --noEmit -p tsconfig.json && pnpm -r run typecheck",

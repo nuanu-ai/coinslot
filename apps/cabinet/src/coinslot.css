@@ -479,3 +479,26 @@ td.control {
   color: var(--warn);
   font-size: 13.5px;
 }
+
+/* The address of the person signed in, in the corner of every page. Until
+   ADR-0009 there was nobody to name: the cabinet held a merchant key and the
+   screen could not say whose hand was on the control that stops all selling.
+   It is a link because that is where a password is changed, and the colour is
+   the muted one so that it reads as a label rather than as a fourth tab. */
+.who {
+  color: var(--muted);
+  text-decoration: none;
+  border-bottom: var(--hairline) solid var(--line);
+}
+
+.who:hover {
+  color: var(--fg);
+}
+
+/* The way back from the password page, under the form. `td.quiet` above is a
+   table cell and does not apply here. */
+p.quiet {
+  margin-top: 16px;
+  font-size: 13px;
+  color: var(--muted);
+}

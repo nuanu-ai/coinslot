@@ -5,10 +5,16 @@
  * zod schema (ADR-0003 §5) and the process names every problem at once rather
  * than one per restart.
  *
- * There is no database address here and there never will be. ADR-0005 §3 says
- * the cabinet reaches the gateway through the public API with a merchant's key
- * and holds no connection of its own: if a screen cannot be drawn from the API,
- * the merchant would have hit the same wall.
+ * There is a database address here and there is exactly one thing it is for:
+ * the people who sign into the cabinet and the sessions they are signed in
+ * with (ADR-0009). ADR-0005 §3 still holds for everything else — every card,
+ * order and receipt on every screen comes from the public API, because the
+ * reason that section gives is dogfooding: a screen the cabinet cannot draw is
+ * API the merchant does not have either.
+ *
+ * Both secrets in here are read and never printed. The sentence this file
+ * throws names the variable that is wrong and not the value it held, because a
+ * startup failure goes to a log and a log goes places the environment does not.
  */
 
 import { z } from "zod";
@@ -16,7 +22,40 @@ import { z } from "zod";
 const absentOrWrong = (whenWrong: string) => (issue: { input: unknown }) =>
   issue.input === undefined ? "the variable is not set" : whenWrong;
 
+/** The same shape the gateway holds its own database address to. */
+function isPostgresUrl(value: string): boolean {
+  if (!URL.canParse(value)) {
+    return false;
+  }
+  const { protocol } = new URL(value);
+  return protocol === "postgres:" || protocol === "postgresql:";
+}
+
 const environmentSchema = z.object({
+  /**
+   * Where the cabinet's own accounts and sessions live.
+   *
+   * The same Postgres as everything else (ADR-0003 §6), and two tables of the
+   * cabinet's own in it. Without one there is nowhere to look a session up, so
+   * every visitor would be a stranger — a cabinet that draws a sign-in form and
+   * can never accept one.
+   */
+  DATABASE_URL: z
+    .string({ error: absentOrWrong("must be a string") })
+    .refine(isPostgresUrl, "must be an address of the form postgres://user@host:port/database"),
+
+  /**
+   * The key the cabinet reaches the gateway with.
+   *
+   * ADR-0009 §4: machine to machine, out of the cabinet's own configuration
+   * rather than out of a visitor's cookie. The length floor is the gateway's
+   * own — the comparison at the other end is constant-time over equal lengths,
+   * and a key short enough to walk through makes that care pointless.
+   */
+  MERCHANT_API_KEY: z
+    .string({ error: absentOrWrong("must be a string") })
+    .min(16, "must be at least 16 characters"),
+
   /** The port the cabinet answers on; from outside it is behind Caddy. */
   PORT: z
     .string({ error: absentOrWrong("must be a string") })
@@ -56,9 +95,9 @@ const environmentSchema = z.object({
    * Whether the session cookie is marked Secure.
    *
    * It defaults to off because the cabinet is developed over plain http on
-   * localhost, where a Secure cookie is simply never sent back and the merchant
-   * cannot sign in at all. Anywhere the cabinet is reachable over https this is
-   * on, and the deployment that forgets it is handing a merchant's key to
+   * localhost, where a Secure cookie is simply never sent back and nobody can
+   * sign in at all. Anywhere the cabinet is reachable over https this is on,
+   * and the deployment that forgets it is handing a merchant's session to
    * anybody on the path.
    */
   COOKIE_SECURE: z
@@ -72,6 +111,8 @@ export interface CabinetConfig {
   readonly gatewayUrl: string;
   readonly basePath: string;
   readonly cookieSecure: boolean;
+  readonly databaseUrl: string;
+  readonly merchantApiKey: string;
 }
 
 export function loadConfig(environment: Record<string, string | undefined>): CabinetConfig {
@@ -95,5 +136,7 @@ export function loadConfig(environment: Record<string, string | undefined>): Cab
     gatewayUrl: parsed.data.GATEWAY_URL.replace(/\/+$/, ""),
     basePath: parsed.data.BASE_PATH,
     cookieSecure: parsed.data.COOKIE_SECURE,
+    databaseUrl: parsed.data.DATABASE_URL,
+    merchantApiKey: parsed.data.MERCHANT_API_KEY,
   };
 }
