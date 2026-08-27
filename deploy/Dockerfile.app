@@ -15,7 +15,17 @@ FROM node:24-alpine
 # The version is pinned so the install inside the image is the install the
 # lockfile was written by. corepack would otherwise read it out of the root
 # package.json, which is not in the context yet when the fetch below runs.
-RUN corepack enable && corepack prepare pnpm@10.33.3 --activate
+#
+# COREPACK_HOME is set away from the home directory for a reason found by
+# running it: corepack caches the package manager it downloads under the home
+# of whoever ran it, so a pnpm fetched here as root is invisible to the `node`
+# user the container runs as — and every container start went back to the
+# network for it. A shared, world-readable cache makes the image self-contained,
+# which is what "comes up with no network" has to mean.
+ENV COREPACK_HOME=/usr/local/share/corepack
+RUN corepack enable \
+  && corepack prepare pnpm@10.33.3 --activate \
+  && chmod -R a+rX "${COREPACK_HOME}"
 
 WORKDIR /app
 

@@ -74,6 +74,16 @@ services:
       # process's own port here, a payment challenge would name a door that is
       # closed from outside.
       PUBLIC_BASE_URL: http://localhost:8080
+      # No chain behind this stack (ADR-0008). Payments are verified and settled
+      # against nothing, so a purchase completes here with no network, no wallet
+      # and no faucet — which is what makes the cabinet worth opening. The
+      # gateway says so in one line at startup.
+      FACILITATOR_URL: sandbox:scripted
+      # A challenge has to name somewhere for the money to go or it cannot be
+      # built at all, so this is here to give the document a shape. Nothing ever
+      # arrives at it: it is the second well-known local-devnet account, public
+      # and valueless, and this gateway settles against nothing anyway.
+      PAY_TO_ADDRESS: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
     depends_on:
       postgres:
         condition: service_healthy
