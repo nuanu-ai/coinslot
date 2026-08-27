@@ -86,6 +86,25 @@ if (databaseUrl === undefined || databaseUrl === "") {
       // refused — a suite that passes once and never again, on a volume that
       // outlives it.
       await pool.query("truncate table cards, orders, receipts, payment_claims");
+      // And the queue's own tables, which are none of ours. They are dropped
+      // rather than emptied, and dropped here rather than after the gateway is
+      // up, and both of those are lessons from a run that failed.
+      //
+      // Emptying them is what pg-boss's own deleteAllJobs does, and it does it
+      // as `TRUNCATE pgboss.job` — an exclusive lock on a partitioned table and
+      // every partition under it. Called after the gateway has started, that
+      // lands on top of the reminder worker already polling those same
+      // partitions, and the two deadlock: `deadlock detected`, in beforeAll,
+      // taking the whole file down before a single test runs. It is a race, so
+      // it does not happen every time, which is the worst way for it to fail.
+      //
+      // Dropping the schema also clears what emptying the jobs leaves behind:
+      // the queues themselves and their schedules. `everyDay` registers a cron
+      // entry that survives on the volume, so a suite that only deleted jobs
+      // would inherit yesterday's schedules for as long as the volume lives.
+      // What this costs is that pg-boss installs itself from nothing on every
+      // run, which is worth having checked anyway.
+      await pool.query("drop schema if exists pgboss cascade");
 
       store = new PostgresStore(connected.db, countedIds());
       boss = new PgBoss(databaseUrl);
@@ -105,10 +124,6 @@ if (databaseUrl === undefined || databaseUrl === "") {
       };
       gateway = new Gateway(runtime);
       await gateway.start();
-      // The queue keeps its own tables, and a job left in them by a previous
-      // run is drawn by this one — which would fail a test about an empty
-      // stream for a reason that has nothing to do with what it checks.
-      await boss.deleteAllJobs();
     }, 60_000);
 
     afterAll(async () => {
