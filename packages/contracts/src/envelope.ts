@@ -88,8 +88,8 @@ export const WORKER_ENVELOPE_KINDS = Object.freeze(
  * `id` names this message and `sent_at` names when it went out. What the pair is
  * not is a way to recognise a repeat, and reading it as one costs a merchant
  * goods: an order the gateway decides to send again is wrapped in a fresh
- * envelope with a fresh `id`, so two attempts at one order share no field but
- * the payload. The gateway does put an envelope back on the stream with its `id`
+ * envelope with a fresh `id`, so the only thing two attempts at one order have
+ * in common is the order they carry. The gateway does put an envelope back on the stream with its `id`
  * untouched, but only on the paths where it drew that envelope and then handed
  * it to nobody — so an identifier a worker has actually seen never comes round a
  * second time. What holds still across a repeat is the order's own identifier

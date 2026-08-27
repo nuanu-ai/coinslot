@@ -547,9 +547,10 @@ export type Order = {
    * without it the record cannot tell those apart.
    *
    * So it is a fact and not a signal, and it is a coarser fact than it looks: a
-   * further hand-over of an order already taken on leaves it true, since only
-   * entering `dispatched` from `paid` resets it. It says this order has been
-   * taken on, never that the hand-over now outstanding has been.
+   * further hand-over of an order already taken on leaves it true, since the
+   * one thing that clears it is `dispatchedOrder`, which runs on the way in
+   * from `paid`. It says this order has been taken on, never that the hand-over
+   * now outstanding has been.
    */
   readonly dispatch: { readonly attempts: number; readonly accepted: boolean };
   /**
