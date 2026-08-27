@@ -266,12 +266,12 @@ prefer.
 | `invalid_params` | the purchase parameters are no good for the delivery |
 | `cannot_fulfill` | it cannot be delivered, for some other reason |
 
-We count `out_of_stock` separately, because it feeds the availability measure —
-the share of purchases that ran into missing goods, which we hold below a
-limit ([why](/failures)). A "there is none" refusal sent under a code of your
-own does not reach that measure, and the picture we hold of your catalogue's
-availability comes out wrong. An `available: false` from the check reaches the
-same measure without a code at all.
+`out_of_stock` is the one we mean to count separately, because it feeds the
+availability measure — the share of purchases that ran into missing goods,
+which we mean to hold below a limit ([why](/failures)). Nothing counts it yet.
+When something does, a "there is none" refusal sent under a code of your own
+will not reach that measure and the picture of your catalogue's availability
+will come out wrong, so the common code is worth preferring now.
 
 ## Who checks a card before it is published
 

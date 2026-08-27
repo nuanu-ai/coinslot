@@ -151,19 +151,22 @@ We keep no stock counts and do not work them out for you: the only source of
 truth about availability is your side. Which is exactly why goods that can run
 out are worth listing with a price check.
 
-The share of purchases that run into missing goods is something we measure and
-hold below a limit we name before the pilot: to an agent, a purchase like that
-looks like a promise the catalogue did not keep.
+The share of purchases that run into missing goods is what we mean to measure
+and hold below a limit, because to an agent a purchase like that looks like a
+promise the catalogue did not keep. Nothing counts it yet, and the limit is
+not named.
 
 ## Your side went quiet for a long time
 
-Selling stops by itself, without you. Cards stop selling and the orders
-already taken on play out in the ordinary way — the same pause you switch on
-by hand, switched on automatically.
+Nothing stops selling on its own today. The switch is the one in your hands,
+and pausing and unpausing are yours to do at any moment —
+[how that is done](/faq).
 
-That is how we defend against the worst case, where buyers pay for goods
-nobody delivers. Selling can be paused and unpaused by hand at any moment as
-well — [how that is done](/faq).
+An automatic stop is designed, and it is the defence against the worst case,
+where buyers go on paying for goods nobody delivers: your cards would come off
+sale and the orders already taken on would play out, exactly as a pause you
+set by hand does. Nothing builds that yet, so during the pilot we watch for
+the case with you rather than instead of you.
 
 ## What is not settled yet
 

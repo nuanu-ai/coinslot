@@ -69,8 +69,8 @@ yours to do.
 Yes, at any moment and with your own hands: the cabinet has a pause on each
 card and one button that stops selling altogether. Paused, a card stops
 selling and disappears from the catalogues, while the orders already taken on
-play out in the ordinary way. If your side stops answering, selling stops
-without you as well — [the automatic stop](/failures) works the same way. The
+play out in the ordinary way. Stopping it without you, when your side goes
+quiet, is designed and not built — [what that would look like](/failures). The
 full list of how an order can end is in [How an order can end](/orders).
 
 ### Can I leave altogether?

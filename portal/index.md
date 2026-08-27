@@ -98,12 +98,12 @@ selling and disappears from the catalogues, while the orders already taken on
 play out in the ordinary way; to be left with no open orders at all you have
 to leave entirely.
 
-Selling can also stop without your asking, automatically: when your side stops
-answering, or when it answers too often that the goods are gone — to the buyer
-that looks like a promise the catalogue did not keep. Such a stop works the
-same way as one you set by hand: cards stop selling, and the orders already
-taken on play out. What counts as silence, and where the limit on missing
-goods sits, we name before the pilot; the stop itself is described on
+We also mean to stop selling without your asking, when your side stops
+answering or answers too often that the goods are gone — to the buyer that
+looks like a promise the catalogue did not keep. That stop is designed and not
+built: nothing today counts your refusals or takes your cards off sale on its
+own, so during the pilot the switch is the one in your hands, and we watch the
+rest with you. What it will look like when it exists is on
 [What can go wrong](/failures).
 
 Short answers — what this costs, what happens about refunds, who settles a
