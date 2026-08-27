@@ -42,6 +42,16 @@ import { connect, PostgresStore } from "./store.js";
 
 const databaseUrl = process.env.DATABASE_URL;
 
+/**
+ * Where this suite's pg-boss lives, which is not where a deployment's does.
+ *
+ * The queue is reset between runs by dropping the whole schema, and the
+ * database this runs against is the same one `docker compose up` gives a
+ * gateway. Dropping `pgboss` would leave that gateway's workers querying tables
+ * that are not there any more.
+ */
+const QUEUE_SCHEMA = "pgboss_adapters";
+
 const syncCard: Card = {
   merchant_item_id: "room-101",
   title: "A room for the night",
@@ -96,8 +106,10 @@ if (databaseUrl === undefined || databaseUrl === "") {
       // outlives it.
       await pool.query("truncate table cards, orders, receipts, payment_claims");
       // And the queue's own tables, which are none of ours. They are dropped
-      // rather than emptied, and dropped here rather than after the gateway is
-      // up, and both of those are lessons from a run that failed.
+      // rather than emptied, dropped before the gateway is up rather than
+      // after, and dropped from an installation of this suite's own rather than
+      // from the one a deployment uses. All three are lessons from runs that
+      // failed.
       //
       // Emptying them is what pg-boss's own deleteAllJobs does, and it does it
       // as `TRUNCATE pgboss.job` — an exclusive lock on a partitioned table and
@@ -111,12 +123,22 @@ if (databaseUrl === undefined || databaseUrl === "") {
       // the queues themselves and their schedules. `everyDay` registers a cron
       // entry that survives on the volume, so a suite that only deleted jobs
       // would inherit yesterday's schedules for as long as the volume lives.
-      // What this costs is that pg-boss installs itself from nothing on every
-      // run, which is worth having checked anyway.
-      await pool.query("drop schema if exists pgboss cascade");
+      //
+      // And it is `pgboss_adapters` rather than `pgboss` because the port this
+      // suite connects to is published for exactly this, so the database it
+      // runs against is the one the containers use. Dropping the schema a
+      // running gateway's workers are polling takes that gateway's queue out
+      // from under it — it logs `relation "pgboss.job_common" does not exist`
+      // and goes on reporting itself healthy. This suite installs its own and
+      // leaves a deployment's alone.
+      //
+      // What it costs is that pg-boss arrives at a schema that is never there
+      // yet, so its own migration of an existing installation is exercised
+      // nowhere. That is a thing to remember at the next pg-boss upgrade.
+      await pool.query(`drop schema if exists ${QUEUE_SCHEMA} cascade`);
 
       store = new PostgresStore(connected.db, countedIds());
-      boss = new PgBoss(databaseUrl);
+      boss = new PgBoss({ connectionString: databaseUrl, schema: QUEUE_SCHEMA });
       queue = new PgBossQueue(boss, {
         pollIntervalMs: 50,
         reminders: { attempts: 3, retryDelayMs: 1_000 },
@@ -280,18 +302,22 @@ if (databaseUrl === undefined || databaseUrl === "") {
               // took shows up below as two owners — the defect itself — and
               // not as a timeout in the plumbing.
               //
-              // The query text is part of what is looked for, because any
-              // backend waiting on any lock anywhere in this database would
-              // otherwise do: the gateway's own queue is running against it,
-              // and a count that something somewhere was waiting would pass
-              // this whether or not it was bob and whether or not it was
-              // this row.
+              // What is looked for has to name this row and no other. A count
+              // of backends waiting on some lock somewhere would pass whether
+              // or not the waiter was bob: pg-boss is running against this same
+              // database and its own fetch is a `for update`, so even matching
+              // on that much would have found the queue waiting on itself. The
+              // query text names the orders table, and pg_blocking_pids says
+              // somebody is actually holding it up rather than merely being
+              // slow.
               const until = Date.now() + 5_000;
               while (Date.now() < until && !bobWasBlocked) {
                 const { rows } = await pool.query<{ blocked: number }>(
                   "select count(*)::int as blocked from pg_stat_activity" +
                     " where datname = current_database() and wait_event_type = 'Lock'" +
-                    " and pid <> pg_backend_pid() and query ilike '%for update%'",
+                    " and pid <> pg_backend_pid()" +
+                    ` and query ilike '%from "orders"%for update%'` +
+                    " and cardinality(pg_blocking_pids(pid)) > 0",
                 );
                 bobWasBlocked = (rows[0]?.blocked ?? 0) > 0;
                 if (!bobWasBlocked) {
@@ -303,6 +329,12 @@ if (databaseUrl === undefined || databaseUrl === "") {
             if (found.paidBy !== null && found.paidBy !== who) {
               return { result: { took: false, heldBy: found.paidBy } };
             }
+            // Noted before the write goes back, so that the order of these
+            // marks says something. Alice reads first because the test starts
+            // her first; what is not arranged is that she gets all the way to
+            // deciding before bob reads at all, and without the hold she does
+            // not — bob's read lands between her read and her write.
+            reads.push(`${who} decided`);
             return { save: { ...found, paidBy: who }, result: { took: true } };
           });
 
@@ -318,9 +350,11 @@ if (databaseUrl === undefined || databaseUrl === "") {
         // Bob really was made to wait by the database, rather than merely
         // having been started late.
         expect(bobWasBlocked).toBe(true);
-        // And he read the order only after alice's write was committed, which
-        // is the whole of what the hold is for.
-        expect(reads).toStrictEqual(["alice", "bob"]);
+        // And bob's read did not land inside alice's decision. This is the
+        // sequence the hold exists to produce: without it the marks come out
+        // "alice", "bob", "alice decided", "bob decided" — both of them having
+        // read an order that was still nobody's.
+        expect(reads).toStrictEqual(["alice", "alice decided", "bob"]);
         expect((await store.orderById(orderId))?.paidBy).toBe("alice");
       } finally {
         await alice.pool.end();
@@ -393,6 +427,35 @@ if (databaseUrl === undefined || databaseUrl === "") {
       expect(await store.claimPayment("fp-db-old", "ord_new")).toStrictEqual({ claimed: true });
     });
 
+    it("keeps the open column in step with the state inside the document", async () => {
+      // `open` is a column of its own, written from the document by `rowFor` on
+      // every insert and every update, and it is what `GET /orders?open=true`
+      // answers from. The in-memory adapter has no such column — it works the
+      // answer out from the state each time it is asked — so nothing offline
+      // can catch the two disagreeing, and a column that fell behind would
+      // quietly drop a live order out of the list the cabinet works from.
+      const published = await store.publishCard({ ...syncCard, merchant_item_id: "listed" }, now);
+      const offered = await gateway.beginPurchase(published.id, {});
+      if (offered.step !== "pay") throw new Error("no price was offered");
+      const orderId = offered.order.order.id;
+
+      const idsOf = async (query?: { readonly open?: boolean }) =>
+        (await store.orders(query)).map((record) => record.order.id);
+
+      expect(await idsOf({ open: true })).toContain(orderId);
+
+      // Closed inside the document, and nothing said about the column.
+      await store.withOrder(orderId, (found) => ({
+        save: { ...found, order: { ...found.order, state: "expired" } },
+        result: null,
+      }));
+
+      expect(await idsOf({ open: true })).not.toContain(orderId);
+      // Still there, though: closed is not deleted, and the unfiltered list is
+      // what somebody reconciling a day's orders reads.
+      expect(await idsOf()).toContain(orderId);
+    });
+
     it("says an order is not there rather than throwing", async () => {
       expect(await store.withOrder("ord_nope", () => ({ result: 1 }))).toStrictEqual({
         found: false,
@@ -451,6 +514,13 @@ if (databaseUrl === undefined || databaseUrl === "") {
       const receipt = await store.receiptForOrder(offered.order.order.id);
       expect(receipt?.outcome).toBe("delivered");
       expect(receipt?.price.amount).toBe("80.00");
+      // And it is in the list as well as findable by its order. The two are
+      // different queries and only one of them had ever been run against a
+      // database; a receipt somebody can fetch but that never appears in the
+      // list is a day's takings that does not add up.
+      const listed = await store.receipts();
+      expect(listed.map((one) => one.order_id)).toContain(offered.order.order.id);
+      expect(listed.find((one) => one.order_id === offered.order.order.id)).toStrictEqual(receipt);
     }, 30_000);
   });
 }
