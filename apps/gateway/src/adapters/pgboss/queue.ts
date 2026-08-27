@@ -37,36 +37,60 @@ import { type Job, PgBoss } from "pg-boss";
 import type { DrawnEnvelope, Queue, Reminder, ReminderPatience } from "../../ports/queue.js";
 
 /**
- * The two queues, named the way pg-boss will accept.
- *
- * pg-boss holds a queue name to alphanumerics, underscores, hyphens, periods
- * and forward slashes, and refuses anything else at the first call — which is
- * start-up in production and nowhere at all offline, since nothing without a
- * database touches this file. So the shape is held to in a test, and the test
- * that matters is the one against the library: this rule was written down here
- * from a reading of the documentation as "a bare identifier, no periods", the
- * first run against a real pg-boss accepted `coinslot.envelopes` without
- * complaint, and a rule nobody had ever asked the library about had been
- * standing in a comment as a fact.
- */
-export const ENVELOPES = "coinslot_envelopes";
-export const REMINDERS = "coinslot_reminders";
-
-/**
- * What pg-boss will take as a queue name, and therefore what these must be.
+ * What pg-boss will take as a queue name, and therefore what every name below
+ * has to be.
  *
  * It is the library's own rule, copied: a space or a colon is refused, a period
  * and a hyphen are not — pg-boss's own internal queue is called
  * `__pgboss__send-it`. `pgboss/queue.db-test.ts` asks the real library whether
  * this still agrees with it.
  *
- * Nothing here checks a name against it at run time, and that is on purpose:
- * pg-boss does its own checking and says why in a sentence worth reading, so a
- * check in front of it would only be a second way to say the same no. This
- * exists so that the two names above can be checked without a database, and it
- * is read by the tests alone.
+ * It used to be read by the tests alone, on the grounds that pg-boss does its
+ * own checking and says why in a sentence worth reading. That held while every
+ * queue name was a constant in this file. One of them is now built out of a
+ * merchant identifier, and the failure moved: a merchant whose identifier
+ * pg-boss will not take is not a start-up error somebody sees, it is one
+ * merchant whose orders reach nobody, discovered at the first sale.
  */
 export const A_NAME_PG_BOSS_ACCEPTS = /^[\w.\-/]+$/;
+
+/**
+ * The reminders queue, and the prefix each merchant's stream is named under.
+ *
+ * The shape is held to in a test, and the test that matters is the one against
+ * the library: this rule was written down here from a reading of the
+ * documentation as "a bare identifier, no periods", the first run against a
+ * real pg-boss accepted `coinslot.envelopes` without complaint, and a rule
+ * nobody had ever asked the library about had been standing in a comment as a
+ * fact.
+ */
+export const ENVELOPES = "coinslot_envelopes";
+export const REMINDERS = "coinslot_reminders";
+
+/**
+ * One merchant's stream, which is a pg-boss queue of its own.
+ *
+ * The alternative was one queue carrying every merchant's envelopes and a
+ * filter on the way out, and it does not work: pg-boss hands out work by queue
+ * name and has no way to fetch by anything inside a job, so filtering would
+ * mean drawing a stranger's envelope in order to look at it — and a drawn
+ * envelope is one its own merchant is not offered until it is finished or its
+ * window runs out. A worker polling would silently delay everybody else's
+ * orders.
+ *
+ * What a queue costs is a row. With pg-boss's own partitioning left off, which
+ * is the default, `createQueue` is an insert into its `queue` table and every
+ * job lives in the one table underneath — so this is a row per merchant and not
+ * a table per merchant.
+ */
+export const streamOf = (merchantId: string): string => {
+  if (!A_NAME_PG_BOSS_ACCEPTS.test(merchantId)) {
+    throw new Error(
+      `the merchant ${JSON.stringify(merchantId)} cannot name a queue: pg-boss holds a name to alphanumerics, underscores, hyphens, periods and forward slashes`,
+    );
+  }
+  return `${ENVELOPES}_${merchantId}`;
+};
 
 export interface PgBossQueueOptions {
   /**
@@ -82,7 +106,18 @@ export interface PgBossQueueOptions {
 export class PgBossQueue implements Queue {
   readonly #boss: PgBoss;
   readonly #options: PgBossQueueOptions;
-  readonly #waiters = new Set<() => void>();
+  /** Workers parked on a stream, by the stream they are parked on. */
+  readonly #waiters = new Map<string, Set<() => void>>();
+  /**
+   * The streams this process has already asked pg-boss to make.
+   *
+   * `create_queue` ends in `on conflict do nothing`, so asking twice is
+   * harmless — but it is a round trip, and one per publish on a busy gateway is
+   * a round trip nobody needs. Remembered per process rather than per
+   * deployment: a second process makes the same call once and gets the same
+   * nothing.
+   */
+  readonly #made = new Set<string>();
   #fire: ((reminder: Reminder) => Promise<void>) | null = null;
   #running = false;
 
@@ -91,8 +126,9 @@ export class PgBossQueue implements Queue {
     this.#options = options;
   }
 
-  async publish(envelope: WorkerEnvelope, afterMs?: number): Promise<void> {
-    const sent = await this.#boss.send(ENVELOPES, envelope as unknown as object, {
+  async publish(merchantId: string, envelope: WorkerEnvelope, afterMs?: number): Promise<void> {
+    const stream = await this.#stream(merchantId);
+    const sent = await this.#boss.send(stream, envelope as unknown as object, {
       // Retries are the machine's to decide, so the queue keeps none of its own.
       retryLimit: 0,
       ...(afterMs === undefined || afterMs <= 0
@@ -108,20 +144,21 @@ export class PgBossQueue implements Queue {
     }
 
     if (afterMs === undefined || afterMs <= 0) {
-      this.#wakeEverybody();
+      this.#wakeEverybody(stream);
     }
   }
 
-  async draw(max: number, waitMs: number): Promise<readonly DrawnEnvelope[]> {
-    const first = await this.#take(max);
+  async draw(merchantId: string, max: number, waitMs: number): Promise<readonly DrawnEnvelope[]> {
+    const stream = await this.#stream(merchantId);
+    const first = await this.#take(stream, max);
     if (first.length > 0 || waitMs <= 0) {
       return first;
     }
 
     const until = Date.now() + waitMs;
     while (Date.now() < until) {
-      await this.#park(Math.min(this.#options.pollIntervalMs, until - Date.now()));
-      const drawn = await this.#take(max);
+      await this.#park(stream, Math.min(this.#options.pollIntervalMs, until - Date.now()));
+      const drawn = await this.#take(stream, max);
       if (drawn.length > 0) {
         return drawn;
       }
@@ -129,8 +166,11 @@ export class PgBossQueue implements Queue {
     return [];
   }
 
-  async finish(handle: string): Promise<void> {
-    await this.#boss.complete(ENVELOPES, handle);
+  async finish(merchantId: string, handle: string): Promise<void> {
+    // Completing names the queue as well as the job, so a handle from one
+    // merchant's stream cannot finish a delivery on another's: pg-boss looks
+    // the job up under the name it is given and finds nothing.
+    await this.#boss.complete(streamOf(merchantId), handle);
   }
 
   async remind(reminder: Reminder, afterMs: number): Promise<void> {
@@ -178,6 +218,9 @@ export class PgBossQueue implements Queue {
     }
 
     await this.#boss.start();
+    // A merchant's own stream is made the first time something is published to
+    // it or drawn from it, because the merchants are rows now and this process
+    // does not hold a list of them at start-up.
     // Both queues run on pg-boss's own defaults, and the important one is the
     // fifteen minutes a delivery may be held before it is taken back. That is
     // deliberate for envelopes, where the machine rather than the queue decides
@@ -190,7 +233,6 @@ export class PgBossQueue implements Queue {
     // added here would apply to a database that has never run this and be
     // silently ignored by every database that has. Changing them on a live
     // installation is `updateQueue`, or a migration.
-    await this.#boss.createQueue(ENVELOPES);
     await this.#boss.createQueue(REMINDERS);
 
     await this.#boss.work<Reminder>(REMINDERS, { batchSize: 1 }, async (jobs: Job<Reminder>[]) => {
@@ -204,31 +246,50 @@ export class PgBossQueue implements Queue {
 
   async stop(): Promise<void> {
     this.#running = false;
-    this.#wakeEverybody();
+    for (const stream of [...this.#waiters.keys()]) {
+      this.#wakeEverybody(stream);
+    }
     await this.#boss.stop({ graceful: true });
   }
 
-  async #take(max: number): Promise<DrawnEnvelope[]> {
-    const jobs = await this.#boss.fetch<WorkerEnvelope>(ENVELOPES, {
+  /** This merchant's stream, made if this process has not made it yet. */
+  async #stream(merchantId: string): Promise<string> {
+    const name = streamOf(merchantId);
+    if (!this.#made.has(name)) {
+      await this.#boss.createQueue(name);
+      this.#made.add(name);
+    }
+    return name;
+  }
+
+  async #take(stream: string, max: number): Promise<DrawnEnvelope[]> {
+    const jobs = await this.#boss.fetch<WorkerEnvelope>(stream, {
       batchSize: Math.max(max, 1),
     });
     return jobs.map((job) => ({ envelope: job.data, handle: job.id }));
   }
 
-  #park(waitMs: number): Promise<void> {
+  #park(stream: string, waitMs: number): Promise<void> {
+    const parked = this.#waiters.get(stream) ?? new Set<() => void>();
+    this.#waiters.set(stream, parked);
     return new Promise((resolve) => {
       const wake = () => {
         clearTimeout(timer);
-        this.#waiters.delete(wake);
+        parked.delete(wake);
         resolve();
       };
       const timer = setTimeout(wake, Math.max(waitMs, 0));
-      this.#waiters.add(wake);
+      parked.add(wake);
     });
   }
 
-  #wakeEverybody(): void {
-    for (const wake of [...this.#waiters]) {
+  /**
+   * Wakes the workers parked on one stream, and only them. Waking every parked
+   * poll on every publish would send each of them back to a fetch on a stream
+   * nothing had arrived on.
+   */
+  #wakeEverybody(stream: string): void {
+    for (const wake of [...(this.#waiters.get(stream) ?? [])]) {
       wake();
     }
   }

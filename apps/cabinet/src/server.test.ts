@@ -825,7 +825,7 @@ describe("a merchant who has left", () => {
     const { browser, gateway, harnessed } = await started();
     await publish(gateway, roomCard);
     await browser.signIn();
-    await harnessed.store.setSelling("departed");
+    await harnessed.store.setSelling(harnessed.merchant.id, "departed");
 
     const page = (await browser.get("/cards")).html;
     const text = readable(page);
@@ -850,7 +850,7 @@ describe("a merchant who has left", () => {
     const { browser, gateway, harnessed } = await started();
     await publish(gateway, roomCard);
     await browser.signIn();
-    await harnessed.store.setSelling("departed");
+    await harnessed.store.setSelling(harnessed.merchant.id, "departed");
 
     const refused = await browser.post("/selling/resume");
 

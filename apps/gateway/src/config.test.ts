@@ -3,15 +3,17 @@ import { isSandboxFacilitator, loadConfig, SANDBOX_FACILITATOR } from "./config.
 
 const database = "postgres://coinslot:secret@localhost:5432/coinslot";
 
-/** The two variables that have no sensible default and must always be given. */
-const required = { DATABASE_URL: database, MERCHANT_API_KEY: "a-merchant-key-long-enough" };
+/** The one variable that has no sensible default and must always be given. */
+const required = { DATABASE_URL: database };
 
 describe("loadConfig", () => {
   it("reads the environment and fills in the sandbox defaults", () => {
     const config = loadConfig(required);
 
     expect(config.databaseUrl).toBe(database);
-    expect(config.merchantApiKey).toBe("a-merchant-key-long-enough");
+    // Nothing is seeded unless somebody asks for it. A gateway that made a key
+    // from a default would be a gateway with a key nobody meant to issue.
+    expect(config.sandboxMerchantKey).toBeNull();
     expect(config.port).toBe(3000);
 
     expect(loadConfig({ ...required, PORT: "8080" }).port).toBe(8080);
@@ -162,7 +164,6 @@ describe("loadConfig", () => {
     // different from "set wrong".
     const bothBroken = () => loadConfig({ PORT: "not a number" });
     expect(bothBroken).toThrowError(/DATABASE_URL: the variable is not set/);
-    expect(bothBroken).toThrowError(/MERCHANT_API_KEY: the variable is not set/);
     expect(bothBroken).toThrowError(/PORT: must be a whole number/);
 
     expect(() =>
@@ -193,9 +194,18 @@ describe("loadConfig", () => {
     );
   });
 
-  it("refuses a merchant key too short to be worth comparing", () => {
-    expect(() => loadConfig({ ...required, MERCHANT_API_KEY: "short" })).toThrowError(
-      /MERCHANT_API_KEY: must be at least 16 characters/,
+  it("takes a key to seed the sandbox with, and refuses one too short to hand out", () => {
+    // Not a key anything is compared against — there is no such variable any
+    // more (ADR-0010). It is written into the database at start-up so a sandbox
+    // comes up selling, and the floor is on what a sandbox may hand out: a real
+    // key is generated with thirty-two bytes behind it and chosen by nobody.
+    expect(
+      loadConfig({ ...required, SANDBOX_MERCHANT_KEY: "a-sandbox-key-long-enough" })
+        .sandboxMerchantKey,
+    ).toBe("a-sandbox-key-long-enough");
+
+    expect(() => loadConfig({ ...required, SANDBOX_MERCHANT_KEY: "short" })).toThrowError(
+      /SANDBOX_MERCHANT_KEY: must be at least 16 characters/,
     );
   });
 

@@ -260,7 +260,7 @@ describe("the payment challenge", () => {
     expect(challenge.accepts[0]?.payTo).toBe(PAY_TO);
     expect(challenge.accepts[0]?.network).toBe("eip155:84532");
     // No order was opened by a call that cannot be a purchase.
-    expect(await harnessed.store.orders()).toStrictEqual([]);
+    expect(await harnessed.store.orders(harnessed.merchant.id)).toStrictEqual([]);
   });
 
   it("prices a POST against an order it opened, and says which order", async () => {
@@ -276,7 +276,7 @@ describe("the payment challenge", () => {
       answered.headers.get(PAYMENT_REQUIRED_HEADER) ?? "",
     );
     const named = challenge.accepts[0]?.extra?.[ORDER_ID_IN_EXTRA];
-    const orders = await harnessed.store.orders();
+    const orders = await harnessed.store.orders(harnessed.merchant.id);
     expect(orders).toHaveLength(1);
     expect(named).toBe(orders[0]?.order.id);
   });
@@ -657,7 +657,7 @@ describe("whose purchase it is", () => {
     });
 
     expect(meddling.status).toBe(409);
-    const orders = await harnessed.store.orders();
+    const orders = await harnessed.store.orders(harnessed.merchant.id);
     expect(orders).toHaveLength(1);
     expect(orders[0]?.order.state).toBe("quoted");
     expect(orders[0]?.order.closure).toBeNull();
@@ -990,13 +990,13 @@ describe("the merchant's own catalog and the pause switch", () => {
     // `sellingFor`'s departed branch is tested directly.
     const { served, harnessed } = await started();
     const itemId = await publish(served, syncCard);
-    await harnessed.store.setSelling("departed");
+    await harnessed.store.setSelling(harnessed.merchant.id, "departed");
 
     const resumed = await served.call("POST", "/v0/selling/resume", { headers: asMerchant });
 
     expect(resumed.status).toBe(409);
     expect((resumed.body as { error: { code: string } }).error.code).toBe("merchant_departed");
-    expect(await harnessed.store.selling()).toBe("departed");
+    expect(await harnessed.store.selling(harnessed.merchant.id)).toBe("departed");
     // And the merchant is still gone as far as an agent is concerned.
     expect(
       (await served.call("POST", `/v0/items/${itemId}/purchase`, { body: { params: {} } })).status,
@@ -1008,12 +1008,12 @@ describe("the merchant's own catalog and the pause switch", () => {
     // would say their open orders are playing out, which they are not.
     const { served, harnessed } = await started();
     await publish(served, syncCard);
-    await harnessed.store.setSelling("departed");
+    await harnessed.store.setSelling(harnessed.merchant.id, "departed");
 
     const paused = await served.call("POST", "/v0/selling/pause", { headers: asMerchant });
 
     expect(paused.status).toBe(409);
-    expect(await harnessed.store.selling()).toBe("departed");
+    expect(await harnessed.store.selling(harnessed.merchant.id)).toBe("departed");
   });
 
   it("says there is no such product rather than pausing nothing quietly", async () => {

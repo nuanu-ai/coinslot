@@ -11,33 +11,33 @@
  *
  * The hold is per order and not over the table: two different orders never wait
  * for each other, because two different rows are two different locks.
+ *
+ * The scoping is the other thing worth reading before a query here is changed.
+ * Every read a merchant makes carries `merchant_id` in its predicate, so a row
+ * belonging to somebody else is not filtered out after the fact — it is never
+ * selected, which is also what makes "not yours" and "not there" the same
+ * answer from where the caller stands.
  */
 
 import type { Card, Receipt } from "@coinslot/contracts";
 import { isOpen, MERCHANT_SELLING, type MerchantSelling } from "@coinslot/core";
-import { and, eq, lt, sql } from "drizzle-orm";
+import { and, eq, isNull, lt, sql } from "drizzle-orm";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import type { Ids } from "../../ports/clock.js";
 import type {
+  CatalogEntry,
+  MerchantScope,
   OrderChange,
   OrderLookup,
   PaymentClaim,
   Store,
   StoredCard,
+  StoredKey,
+  StoredMerchant,
   StoredOrder,
 } from "../../ports/store.js";
-import { cards, merchants, orders, paymentClaims, receipts } from "./schema.js";
-
-/**
- * The one merchant of stage one, under a key rather than a row we have to find.
- *
- * The pilot plan's stage one is one merchant with one key, and the gateway
- * holds exactly one merchant API key to prove it. When there is a second
- * merchant this constant is what stops working, loudly, which is better than a
- * query that quietly picks whichever row came first.
- */
-const THE_MERCHANT = "the_merchant";
+import { cards, merchantKeys, merchants, orders, paymentClaims, receipts } from "./schema.js";
 
 export class PostgresStore implements Store {
   readonly #db: NodePgDatabase;
@@ -48,7 +48,113 @@ export class PostgresStore implements Store {
     this.#ids = ids;
   }
 
-  async publishCard(card: Card, at: number): Promise<StoredCard> {
+  // --- merchants and their keys ---------------------------------------------
+
+  async addMerchant(
+    merchant: { readonly id: string; readonly name: string },
+    at: number,
+  ): Promise<StoredMerchant | null> {
+    // A merchant nobody has paused is selling, which is what a new row says.
+    const [row] = await this.#db
+      .insert(merchants)
+      .values({
+        id: merchant.id,
+        name: merchant.name,
+        selling: "open",
+        createdAt: new Date(at),
+        updatedAt: new Date(at),
+      })
+      .onConflictDoNothing({ target: merchants.id })
+      .returning();
+    // Nothing came back: the identifier is taken, and this wrote nothing over
+    // whatever was there. The one caller is a command somebody typed twice.
+    return row === undefined ? null : storedMerchantOf(row);
+  }
+
+  async merchantById(id: string): Promise<StoredMerchant | null> {
+    const [row] = await this.#db.select().from(merchants).where(eq(merchants.id, id)).limit(1);
+    return row === undefined ? null : storedMerchantOf(row);
+  }
+
+  async merchants(): Promise<readonly StoredMerchant[]> {
+    const rows = await this.#db.select().from(merchants).orderBy(merchants.createdAt);
+    return rows.map(storedMerchantOf);
+  }
+
+  async addKey(
+    key: {
+      readonly id: string;
+      readonly merchantId: string;
+      readonly label: string;
+      readonly digest: string;
+    },
+    at: number,
+  ): Promise<StoredKey> {
+    // A key naming a merchant that is not there is refused by the foreign key
+    // rather than written: a key that opens a door onto nothing is worse than
+    // a command that failed.
+    const [row] = await this.#db
+      .insert(merchantKeys)
+      .values({
+        id: key.id,
+        merchantId: key.merchantId,
+        label: key.label,
+        digest: key.digest,
+        createdAt: new Date(at),
+      })
+      .returning();
+
+    if (row === undefined) {
+      throw new Error(`issuing a key for ${key.merchantId} wrote no row`);
+    }
+    return storedKeyOf(row);
+  }
+
+  async merchantForKey(digest: string): Promise<string | null> {
+    // The disabled ones are excluded in the predicate rather than read back and
+    // checked, so there is one answer and one shape of answer for every key
+    // that does not open the door — never issued and revoked alike.
+    const [row] = await this.#db
+      .select({ merchantId: merchantKeys.merchantId })
+      .from(merchantKeys)
+      .where(and(eq(merchantKeys.digest, digest), isNull(merchantKeys.disabledAt)))
+      .limit(1);
+    return row?.merchantId ?? null;
+  }
+
+  async keyByDigest(digest: string): Promise<StoredKey | null> {
+    const [row] = await this.#db
+      .select()
+      .from(merchantKeys)
+      .where(eq(merchantKeys.digest, digest))
+      .limit(1);
+    return row === undefined ? null : storedKeyOf(row);
+  }
+
+  async keysOf(merchantId: string): Promise<readonly StoredKey[]> {
+    const rows = await this.#db
+      .select()
+      .from(merchantKeys)
+      .where(eq(merchantKeys.merchantId, merchantId))
+      .orderBy(merchantKeys.createdAt);
+    return rows.map(storedKeyOf);
+  }
+
+  async disableKey(id: string, at: number): Promise<StoredKey | null> {
+    const [row] = await this.#db
+      .update(merchantKeys)
+      // The first revocation is the true one. Written as a plain assignment, a
+      // second run of the command would move the instant somebody is
+      // reconstructing an incident from.
+      .set({ disabledAt: sql`coalesce(${merchantKeys.disabledAt}, ${new Date(at)})` })
+      .where(eq(merchantKeys.id, id))
+      .returning();
+    return row === undefined ? null : storedKeyOf(row);
+  }
+
+  // --- the catalog ----------------------------------------------------------
+
+  async publishCard(merchantId: string, card: Card, at: number): Promise<StoredCard> {
     // Republishing under the same merchant key changes the card that is there.
     // The insert names the identifier it would use, and the conflict clause is
     // what keeps the existing one instead — so a card that is already there
@@ -57,12 +163,16 @@ export class PostgresStore implements Store {
       .insert(cards)
       .values({
         id: this.#ids("item"),
+        merchantId,
         merchantItemId: card.merchant_item_id,
         card,
         asOf: new Date(at),
       })
       .onConflictDoUpdate({
-        target: cards.merchantItemId,
+        // The merchant is half of the target, so a publish only ever edits the
+        // publisher's own card. Targeting the identifier alone would hand the
+        // second merchant to use a "sku-1" the first merchant's card.
+        target: [cards.merchantId, cards.merchantItemId],
         // `paused` is deliberately not in this set. A merchant editing a price
         // is not asking for a product they took off sale to go back on it, and
         // a pause that evaporated on the next publish would put stock they do
@@ -82,53 +192,73 @@ export class PostgresStore implements Store {
     return row === undefined ? null : storedCardOf(row);
   }
 
-  async cards(): Promise<readonly StoredCard[]> {
-    const rows = await this.#db.select().from(cards).orderBy(cards.asOf);
+  async cards(merchantId: string): Promise<readonly StoredCard[]> {
+    const rows = await this.#db
+      .select()
+      .from(cards)
+      .where(eq(cards.merchantId, merchantId))
+      .orderBy(cards.asOf);
     return rows.map(storedCardOf);
   }
 
-  async setCardPaused(id: string, paused: boolean): Promise<StoredCard | null> {
-    const [row] = await this.#db.update(cards).set({ paused }).where(eq(cards.id, id)).returning();
+  async catalogEntries(): Promise<readonly CatalogEntry[]> {
+    // One statement rather than the cards and then a word per merchant: the
+    // catalog is read on every agent's first call, and a query per merchant
+    // behind it grows with the number of merchants for no reason.
+    const rows = await this.#db
+      .select({ card: cards, selling: merchants.selling })
+      .from(cards)
+      .innerJoin(merchants, eq(cards.merchantId, merchants.id))
+      .orderBy(cards.asOf);
+    return rows.map((row) => ({
+      card: storedCardOf(row.card),
+      merchant: sellingWordOf(row.selling),
+    }));
+  }
+
+  async setCardPaused(merchantId: string, id: string, paused: boolean): Promise<StoredCard | null> {
+    const [row] = await this.#db
+      .update(cards)
+      .set({ paused })
+      // Both halves in the predicate: another merchant's card is not updated
+      // and not reported, so this answers exactly what a card that is not there
+      // answers.
+      .where(and(eq(cards.id, id), eq(cards.merchantId, merchantId)))
+      .returning();
     return row === undefined ? null : storedCardOf(row);
   }
 
-  async selling(): Promise<MerchantSelling> {
+  async selling(merchantId: string): Promise<MerchantSelling> {
     const [row] = await this.#db
       .select()
       .from(merchants)
-      .where(eq(merchants.id, THE_MERCHANT))
+      .where(eq(merchants.id, merchantId))
       .limit(1);
 
     if (row === undefined) {
-      // Nobody has ever pressed the switch. A merchant we hold cards for is
-      // selling until they say otherwise; there is no state of the world in
-      // which this has to answer "I do not know".
-      return "open";
-    }
-    if (!(MERCHANT_SELLING as readonly string[]).includes(row.selling)) {
-      // A word the machine does not know reached the column — a hand-edited
-      // row, or a value from a version of this code that is not this one.
-      // Guessing here would be guessing about whether somebody is selling.
+      // Every key names a merchant that exists and every card carries one, so
+      // there is no ordinary way here. Answering "open" would be selling on
+      // behalf of somebody nobody can find.
       throw new Error(
-        `the merchant's selling state is "${row.selling}", which is not one of ${MERCHANT_SELLING.join(", ")}`,
+        `there is no merchant ${merchantId}, so there is no word for whether they are selling`,
       );
     }
-    return row.selling as MerchantSelling;
+    return sellingWordOf(row.selling);
   }
 
-  async setSelling(selling: MerchantSelling): Promise<void> {
-    await this.#db
-      .insert(merchants)
-      // One clock for both branches. Written as `new Date()` on the insert and
-      // `now()` on the update, the two rows would carry stamps from different
-      // clocks — this process's and the database's — and the column exists to
-      // be compared.
-      .values({ id: THE_MERCHANT, selling, updatedAt: sql`now()` })
-      .onConflictDoUpdate({
-        target: merchants.id,
-        set: { selling, updatedAt: sql`now()` },
-      });
+  async setSelling(merchantId: string, selling: MerchantSelling): Promise<void> {
+    const changed = await this.#db
+      .update(merchants)
+      .set({ selling, updatedAt: sql`now()` })
+      .where(eq(merchants.id, merchantId))
+      .returning({ id: merchants.id });
+
+    if (changed.length === 0) {
+      throw new Error(`there is no merchant ${merchantId} to stop or start selling`);
+    }
   }
+
+  // --- orders ---------------------------------------------------------------
 
   async addOrder(record: StoredOrder): Promise<void> {
     await this.#db.insert(orders).values(rowFor(record));
@@ -139,11 +269,24 @@ export class PostgresStore implements Store {
     return row?.record ?? null;
   }
 
-  async orders(query?: { readonly open?: boolean }): Promise<readonly StoredOrder[]> {
+  async merchantOrder(merchantId: string, id: string): Promise<StoredOrder | null> {
+    const [row] = await this.#db
+      .select()
+      .from(orders)
+      .where(and(eq(orders.id, id), eq(orders.merchantId, merchantId)))
+      .limit(1);
+    return row?.record ?? null;
+  }
+
+  async orders(
+    merchantId: string,
+    query?: { readonly open?: boolean },
+  ): Promise<readonly StoredOrder[]> {
+    const mine = eq(orders.merchantId, merchantId);
     const rows = await this.#db
       .select()
       .from(orders)
-      .where(query?.open === true ? and(eq(orders.open, true)) : undefined)
+      .where(query?.open === true ? and(mine, eq(orders.open, true)) : mine)
       .orderBy(orders.createdAt);
     return rows.map((row) => row.record);
   }
@@ -151,12 +294,25 @@ export class PostgresStore implements Store {
   async withOrder<T>(
     id: string,
     change: (found: StoredOrder) => Promise<OrderChange<T>> | OrderChange<T>,
+    scope?: MerchantScope,
   ): Promise<OrderLookup<T>> {
     return this.#db.transaction(async (tx) => {
       // The lock is taken on the row itself, so a second decision about this
       // order waits here rather than reading the same order and writing over
-      // whatever the first one decided.
-      const [row] = await tx.select().from(orders).where(eq(orders.id, id)).limit(1).for("update");
+      // whatever the first one decided. Where a merchant is named, whose order
+      // it is is part of the same predicate as the lock: a stranger's order is
+      // never selected, never locked and never reported, so there is no window
+      // between finding out whose it is and acting on it.
+      const [row] = await tx
+        .select()
+        .from(orders)
+        .where(
+          scope === undefined
+            ? eq(orders.id, id)
+            : and(eq(orders.id, id), eq(orders.merchantId, scope.merchantId)),
+        )
+        .limit(1)
+        .for("update");
 
       if (row === undefined) {
         return { found: false };
@@ -220,12 +376,17 @@ export class PostgresStore implements Store {
     return gone.length;
   }
 
-  async putReceipt(receipt: Receipt): Promise<void> {
+  // --- receipts -------------------------------------------------------------
+
+  async putReceipt(merchantId: string, receipt: Receipt): Promise<void> {
     await this.#db
       .insert(receipts)
-      .values({ orderId: receipt.order_id, receipt, updatedAt: new Date() })
+      .values({ orderId: receipt.order_id, merchantId, receipt, updatedAt: new Date() })
       .onConflictDoUpdate({
         target: receipts.orderId,
+        // The merchant is not in this set. A receipt belongs to whoever made
+        // the sale, and writing it again — which is what the machine does when
+        // an order moves on — is not an occasion for it to change hands.
         set: { receipt, updatedAt: sql`now()` },
       });
   }
@@ -239,15 +400,79 @@ export class PostgresStore implements Store {
     return row?.receipt ?? null;
   }
 
-  async receipts(): Promise<readonly Receipt[]> {
-    const rows = await this.#db.select().from(receipts).orderBy(receipts.updatedAt);
+  async receipts(merchantId: string): Promise<readonly Receipt[]> {
+    const rows = await this.#db
+      .select()
+      .from(receipts)
+      .where(eq(receipts.merchantId, merchantId))
+      .orderBy(receipts.updatedAt);
     return rows.map((row) => row.receipt);
   }
 }
 
 /** One card row as the rest of the gateway reads it. */
-function storedCardOf(row: { id: string; card: Card; asOf: Date; paused: boolean }): StoredCard {
-  return { id: row.id, card: row.card, asOf: row.asOf.getTime(), paused: row.paused };
+function storedCardOf(row: {
+  id: string;
+  merchantId: string;
+  card: Card;
+  asOf: Date;
+  paused: boolean;
+}): StoredCard {
+  return {
+    id: row.id,
+    merchantId: row.merchantId,
+    card: row.card,
+    asOf: row.asOf.getTime(),
+    paused: row.paused,
+  };
+}
+
+/** One merchant row as the rest of the gateway reads it. */
+function storedMerchantOf(row: {
+  id: string;
+  name: string;
+  selling: string;
+  createdAt: Date;
+}): StoredMerchant {
+  return {
+    id: row.id,
+    name: row.name,
+    selling: sellingWordOf(row.selling),
+    createdAt: row.createdAt.getTime(),
+  };
+}
+
+/** One key row as the rest of the gateway reads it. The digest stays behind. */
+function storedKeyOf(row: {
+  id: string;
+  merchantId: string;
+  label: string;
+  createdAt: Date;
+  disabledAt: Date | null;
+}): StoredKey {
+  return {
+    id: row.id,
+    merchantId: row.merchantId,
+    label: row.label,
+    createdAt: row.createdAt.getTime(),
+    disabledAt: row.disabledAt === null ? null : row.disabledAt.getTime(),
+  };
+}
+
+/**
+ * The selling word out of a text column, or a refusal.
+ *
+ * A word the machine does not know reached the column — a hand-edited row, or a
+ * value from a version of this code that is not this one. Guessing here would
+ * be guessing about whether somebody is selling.
+ */
+function sellingWordOf(word: string): MerchantSelling {
+  if (!(MERCHANT_SELLING as readonly string[]).includes(word)) {
+    throw new Error(
+      `the merchant's selling state is "${word}", which is not one of ${MERCHANT_SELLING.join(", ")}`,
+    );
+  }
+  return word as MerchantSelling;
 }
 
 /** The columns, written from the document so they cannot disagree with it. */
@@ -256,6 +481,7 @@ function rowFor(record: StoredOrder) {
     id: record.order.id,
     state: record.order.state,
     open: isOpen(record.order.state),
+    merchantId: record.merchantId,
     itemId: record.itemId,
     merchantItemId: record.merchantItemId,
     record,

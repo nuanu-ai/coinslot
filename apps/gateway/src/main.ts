@@ -27,6 +27,7 @@ import { queueOn } from "./adapters/pgboss/queue.js";
 import { connect, PostgresStore } from "./adapters/postgres/store.js";
 import { X402Facilitator } from "./adapters/x402/facilitator.js";
 import { Gateway } from "./app/gateway.js";
+import { seedSandboxKey } from "./app/merchants.js";
 import type { Runtime } from "./app/runtime.js";
 import { isSandboxFacilitator, loadConfig } from "./config.js";
 import { buildApp } from "./http/server.js";
@@ -106,8 +107,47 @@ const runtime: Runtime = {
 
 const gateway = new Gateway(runtime);
 
+/**
+ * The sandbox's one key, put in the database if it is not there already.
+ *
+ * It is what makes `docker compose up` sell with no manual step: the same
+ * string is given to the cabinet and to the merchant process in that file, and
+ * without a row to match it the door would turn both of them away. Writing it
+ * is idempotent — the key is looked up by its digest first — so a restart and a
+ * second replica both write nothing.
+ *
+ * It is a seed and not a door. Nothing compares a request against this value;
+ * once the row is there the key is read like every other key, and disabling it
+ * at a terminal keeps it disabled through a restart, which is the point of
+ * saying so out loud rather than quietly re-issuing it.
+ *
+ * This runs before the migrations in any deployment that has them, in the sense
+ * that matters: the migration is a separate step that has already finished, and
+ * it is what wrote the merchant row and gave every existing card, order and
+ * receipt an owner. All this does is hang a key on it.
+ */
+async function seedTheSandbox(secret: string): Promise<void> {
+  const seeded = await seedSandboxKey(runtime.store, runtime.ids, secret, runtime.clock());
+  if (seeded.kind === "issued") {
+    console.warn(
+      `[gateway] SANDBOX: the key in SANDBOX_MERCHANT_KEY now opens ${seeded.merchantId} — ` +
+        "a key from an environment cannot be revoked without a deployment, so no deployment should set it",
+    );
+    return;
+  }
+  if (seeded.kind === "disabled") {
+    console.warn(
+      "[gateway] the key in SANDBOX_MERCHANT_KEY exists and somebody disabled it; it is left disabled, " +
+        "and nothing presenting it will get in",
+    );
+  }
+}
+
 try {
   await gateway.start();
+  if (config.sandboxMerchantKey !== null) {
+    await seedTheSandbox(config.sandboxMerchantKey);
+  }
 } catch (thrown) {
   // The first thing an engineer bringing this up sees. A stack trace out of the
   // queue's own internals says "something about Postgres" and makes them go

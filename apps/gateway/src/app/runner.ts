@@ -52,7 +52,7 @@ import {
 } from "@coinslot/core";
 import { asTimestamp } from "../ports/clock.js";
 import type { Reminder } from "../ports/queue.js";
-import type { OrderChange, PaymentWord, StoredOrder } from "../ports/store.js";
+import type { MerchantScope, OrderChange, PaymentWord, StoredOrder } from "../ports/store.js";
 import type { Runtime } from "./runtime.js";
 import { purchaseOf, Waiting } from "./waiting.js";
 
@@ -146,8 +146,23 @@ export class OrderRunner {
     return record;
   }
 
-  /** Feeds one event to the machine and carries out whatever comes back. */
-  async apply(orderId: string, event: OrderEvent, facts: OrderFacts = {}): Promise<Applied> {
+  /**
+   * Feeds one event to the machine and carries out whatever comes back.
+   *
+   * `scope` is how a merchant's own call is held to their own orders. Given
+   * one, the store finds nothing where the order belongs to somebody else, and
+   * the ownership is read under the same hold as the order itself — so there is
+   * no window between learning whose it is and acting on it, and the caller
+   * cannot tell "not yours" from "not there". It is left out where the caller
+   * has no merchant to be held to: a reminder of ours running out, and a
+   * payment presented by an agent that carries no key.
+   */
+  async apply(
+    orderId: string,
+    event: OrderEvent,
+    facts: OrderFacts = {},
+    scope?: MerchantScope,
+  ): Promise<Applied> {
     const decided = await this.#runtime.store.withOrder(
       orderId,
       async (found): Promise<OrderChange<Decided>> => {
@@ -184,6 +199,7 @@ export class OrderRunner {
 
         return { save: next, result: { moved, before: known.order, known: next } };
       },
+      scope,
     );
 
     if (!decided.found) {
@@ -358,12 +374,20 @@ export class OrderRunner {
           await this.#settle(record, at);
           break;
 
+        // Which stream an envelope goes on comes off the order and is never
+        // guessed at: the merchant on it was settled when the order was made,
+        // from the card it was made against, so a redelivery an hour later
+        // reaches the same worker as the first hand-over did.
         case "dispatch_order":
-          await this.#runtime.queue.publish(this.#orderEnvelope(record, at));
+          await this.#runtime.queue.publish(record.merchantId, this.#orderEnvelope(record, at));
           break;
 
         case "redeliver_order":
-          await this.#runtime.queue.publish(this.#orderEnvelope(record, at), effect.delayMs);
+          await this.#runtime.queue.publish(
+            record.merchantId,
+            this.#orderEnvelope(record, at),
+            effect.delayMs,
+          );
           break;
 
         case "issue_receipt":
@@ -384,7 +408,10 @@ export class OrderRunner {
           break;
 
         case "emit_merchant_event":
-          await this.#runtime.queue.publish(this.#eventEnvelope(record, effect.event, at));
+          await this.#runtime.queue.publish(
+            record.merchantId,
+            this.#eventEnvelope(record, effect.event, at),
+          );
           break;
 
         case "answer_merchant":
@@ -521,7 +548,11 @@ export class OrderRunner {
     const moneyMovedNow = before.payment !== "settled" && record.order.payment === "settled";
     const paidAt = moneyMovedNow ? at : (record.order.timestamps.paidAt ?? at);
 
-    await this.#runtime.store.putReceipt({
+    // The receipt belongs to the merchant the sale did, which is on the order
+    // rather than looked up through the card: a card can be republished or
+    // taken off sale, and a receipt names who made the sale whatever became of
+    // the catalog afterwards.
+    await this.#runtime.store.putReceipt(record.merchantId, {
       id: this.#runtime.ids("rcp"),
       order_id: record.order.id,
       item_id: record.itemId,

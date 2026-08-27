@@ -45,6 +45,7 @@ import { asTimestamp } from "../ports/clock.js";
 import type { Reminder } from "../ports/queue.js";
 import type { StoredCard, StoredOrder } from "../ports/store.js";
 import { orderCallResponseOf } from "./answers.js";
+import { keyDigest } from "./merchants.js";
 import { OrderRunner, orderDocumentOf } from "./runner.js";
 import {
   modeForCard,
@@ -106,8 +107,15 @@ export class Gateway {
   readonly runner: OrderRunner;
   /** Purchases parked on a price question, by the identifier of the question. */
   readonly quotes = new Waiting<QuoteResponse>();
-  /** Which order each open price question belongs to. */
-  readonly #questions = new Map<string, string>();
+  /**
+   * Which order each open price question belongs to, and whose it is.
+   *
+   * The merchant is here because the answer route is a merchant's, and a price
+   * identifier is not a secret: it travels on a stream and it lands in a
+   * receipt. Without the merchant beside it, anybody holding one out of a log
+   * could name the price somebody else's purchase settled at.
+   */
+  readonly #questions = new Map<string, { orderId: string; merchantId: string }>();
 
   constructor(runtime: Runtime) {
     this.runtime = runtime;
@@ -197,13 +205,17 @@ export class Gateway {
 
   // --- the catalog ----------------------------------------------------------
 
-  async publishCard(body: unknown): Promise<PublishResult> {
+  async publishCard(merchantId: string, body: unknown): Promise<PublishResult> {
     const parsed = CardSchema.safeParse(body);
     if (!parsed.success) {
       return { errors: findingsOf(parsed.error.issues) };
     }
 
-    const stored = await this.runtime.store.publishCard(parsed.data, this.runtime.clock());
+    const stored = await this.runtime.store.publishCard(
+      merchantId,
+      parsed.data,
+      this.runtime.clock(),
+    );
     return { ok: { id: stored.id } };
   }
 
@@ -218,13 +230,19 @@ export class Gateway {
    * than that they stop working.
    */
   async catalog(): Promise<CatalogPage> {
-    const selling = await this.runtime.store.selling();
-    const cards = await this.runtime.store.cards();
+    // One catalog across every merchant, which is the product (ADR-0010). The
+    // selling word is read per card because it is per merchant: one merchant
+    // stopping all selling takes their own cards out of this and leaves
+    // everybody else's exactly where they were.
+    const entries = await this.runtime.store.catalogEntries();
     return {
-      items: cards
-        .filter((stored) => sellingFor(selling, stored) === "open")
-        .map((stored) =>
-          publicCardOf(stored.card, { id: stored.id, as_of: asTimestamp(stored.asOf) }),
+      items: entries
+        .filter((entry) => sellingFor(entry.merchant, entry.card) === "open")
+        .map((entry) =>
+          publicCardOf(entry.card.card, {
+            id: entry.card.id,
+            as_of: asTimestamp(entry.card.asOf),
+          }),
         ),
     };
   }
@@ -234,18 +252,13 @@ export class Gateway {
   /**
    * Every card this merchant published, with the word each is selling under.
    *
-   * "This merchant" is stage one's one merchant, and the scoping is the store
-   * holding nobody else's cards rather than a filter here. The pilot plan's
-   * stage one is one merchant with one key, and the gateway holds exactly one
-   * `MERCHANT_API_KEY` to prove it — so there is nothing to scope against yet
-   * and a filter would be filtering on a field that does not exist. What that
-   * costs is named rather than left to be discovered: the day a second merchant
-   * exists, this and `receipts()` are two of the places that hand one merchant
-   * another's catalog, and the key check in front of them will not notice.
+   * "This merchant" is the merchant the key on the call resolved to, and the
+   * scoping is the store's — the query carries the merchant, so another
+   * merchant's card is never selected rather than selected and dropped.
    */
-  async merchantCards(): Promise<MerchantCardList> {
-    const selling = await this.runtime.store.selling();
-    const cards = await this.runtime.store.cards();
+  async merchantCards(merchantId: string): Promise<MerchantCardList> {
+    const selling = await this.runtime.store.selling(merchantId);
+    const cards = await this.runtime.store.cards(merchantId);
     return { selling, cards: cards.map((stored) => merchantCardOf(stored, selling)) };
   }
 
@@ -257,12 +270,19 @@ export class Gateway {
    * and nowhere else, so an order accepted a minute ago plays out exactly as it
    * would have.
    */
-  async setCardPaused(itemId: string, paused: boolean): Promise<MerchantCard | null> {
-    const stored = await this.runtime.store.setCardPaused(itemId, paused);
+  async setCardPaused(
+    merchantId: string,
+    itemId: string,
+    paused: boolean,
+  ): Promise<MerchantCard | null> {
+    const stored = await this.runtime.store.setCardPaused(merchantId, itemId, paused);
     if (stored === null) {
+      // Either there is no such card or it is not this merchant's, and the
+      // answer is the same one on purpose: a pause call is not a way of
+      // finding out what somebody else is selling.
       return null;
     }
-    return merchantCardOf(stored, await this.runtime.store.selling());
+    return merchantCardOf(stored, await this.runtime.store.selling(merchantId));
   }
 
   /**
@@ -274,8 +294,8 @@ export class Gateway {
    * the whole catalog so which cards actually came back is a fact rather than
    * something to infer.
    */
-  async setSelling(selling: MerchantSelling): Promise<SellingChange> {
-    const now = await this.runtime.store.selling();
+  async setSelling(merchantId: string, selling: MerchantSelling): Promise<SellingChange> {
+    const now = await this.runtime.store.selling(merchantId);
     if (now === "departed") {
       // A departure is not a heavier pause and this switch does not undo one.
       // Leaving closed the orders that were open and left the merchant owing
@@ -287,19 +307,18 @@ export class Gateway {
       // direction, which is the half that was missing.
       return { ok: false, why: "this merchant has left, and selling is not resumed by a switch" };
     }
-    await this.runtime.store.setSelling(selling);
-    return { ok: true, cards: await this.merchantCards() };
+    await this.runtime.store.setSelling(merchantId, selling);
+    return { ok: true, cards: await this.merchantCards(merchantId) };
   }
 
   /**
-   * Every receipt this merchant has.
+   * Every receipt this merchant has, and nobody else's.
    *
-   * Scoped the way `merchantCards()` is, for the same stage-one reason and with
-   * the same cost: the store holds one merchant's receipts because it holds one
-   * merchant's, not because anything here selects them.
+   * Scoped the way `merchantCards` is and by the same means: the merchant is in
+   * the query, so a receipt of somebody else's is never read at all.
    */
-  async receipts(): Promise<ReceiptList> {
-    return { receipts: [...(await this.runtime.store.receipts())] };
+  async receipts(merchantId: string): Promise<ReceiptList> {
+    return { receipts: [...(await this.runtime.store.receipts(merchantId))] };
   }
 
   // --- buying ---------------------------------------------------------------
@@ -343,7 +362,9 @@ export class Gateway {
       // One word out of the two switches a merchant has: the whole catalog, and
       // this card. Whichever of them is off, the machine hears the same word
       // and refuses the same way — the orders already accepted are untouched.
-      selling: sellingFor(await this.runtime.store.selling(), stored),
+      // Whose word it is comes off the card: a buyer walks one catalog across
+      // every merchant, and what governs this sale is the card's own merchant.
+      selling: sellingFor(await this.runtime.store.selling(stored.merchantId), stored),
     });
 
     if (!created.ok) {
@@ -352,6 +373,10 @@ export class Gateway {
 
     const record: StoredOrder = {
       order: created.order,
+      // The sale belongs to whoever published the card it was made against, and
+      // it is settled here and never again: this is what puts the order on that
+      // merchant's stream and what every later read of it is checked against.
+      merchantId: stored.merchantId,
       itemId: stored.id,
       merchantItemId: stored.card.merchant_item_id,
       params: { ...params },
@@ -515,8 +540,33 @@ export class Gateway {
     return this.#wherePurchaseStands(orderId);
   }
 
+  /**
+   * One order, whoever it belongs to — the buying surface's read.
+   *
+   * The route that uses it takes no key, because the payment presented against
+   * the order is what stands in for one. A merchant's own read of one order is
+   * {@link merchantOrder}, which is scoped.
+   */
   async orderById(orderId: string): Promise<StoredOrder | null> {
     return this.runtime.store.orderById(orderId);
+  }
+
+  /** One of this merchant's orders. Another merchant's is not found. */
+  async merchantOrder(merchantId: string, orderId: string): Promise<StoredOrder | null> {
+    return this.runtime.store.merchantOrder(merchantId, orderId);
+  }
+
+  /**
+   * Which merchant a presented key belongs to, or nothing.
+   *
+   * The lookup is by the digest of what was presented, so nothing here compares
+   * one secret against another and the time it takes says nothing about how
+   * much of a key was right. A key nobody was ever issued and a key that has
+   * been disabled come back identically, which is the store's promise and not
+   * this line's.
+   */
+  async merchantForKey(presented: string): Promise<string | null> {
+    return this.runtime.store.merchantForKey(keyDigest(presented));
   }
 
   // --- the merchant's stream ------------------------------------------------
@@ -529,9 +579,10 @@ export class Gateway {
    * machine refuses the hand-over, and passing it to a handler anyway would ask
    * a merchant to work on a purchase that is over.
    */
-  async poll(max: number, waitMs: number): Promise<WorkerPollResponse> {
+  async poll(merchantId: string, max: number, waitMs: number): Promise<WorkerPollResponse> {
     const { config, queue, clock } = this.runtime;
     const drawn = await queue.draw(
+      merchantId,
       Math.min(max, config.worker.pollMaxEnvelopes),
       Math.min(waitMs, config.worker.pollWaitMs),
     );
@@ -559,6 +610,12 @@ export class Gateway {
           orderId,
           { kind: "order_dispatched", at },
           { openDeliveryId: handOver },
+          // The envelope came off this merchant's own stream, so this is belt
+          // and braces rather than the scoping itself — and it is the belt
+          // worth having: a hand-over recorded against a stranger's order would
+          // be this gateway telling one merchant's order that another merchant
+          // is working on it.
+          { merchantId },
         );
       } catch (thrown) {
         // Recording this one hand-over failed. The rest of the batch is not
@@ -567,7 +624,11 @@ export class Gateway {
         // seen again — and this one goes back on the stream rather than being
         // lost with it.
         console.error(`[gateway] could not record the hand-over of ${orderId}`, thrown);
-        await queue.publish(sentNow(delivery.envelope, at), config.settleInFlightRetryMs);
+        await queue.publish(
+          merchantId,
+          sentNow(delivery.envelope, at),
+          config.settleInFlightRetryMs,
+        );
         finished.push(delivery.handle);
         continue;
       }
@@ -578,7 +639,11 @@ export class Gateway {
         // reports. The order goes back on the stream rather than being dropped,
         // because dropping it is how an order that was paid for never reaches a
         // merchant at all.
-        await queue.publish(sentNow(delivery.envelope, at), config.settleInFlightRetryMs);
+        await queue.publish(
+          merchantId,
+          sentNow(delivery.envelope, at),
+          config.settleInFlightRetryMs,
+        );
         finished.push(delivery.handle);
         continue;
       }
@@ -603,7 +668,7 @@ export class Gateway {
     // recorded. Told first, a throw part way through the batch would leave
     // envelopes finished that nobody was ever handed.
     for (const handle of finished) {
-      await queue.finish(handle);
+      await queue.finish(merchantId, handle);
     }
 
     return { contract_version: CONTRACT_VERSION, envelopes: handing };
@@ -622,17 +687,24 @@ export class Gateway {
    * So the answer is put to the machine here, and what the machine made of it is
    * what comes back.
    */
-  async answerQuote(priceId: string, response: QuoteResponse): Promise<QuoteAnswerAck> {
+  async answerQuote(
+    merchantId: string,
+    priceId: string,
+    response: QuoteResponse,
+  ): Promise<QuoteAnswerAck> {
     const asked = this.#questions.get(priceId);
-    if (asked === undefined) {
-      // A question we no longer hold — a worker replaying an envelope from an
-      // hour ago, or one already answered. It priced nothing.
+    // A question this merchant was not the one asked is answered exactly as a
+    // question we no longer hold — a worker replaying an envelope from an hour
+    // ago, or one already answered. It priced nothing, and the answer says
+    // nothing about whether the identifier names a live sale of somebody
+    // else's.
+    if (asked === undefined || asked.merchantId !== merchantId) {
       return { used: false };
     }
 
     const at = this.runtime.clock();
     const applied = await this.runner.apply(
-      asked,
+      asked.orderId,
       response.available
         ? {
             kind: "quote_answered",
@@ -646,6 +718,7 @@ export class Gateway {
           }
         : { kind: "quote_answered", at, available: false },
       { priceId },
+      { merchantId },
     );
 
     // The question is finished either way: it has been put to the machine, and
@@ -659,19 +732,33 @@ export class Gateway {
     return { used: applied.outcome === "moved" };
   }
 
-  /** What the merchant's handler returned for an order it was given. */
-  async answerOrder(orderId: string, answer: HandlerAnswer): Promise<OrderCallResponse | null> {
+  /**
+   * What the merchant's handler returned for an order it was given.
+   *
+   * Every one of the four routes below names the merchant whose key opened the
+   * call, and hands it to the store as the scope of the hold on the order. An
+   * order belonging to somebody else is not found — the same answer an order
+   * that never existed gets — so a merchant holding an identifier out of a log
+   * cannot deliver, refuse or accept a stranger's sale, and learns nothing from
+   * trying.
+   */
+  async answerOrder(
+    merchantId: string,
+    orderId: string,
+    answer: HandlerAnswer,
+  ): Promise<OrderCallResponse | null> {
     if ("delivered" in answer) {
-      return this.deliverOrder(orderId, answer.delivered, "handler");
+      return this.deliverOrder(merchantId, orderId, answer.delivered, "handler");
     }
     if ("refused" in answer) {
-      return this.refuseOrder(orderId, answer.refused, "handler");
+      return this.refuseOrder(merchantId, orderId, answer.refused, "handler");
     }
 
-    return this.#takeOrderOn(orderId, answer.accepted);
+    return this.#takeOrderOn(merchantId, orderId, answer.accepted);
   }
 
   async deliverOrder(
+    merchantId: string,
     orderId: string,
     delivery: Delivery,
     from: "handler" | "call" = "call",
@@ -681,11 +768,13 @@ export class Gateway {
       orderId,
       from === "handler" ? { kind: "handler_delivered", at } : { kind: "deliver_called", at },
       { delivery, openDeliveryId: null },
+      { merchantId },
     );
     return this.#answerFor(applied, "delivered");
   }
 
   async refuseOrder(
+    merchantId: string,
     orderId: string,
     refusal: Refusal,
     from: "handler" | "call" = "call",
@@ -697,6 +786,7 @@ export class Gateway {
         ? { kind: "handler_refused", at, code: refusal.code, message: refusal.message }
         : { kind: "refuse_called", at, code: refusal.code, message: refusal.message },
       { openDeliveryId: null },
+      { merchantId },
     );
     return this.#answerFor(applied, "refused");
   }
@@ -714,8 +804,12 @@ export class Gateway {
    * told less, and widening the shape is a change to a published document
    * rather than something to do here.
    */
-  async acceptOrder(orderId: string, acceptance: Acceptance): Promise<OrderAcceptResponse | null> {
-    const taken = await this.#takeOrderOn(orderId, acceptance);
+  async acceptOrder(
+    merchantId: string,
+    orderId: string,
+    acceptance: Acceptance,
+  ): Promise<OrderAcceptResponse | null> {
+    const taken = await this.#takeOrderOn(merchantId, orderId, acceptance);
     return taken === null || !taken.ok ? taken : { ok: true };
   }
 
@@ -728,7 +822,11 @@ export class Gateway {
    * of a success to him, so an acceptance that came back as a failure wrote a
    * problem into his log for every asynchronous order that went through.
    */
-  async #takeOrderOn(orderId: string, _acceptance: Acceptance): Promise<OrderCallResponse | null> {
+  async #takeOrderOn(
+    merchantId: string,
+    orderId: string,
+    _acceptance: Acceptance,
+  ): Promise<OrderCallResponse | null> {
     // The expected time to deliver is the merchant's estimate and not a
     // commitment: what he is held to is the deadline on his card, which the
     // order already carries. Writing his guess down beside it would put two
@@ -738,13 +836,15 @@ export class Gateway {
       orderId,
       { kind: "handler_accepted", at },
       { openDeliveryId: null },
+      { merchantId },
     );
 
     return this.#answerFor(applied, "accepted");
   }
 
-  async orders(open: boolean | undefined): Promise<readonly StoredOrder[]> {
-    return this.runtime.store.orders(open === undefined ? undefined : { open });
+  /** This merchant's orders, or with `open` only the ones still owed work or money. */
+  async orders(merchantId: string, open: boolean | undefined): Promise<readonly StoredOrder[]> {
+    return this.runtime.store.orders(merchantId, open === undefined ? undefined : { open });
   }
 
   // --- the parts the flows above lean on ------------------------------------
@@ -783,10 +883,10 @@ export class Gateway {
     // sitting on a poll is woken by that publish, and a merchant whose handler
     // answers inside a millisecond would otherwise find nobody listening and
     // have his price thrown away.
-    this.#questions.set(priceId, orderId);
+    this.#questions.set(priceId, { orderId, merchantId: record.merchantId });
     const parked = this.quotes.wait(priceId, config.deadlines.quoteResponseMs);
 
-    await queue.publish({
+    await queue.publish(record.merchantId, {
       kind: "quote_request",
       id: ids("env"),
       sent_at: asTimestamp(askedAt),

@@ -40,6 +40,21 @@ const cardFor = (merchantItemId: string, title: string): Card => ({
   fulfillment: "sync",
 });
 
+/**
+ * A card whose goods come later, which is what leaves an order open.
+ *
+ * The tests about answering somebody else's order need one that is still
+ * waiting for an answer while the assertion runs. On a synchronous card the
+ * agent is held on the call until the goods or the budget arrive, so a merchant
+ * who only takes the order on would have the test waiting out that budget; here
+ * the money moves at the purchase and the call comes straight back.
+ */
+const laterCardFor = (merchantItemId: string, title: string): Card => ({
+  ...cardFor(merchantItemId, title),
+  fulfillment: "async",
+  fulfill_deadline_seconds: 3_600,
+});
+
 let open: { harnessed: Harness; served: Served } | null = null;
 
 const started = async (overrides: Record<string, string> = {}) => {
@@ -59,11 +74,7 @@ const keyOf = (merchant: SeededMerchant): Record<string, string> => ({
   authorization: `Bearer ${merchant.key}`,
 });
 
-const publish = async (
-  served: Served,
-  merchant: SeededMerchant,
-  card: Card,
-): Promise<string> => {
+const publish = async (served: Served, merchant: SeededMerchant, card: Card): Promise<string> => {
   const answered = await served.call("POST", "/v0/catalog/publish", {
     body: card,
     headers: keyOf(merchant),
@@ -199,17 +210,16 @@ describe("what a key can do", () => {
 
   it("will not let one merchant answer the other's order", async () => {
     const { served, harnessed } = await started();
-    const { a, b, cardB } = await twoMerchants(served, harnessed);
+    const a = await harnessed.addMerchant("Merchant A");
+    const b = await harnessed.addMerchant("Merchant B");
+    const cardB = await publish(served, b, laterCardFor("b-later", "B's eSIM"));
 
     // B's card is bought and B's worker takes the order on rather than
     // delivering it, so there is a live order waiting for an answer.
-    const bought = buyOverHttp(harnessed, served, cardB, {
+    await buyOverHttp(harnessed, served, cardB, {
       merchantId: b.id,
       onOrder: () => ({ accepted: {} }),
     });
-    // The purchase is asynchronous from the agent's side only after the sync
-    // budget runs out, so the call is awaited before anything is asserted.
-    await bought;
 
     const ofB = await served.call("GET", "/v0/orders", { headers: keyOf(b) });
     const orderId = (ofB.body as { orders: { id: string }[] }).orders[0]?.id ?? "";
@@ -229,7 +239,9 @@ describe("what a key can do", () => {
 
   it("will not let one merchant refuse or accept the other's order", async () => {
     const { served, harnessed } = await started();
-    const { a, b, cardB } = await twoMerchants(served, harnessed);
+    const a = await harnessed.addMerchant("Merchant A");
+    const b = await harnessed.addMerchant("Merchant B");
+    const cardB = await publish(served, b, laterCardFor("b-later", "B's eSIM"));
 
     await buyOverHttp(harnessed, served, cardB, {
       merchantId: b.id,

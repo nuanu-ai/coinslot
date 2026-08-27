@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bearerIn, keyMatches } from "./auth.js";
+import { bearerIn } from "./auth.js";
 import { atomicUnits, PaymentEdge, paymentFingerprint } from "./x402.js";
 
 describe("a price in the token's own units", () => {
@@ -75,16 +75,12 @@ describe("what an agent is asked to pay", () => {
 });
 
 describe("the merchant's key", () => {
-  it("matches only the key itself", () => {
-    expect(keyMatches("a-merchant-key-long-enough", "a-merchant-key-long-enough")).toBe(true);
-    expect(keyMatches("a-merchant-key-long-enougH", "a-merchant-key-long-enough")).toBe(false);
-    // Keys of different lengths are compared without complaint, because the
-    // comparison is over digests. Refusing to compare them would have said
-    // something about the length of the real one.
-    expect(keyMatches("short", "a-merchant-key-long-enough")).toBe(false);
-    expect(keyMatches("", "a-merchant-key-long-enough")).toBe(false);
-  });
-
+  // What used to be here was a test that one key matched another in constant
+  // time. It retired with the variable it certified: the door is a lookup by
+  // digest now (ADR-0010), so nothing compares a secret against a secret. What
+  // replaced it is in `tenancy.test.ts` — a key nobody was issued is refused, a
+  // key somebody disabled is refused in the same words, and two merchants' keys
+  // never resolve to each other.
   it("reads a bearer token however the scheme is spelled, and nothing else", () => {
     expect(bearerIn("Bearer abc")).toBe("abc");
     expect(bearerIn("bearer abc")).toBe("abc");

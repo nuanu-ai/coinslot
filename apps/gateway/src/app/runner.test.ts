@@ -59,6 +59,7 @@ const impossible = (): StoredOrder => {
 
   return {
     order,
+    merchantId: "mch_the_runner",
     itemId: "item_1",
     merchantItemId: "sku-1",
     params: {},
@@ -118,7 +119,7 @@ describe("an order whose next clock could not be started", () => {
     // waiting on anything. Armed first and failing, nothing is written and the
     // event comes back to an order that has not moved.
     open = await harness();
-    const published = await open.gateway.publishCard({
+    const published = await open.gateway.publishCard(open.merchant.id, {
       merchant_item_id: "esim",
       title: "A seven day eSIM",
       description: "Seven days of data",
@@ -151,7 +152,7 @@ describe("an order whose next clock could not be started", () => {
 describe("who an order belongs to", () => {
   /** An order that has been quoted and is waiting for a payment. */
   const waiting = async (harnessed: Harness) => {
-    const published = await harnessed.gateway.publishCard({
+    const published = await harnessed.gateway.publishCard(harnessed.merchant.id, {
       merchant_item_id: "esim",
       title: "A seven day eSIM",
       description: "Seven days of data",

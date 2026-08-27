@@ -137,10 +137,8 @@ const USAGE = [
  * of the answer: `list_merchant_cards` returns published cards whole, each of
  * them the card its author wrote rather than an agent's projection of it. What
  * that route promises is worth repeating exactly, because every part of it is
- * easy to overstate. Whose cards it returns is not settled — its own
- * description says that during the pilot there is one merchant and one key, so
- * it answers with every card the gateway holds, and scoping it to the caller
- * is a change still to come. A card reaches that list by being accepted at
+ * easy to overstate. Whose cards it returns is settled: the merchant whose key
+ * the call was made with, and nobody else. A card reaches that list by being accepted at
  * `publish_card`, which parses the same `CardSchema` this package parses, so
  * the cards on it passed this check on the day they went out — which is not
  * the same as passing it now, because the schema can move, nothing parses a
