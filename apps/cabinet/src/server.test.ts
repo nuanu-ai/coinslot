@@ -110,6 +110,13 @@ interface Browser {
   withRawCookie(cookie: string): Browser;
   /** The same browser claiming its page came from somewhere else. */
   from(origin: string): Browser;
+  /**
+   * The same browser behind something that adds headers of its own.
+   *
+   * A terminator in front of the cabinet is not a browser and cannot be driven
+   * as one, so the headers it would add are put on the request here.
+   */
+  sending(headers: Record<string, string>): Browser;
   close(): Promise<void>;
 }
 
@@ -117,6 +124,14 @@ interface Running {
   readonly harnessed: Harness;
   readonly gateway: Served;
   readonly browser: Browser;
+  /**
+   * Where the cabinet under test is listening.
+   *
+   * A test that has to name an origin needs the host and the port the cabinet
+   * is actually answering on, because an origin the browser claims is compared
+   * against the `Host` header of the same request.
+   */
+  readonly url: string;
   /** The store the cabinet under test signs people in against. */
   readonly accounts: Accounts;
   /** A second browser on the same cabinet, for two people or two devices. */
@@ -145,6 +160,7 @@ const started = async (
     harnessed,
     gateway,
     browser,
+    url,
     accounts,
     another: async () => await attachedTo(url, basePath),
     async stopGateway() {
@@ -219,6 +235,7 @@ async function attachedTo(url: string, basePath: string): Promise<Browser> {
     sent: {
       readonly cookie?: string;
       readonly origin?: string;
+      readonly extra?: Record<string, string>;
       readonly raw?: { readonly contentType: string; readonly body: string };
     } = {},
   ): Promise<Visit> => {
@@ -229,6 +246,7 @@ async function attachedTo(url: string, basePath: string): Promise<Browser> {
       headers: {
         ...(cookie === "" ? {} : { cookie }),
         ...(sent.origin === undefined ? {} : { origin: sent.origin }),
+        ...(sent.extra ?? {}),
         ...(form === undefined ? {} : { "content-type": "application/x-www-form-urlencoded" }),
         ...(sent.raw === undefined ? {} : { "content-type": sent.raw.contentType }),
       },
@@ -276,6 +294,11 @@ async function attachedTo(url: string, basePath: string): Promise<Browser> {
       ...browser,
       get: (path) => call("GET", path, undefined, { origin }),
       post: (path, form) => call("POST", path, form ?? {}, { origin }),
+    }),
+    sending: (extra) => ({
+      ...browser,
+      get: (path) => call("GET", path, undefined, { extra }),
+      post: (path, form) => call("POST", path, form ?? {}, { extra }),
     }),
     close: async () => undefined,
   };
@@ -592,6 +615,29 @@ describe("getting into the cabinet", () => {
     await expect(sessionFor(accounts, fingerprintOf(token), new Date())).resolves.toBeNull();
     const replayed = await browser.withRawCookie(`${COOKIE}=${token}`).get("/cards");
     expect(replayed.to).toBe("/sign-in");
+  });
+
+  it("signs a merchant out even when another cookie of this name arrives first", async () => {
+    // A browser sends cookies of one name longest-path first and, among equal
+    // paths, oldest first, so the merchant's own is not necessarily the one
+    // this handler sees first. Ending only the first identifier the request
+    // carried would leave the session alive behind a sign-out that said it had
+    // worked — the exact case a shared machine is signed out of.
+    const { browser, gateway, accounts } = await started();
+    await publish(gateway, roomCard);
+    await browser.signIn();
+    const token = browser.sessionToken() ?? "";
+    // Shaped like one of ours, so it is looked up rather than skipped, and
+    // belonging to nobody.
+    const planted = "b".repeat(43);
+
+    const out = await browser
+      .withRawCookie(`${COOKIE}=${planted}; ${COOKIE}=${token}`)
+      .post("/sign-out");
+
+    expect(out.to).toBe("/sign-in");
+    await expect(sessionFor(accounts, fingerprintOf(token), new Date())).resolves.toBeNull();
+    expect((await browser.withRawCookie(`${COOKIE}=${token}`).get("/cards")).to).toBe("/sign-in");
   });
 
   it("hangs every link and form off the path it is mounted at", async () => {
@@ -1440,6 +1486,45 @@ describe("when something goes wrong that the merchant has to get out of", () => 
 
     expect(forged.status).toBe(403);
     expect(await purchasable(gateway, itemId)).toBe(true);
+  });
+
+  it("takes the scheme from the terminator in front of it, or refuses every form", async () => {
+    // Behind Caddy this process speaks http and the browser speaks https, so
+    // the origin a browser sends says "https" and the request arriving here
+    // says nothing of the sort. A cabinet that did not read the forwarded
+    // scheme would compare `https://host` against `http://host`, decide the
+    // form came from somewhere else, and refuse every form post on the site —
+    // the sign-in included, which is a cabinet nobody can get into.
+    //
+    // The sign-in is what this drives for exactly that reason: it is the post
+    // that has to work before any other one can.
+    const { browser, url } = await started();
+    const asHttps = `https://${new URL(url).host}`;
+    const credentials = { email: PERSON, password: PASSWORD };
+
+    const behindTls = await browser
+      .sending({ origin: asHttps, "x-forwarded-proto": "https" })
+      .post("/sign-in", credentials);
+    expect(behindTls.status).toBe(303);
+    expect(behindTls.to).toBe("/cards");
+
+    // The leftmost value, not the last. What this is compared against is the
+    // scheme the browser used at the edge of the chain, and that is the first
+    // entry; preferring the last would tell an honest merchant behind a chain
+    // that terminates TLS early that their form came from somewhere else.
+    const throughAChain = await browser
+      .sending({ origin: asHttps, "x-forwarded-proto": "https, http" })
+      .post("/sign-in", credentials);
+    expect(throughAChain.status).toBe(303);
+
+    // And the scheme is part of the origin rather than decoration: a page
+    // served over http on the same host is a different origin, which is the
+    // distinction this check exists to make because SameSite does not make it.
+    const overHttp = await browser
+      .sending({ origin: `http://${new URL(url).host}`, "x-forwarded-proto": "https" })
+      .post("/sign-in", credentials);
+    expect(overHttp.status).toBe(403);
+    expect(readable(overHttp.html)).toContain("did not come from the cabinet");
   });
 });
 
