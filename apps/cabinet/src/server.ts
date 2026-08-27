@@ -54,8 +54,8 @@ import { passwordScreen, signInScreen } from "./sign-in.js";
  * path, the one thing ADR-0005 §2 exists to keep it off. At an empty BASE_PATH
  * the path is already `/` and the prefix would be available, but only where the
  * cookie is also `Secure`: the name would then depend on two configuration
- * values, and no deployment of this cabinet sets them that way, so it would be
- * a branch that exists only in its own test.
+ * values, and no deployment described in this repository sets both of them that
+ * way, so it would be a branch that exists only in its own test.
  *
  * `__Secure-` is available and buys nothing here. It stops a page served over
  * http from setting the cookie, and the page this is about is served over https
