@@ -163,10 +163,18 @@ async function visiting(gatewayUrl: string, basePath: string): Promise<Browser> 
   };
 }
 
-/** The page's text with the tags taken out, so a test reads what a person does. */
+/**
+ * The page's text with the tags taken out, so a test reads what a person does.
+ *
+ * The entities are decoded after the tags are stripped, and the ampersand last
+ * of all: decoded first, a page carrying the literal text `&lt;` would come out
+ * as a bracket and this would report markup where there is none.
+ */
 const readable = (html: string): string =>
   html
     .replaceAll(/<[^>]*>/g, " ")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
     .replaceAll("&#39;", "'")
     .replaceAll("&quot;", '"')
     .replaceAll("&amp;", "&")
@@ -300,6 +308,30 @@ describe("the cards screen", () => {
     const text = readable((await browser.signIn(KEY)).html);
 
     expect(text).toContain("not published a card yet");
+  });
+
+  it("puts a merchant's own text on the page as text, whatever is in it", async () => {
+    // A card title is text somebody else wrote. The contract lets it hold any
+    // printable character, so a title with a bracket or an ampersand in it must
+    // arrive on the page as those characters rather than as markup — a merchant
+    // whose product is called "Tom & Jerry <the box set>" should see their
+    // product, not a page that stopped rendering halfway down the row.
+    const { browser, gateway } = await started();
+    await publish(gateway, {
+      ...roomCard,
+      merchant_item_id: "a&b<c>",
+      title: 'Tom & Jerry <the "box set">',
+    });
+
+    const page = (await browser.signIn(KEY)).html;
+
+    // Not one character of the title reaches the page as markup...
+    expect(page).not.toContain("Jerry <");
+    expect(page).not.toContain("a&b");
+    expect(page).toContain("Tom &amp; Jerry &lt;the &quot;box set&quot;&gt;");
+    // ...and a merchant still reads their own product's name, unchanged.
+    expect(readable(page)).toContain('Tom & Jerry <the "box set">');
+    expect(readable(page)).toContain("a&b<c>");
   });
 
   it("pauses one card, and that card stops selling", async () => {
@@ -464,6 +496,9 @@ describe("the orders screen", () => {
     expect(text).toContain("refund due");
     expect(text).toContain("1 order needs you");
     expect(text).toContain("You return it from your own wallet");
+    // And nowhere on the page is the wire's own word for it. `refund_due` is
+    // what a program branches on; a merchant reads a sentence.
+    expect(text).not.toContain("refund_due");
   });
 });
 
