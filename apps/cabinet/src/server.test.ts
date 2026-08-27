@@ -1310,24 +1310,30 @@ describe("what the cabinet writes down about what people do", () => {
     const { browser, gateway } = await started();
     const itemId = await publish(gateway, roomCard);
 
+    // Read out inside the journey and not after it. Taken afterwards it is
+    // null, because the last two steps end the session — and an assertion
+    // guarded by "if we have one" is an assertion that never runs. That is how
+    // this test passed while the cabinet logged the identifier on every
+    // sign-in, and it is the reason for the plain `expect` below.
+    let token = "";
+
     const said = await logged(async () => {
       await browser.post("/sign-in", { email: PERSON, password: "not-the-password" });
       await browser.signIn();
+      token = browser.sessionToken() ?? "";
       await browser.post("/selling/pause");
       await browser.post(`/cards/${encodeURIComponent(itemId)}/pause`);
       await browser.post("/password", { current: PASSWORD, fresh: "a-password-of-their-own" });
       await browser.post("/sign-out");
     });
 
+    expect(token).not.toBe("");
+    expect(said).not.toContain(token);
     expect(said).not.toContain(PASSWORD);
     expect(said).not.toContain("a-password-of-their-own");
     expect(said).not.toContain("not-the-password");
     expect(said).not.toContain(KEY);
     expect(said).not.toContain(PASSWORD_HASH);
-    const token = browser.sessionToken();
-    if (token !== null) {
-      expect(said).not.toContain(token);
-    }
   });
 
   it("does not write down an address somebody merely typed at the sign-in", async () => {
