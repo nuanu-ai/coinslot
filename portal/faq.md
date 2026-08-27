@@ -18,13 +18,12 @@ are worked through on [Connecting to Coinslot](/).
 
 ### Do I need an engineer for this?
 
-It depends which delivery path you take. The link to an online shop is set up
-and run by us, and it asks no engineering work of your side. A handler against
-your API can be written by your engineer with our tools, and if you have no
-engineer of your own, or they are busy with something else, we do that part
-and run it ourselves — what we need from you then is access to the API and
-your approval of the cards. The choice is described in
-[Your hands or ours](/).
+It depends which delivery path you take. We set up the link to an online shop
+and run it ourselves, and it asks no engineering work of your side. Your own
+engineer can write a handler against your API with our tools, and if you have
+no engineer, or they are busy with something else, we do that part and run it
+too — what we need from you then is access to the API and your approval of the
+cards. The choice is described in [Your hands or ours](/).
 
 ### What does it cost?
 
@@ -126,11 +125,12 @@ repeat in which mode is in [Telling a repeat apart](/orders).
 
 ### What do I check myself with before publishing?
 
-The `coinslot verify` command, on your side. It looks at two things: whether
-the card is enough for an agent to assemble a correct purchase, and whether
-your handler holds against repeats — that is, whether a second delivery
-appears when the same order arrives twice. It compares the effect and not the
-bytes of the answers. The whole step is in [Check yourself](/quickstart).
+The check we ship, which these pages call `coinslot verify`. It looks at two
+things: whether the card is enough for an agent to assemble a correct
+purchase, and whether your handler holds against repeats — that is, whether a
+second delivery appears when the same order arrives twice. It compares the
+effect and not the bytes of the answers. The whole step, and what you can
+actually run today, is in [Check yourself](/quickstart).
 
 ## What is not settled yet
 
