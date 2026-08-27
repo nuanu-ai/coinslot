@@ -512,12 +512,26 @@ describe("the discovery declaration a challenge carries", () => {
   }
 
   it("gives two requests for one product the same declaration", () => {
-    // Byte for byte. A listing is keyed on the resource, and a declaration
-    // that varied between two challenges for the same card would be two
-    // listings for one product.
-    expect(JSON.stringify(challenge("POST", { serviceName: "A seller" }))).toBe(
-      JSON.stringify(challenge("POST", { serviceName: "A seller" })),
-    );
+    // Byte for byte, from two edges built separately over a card parsed twice,
+    // so nothing here is two readings of one object. A listing is keyed on the
+    // resource, and anything that varied between two challenges for the same
+    // card — an instant, a counter, a value read off the request — would be two
+    // listings for one product, or one that flickers between them.
+    const twice = () => {
+      const parsed = CardSchema.parse(JSON.parse(JSON.stringify(card)));
+      return JSON.stringify(
+        decodePaymentRequiredHeader(
+          edge().challengeFor(
+            { amount: "5.00", currency: "USD" },
+            null,
+            { itemId: "itm_4d21bb", card: parsed, serviceName: "A seller" },
+            "POST",
+          ),
+        ),
+      );
+    };
+
+    expect(twice()).toBe(twice());
   });
 
   it("still says which order it is for", () => {
