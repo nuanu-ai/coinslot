@@ -70,16 +70,40 @@ describe("the surface is the table", () => {
     }
   });
 
-  it("does not serve the route whose door nobody has chosen", async () => {
-    // The agent's status route is the only one under the merchant's prefix that
-    // is not the merchant's. Left mounted with no scheme it would let anyone
-    // read anyone's purchase.
-    const { served } = await started();
-    expect(API_ROUTES.get_order_status.auth).toBe("undecided");
+  it("puts the merchant's door on the merchant's calls and on no other", async () => {
+    // The check that has to run over the whole table rather than over one
+    // route. Every call is made with no key at all: the merchant's are refused
+    // and nothing else is, so a door attached to an address prefix — the
+    // natural mistake under `/v0/orders`, where every route but one is the
+    // merchant's — turns the agent's own route into one it can never open, and
+    // this test dies the moment it does.
+    const { served } = await started({ WORKER_POLL_WAIT_MS: "1" });
 
-    const answered = await served.call("GET", "/v0/orders/ord_1/status", { headers: asMerchant });
+    for (const [name, route] of mountableRoutes()) {
+      const path = route.path.replaceAll(/:([a-z_]+)/g, "placeholder");
+      const answered = await served.call(route.method, path, {
+        ...(route.request === undefined ? {} : { body: {} }),
+      });
 
-    expect(answered.status).toBe(404);
+      expect(answered.status === 401, `${name} with no key answered ${answered.status}`).toBe(
+        route.auth === "merchant_key",
+      );
+    }
+  });
+
+  it("will not mount a route whose door nobody has chosen, whoever hands it over", async () => {
+    // The list the gateway mounts from already leaves these out, and that is
+    // one filter away from not doing so. This is the second half of the same
+    // promise, at the place the mistake would land: a route marked undecided is
+    // refused here even when it is handed over by name, so a door nobody chose
+    // cannot be opened by editing a list.
+    const { harnessed } = await started();
+
+    expect(() =>
+      buildApp(harnessed.gateway, [
+        ["list_catalog" as never, { ...API_ROUTES.list_catalog, auth: "undecided" as const }],
+      ]),
+    ).toThrow(/undecided/);
   });
 
   it("will not start when the table names a call nothing serves", async () => {
@@ -90,7 +114,7 @@ describe("the surface is the table", () => {
     const { harnessed } = await started();
 
     expect(() =>
-      buildApp(harnessed.gateway, [["get_order_status" as never, API_ROUTES.get_order_status]]),
+      buildApp(harnessed.gateway, [["a_call_nobody_serves" as never, API_ROUTES.list_catalog]]),
     ).toThrow(/nothing to serve it with/);
   });
 });
