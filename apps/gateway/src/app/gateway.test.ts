@@ -1129,10 +1129,15 @@ describe("the merchant's calls", () => {
   });
 
   it("still takes an order on that is owed a refund, because the goods still close it", async () => {
-    // The other order an acceptance can arrive for late. Here it is true: the
-    // deadline ran out and the buyer is owed his money back, but goods that
-    // arrive before the refund does close the debt instead — so the merchant
-    // taking it on is taking on work that still exists, and is told so.
+    // The other order an acceptance can arrive for late. This fixture reaches
+    // the debt the short way — the merchant refuses out of stock after the
+    // charge, which is one of the paths into it, not the expiry one — and the
+    // promise is the same either way: goods that arrive before the refund does
+    // close the debt instead, so a merchant taking the order on afterwards is
+    // taking on work that still exists, and is told his acceptance landed.
+    // Odd-looking on the face of it, since he is the one who refused; it is
+    // the honest answer, because until the refund is executed his goods are
+    // still the cheaper way out for everybody.
     const harnessed = await started();
     const itemId = await published(harnessed, asyncCard);
     const offered = await harnessed.gateway.beginPurchase(itemId, {});

@@ -177,10 +177,12 @@ function answer(order: Order, merchantAnswer: MerchantAnswer): TransitionResult 
 /**
  * The merchant is told his acceptance landed.
  *
- * Written once and used from the two states where taking the order on moves it
- * forward — dispatched, and the confirmation the same event answers — because
- * those are the same fact about him and a merchant reading two different
- * answers to his one answer would be reading a difference that is not there.
+ * Written once and used from two arms — dispatched, and the confirmation the
+ * same event answers — because those are the same fact about him and a
+ * merchant reading two different answers to his one answer would be reading a
+ * difference that is not there. Arms, not states: an acceptance arriving while
+ * our record still says `paid` is routed into the dispatched arm, so three
+ * states reach this effect and five in all can handle the event.
  * It rides alongside the other effects rather than through `answer`, which
  * replaces them.
  *
@@ -916,6 +918,14 @@ function fromDelivered(order: Order, event: StateEvent): TransitionResult {
       // is the state he is in: told his acceptance landed he would write the
       // order down as under way — which is what that word means here — and go
       // looking for goods he has already handed over.
+      //
+      // Where the line falls, since the same at-least-once argument reaches
+      // further than this arm: a redelivered acceptance is answered as
+      // ordinary only where the order still stands and nothing failed. On an
+      // order that ran out its deadline or closed with a departed merchant the
+      // refusal stays, and the entry it writes in his log is one he wants —
+      // there the order genuinely did fail, and `order_already_closed` is
+      // exactly true of it rather than merely safe to say.
       return answer(order, { ok: true, result: "already_delivered" });
     case "order_dispatched":
       // The order came round again off the queue. Nothing is owed on it and

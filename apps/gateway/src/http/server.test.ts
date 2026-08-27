@@ -748,13 +748,15 @@ describe("the worker's calls over HTTP", () => {
     });
 
     expect(early.status).toBe(409);
-    // The code is the machine's own word rather than one of the three the
-    // contract promises, which the open set allows for, and the flag is what
-    // the merchant acts on: repeating this call changes nothing.
-    expect(early.body).toMatchObject({
-      ok: false,
-      error: { code: "event_not_applicable", retryable: false },
-    });
+    // Refused, and the order was not taken on — that is what this pins. The
+    // code itself is deliberately not pinned: it is the machine's own word
+    // rather than one of the three the contract promises, and `results.ts`
+    // calls that set open and free to change, so asserting it here would
+    // certify a stability the contract declines to offer. Nor is `retryable`
+    // pinned, because on this fixture it is not true in the sense the field
+    // promises: the order is merely unpaid, and the identical call succeeds
+    // once the buyer pays. The flag has two values where the truth has three.
+    expect(early.body).toMatchObject({ ok: false });
     expect((await harnessed.store.orderById(offered.order.order.id))?.order.dispatch.accepted).toBe(
       false,
     );
