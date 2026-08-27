@@ -31,6 +31,7 @@ are working names and can still change before the pilot.
 | `params` | the shape of the purchase parameters | required where the delivery needs input | `{ email: { type: 'string', required: true } }` |
 | `result` | the shape of what the agent receives on delivery | required | `{ access_url: { type: 'string' } }` |
 | `fulfillment` | `'sync'` or `'async'`; `'confirm'` is not published during the pilot | required | `'sync'` |
+| `fulfill_deadline_seconds` | how long you may take to deliver | on an asynchronous card only | `86400` |
 
 An asynchronous card carries one deadline of your own: how long you may take
 to deliver. It runs from the moment the buyer is charged, which for an
@@ -39,8 +40,9 @@ when the order reaches your handler, and it covers every attempt we make to
 deliver that order to you. The agent sees the deadline before it buys, and
 what happens when it runs out is in [Time ran out](/orders). A synchronous
 card has no such field, because how long to wait for a synchronous answer is
-our own ceiling on how long an agent waits, and it is the same for every
-product. The confirmation mode has a deadline of its own and it arrives
+our own ceiling on how long an agent waits, the same for every product. That
+one runs from the moment of purchase, so the price question and the payment
+check come out of it before your handler is called. The confirmation mode has a deadline of its own and it arrives
 together with the mode.
 
 ### Two identifiers
@@ -96,10 +98,11 @@ country, a period, any other input without which the delivery is impossible.
 Each parameter has a type, a mark saying whether it is required, and an
 explanation a person can read of what it is for.
 
-This field is checked more strictly than the others, because it is where the
-card's main requirement breaks. A parameter your delivery needs and the card
-does not name produces a purchase you cannot fulfil — and instead of a sale
-you get a refusal.
+Nothing checks this field against your delivery, and it is where the card's
+main requirement breaks. A parameter your delivery needs and the card does not
+name produces a purchase you cannot fulfil — and instead of a sale you get a
+refusal. No check of ours can see that, because neither we nor the contract
+know what your delivery needs; getting it right is yours.
 
 ### Delivery result
 
@@ -305,8 +308,8 @@ and what that ought to be is not settled.
   buying program or instructing it.
 - The exact shape that describes the purchase parameters and the delivery
   result.
-- The names of the fields a card sets your deadlines in, for confirming and
-  for delivering.
+- The delivery deadline's numbers: what it defaults to when a card leaves it
+  out, and how long it may be.
 - The shape of the field a card declares a price check in and chooses a
   transport with.
 - Whether the vocabulary of recommended codes grows beyond three: we decide

@@ -211,7 +211,8 @@ called the order counts as accepted, and the delivery deadline named in your
 card is running on it — it started when the buyer was charged, at the moment
 of purchase, before the order reached you. A synchronous card carries no such
 field: how long to wait for a synchronous answer is set by us, as one number
-for everybody.
+for everybody, and it bounds the whole purchase rather than your handler — it
+runs from the moment the agent buys.
 
 If your process has restarted in the meantime, the object you kept is gone.
 The open orders are then read back from us, and the delivery is made on those
@@ -325,9 +326,11 @@ problem handler stays quiet. The first order reaches it on step 5.
 ## 4. Check the card
 
 Before calling us, run your cards through the check. It reads a card the way
-we read it at publication and reports what an agent could not do with it: a
-parameter your delivery needs and the card does not name, a result that
-promises nothing, a deadline on a card whose mode never uses one.
+we read it at publication and reports what the contract can see from the card
+alone: a result that promises nothing, a deadline on a card whose mode never
+uses one, a field of the wrong shape. What it cannot see is your delivery, so
+a purchase parameter your delivery needs and the card does not name goes
+through unremarked. That one is yours to catch.
 
 ```sh
 npx coinslot verify card.json

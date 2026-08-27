@@ -194,6 +194,8 @@ The first call returns one order, the second every order still open. They are
 for the case where your process restarted and no record of the order is left
 on your side: the list of open orders shows what is still waiting for a
 delivery, so the picture does not have to be rebuilt from your database alone.
+Both throw when they cannot reach us, which is worth remembering about a loop
+that runs the moment a process comes back up.
 
 Orders from here carry the same calls that orders from the handler do:
 `deliver` and `refuse` are made directly on them. After a restart your process
@@ -211,8 +213,8 @@ await coinslot.orders.forId(savedId).deliver({ access_url: url })
 ```
 
 That call asks nothing, and so it works even when we cannot be reached: `get`
-at such a moment throws, while a delivery against a saved identifier goes out
-and comes back as an error flagged worth repeating. It
+and `list` at such a moment throw, while a delivery against a saved identifier
+goes out and comes back as an error flagged worth repeating. It
 does not read the order itself — there are no purchase parameters and no state
 in it, only the calls that close an order.
 
@@ -296,7 +298,10 @@ deadline of yours, on the delivery, counted from the moment the buyer was
 charged, and the agent sees it before it buys; the
 confirmation mode has a deadline of its own and it arrives together with the
 mode. How long to wait for a synchronous answer is set by us — that is the
-general ceiling on how long an agent waits, and no card carries it.
+general ceiling on how long an agent waits, no card carries it, and it is a
+ceiling on the whole purchase rather than on your handler: it runs from the
+moment the agent buys, so asking your price and checking the payment come out
+of it before your handler is called.
 
 | Situation | Time ran out — what happened |
 | --- | --- |
@@ -366,8 +371,10 @@ delivery. The hard case is a delivery that began before the deadline and
 finished after it, by which time the purchase is closed as a refusal with
 nothing charged.
 
-Say ten seconds are allowed for a synchronous answer (an example figure). Your
-handler began the delivery in the ninth second and finished in the twelfth. By
+Say ten seconds are allowed for a synchronous answer (an example figure),
+counted from the moment the agent bought — asking your price and checking the
+payment come out of the same ten. Your handler began the delivery in the ninth
+second and finished in the twelfth. By
 that second the agent has already had a refusal and spent nothing, but the
 access you gave out has not gone anywhere.
 
@@ -376,11 +383,12 @@ collects the delivery that was made, this time with the payment. So answering
 with the earlier result under the key is worth doing after the deadline has
 passed too.
 
-Being late is not an error and does not come back as an exception: for a late
-answer our tools hand your code the result "the purchase is already closed".
-There is one thing to do with it — write the case down on your side. You have
-produced the goods, there is no payment for them yet, and it will arrive with
-a repeat.
+Being late is not an error and does not come back as an exception. Our side
+takes the answer and records the purchase as already closed. Your code is not
+told: the tools report an answer we refused, and this is one we accept, so
+nothing surfaces on your side. The case is invisible to you until the repeat
+arrives and pays for it — you have produced the goods, there is no payment for
+them yet, and it comes with the repeat.
 
 ## The price changed while the agent was thinking
 
@@ -404,3 +412,5 @@ failed, and your side never hears about it — no order appears at all.
   path where an order arrives as a message, after the pilot.
 - How your side learns that a refund on an order has gone out: together with
   the mechanics of refunding ([Money](/money)).
+- Telling your code that a synchronous answer arrived after its deadline. Our
+  side records it; nothing carries the word back to you.
