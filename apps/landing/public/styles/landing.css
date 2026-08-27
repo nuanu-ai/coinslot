@@ -41,6 +41,20 @@
   color: var(--muted);
 }
 
+/* A link sitting inside a sentence is underlined, because inside a sentence
+   colour is the only thing separating it from the words around it and colour
+   alone is not a signal everyone receives. Links that are already shaped like
+   something to click — the nav, the buttons, the footer row — are left as the
+   design drew them. */
+.section__body a,
+.cell__body a,
+.row__body a,
+.caption a,
+.open__list a {
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
 /* Header */
 
 .masthead {
@@ -79,6 +93,16 @@
   font-size: 14px;
 }
 
+/* A link in the header or the footer is a thing a thumb has to hit, and a line
+   of 14px text is 22px tall at most. These give every one of them a 24px box
+   without moving anything on the page. */
+.masthead__nav a,
+.colophon__links a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+}
+
 /* Buttons here are links: every one of them goes to a page, and none of them
    submits anything. */
 
@@ -96,16 +120,22 @@
   font-weight: 500;
 }
 
+/* The bordered buttons take --line-strong rather than the page's hairline: at
+   1.31:1 the drawn hairline left "Talk to us" looking like a sentence that
+   happened to have a box near it. */
+
 .button--quiet {
   color: var(--fg);
-  border: var(--hairline) solid var(--line);
+  border: var(--hairline) solid var(--line-strong);
 }
 
 .button--small {
+  display: inline-flex;
+  align-items: center;
   padding: 7px 14px;
   font-size: 14px;
   color: var(--fg);
-  border: var(--hairline) solid var(--line);
+  border: var(--hairline) solid var(--line-strong);
   border-radius: var(--radius);
 }
 
