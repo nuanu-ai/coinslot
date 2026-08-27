@@ -94,9 +94,9 @@ failure. An exception in the handler, a process that fell over, a connection
 that broke — for us each of these means the order never reached you: the answer
 did not arrive, so we send the order again, after a delay, until the mode's
 deadline runs out or we have made enough attempts. Either way the order closes
-as though the deadline had passed. We read a refusal the other way, as a final "this cannot be
-delivered", and we close the order on it. So a supplier that did not answer
-within five seconds is not worth a refusal: throw instead.
+as though the deadline had passed. We read a refusal the other way, as a final
+"this cannot be delivered", and we close the order on it. So a supplier that
+did not answer within five seconds is not worth a refusal: throw instead.
 
 Silence does not count as an answer: every wait has a deadline, and an order
 that runs past its deadline closes without you.
@@ -198,9 +198,9 @@ for (const waiting of open) {
 The first call returns one order, the second every order still open. They are
 for the case where your process restarted and no record of the order is left on
 your side: the list of open orders shows what is still owed something, so the
-picture does not have to be rebuilt from your database alone. Both throw
-when they cannot reach us, which is worth remembering about a loop that runs
-the moment a process comes back up.
+picture does not have to be rebuilt from your database alone. Both throw when
+they cannot reach us, which is worth remembering about a loop that runs the
+moment a process comes back up.
 
 Orders from here carry the same calls that orders from the handler do:
 `deliver` and `refuse` are made directly on them. After a restart your process
@@ -283,7 +283,7 @@ execute; and the payment network never said whether the charge went through.
 | There is none, the parameters did not fit, the payment failed its check — or you refused in the synchronous mode | never moved | a refusal with a reason; the purchase did not happen |
 | You answered "I will not deliver" to a request to confirm | never moved | a refusal, and nothing was charged |
 | Time ran out: no confirmation, no payment or no synchronous delivery arrived | never moved | the order was closed on its deadline |
-| You left, and the open orders closed | for what was not delivered, [you send it back](/money) | the order is closed, the money will come back |
+| You left | for what was not delivered, [you send it back](/money) | an unpaid order is closed; a paid one waits for your refund |
 | The money was charged and no delivery happened | with you | the order is waiting for a refund |
 | You delivered synchronously and the payment did not execute | never arrived | the purchase did not happen; a repeat drives the payment home |
 | The payment network did not say whether the money was charged | not known — we are finding out and will tell you when we do | "the outcome of the payment is not known", not "refused": a repeat under the same key is safe |
@@ -383,9 +383,9 @@ nothing charged.
 Say ten seconds are allowed for a synchronous answer (an example figure),
 counted from the moment the agent bought — asking your price and checking the
 payment come out of the same ten, and so does whatever the agent spends
-deciding to pay. Your handler began the delivery in the ninth
-second and finished in the twelfth. By that second the agent has already had a
-refusal and spent nothing, but the access you gave out has not gone anywhere.
+deciding to pay. Your handler began the delivery in the ninth second and
+finished in the twelfth. By that second the agent has already had a refusal and
+spent nothing, but the access you gave out has not gone anywhere.
 
 Work already done is not lost: a repeat purchase under the same order key
 collects the delivery that was made, this time with the payment. So answering

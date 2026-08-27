@@ -310,12 +310,12 @@ on it.
 Both calls take `as_of` as their last argument — the moment the answer is true
 for. It separates "went and looked" from "handed over what was in the cache",
 it is meant to tell us how far the answer can be trusted — nothing compares it
-against a threshold yet — and it goes into the record of the sale. In the example above it is named where the price came from
-a lookup that carries its own timestamp, and left out where the handler has
-just been and confirmed there is none: an `as_of` left out is the moment of the
-answer itself. So if you take the price from a cache, name the moment that
-cache was filled; left to the default, the answer claims more freshness than
-you have.
+against a threshold yet — and it goes into the record of the sale. In the
+example above it is named where the price came from a lookup that carries its
+own timestamp, and left out where the handler has just been and confirmed there
+is none: an `as_of` left out is the moment of the answer itself. So if you take
+the price from a cache, name the moment that cache was filled; left to the
+default, the answer claims more freshness than you have.
 
 This is the path we serve: the same channel the orders use, and nothing of
 yours facing outward. A second transport is designed for a business whose price
@@ -342,15 +342,21 @@ unremarked. That one is yours to catch.
 npx coinslot verify card.json
 ```
 
-That is not yet a command you can run — the package does not declare it, so
-today the check is reached through the functions the package exports. Either
-way it takes the cards as arguments and reads them off disk. It raises no order
-and it does not need your handler running.
+Name the card files. The command does not go looking for them: it takes no key
+and no address, so it cannot ask us what you have published, and nothing says
+where you keep the files you publish from — called bare, it refuses and prints
+those reasons rather than checking nothing quietly. It raises no order and it
+does not need your handler running.
 
-There is no silent "invalid": every finding is explained in words and points at
-one field of one card. A card whose shape is wrong is not then checked against
-the rules that compare one field with another, so a short list of findings is
-not a promise that one round of fixes is enough.
+The command itself cannot be invoked yet, because these packages ship without a
+build step and declare no command; until they are built, the same check is the
+function the package exports, which takes a card you have already parsed.
+
+There is no silent "invalid": every finding is explained in words, and all but
+one point at a field — a file that is not JSON at all is a finding about the
+card as a whole. A card whose shape is wrong is not then checked against the
+rules that compare one field with another, so a short list of findings is not a
+promise that one round of fixes is enough.
 
 The other half of checking yourself is missing, and it is the half worth more.
 Whether your handler holds against repeats — whether a second delivery appears
@@ -413,8 +419,8 @@ code.
   delivery. Nothing on our surface raises a test order to send, and behind that
   sits the question of what separates the sandbox from the live system.
 - `coinslot verify` as a command you can run. The card check is written and the
-  package exports it; what the package does not declare is the command that
-  wraps it.
+  package exports it; what is missing is the build that would let the command
+  start.
 - How the package reaches you. It is not published anywhere, and the name it is
   installed under is a working one.
 - Where to say that you are ready for a test purchase: we have no channel for

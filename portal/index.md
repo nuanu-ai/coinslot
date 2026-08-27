@@ -41,8 +41,8 @@ have answered them we have no more questions for you.
    title, the description, the price and the list of what has to be given at
    purchase. You check the finished card and approve it. Approval goes by
    correspondence rather than by a button: we send you the card, and you either
-   say yes or say what to fix. The last word stays with you, because the card
-   sells under your name and at your prices.
+   say yes or say what to fix. The last word stays with you, because it is your
+   product at your price and the card is the whole of what an agent reads.
 2. Where to send the money. We need the address of your wallet — buyers'
    payments arrive there. Nothing accumulates on our side, and nothing is paid
    out once a week.
@@ -90,11 +90,15 @@ side, so you find yourself in them without doing anything; when the exchange
 formats change, we move everyone at once and your side is not touched.
 
 You can stop the sales yourself at any moment. The cabinet is a page on our
-side that you sign in to, and it shows your cards, your orders and the receipts
-for the sales that went through. It carries a pause on each card and one button
+side that you sign in to with an address and a password of your own, and it
+shows your cards, your orders and the receipts for the sales that went through.
+That account is not the key your code sends us, so ending someone's session
+does not touch your integration. It carries a pause on each card and one button
 that stops selling altogether. Paused, a card stops selling and disappears from
-the catalogues, while the orders already taken on play out in the ordinary way;
-to be left with no open orders at all you have to leave entirely.
+the catalogues, while the orders already taken on play out in the ordinary way.
+Leaving is the other thing, and it does not tidy everything away either: the
+orders nobody paid for close, and the ones paid for and not delivered become
+money you send back.
 
 We also mean to stop selling without your asking, when your side stops
 answering or answers too often that the goods are gone — to the buyer that
@@ -126,6 +130,8 @@ where it is awkward for you.
   and not yet delivered appears among the orders and not among the receipts.
   The money arrives straight in your wallet, and putting the two together is
   still yours to do.
+- Whether an agent is told whose shop it is buying from. A card carries the
+  product and its price, and nothing in it names the seller.
 - What happens when a purchased period runs out: renewing a subscription and
   buying the same access again are not designed yet.
 - What we promise you when it is our side that goes quiet. There is a great

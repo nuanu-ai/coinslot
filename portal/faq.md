@@ -37,10 +37,11 @@ and the rest of the money, is on [Money](/money).
 We do, from your site, your catalogue or your documentation, and you check them
 and approve them. Approval goes by correspondence rather than by a button: we
 send you the card, and you either say yes or say what to fix. The last word
-stays with you, because the sale goes out under your name and at your prices.
-Keeping the cards up is our work too: the product, what is in it or the price
-changes, you tell us, and we make the edit. If you would rather keep the cards
-yourself, the tools for it are there: [The first test sale](/quickstart).
+stays with you: it is your product at your price, and the card is the whole of
+what an agent reads. Keeping the cards up is our work too: the product, what is
+in it or the price changes, you tell us, and we make the edit. If you would
+rather keep the cards yourself, the tools for it are there: [The first test
+sale](/quickstart).
 
 ### Will live customers come to me?
 
@@ -74,12 +75,13 @@ of how an order can end is in [How an order can end](/orders).
 
 ### Can I leave altogether?
 
-You can, and it is an ordinary operation. The cards come out of the catalogues,
-the open orders close, and the money for anything undelivered you send back to
-the buyers yourself, from your own wallet: that is where it arrived. Neither
-your money nor your goods are left with us — they always went past us anyway.
-One thing does remain: the key to your API, if we were the ones writing and
-running the handler. Revoke it, and our side can no longer reach yours. The
+Leaving is designed, and nothing on our surface does it yet — during the pilot
+it is arranged with us. The cards come out of the catalogues, the orders nobody
+paid for close, and the money for anything paid for and not delivered you send
+back to the buyers yourself, from your own wallet: that is where it arrived.
+Neither your money nor your goods are left with us — they always went past us
+anyway. One thing does remain: the key to your API, if we were the ones writing
+and running the handler. Revoke it, and our side can no longer reach yours. The
 obligation to refund, and what is still unchosen in its mechanics, is described
 on [Money](/money).
 
@@ -107,12 +109,12 @@ chosen: [Money](/money).
 We ask you at the moment of purchase, where the card has a price check turned
 on. Your code answers it, in a price handler that sits in the same process as
 the order handler; the sale then goes at the price you named, and an answer of
-"there is none" closes the purchase before any money moves
-([what to answer with](/cards)). A second transport for a separate pricing
-service — a price hook at an address of your own — is designed and not called
-yet, so a card that names one is priced as though nobody had answered. Without a check we
-sell at the card's price and hear that the goods have run out from your refusal
-at delivery; what happens when the check is silent is on [What can go
+"there is none" closes the purchase before any money moves ([what to answer
+with](/cards)). A second transport for a separate pricing service — a price
+hook at an address of your own — is designed and not called yet, so a card that
+names one is priced as though nobody had answered. Without a check we sell at
+the card's price and hear that the goods have run out from your refusal at
+delivery; what happens when the check is silent is on [What can go
 wrong](/failures).
 
 ### The same order arrived twice — is that normal?
@@ -134,8 +136,8 @@ the card](/quickstart).
 
 ## What is not settled yet
 
-- The timings of the procedure for leaving, and what becomes of orders taken on
-  at the last moment.
+- How leaving is done at all — no call makes it happen today — its timings, and
+  what becomes of orders taken on at the last moment.
 - What the records of a delivery contain, the ones we hand you to settle a
   dispute with.
 - How a complaint reaches you at all: the buyer is a program, and the person it

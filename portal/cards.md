@@ -45,8 +45,8 @@ happens when it runs out is in [Time ran out](/orders). A synchronous card has
 no such field, because how long to wait for a synchronous answer is set by us,
 the same for every product. That one runs from the moment of purchase rather
 than from the moment your handler is called, so the price question and the
-payment check come out of it first. The confirmation mode has a deadline
-of its own and it arrives together with the mode.
+payment check come out of it first. The confirmation mode has a deadline of its
+own and it arrives together with the mode.
 
 ### Two identifiers
 
