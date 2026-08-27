@@ -193,9 +193,12 @@ export function postgresAccounts(pool: Pool): Accounts {
           .leftJoin(sessions, and(eq(sessions.accountId, accounts.id), gt(sessions.expiresAt, now)))
           .groupBy(accounts.email, accounts.createdAt);
         // Sorted here rather than by the database, so that the order a person
-        // reads off a terminal is the same one whichever store answered. A
-        // database sorts by its own collation, and `C` and ICU disagree about
-        // where a hyphen or a dot in an address goes.
+        // reads off a terminal is the same one whichever store answered and on
+        // whatever server. A database sorts by its own collation, and the
+        // disagreement is real rather than theoretical: on Postgres 17, `C` and
+        // `en-US-x-icu` put `renée@example.com` on opposite sides of
+        // `renz@example.com`. Hyphens and dots, which is where one would look
+        // for this first, are ordered the same way by both.
         return rows
           .map((row) => ({
             email: row.email,

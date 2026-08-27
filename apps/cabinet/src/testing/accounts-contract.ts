@@ -399,6 +399,33 @@ export function describeAccounts(name: string, open: () => Promise<Accounts>): v
         expect(listed[0]?.createdAt.toISOString()).toBe(at.toISOString());
       });
 
+      it("is in one order whichever store answered and whatever the database would have chosen", async () => {
+        // The order is decided in the process, not by the database, so that a
+        // person reading a terminal sees the same list from either store and
+        // from any deployment. The addresses here are what makes that testable:
+        // measured on Postgres 17, the `C` collation and `en-US-x-icu` put
+        // `renée@example.com` on opposite sides of `renz@example.com`, and
+        // JavaScript's own `<` agrees with `C` while `localeCompare` agrees
+        // with ICU. Two addresses of plain lower-case letters, or a hyphen or a
+        // dot, are ordered the same way by all four and would hold nothing.
+        //
+        // They go in in an order that is neither answer, so what is read is a
+        // sort and not the order they were added in.
+        const accounts = await fresh();
+        const at = new Date("2026-08-27T09:00:00.000Z");
+        for (const address of ["renz@example.com", "renée@example.com", "dmitry@example.com"]) {
+          await accounts.add(address, "hash", at);
+        }
+
+        const listed = await accounts.list(at);
+
+        expect(listed.map((row) => row.email)).toStrictEqual([
+          "dmitry@example.com",
+          "renée@example.com",
+          "renz@example.com",
+        ]);
+      });
+
       it("says there are none rather than failing when nobody has an account", async () => {
         const accounts = await fresh();
 
