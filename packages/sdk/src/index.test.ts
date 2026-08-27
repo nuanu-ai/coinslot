@@ -9,6 +9,7 @@ const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.
   license?: string;
   repository?: unknown;
   engines?: Record<string, string>;
+  scripts?: Record<string, string>;
   dependencies?: Record<string, string>;
   exports?: Record<string, unknown>;
   publishConfig?: {
@@ -94,15 +95,21 @@ describe("@coinslot/sdk", () => {
     expect(published.filter((path) => !inPackage(sourceOf(path)))).toStrictEqual([]);
   });
 
-  it("carries what npm needs to publish it", () => {
+  it("carries what npm needs to publish it, and builds before it is packed", () => {
     // A merchant installs this from a registry, so the fields a registry reads
     // are part of the deliverable. `files` is the one with teeth: without it
     // npm ships the whole directory, and our tests, our fixtures and our
     // fake gateway would land in someone else's production.
+    //
+    // `prepack` is the other. Packing a tree whose `dist` is absent otherwise
+    // produces a tarball holding nothing but this manifest — no error, no
+    // warning — while `publishConfig` still names an entry point and a command
+    // that are not in it. That package installs and dies on first use.
     expect(manifest.private).toBeUndefined();
     expect(manifest.files).toStrictEqual(["dist"]);
     expect(manifest.license).toBe("UNLICENSED");
     expect(manifest.repository).toBeDefined();
     expect(manifest.engines?.node).toBeDefined();
+    expect(manifest.scripts?.prepack).toBeDefined();
   });
 });
