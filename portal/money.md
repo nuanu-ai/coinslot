@@ -1,143 +1,148 @@
-# Деньги
+# Money
 
-*Предварительная версия контракта — до пилота формулировки могут уточняться.*
+*A preliminary contract: the wording can still change before the pilot.*
 
-Вы держите интернет-бизнес и решаете, стоит ли выставлять товары туда, где
-покупают программы. Денежная часть этого решения собрана здесь: куда приходят
-деньги, в какой момент они списываются у покупателя, чем вы при этом рискуете
-и сколько берём мы.
+You run an online business, and you are deciding whether it is worth putting
+your goods where programs do the buying. The money side of that decision is
+collected here: where the payments arrive, at what moment the buyer is
+charged, what you are risking while that happens, and what we take.
 
-## Куда приходят деньги
+## Where the money arrives
 
-Деньги идут с кошелька покупателя прямо на ваш кошелёк. Coinslot к ним не
-притрагивается: мы их не собираем и не храним, через наши счета они не
-проходят. Поэтому здесь нет ни выплат, ни расчётного периода, ни остатка на
-балансе, который надо выводить.
+The money goes from the buyer's wallet — the buyer is a program, buying on
+behalf of a person — straight to your wallet. Coinslot does not touch it: we
+neither collect it nor hold it, and it never passes through our accounts. So
+there is no payout here, no settlement period, and no balance sitting with us
+that has to be withdrawn.
 
-Каждый платёж приходит отдельным переводом. Сто продаж — это сто входящих
-переводов: если ваша бухгалтерия привыкла к одной строке за период, строк
-здесь будет столько же, сколько продаж.
+Every payment arrives as its own transfer. A hundred sales are a hundred
+incoming transfers: if your accounting is used to one line per period, there
+will be as many lines here as there were sales.
 
-## Какими деньгами платят
+## What they pay in
 
-Покупатели платят стейблкоином — цифровым долларом, то есть деньгами, курс
-которых привязан к доллару. Для вас это значит, что сумма, которую увидел
-покупатель в момент покупки, и сумма, пришедшая на кошелёк, совпадают: между
-покупкой и зачислением ничего не пересчитывается по курсу.
+Buyers pay in a stablecoin — a digital dollar, meaning money whose rate is
+pegged to the dollar. For you that means the sum the buyer saw at the moment
+of purchase and the sum that lands in your wallet are the same: nothing is
+converted at a rate in between.
 
-Ещё одно свойство этих денег стоит знать заранее: перевод окончателен. Отозвать
-его, как отзывают списание по карте, покупатель не может — такого механизма в
-этих платежах нет вовсе. Знакомой по картам ситуации, когда деньги
-забирают с вашего счёта через месяц после продажи, а вы доказываете, что товар
-был выдан, здесь не бывает: всё, что вы возвращаете, вы возвращаете сами и по
-своему решению.
+These payments have one more property worth knowing in advance: the transfer
+is final. A buyer cannot reverse it the way a card charge is reversed, because
+these payments have no such mechanism at all. The case familiar from cards,
+where money is taken back off your account a month after the sale and you are
+left proving the goods went out, does not happen here. Whatever you give back,
+you give back yourself and by your own decision.
 
-Какой именно цифровой доллар мы используем и в какой сети идут переводы, ещё
-не выбрано. Из того же вопроса следует, кто платит комиссию сети и как она
-соотносится с ценой товара; оба пункта в списке внизу страницы.
+Which digital dollar we use, and which network the transfers run over, is not
+chosen yet. Who pays the network fee and how that fee sits against the price
+of the goods follows from the same question; both are in the list at the
+bottom of this page.
 
-## Когда деньги окажутся у вас
+## When the money reaches you
 
-Зависит от товара. У части товаров деньги приходят после того, как вы выдали:
-платёж исполняется последним шагом покупки, и если выдать не получилось,
-покупка просто не состоялась — покупатель не потратил ничего, а вы никому
-ничего не должны. У остальных товаров деньги приходят в момент покупки, до
-вашей выдачи, и тогда невыданный товар оставляет долг: такой заказ помечается
-требующим возврата.
+It depends on the product. For some goods the money arrives after you have
+delivered: the payment executes as the last step of the purchase, and if the
+delivery did not work out, the purchase simply did not happen — the buyer
+spent nothing and you owe nobody anything. For the rest the money arrives at
+the moment of purchase, ahead of your delivery, and then a product that was
+never delivered leaves a debt: such an order is marked as needing a refund.
 
-Порядок выбираете вы, и выбираете его по каждому товару отдельно — он
-записывается в карточке этого товара вместе с ценой и описанием. Общего
-переключателя на весь магазин нет: у одного товара деньги приходят после
-выдачи, у соседнего — вперёд неё.
+You choose the order, and you choose it product by product — it is written in
+that product's card alongside the price and the description. There is no
+switch for the whole shop: one product can be paid for after delivery and the
+one next to it before.
 
-Скажем, вы продаёте месячный доступ за пять долларов (число примерное). Если
-доступ уходит покупателю прямо в ответ на покупку, эти пять долларов придут
-на кошелёк после того, как ваша сторона его выдала. Если доступ готовится
-минуты или часы, те же пять долларов придут в момент покупки, а выдадите вы
-позже.
+Say you sell a month of access for five dollars (an example figure). If the
+access goes to the buyer in the answer to the purchase, those five dollars
+reach your wallet after your side has handed it over. If preparing the access
+takes minutes or hours, the same five dollars arrive at the moment of purchase
+and you deliver later.
 
-Есть и третий порядок — для товаров, которые вы выдаёте руками. До всяких
-денег к вам приходит вопрос «выдадите?»; пока вы не ответили «да», не списано
-ничего, а после вашего «да» деньги приходят сразу, и выдаёте вы уже потом.
+There is a third order, for goods you hand over yourself, and it arrives after
+the pilot. Before any money moves you are asked whether you will deliver;
+until you answer yes nothing is charged, and after your yes the money arrives
+at once, with the delivery still ahead of it.
 
-Отсюда общее правило. Пока ваш ответ стоит раньше денег, ваше молчание
-покупателю ничего не стоит. После списания то же самое молчание оставляет его
-без товара — как это выглядит в каждом отдельном сбое, показано на странице
-[«Что может пойти не так»](/failures). Точные моменты списания сведены в
-таблицу для вашего инженера на странице
-[«Заказы и режимы выдачи»](/orders).
+From that comes the general rule. While your answer comes before the money,
+your silence costs the buyer nothing. After the charge, that same silence
+leaves them without the goods — what that looks like in each separate failure
+is on [What can go wrong](/failures). The exact moments of charging are
+collected in a table for your engineer on
+[Orders and fulfillment modes](/orders).
 
-## Вы выдали, а деньги не пришли
+## You delivered and the money did not arrive
 
-Такое возможно у товаров, за которые платят после вашей выдачи. Сначала мы
-проверяем платёж — подпись и наличие средств, — потом передаём заказ вам,
-получаем товар и только затем исполняем платёж. Между проверкой и исполнением
-проходит время, и в этот зазор средства могут уйти с кошелька покупателя на
-что-нибудь другое.
+This is possible for goods that are paid for after your delivery. We check the
+payment first — the signature and the funds — then hand you the order, receive
+the goods and only then execute the payment. Time passes between the check and
+the execution, and in that gap the funds can leave the buyer's wallet for
+something else.
 
-Величина риска ограничена ценой одной покупки, поэтому решаете вы здесь одно:
-насколько дорога и необратима ваша выдача. Доступ, который вы можете отозвать,
-и посылка, которая уже уехала, стоят вам разного.
+What it can cost you is the price of one sale, so the only thing you have to
+weigh here is how expensive and how irreversible your delivery is. Access you
+can revoke and a parcel already on its way are worth different amounts to you.
 
-Узнаёте вы о таком случае от нас: мы сами сообщаем, что платёж не исполнился.
-Сверять переводы на кошелёк с тем, что вы выдали, руками для этого не нужно.
+You hear about such a case from us: we tell you the payment did not execute.
+There is no need to reconcile the transfers into your wallet against what you
+delivered by hand.
 
-Закрывает этот случай тот же выбор порядка. У товара, деньги за который
-приходят вперёд выдачи, списание происходит в момент покупки, и выдавать
-неоплаченное вам не приходится. Порядок вы выбираете по каждому товару в его
-карточке, и общего правила мы за вас не устанавливаем.
+Choosing the other order closes the case. For a product whose money comes
+ahead of the delivery, the charge happens at the moment of purchase and you
+never deliver anything unpaid. That choice is yours product by product, in the
+card, and we do not set a general rule on your behalf.
 
-## Чем подтверждается продажа
+## What a sale is evidenced by
 
-По каждой оплаченной покупке остаётся квитанция — запись о проведённом
-платеже. По ней видно, что и почём куплено; покупателю она служит
-доказательством оплаты, вам — записью, по которой разбирается спор. Цена, по
-которой прошла продажа, попадает в квитанцию и остаётся там неизменной, даже
-если ваша цена потом поменялась.
+Every paid purchase leaves a receipt — a record of the payment that went
+through. It shows what was bought and for how much; to the buyer it is proof
+of payment, to you it is the record a dispute is settled from. The price the
+sale went through at goes into the receipt and stays there unchanged even
+after your price has moved.
 
-Квитанция нужна ещё и для повторов. Ответ на покупку иногда теряется по
-дороге: покупатель заплатил, а товар до него не доехал из-за оборванной
-связи. Тогда агент повторяет покупку и получает то, что уже выдано. Второго
-списания при этом не происходит, и вторую выдачу мы у вас не просим. По
-какому ключу мы опознаём повтор, сказано в разделе
-[«Как опознать повтор»](/orders).
+Receipts matter for repeats too. The answer to a purchase is sometimes lost on
+the way: the buyer paid and the goods did not reach them because the
+connection dropped. The agent then repeats the purchase and receives what has
+already been delivered. There is no second charge, and we do not ask you for a
+second delivery. Which key we recognise a repeat by is in
+[Telling a repeat apart](/orders).
 
-## Если покупатель не получил товар
+## If the buyer did not get the goods
 
-Деньги за невыданный товар возвращаете покупателю вы, со своего кошелька.
-Иначе и быть не может: платёж пришёл от него прямо к вам, через наши счета он
-не проходил, и вернуть то, чего мы никогда не держали, мы не в состоянии. Наша
-часть работы здесь — зафиксировать обязательство и передать вам запись: какой
-заказ, на какую сумму и почему остался невыданным. Касается это и заказов,
-которые вы не успели выдать, и заказов, оставшихся открытыми на момент вашего
-ухода.
+You return the money for an undelivered product to the buyer yourself, out of
+your own wallet. It cannot be otherwise: the payment came from them straight
+to you, it never passed through our accounts, and we are in no position to
+give back what we never held. Our part of the work is to record the obligation
+and hand you the record — which order, for how much, and why it was left
+undelivered. That covers both the orders you did not manage to deliver in time
+and the orders still open at the moment you leave.
 
-Каким способом деньги пойдут обратно, мы выбираем до пилота: смотрим, как это
-устроено у работающих продавцов, и берём рабочий образец. Что именно делаете
-при возврате вы — пока не решено, и это главный незакрытый пункт денежного
-контура.
+How the money travels back is something we settle before the pilot: we are
+looking at how working sellers do it and taking a pattern that works. What
+exactly you do during a refund is not decided, and it is the largest open item
+in the money contract.
 
-Пока способа нет, действует правило пилота — то самое, о котором мы
-спрашиваем при подключении ([«О чём мы вас спросим»](/)): вперёд оплаты идут
-только товары, которые можно выдать повторно, а попытку выдачи мы повторяем
-до срока, названного в карточке. Правило сужает случай, но не убирает его:
-заказ, по которому выдать не удалось совсем, остаётся возможным. О каждом
-таком заказе мы сообщаем вам отдельно, и на пилоте их немного — но не ноль, и
-разбираться с каждым придётся вручную.
+Until there is a way, the pilot's rule applies — the one we ask about when you
+connect ([What we will ask you](/)): only goods that can be delivered a second
+time are paid for in advance, and we repeat the attempt to deliver until the
+deadline named in the card. The rule narrows the case without removing it: an
+order that could not be delivered at all remains possible. We tell you about
+every such order separately, and during the pilot there are few of them — but
+not none, and each one is dealt with by hand.
 
-## Сколько берём мы
+## What we take
 
-Процента с платежей у нас нет, и взяться ему неоткуда: деньги идут мимо нас.
-Зарабатываем мы на инструментах и подписке — на том, чем пользуетесь вы, а не
-на том, сколько вы продали. Цену подписки и её состав мы называем до
-подключения; сейчас это открытый пункт внизу страницы.
+We take no percentage of the payments, and there is nowhere for one to come
+from: the money goes past us. We earn on the tools and on a subscription — on
+what you use, not on what you sold. We name the price of the subscription and
+what it covers before you connect; today it is an open item at the bottom of
+this page.
 
-## Что ещё не решено
+## What is not settled yet
 
-- Какой цифровой доллар и какая сеть переводов; кто платит комиссию сети и
-  как она соотносится с ценой товара.
-- Каким способом вы возвращаете деньги по невыданному и как мы узнаём, что
-  возврат исполнен.
-- Цена подписки и то, что в неё входит.
-- Кто считается продавцом в документах, какой документ по сделке получает
-  ваша бухгалтерия и как отчитываться по платежам стейблкоином.
+- Which digital dollar and which transfer network; who pays the network fee
+  and how it sits against the price of the goods.
+- How you send money back for an undelivered order, and how we learn that you
+  have.
+- The price of the subscription and what it covers.
+- Who counts as the seller on paper, what document your accounting receives
+  for a sale, and how a stablecoin payment is reported.
