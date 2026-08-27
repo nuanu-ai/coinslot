@@ -25,6 +25,8 @@
  */
 
 import { createHash } from "node:crypto";
+import type { BazaarDeclaration, Card } from "@coinslot/contracts";
+import { API_ROUTES, bazaarDeclarationOf, expandPath } from "@coinslot/contracts";
 import {
   decodePaymentSignatureHeader,
   encodePaymentRequiredHeader,
@@ -37,6 +39,7 @@ import type {
   SettleResponse,
 } from "@x402/core/types";
 import { getDefaultAsset } from "@x402/evm";
+import { bazaarResourceServerExtension, declareDiscoveryExtension } from "@x402/extensions/bazaar";
 import type { PaymentConfig } from "../config.js";
 
 /** The x402 version this edge speaks. */
@@ -143,23 +146,72 @@ export class PaymentEdge {
     };
   }
 
-  /** The whole challenge, as the header carries it. */
+  /**
+   * The canonical address of one product, which is what a listing is keyed on.
+   *
+   * It is built from the configured base and the route table, never from the
+   * request. Behind a terminator the request says `http://` and carries
+   * whatever query string the caller wrote, and two spellings of one address
+   * are two resources to a catalog — two listings for one product, or one that
+   * flickers between them. The identifier is put through the route table's own
+   * substitution rather than pasted in, because an identifier may carry
+   * characters that would otherwise become extra path segments.
+   */
+  resourceUrlFor(itemId: string): string {
+    return `${this.#baseUrl}${expandPath(API_ROUTES.purchase_item.path, { item_id: itemId })}`;
+  }
+
+  /**
+   * The whole challenge, as the header carries it: what is being paid for, what
+   * it costs, and enough about the product for an agent that has never heard of
+   * us to find it and buy it.
+   *
+   * The last part is the discovery declaration, and it is assembled here rather
+   * than written out: `bazaarDeclarationOf` decides what a card says about
+   * itself, the protocol's own library turns that into the wire shape, and the
+   * same library then stamps the request's method into the declaration and into
+   * the schema beside it. Nothing in this file writes the format by hand.
+   *
+   * The method matters and is not cosmetic. A declaration that names a body is
+   * only valid on a method that carries one, and a crawler — and the catalog's
+   * own validator — asks with GET. Answering a GET with a body declaration is
+   * how a resource becomes invisible to the thing that lists it, so the two
+   * methods get the two shapes: a GET is declared as the probe it is, and a
+   * POST is declared as the purchase an agent actually makes.
+   */
   challengeFor(
     price: { readonly amount: string; readonly currency: string },
     orderId: string | null,
-    path: string,
-    description: string,
+    listed: {
+      readonly itemId: string;
+      readonly card: Card;
+      readonly serviceName: string | null;
+    },
+    method: "GET" | "POST",
     why?: string,
   ): string {
+    const declared = bazaarDeclarationOf(listed.card, {
+      url: this.resourceUrlFor(listed.itemId),
+      serviceName: listed.serviceName,
+    });
+
     const challenge: PaymentRequired = {
       x402Version: X402_VERSION,
       ...(why === undefined ? {} : { error: why }),
       resource: {
-        url: `${this.#baseUrl}${path}`,
-        description,
-        mimeType: "application/json",
+        url: declared.resource.url,
+        description: declared.resource.description,
+        mimeType: declared.resource.mimeType,
+        ...(declared.resource.serviceName === undefined
+          ? {}
+          : { serviceName: declared.resource.serviceName }),
+        // The contract hands the tags out read-only, and the protocol's own
+        // resource block takes a plain array. A copy rather than a cast: what
+        // goes into the challenge is nobody else's to change afterwards.
+        ...(declared.resource.tags === undefined ? {} : { tags: [...declared.resource.tags] }),
       },
       accepts: [this.requirementsFor(price, orderId)],
+      extensions: discoveryExtensionOf(declared, method),
     };
     return encodePaymentRequiredHeader(challenge);
   }
@@ -177,6 +229,52 @@ export class PaymentEdge {
   token(): TokenIdentity {
     return { network: this.#config.network, asset: getDefaultAsset(this.#network()).asset };
   }
+}
+
+/**
+ * One card's declaration in the shape the protocol carries it, for the method
+ * this request came in on.
+ *
+ * Both steps are the library's. `declareDiscoveryExtension` builds the
+ * declaration and the schema it is checked against; `enrichDeclaration` is the
+ * hook the official resource server calls on every challenge, and it is what
+ * writes the request's method into both halves — the declaration says which
+ * method it describes, and the schema beside it is narrowed to that one method.
+ * Left out, the declaration would fail the check the catalog runs on it, which
+ * demands a method and has none to find.
+ *
+ * The hook wants a transport context, and what it reads out of one is the
+ * method and, where a route carries path parameters it was told about, the
+ * values in them. It is given the method and a path that answers for itself.
+ * Our own route does carry a path parameter — the product — but naming it here
+ * would put the identifier into the declaration a second time, where it is
+ * already the resource's own address, so no route pattern is passed and the
+ * hook adds nothing but the method.
+ */
+function discoveryExtensionOf(
+  declared: BazaarDeclaration,
+  method: "GET" | "POST",
+): Record<string, unknown> {
+  const built = declareDiscoveryExtension(
+    method === "POST"
+      ? {
+          bodyType: "json",
+          input: declared.input,
+          inputSchema: declared.inputSchema,
+          output: declared.output,
+        }
+      : // A crawler's probe carries no body and no parameters of ours, so it is
+        // declared with neither. What it does carry is what the agent gets back,
+        // which is the part a catalog shows.
+        { output: declared.output },
+  );
+
+  const enriched = bazaarResourceServerExtension.enrichDeclaration?.(built.bazaar, {
+    method,
+    adapter: { getPath: () => "" },
+  });
+
+  return { bazaar: enriched ?? built.bazaar };
 }
 
 /**

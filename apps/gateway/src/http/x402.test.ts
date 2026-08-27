@@ -1,3 +1,11 @@
+import { CardSchema } from "@coinslot/contracts";
+import { decodePaymentRequiredHeader } from "@x402/core/http";
+import type { DiscoveryExtension } from "@x402/extensions/bazaar";
+import {
+  sanitizeResourceServiceMetadata,
+  validateDiscoveryExtension,
+  validateDiscoveryExtensionSpec,
+} from "@x402/extensions/bazaar";
 import { describe, expect, it } from "vitest";
 import { bearerIn } from "./auth.js";
 import { atomicUnits, PaymentEdge, paymentFingerprint } from "./x402.js";
@@ -356,5 +364,149 @@ describe("one payment, one fingerprint", () => {
     // same payment.
     expect(fingerprintOf(signed({ proof: { a: 1, b: "0xff" } }))).toBe(byPayload);
     expect(fingerprintOf(signed({ proof: { a: 2, b: "0xff" } }))).not.toBe(byPayload);
+  });
+});
+
+describe("the discovery declaration a challenge carries", () => {
+  // The promise: an agent that has never heard of us can find this product in
+  // a catalog it already walks, and what it reads there is the product it can
+  // then buy. Nothing offline can say the catalog will accept it — that is a
+  // live call and it lives in `pnpm smoke:listing` — but two things can be
+  // checked here, and both are checked with the catalog's own code: that the
+  // declaration is consistent with the schema it ships alongside itself, and
+  // that nothing we send about the seller gets dropped on the way in.
+  const card = CardSchema.parse({
+    merchant_item_id: "access-monthly",
+    title: "Доступ к сервису на один месяц",
+    description: "Доступ на 30 дней с момента выдачи, продление не входит.",
+    price: { amount: "5.00", currency: "USD" },
+    params: { email: { type: "string", required: true, title: "Куда прислать доступ" } },
+    result: { access_url: { type: "string", title: "Ссылка для входа" } },
+    fulfillment: "sync",
+    tags: ["access", "subscription"],
+  });
+
+  const edge = () =>
+    new PaymentEdge(
+      {
+        facilitatorUrl: "https://x402.org/facilitator",
+        network: "eip155:84532",
+        timeoutSeconds: 300,
+        payTo: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        cdpApiKeyId: null,
+        cdpApiKeySecret: null,
+      },
+      "https://coinslot.example",
+      300,
+    );
+
+  const challenge = (method: "GET" | "POST", listed: { serviceName: string | null }) =>
+    decodePaymentRequiredHeader(
+      edge().challengeFor(
+        { amount: "5.00", currency: "USD" },
+        null,
+        { itemId: "itm_4d21bb", card, serviceName: listed.serviceName },
+        method,
+      ),
+    );
+
+  const declaration = (method: "GET" | "POST") =>
+    challenge(method, { serviceName: "The pilot merchant" }).extensions
+      ?.bazaar as DiscoveryExtension;
+
+  it("names the resource at the address this gateway was configured with", () => {
+    // Not the address the request arrived at. Behind a terminator that is
+    // http:// and carries whatever query string the caller wrote, and the
+    // resource identity is what a listing is keyed on: two spellings would be
+    // two listings, or one that flickers between them.
+    expect(challenge("GET", { serviceName: null }).resource.url).toBe(
+      "https://coinslot.example/v0/items/itm_4d21bb/purchase",
+    );
+  });
+
+  it("says who is selling and what the product is filed under", () => {
+    const { resource } = challenge("POST", { serviceName: "The pilot merchant" });
+
+    expect(resource.serviceName).toBe("The pilot merchant");
+    expect(resource.tags).toStrictEqual(["access", "subscription"]);
+    expect(resource.description).toBe(card.description);
+  });
+
+  it("loses nothing about the seller to the catalog's own sanitiser", () => {
+    // This is the catalog's code, not a copy of its rules: what it drops here
+    // is what would silently vanish from a listing. A name or a tag it did not
+    // hand back would be a merchant trading under a word they did not choose.
+    const { resource } = challenge("POST", { serviceName: "The pilot merchant" });
+
+    expect(sanitizeResourceServiceMetadata(resource)).toStrictEqual({
+      serviceName: "The pilot merchant",
+      tags: ["access", "subscription"],
+    });
+  });
+
+  it("says nothing about a seller nobody has named", () => {
+    const { resource } = challenge("POST", { serviceName: null });
+
+    expect("serviceName" in resource).toBe(false);
+  });
+
+  it("describes the purchase an agent would actually make", () => {
+    const info = declaration("POST").info as unknown as {
+      input: Record<string, unknown>;
+      output?: { example?: unknown };
+    };
+
+    expect(info.input.method).toBe("POST");
+    expect(info.input.bodyType).toBe("json");
+    expect(info.input.body).toStrictEqual({ params: { email: "" } });
+    expect(info.output?.example).toStrictEqual({ access_url: "" });
+  });
+
+  it("describes the probe a crawler makes as the probe it is", () => {
+    // A crawler and the catalog's own validator ask with GET, and a body
+    // declaration is only valid on a method that carries a body. Answering a
+    // GET with one would make the resource invisible to the very thing that
+    // lists it.
+    const info = declaration("GET").info as unknown as { input: Record<string, unknown> };
+
+    expect(info.input.method).toBe("GET");
+    expect("bodyType" in info.input).toBe(false);
+    expect("body" in info.input).toBe(false);
+  });
+
+  for (const method of ["GET", "POST"] as const) {
+    it(`holds together against its own schema on ${method}`, () => {
+      // The catalog validates the declaration against the schema shipped
+      // beside it, with this very function. A declaration that failed here is
+      // one the catalog would refuse.
+      expect(validateDiscoveryExtension(declaration(method))).toStrictEqual({ valid: true });
+      expect(
+        validateDiscoveryExtensionSpec(declaration(method) as unknown as Record<string, unknown>),
+      ).toStrictEqual({ valid: true });
+    });
+  }
+
+  it("gives two requests for one product the same declaration", () => {
+    // Byte for byte. A listing is keyed on the resource, and a declaration
+    // that varied between two challenges for the same card would be two
+    // listings for one product.
+    expect(JSON.stringify(challenge("POST", { serviceName: "A seller" }))).toBe(
+      JSON.stringify(challenge("POST", { serviceName: "A seller" })),
+    );
+  });
+
+  it("still says which order it is for", () => {
+    // The declaration is added beside what was already there, not instead of
+    // it: the order identifier travels in `extra` and is what a payment names.
+    const forOrder = decodePaymentRequiredHeader(
+      edge().challengeFor(
+        { amount: "5.00", currency: "USD" },
+        "ord_1",
+        { itemId: "itm_4d21bb", card, serviceName: null },
+        "POST",
+      ),
+    );
+
+    expect(forOrder.accepts[0]?.extra?.order_id).toBe("ord_1");
   });
 });

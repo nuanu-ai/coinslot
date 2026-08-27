@@ -330,20 +330,32 @@ async function purchase(
   { params, body, request, response }: RouteCall,
 ): Promise<RouteAnswer> {
   const itemId = params.item_id ?? "";
-  const path = request.originalUrl.split("?")[0] ?? request.path;
 
   if (request.method === "GET") {
-    const stored = await gateway.runtime.store.cardById(itemId);
-    if (stored === null) {
+    const offered = await gateway.paidResource(itemId);
+    if (offered === null) {
       return written(response, NOT_FOUND, refusal("no_such_item", "there is no such product"));
+    }
+    if (offered.selling !== "open") {
+      // A card that is off sale answers no challenge, and the reason is not
+      // tidiness. A challenge carries the declaration a discovery catalog is
+      // built from, and a catalog lists what answers 402 and drops what stops:
+      // kept up here, a paused card would stay listed while every purchase
+      // behind the listing came back refused. The word an agent gets is the
+      // same word the order machine would have given it a moment later.
+      return written(
+        response,
+        CONFLICT,
+        refusal("not_selling", "this product is not on sale at the moment"),
+      );
     }
     response.setHeader(
       PAYMENT_REQUIRED_HEADER,
       edge.challengeFor(
-        { amount: stored.card.price.amount, currency: stored.card.price.currency },
+        { amount: offered.card.card.price.amount, currency: offered.card.card.price.currency },
         null,
-        path,
-        stored.card.description,
+        { itemId: offered.card.id, card: offered.card.card, serviceName: offered.serviceName },
+        "GET",
         "this resource is paid for; the price here is the published one and a purchase is priced when it is made",
       ),
     );
@@ -359,7 +371,6 @@ async function purchase(
         gateway,
         edge,
         response,
-        path,
         await gateway.payPurchase(
           presented.orderId,
           presented.raw,
@@ -375,7 +386,6 @@ async function purchase(
     gateway,
     edge,
     response,
-    path,
     attempt,
     presented === null
       ? undefined
@@ -387,7 +397,6 @@ async function answerPurchase(
   gateway: Gateway,
   edge: PaymentEdge,
   response: RouteCall["response"],
-  path: string,
   attempt: PurchaseAttempt,
   why?: string,
 ): Promise<RouteAnswer> {
@@ -455,9 +464,27 @@ async function answerPurchase(
       if (price === null) {
         throw new Error(`the order ${attempt.order.order.id} was offered for sale with no price`);
       }
+      // The product this order is for, read from the order rather than from the
+      // address the call came in on. They are the same address in the ordinary
+      // case, and where they are not — a payment naming an order for another
+      // product — what a challenge has to describe is the product being paid
+      // for. The resource an agent is invited to pay for and the resource a
+      // catalog lists are the same string, so it cannot come from the request.
+      const offered = await gateway.paidResource(attempt.order.itemId);
+      if (offered === null) {
+        throw new Error(
+          `the order ${attempt.order.order.id} is for ${attempt.order.itemId}, which is not in the catalog`,
+        );
+      }
       response.setHeader(
         PAYMENT_REQUIRED_HEADER,
-        edge.challengeFor(price, attempt.order.order.id, path, "one purchase", why),
+        edge.challengeFor(
+          price,
+          attempt.order.order.id,
+          { itemId: offered.card.id, card: offered.card.card, serviceName: offered.serviceName },
+          "POST",
+          why,
+        ),
       );
       return written(response, PAYMENT_REQUIRED, {});
     }
