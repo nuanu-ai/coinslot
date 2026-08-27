@@ -10,16 +10,19 @@
  * out loud: the merchant is a parameter rather than something the store is
  * configured with, so a read that forgot whose it was would not compile.
  *
- * The ones that name no merchant fall into three groups, and each says which it
+ * The ones that name no merchant fall into four groups, and each says which it
  * is in its own words. Four are the buying surface: `cardById`,
  * `catalogEntries`, `orderById` and `receiptForOrder` answer an agent, or a
  * clock of ours, and neither has a key. Three are the claims on payments —
  * `claimPayment`, `releaseClaim`, `forgetClaimsBefore` — which are deliberately
  * across the whole gateway, for the reason written beside the first of them.
- * The rest are the merchants and their keys, whose caller is somebody at a
- * terminal or the door itself, and none of them is reachable from a request.
- * `withOrder` is in none of the three: it takes the merchant when there is one
- * to take and says in its own place what leaving it out means.
+ * Two are the sweep's — `openOrders` and `deliveredWithoutReceipt` — which ask
+ * what is still owed across every merchant, because an effect that went missing
+ * is not one merchant's problem to notice. The rest are the merchants and their
+ * keys, whose caller is somebody at a terminal or the door itself, and none of
+ * them is reachable from a request. `withOrder` is in none of the four: it
+ * takes the merchant when there is one to take and says in its own place what
+ * leaving it out means.
  *
  * One method is not an accessor and is the reason this is an interface rather
  * than three maps. `withOrder` holds an order still while a decision is made
@@ -31,7 +34,7 @@
  * gets charged twice.
  */
 
-import type { Card, Delivery, Receipt } from "@coinslot/contracts";
+import type { Card, Delivery, Receipt, WorkerEnvelope } from "@coinslot/contracts";
 import type { MerchantSelling, Order } from "@coinslot/core";
 
 /** A card as its merchant published it, under the catalog identifier we issued. */
@@ -162,12 +165,48 @@ export interface PaymentWord {
 }
 
 /**
- * What `withOrder` decided: the order to write back, if any, and the answer to
- * give the caller. Leaving `save` out is how a read that changes nothing says
- * so, rather than writing the order it just read.
+ * One write that has to land with the order or not at all (ADR-0013).
+ *
+ * These are the effects that cannot be re-driven once the order has moved past
+ * the transition that asked for them. An order that says the merchant was
+ * handed the work, with no envelope written, is not repairable by a retry: the
+ * state is already past the point that emits the dispatch. So the envelope is
+ * written where the order is, and either both are there or neither is.
+ *
+ * They are described here rather than carried out by the caller on purpose.
+ * What each adapter has to arrange is its own — a row in the same transaction
+ * for Postgres, one uninterrupted span for the in-memory store — and a caller
+ * that held a transaction handle would be holding a Postgres in a port that
+ * has never known about one.
+ *
+ * Only two things are on this list and adding a third is a decision rather than
+ * a detail. Everything here also has to be something its receiver already
+ * tolerates arriving twice, because the sweep re-drives exactly these; an
+ * effect that does not tolerate a repeat cannot be one of them.
+ */
+export type WithTheOrder =
+  | {
+      readonly kind: "envelope";
+      readonly merchantId: string;
+      readonly envelope: WorkerEnvelope;
+      /** How long the stream holds it back, where something asked it to wait. */
+      readonly afterMs?: number;
+    }
+  | { readonly kind: "receipt"; readonly merchantId: string; readonly receipt: Receipt };
+
+/**
+ * What `withOrder` decided: the order to write back, if any, the writes that go
+ * with it, and the answer to give the caller. Leaving `save` out is how a read
+ * that changes nothing says so, rather than writing the order it just read.
+ *
+ * `alongside` is not conditional on `save`, and the honest reading is that
+ * these writes belong to the same unit of work rather than to the order
+ * document: a decision that returns them and then throws writes none of them,
+ * and one that returns normally writes all of them.
  */
 export interface OrderChange<T> {
   readonly save?: StoredOrder;
+  readonly alongside?: readonly WithTheOrder[];
   readonly result: T;
 }
 
@@ -433,6 +472,33 @@ export interface Store {
 
   /** This merchant's orders, or with `open` only the ones still owed work or money. */
   orders(merchantId: string, query?: { readonly open?: boolean }): Promise<readonly StoredOrder[]>;
+
+  /**
+   * Every order still owed work or money, whoever it belongs to.
+   *
+   * The one caller is the sweep, which asks the orders themselves what they are
+   * missing rather than keeping a second book of what was meant to happen
+   * (ADR-0013). It names no merchant because a clock that never fired is not
+   * one merchant's problem to notice.
+   *
+   * What bounds it is that open orders close: every one of them is waiting on a
+   * deadline that ends it, so this is the work in flight and not the history.
+   * A gateway whose orders stopped closing would find this growing, and that is
+   * the same fault seen from another angle rather than a second one.
+   */
+  openOrders(): Promise<readonly StoredOrder[]>;
+
+  /**
+   * Every order that ended delivered with no receipt written against it,
+   * whoever it belongs to.
+   *
+   * A receipt is what a merchant reconciles a wallet against, so a delivered
+   * order without one is a sale that is invisible to the person whose money it
+   * was. With the receipt written where the order is, the answer to this should
+   * always be empty; it is asked because "should always be" is not a thing to
+   * take on trust about somebody else's money.
+   */
+  deliveredWithoutReceipt(): Promise<readonly StoredOrder[]>;
 
   /**
    * Holds one order still, hands it to `change`, and writes back whatever

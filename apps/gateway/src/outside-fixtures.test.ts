@@ -32,8 +32,14 @@ const PAY_TO = "0x00000000000000000000000000000000000000aa";
 /** A whole gateway and a socket to talk to it over, built from nothing. */
 async function aGatewayOnAPort() {
   const ids = () => randomUUID();
-  const store = new MemoryStore(ids);
   const queue = new MemoryQueue();
+  // The queue is made first because the store publishes through it: an envelope
+  // that must not be lost is written where the order is (ADR-0013).
+  const store = new MemoryStore(
+    ids,
+    () => Date.now(),
+    (merchantId, envelope, afterMs) => queue.publish(merchantId, envelope, afterMs),
+  );
   const facilitator = new ScriptedFacilitator();
 
   // A merchant and a key, written the way anything that makes one writes one:

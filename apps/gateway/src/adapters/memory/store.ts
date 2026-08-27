@@ -26,7 +26,7 @@
  * somebody else's cabinet.
  */
 
-import type { Card, Receipt } from "@coinslot/contracts";
+import type { Card, Receipt, WorkerEnvelope } from "@coinslot/contracts";
 import { isOpen, type MerchantSelling } from "@coinslot/core";
 import type { Clock, Ids } from "../../ports/clock.js";
 import type {
@@ -40,7 +40,36 @@ import type {
   StoredKey,
   StoredMerchant,
   StoredOrder,
+  WithTheOrder,
 } from "../../ports/store.js";
+
+/**
+ * Where this store puts an envelope that has to be written with an order.
+ *
+ * It is the queue's `publish` and nothing more, taken as a function so that the
+ * store depends on the one thing it needs rather than on a queue. In a
+ * deployment the two live in one database and the atomicity is a transaction;
+ * here they are two maps in one process, and what stands in for the transaction
+ * is that nothing about the order is written until this has returned.
+ */
+export type Envelopes = (
+  merchantId: string,
+  envelope: WorkerEnvelope,
+  afterMs?: number,
+) => Promise<void>;
+
+/**
+ * The answer for a store that was built without one.
+ *
+ * Most of the stores made in this repository serve a command somebody typed or
+ * a test about the catalog, and none of those ever writes an order. Refusing
+ * out loud is the alternative to a store that quietly drops a merchant's work.
+ */
+const noEnvelopes: Envelopes = async (_merchantId, envelope) => {
+  throw new Error(
+    `this store was built with nowhere to put the envelope ${envelope.id}: a store that writes orders is given a stream`,
+  );
+};
 
 /** What a merchant's row holds here, with the selling word that may move. */
 interface MerchantRow {
@@ -73,10 +102,12 @@ export class MemoryStore implements Store {
   readonly #locks = new Map<string, Promise<unknown>>();
   readonly #ids: Ids;
   readonly #now: Clock;
+  readonly #envelopes: Envelopes;
 
-  constructor(ids: Ids, now: Clock = () => Date.now()) {
+  constructor(ids: Ids, now: Clock = () => Date.now(), envelopes: Envelopes = noEnvelopes) {
     this.#ids = ids;
     this.#now = now;
+    this.#envelopes = envelopes;
   }
 
   // --- merchants and their keys ---------------------------------------------
@@ -290,6 +321,26 @@ export class MemoryStore implements Store {
       }
 
       const decided = await change(found);
+
+      // What has to go with the order goes first, and the order is not written
+      // at all if any of it refuses. There the Postgres adapter has a
+      // transaction and this has an ordering, and the ordering is enough for
+      // the same reason: everything that could act on the envelope has to come
+      // back through this very lock to do it, so nobody can see the stream and
+      // the order disagree. The other order — writing the order first — is the
+      // one that leaves a record saying something happened when nothing did.
+      //
+      // Where this is weaker than a transaction, said out loud rather than
+      // left to be found: a list whose second write refuses does not take the
+      // first one back, and there Postgres would. It costs nothing today
+      // because no transition asks for two of these at once — a receipt is
+      // issued when goods are released and an envelope goes out when they are
+      // asked for, and the machine never emits both — and it would cost
+      // something the day one does.
+      for (const write of decided.alongside ?? []) {
+        await this.#writeWithTheOrder(write);
+      }
+
       if (decided.save !== undefined) {
         // The merchant comes from the order that was read and not from the
         // save, exactly as the Postgres adapter takes it from the row: a sale
@@ -310,6 +361,29 @@ export class MemoryStore implements Store {
       mine.catch(() => undefined),
     );
     return mine;
+  }
+
+  async openOrders(): Promise<readonly StoredOrder[]> {
+    return [...this.#orders.values()].filter((record) => isOpen(record.order.state));
+  }
+
+  async deliveredWithoutReceipt(): Promise<readonly StoredOrder[]> {
+    return [...this.#orders.values()].filter(
+      (record) => record.order.state === "delivered" && !this.#receipts.has(record.order.id),
+    );
+  }
+
+  /**
+   * One write that goes with an order. The receipt goes through the store's own
+   * method rather than into the map behind its back, so there is one place a
+   * receipt is written and one rule about whose it is.
+   */
+  async #writeWithTheOrder(write: WithTheOrder): Promise<void> {
+    if (write.kind === "receipt") {
+      await this.putReceipt(write.merchantId, write.receipt);
+      return;
+    }
+    await this.#envelopes(write.merchantId, write.envelope, write.afterMs);
   }
 
   // --- payments -------------------------------------------------------------

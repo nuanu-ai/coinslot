@@ -98,7 +98,6 @@ export async function harness(overrides: Record<string, string> = {}): Promise<H
   let now = Date.parse("2026-08-26T12:00:00.000Z");
 
   const config = testConfig(overrides);
-  const store = new MemoryStore(countedIds(), () => now);
   // The queue's patience with a failing reminder comes from the configuration,
   // not from a default beside it — or a test that sets the number would be
   // asserting against something else entirely.
@@ -106,6 +105,15 @@ export async function harness(overrides: Record<string, string> = {}): Promise<H
     attempts: config.reminderAttempts,
     retryDelayMs: config.reminderRetryDelayMs,
   });
+  // The queue is made first because the store publishes through it: an envelope
+  // that must not be lost is written where the order is (ADR-0013). The call is
+  // made through the queue rather than bound to its method, so a test that
+  // replaces `queue.publish` replaces the one the store uses too.
+  const store = new MemoryStore(
+    countedIds(),
+    () => now,
+    (merchantId, envelope, afterMs) => queue.publish(merchantId, envelope, afterMs),
+  );
   const facilitator = new ScriptedFacilitator();
   const ids = countedIds();
 
