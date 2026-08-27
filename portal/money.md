@@ -94,11 +94,15 @@ the card, and we do not set a general rule on your behalf.
 
 ## What proves a sale happened
 
-Every paid purchase leaves a receipt — a record of the payment that went
-through. It shows what was bought and for how much; to the buyer it is proof
-of payment, to you it is the record a dispute is settled from. The price the
-sale went through at goes into the receipt and stays there unchanged even
-after your price has moved.
+A sale that went through leaves a receipt — a record of the payment, written
+at the moment the goods are released. It shows what was bought and for how
+much; to the buyer it is proof of payment, to you it is the record a dispute
+is settled from. The price the sale went through at goes into the receipt and
+stays there unchanged even after your price has moved.
+
+An order paid for and never delivered leaves no receipt, because no goods went
+out. What you have for that case is the order itself and the event telling you
+a refund is owed.
 
 Receipts matter for repeats too. The answer to a purchase is sometimes lost on
 the way: the buyer paid and the goods did not reach them because the
@@ -144,6 +148,9 @@ this page.
   and how it sits against the price of the goods.
 - How you send money back for an undelivered order, and how we learn that you
   have.
+- Reconciling what came in against what was sold. A receipt follows the goods,
+  so an order paid for and not delivered has none, and matching the transfers
+  into your wallet against the orders is still yours to do by hand.
 - The price of the subscription and what it covers.
 - Who counts as the seller on paper, what document your accounting receives
   for a sale, and how a stablecoin payment is reported.

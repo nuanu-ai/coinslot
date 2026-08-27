@@ -90,8 +90,9 @@ You do, by your own rules, the same way you settle one in an ordinary shop. We
 do not stand between you and the buyer and do not make decisions on your
 behalf: the rules about refunds and about good faith are yours, and they are
 not ours to apply for you. Our part is technical — we hand you the order and
-the records of what happened with the delivery and when, including
-[the receipt with the sale price](/money).
+the records of what happened with the delivery and when. Where the goods went
+out there is a [receipt with the sale price](/money) as well; where they did
+not, there is the order and the event saying a refund is owed.
 
 ### What do buyers pay with?
 
