@@ -21,8 +21,14 @@ describe("where the cabinet thinks it is mounted", () => {
     // URL to a browser. Accepted, every redirect leaves the origin and every
     // stylesheet link points at somebody else's server — with a merchant's
     // session cookie riding along on the redirect they follow.
-    expect(() => loadConfig({ BASE_PATH: "//evil.com" })).toThrow(/BASE_PATH/);
-    expect(() => loadConfig({ BASE_PATH: "//evil.com/cabinet" })).toThrow(/BASE_PATH/);
+    // Both spellings. The URL standard treats a backslash after the first
+    // slash exactly as a second slash, so `new URL("/\\evil.com", origin)`
+    // resolves to https://evil.com/ in every browser — a lookahead that only
+    // covered "/" left the same hole open under a different character.
+    for (const bad of ["//evil.com", "//evil.com/cabinet", "/\\evil.com", "/\\\\evil.com"]) {
+      expect(() => loadConfig({ BASE_PATH: bad }), bad).toThrow(/BASE_PATH/);
+    }
+    expect(new URL("/\\evil.com", "https://cabinet.example/").host).toBe("evil.com");
   });
 
   it("refuses a mount point that is not one", () => {

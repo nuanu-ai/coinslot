@@ -16,15 +16,19 @@ describe("whether a merchant is taking new orders", () => {
     }
   });
 
-  it("keeps leaving apart from pausing, because they are not the same thing", () => {
-    // Pausing takes the cards off sale and lets the open orders play out.
-    // Leaving closes them and leaves the merchant owing refunds on whatever
-    // was paid for and never delivered. One word for both would let a merchant
-    // reading a screen think a pause could be undone the same way a departure
-    // can, which it cannot.
-    expect(SELLING_STATES).toContain("paused");
-    expect(SELLING_STATES).toContain("departed");
-    expect(SellingStateSchema.parse("paused")).not.toBe(SellingStateSchema.parse("departed"));
+  it("says in the exported document that leaving is not a heavier pause", () => {
+    // The distinction is the reason there are three words rather than a
+    // boolean, and it is invisible from the shape: a reader with the document
+    // and no TypeScript sees three strings. Pausing takes the cards off sale
+    // and lets the open orders play out; leaving closes them and leaves the
+    // merchant owing refunds on whatever was paid for and never delivered. A
+    // reader who took a departure for a deeper pause would expect it to be
+    // undone the way a pause is.
+    const description = toJsonSchemas().selling_state.description ?? "";
+
+    expect(description).toContain("already accepted play out");
+    expect(description).toContain("closed with them");
+    expect(description).toContain("not reachable by pausing");
   });
 
   it("reaches the reader who has the exported document and nothing else", () => {

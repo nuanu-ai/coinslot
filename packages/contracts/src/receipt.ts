@@ -45,6 +45,12 @@ import { IdentifierSchema, SalePriceSchema, TimestampSchema } from "./primitives
  *
  * That leaves four: paid and still running, paid and delivered, paid and owed
  * back, paid and paid back.
+ *
+ * What this list does not say is when a receipt is written at all, and a reader
+ * should not infer it from here. That is the gateway's, and a gateway that
+ * writes one only as goods are released will only ever produce `delivered` —
+ * so a consumer must not read the presence of these four as a promise that a
+ * receipt exists for every payment that executed.
  */
 export const ReceiptOutcomeSchema = z.enum(["in_progress", "delivered", "refund_due", "refunded"]);
 

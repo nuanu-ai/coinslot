@@ -401,10 +401,6 @@ td.control {
   color: var(--ok);
 }
 
-.tile .figure.warn {
-  color: var(--warn);
-}
-
 .tile .figure.busy {
   color: var(--accent);
 }

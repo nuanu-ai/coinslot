@@ -35,7 +35,7 @@ export const SELLING_STATES = Object.freeze([
 
 export const SellingStateSchema = z.enum(SELLING_STATES).meta({
   description:
-    'Whether a merchant is taking new orders. "open" — new orders are taken. "paused" — no new order is taken and the orders already accepted play out in the ordinary way, so a pause never closes anything. "departed" — the merchant left, their cards are off sale and the orders that were open closed with them. Leaving is not a heavier pause and is not reachable by pausing.',
+    'Whether a merchant is taking new orders. "open" — new orders are taken. "paused" — no new order is taken and the orders already accepted play out in the ordinary way, so a pause never closes anything. "departed" — the merchant left, their cards are off sale, the orders that were open closed with them, and the money for anything paid for and not delivered is theirs to return. Leaving is not a heavier pause: it is not reachable by pausing, and it is not undone by resuming.',
 });
 
 export type SellingState = z.infer<typeof SellingStateSchema>;

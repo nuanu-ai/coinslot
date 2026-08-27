@@ -101,7 +101,13 @@ const cardControl = (base: string, entry: MerchantCard): string => {
 
 export const cardsScreen = (base: string, cards: MerchantCardList): string => {
   const paused = cards.cards.filter((entry) => entry.paused).length;
-  const stopped = cards.selling !== "open";
+  // Three words and not two. Folding "departed" into "stopped" would offer a
+  // merchant who has left a button that puts them back on sale and a note
+  // saying their accepted orders are playing out — and leaving closed those
+  // orders and left refunds owed. The whole of `selling.ts` is an argument
+  // that this fold is the one not to make.
+  const gone = cards.selling === "departed";
+  const stopped = cards.selling === "paused";
 
   const rows = cards.cards.map(
     (entry) => `<tr class="${entry.selling === "open" ? "" : "off"}">
@@ -124,9 +130,13 @@ export const cardsScreen = (base: string, cards: MerchantCardList): string => {
       )}</p>
     </div>
     <div class="actions">
-      <form class="inline" method="post" action="${escaped(base)}/selling/${stopped ? "resume" : "pause"}">
+      ${
+        gone
+          ? ""
+          : `<form class="inline" method="post" action="${escaped(base)}/selling/${stopped ? "resume" : "pause"}">
         <button class="wide${stopped ? " primary" : ""}" type="submit">${stopped ? "Start selling again" : "Stop all selling"}</button>
-      </form>
+      </form>`
+      }
     </div>
   </div>
 ${table(
@@ -134,14 +144,30 @@ ${table(
   rows,
   "You have not published a card yet. Your code publishes them; they appear here.",
 )}
-  <div class="note"><span class="mark">&#8627;</span><span>${escaped(
-    stopped
-      ? "All selling is stopped: no new order is taken for any card, and the orders you have already accepted play out as usual. Resuming leaves the cards you paused yourself paused."
-      : "A pause takes the card off sale without abandoning orders: the ones you already accepted play out as usual. No new orders arrive while it is paused.",
-  )}</span></div>
+  <div class="note"><span class="mark">&#8627;</span><span>${escaped(sellingNote(cards.selling))}</span></div>
 `;
 
   return framed({ base, tab: "cards", title: "Product cards", selling: cards.selling, body });
+};
+
+/**
+ * What the merchant's selling word means for the orders they already have.
+ *
+ * A pause and a departure differ in exactly the thing a merchant needs to know
+ * here, and the difference is not one of degree: a pause leaves the accepted
+ * orders to play out, and leaving closed them and left the money for anything
+ * paid for and not delivered to be returned. One sentence for both would be
+ * wrong for one of them.
+ */
+const sellingNote = (selling: MerchantCardList["selling"]): string => {
+  switch (selling) {
+    case "departed":
+      return "You have left. The cards are off sale, the orders that were open closed with you, and the money for anything paid for and not delivered is yours to return. Selling does not start again from this page.";
+    case "paused":
+      return "All selling is stopped: no new order is taken for any card, and the orders you have already accepted play out as usual. Resuming leaves the cards you paused yourself paused.";
+    case "open":
+      return "A pause takes the card off sale without abandoning orders: the ones you already accepted play out as usual. No new orders arrive while it is paused.";
+  }
 };
 
 export const ordersScreen = (
@@ -183,6 +209,9 @@ ${table(
   rows,
   open ? "Nothing is open. Every order you have is finished." : "No orders yet.",
 )}
+  <div class="note"><span class="mark">&#8627;</span><span>${escaped(
+    "One kind of order cannot appear here: a purchase that closed before anybody named a price for it — a product you said was gone, or a price question you did not answer. The row every order is drawn in carries the price it sold at, and those have none. Nothing was charged for them.",
+  )}</span></div>
 ${wanting
   .map(
     (order) => `  <div class="callout">
@@ -254,7 +283,6 @@ export const receiptsScreen = (
 ): string => {
   const titles = new Map(cards.cards.map((entry) => [entry.id, entry.card.title]));
   const delivered = receipts.receipts.filter((receipt) => receipt.outcome === "delivered").length;
-  const running = receipts.receipts.filter((receipt) => receipt.outcome === "in_progress").length;
 
   const rows = receipts.receipts.map((receipt) => {
     const word = ORDER_WORDS[receipt.outcome];
@@ -274,7 +302,8 @@ export const receiptsScreen = (
   <div class="lede">
     <div>
       <h1>Receipts</h1>
-      <p>A receipt is the proof of a payment: the amount, the moment the money moved, the moment of purchase, and the instant the price behind it was true. A purchase that ended before any payment leaves no receipt, and none is written while it is unknown whether the buyer was charged. A refund you owe is not here either — no receipt is written for one, and it appears on Orders.</p>
+      <p>A receipt is written when the goods for an order are released: the amount, the moment the money moved, the moment of purchase, and the instant the price behind it was true.</p>
+      <p>This is not the whole of the money. A purchase whose goods have not gone out has no receipt yet, and in the mode where the money moves at the purchase that means a payment you have already been sent is not on this page. Neither is a refund you owe. Both are on Orders, and until they end there the list below is short of them. A purchase that ended before any payment leaves no receipt at all, and none is written while it is unknown whether the buyer was charged.</p>
       ${testWarning(receipts)}
     </div>
   </div>
@@ -285,27 +314,21 @@ export const receiptsScreen = (
       <div class="aside">${escaped(sumsOf(receipts))}</div>
     </div>
     <div class="tile">
+      <!-- Two tiles and not three. A third counting what is paid for and not
+           yet delivered would read nought forever — this gateway writes a
+           receipt only when goods are released — and a nought is a positive
+           claim that there is none, printed on the screen where a merchant
+           looks for money they are owed. What cannot be counted here is said in
+           words above the table instead, with the place it can be counted. -->
       <div class="label">Delivered</div>
       <div class="figure${delivered === 0 ? "" : " ok"}">${delivered}</div>
-      <div class="aside">of ${receipts.receipts.length} paid</div>
-    </div>
-    <div class="tile">
-      <!-- Not "refund due". A receipt can carry that word and none ever does:
-           receipts are written when goods are released, and an order owing a
-           refund released none. A tile that could only ever read nought would
-           have sat here saying "nothing owed back" while the orders screen of
-           the same cabinet told the merchant to return money from their own
-           wallet. What is counted instead is reachable and is the number a
-           merchant actually watches: money taken, goods not yet out. -->
-      <div class="label">Awaiting fulfilment</div>
-      <div class="figure${running === 0 ? "" : " busy"}">${running}</div>
-      <div class="aside">${escaped(running === 0 ? "nothing outstanding" : "paid for, not yet delivered")}</div>
+      <div class="aside">of ${countOf(receipts.receipts.length, "receipt")}</div>
     </div>
   </div>
 ${table(
   ["Receipt", "Order", "Product", "Amount", "Outcome", "Paid", "Bought", "Price true as of"],
   rows,
-  "No receipts yet. One is written the moment a payment goes through.",
+  "No receipts yet. One is written when the goods for an order are released — a purchase that has been paid for and not delivered is on Orders, not here.",
 )}
 `;
 

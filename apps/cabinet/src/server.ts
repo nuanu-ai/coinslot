@@ -55,10 +55,26 @@ const SESSION_HOURS = 12;
  * carry a copy, with the palette from before the contrast fix, which is how one
  * visual language quietly becomes two that look almost alike.
  */
-const TOKENS = readFileSync(
-  new URL("../../landing/public/styles/tokens.css", import.meta.url),
-  "utf8",
-);
+const TOKENS_AT = new URL("../../landing/public/styles/tokens.css", import.meta.url);
+const TOKENS = readTokens();
+
+function readTokens(): string {
+  try {
+    return readFileSync(TOKENS_AT, "utf8");
+  } catch (thrown) {
+    // An ENOENT here is a packaging mistake — a workspace pruned to the
+    // cabinet's own dependencies, which the landing is not one of — and the
+    // bare exception names a path and nothing about why anybody wanted it. The
+    // configuration goes to lengths to name every problem at once; this is the
+    // same courtesy for the one file it does not read.
+    throw new Error(
+      `The cabinet cannot start: it serves the shared visual language from ${TOKENS_AT.pathname},` +
+        " which is not there. That file is the landing's styles/tokens.css, and ADR-0005 §6 makes" +
+        " it the one place the three surfaces take their palette from — so the cabinet ships" +
+        ` beside it rather than carrying a copy. ${String(thrown)}`,
+    );
+  }
+}
 const STYLESHEET = `${TOKENS}\n${readFileSync(new URL("./coinslot.css", import.meta.url), "utf8")}`;
 
 /**
@@ -82,7 +98,7 @@ export function buildApp(
   // header would make a spoofable header authoritative for no benefit at all.
   // The forms are the only thing a browser posts here, and they are small.
   app.use(express.urlencoded({ extended: false, limit: "16kb" }));
-  app.use(sameOrigin);
+  app.use(sameOriginUnder(base));
 
   // Under one origin the cabinet is reached at BASE_PATH, so that is where a
   // probe looks; at the bare root it is what a container health check asks for.
@@ -129,7 +145,9 @@ export function buildApp(
             base,
             tried.status === 401
               ? "That key was not accepted. It is the key your gateway is configured with."
-              : `The gateway did not answer: ${tried.why}`,
+              : tried.status === 0
+                ? `The gateway did not answer: ${tried.why}`
+                : tried.why,
           ),
         );
       return;
@@ -267,31 +285,35 @@ export function buildApp(
  * the merchant's own browser and every command-line client along with it. This
  * is a cheap second lock, not the lock.
  */
-function sameOrigin(request: Request, response: Response, next: () => void): void {
-  const origin = request.headers.origin;
-  if (request.method !== "POST" || origin === undefined) {
-    next();
-    return;
-  }
+function sameOriginUnder(base: string) {
+  return (request: Request, response: Response, next: () => void): void => {
+    const origin = request.headers.origin;
+    if (request.method !== "POST" || origin === undefined) {
+      next();
+      return;
+    }
 
-  const asked = request.headers.host;
-  let host: string;
-  try {
-    host = new URL(origin).host;
-  } catch {
-    host = "";
-  }
+    // The whole origin and not merely the host. A scheme is part of an origin,
+    // and a page served over http on the same host is a different origin from
+    // one served over https — which is exactly the distinction this check
+    // exists to make, since SameSite does not make it either. The scheme comes
+    // from the forwarded header where a terminator set one, because behind
+    // Caddy this process speaks http and the browser does not.
+    const forwarded = request.headers["x-forwarded-proto"];
+    const scheme = (Array.isArray(forwarded) ? forwarded[0] : forwarded)?.split(",")[0]?.trim();
+    const asked = request.headers.host;
 
-  if (asked !== undefined && host === asked) {
-    next();
-    return;
-  }
-  // Nothing about which origin would have worked: that is an answer to
-  // somebody who is guessing, and this refusal is only ever seen by them.
-  response
-    .status(403)
-    .type("html")
-    .send(problemPage("", "This form did not come from the cabinet."));
+    if (asked !== undefined && origin === `${scheme ?? "http"}://${asked}`) {
+      next();
+      return;
+    }
+    // Nothing about which origin would have worked: that is an answer to
+    // somebody who is guessing, and this refusal is only ever seen by them.
+    response
+      .status(403)
+      .type("html")
+      .send(problemPage(base, "This form did not come from the cabinet."));
+  };
 }
 
 /**
@@ -328,12 +350,20 @@ function trouble(response: Response, base: string, answer: Answer<unknown>): voi
     response.redirect(303, `${base}/sign-in`);
     return;
   }
-  // The gateway's own sentence, not one invented here, and nothing is claimed
-  // about what did or did not happen beyond what it said.
-  response
-    .status(502)
-    .type("html")
-    .send(problemPage(base, `The gateway did not answer: ${answer.why}`));
+  if (answer.status === 0) {
+    // Nothing answered at all. This is the only case in which "the gateway did
+    // not answer" is true, and it is a different thing from a gateway that
+    // answered and said no — a merchant told the wrong one of those goes and
+    // checks a service that is running.
+    response
+      .status(502)
+      .type("html")
+      .send(problemPage(base, `The gateway did not answer: ${answer.why}`));
+    return;
+  }
+  // The gateway answered and refused. Its own sentence, under its own status:
+  // nothing is claimed about what did or did not happen beyond what it said.
+  response.status(answer.status).type("html").send(problemPage(base, answer.why));
 }
 
 function problemPage(base: string, said: string): string {

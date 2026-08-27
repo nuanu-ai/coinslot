@@ -25,6 +25,7 @@ import type { Answer } from "./gateway.js";
 import { buildApp } from "./server.js";
 
 const KEY = "a-merchant-key-long-enough";
+const asMerchant = { authorization: `Bearer ${KEY}` };
 const PAY_TO = "0x0000000000000000000000000000000000000001";
 
 const roomCard: Card = {
@@ -332,6 +333,16 @@ describe("getting into the cabinet", () => {
     expect(tokensIn(light?.[1])).toEqual(expect.arrayContaining(painted));
   });
 
+  it("answers a health probe at the root and under the path it is mounted at", async () => {
+    // Caddy passes /cabinet through unstripped, so a probe arrives at
+    // /cabinet/healthz; a container health check asks at the root. A 404 to
+    // either reads as a dead process.
+    const { browser } = await started({ base: "/cabinet" });
+
+    expect((await browser.get("/healthz")).status).toBe(200);
+    expect((await browser.get("/cabinet/healthz")).status).toBe(200);
+  });
+
   it("serves the shared visual language rather than a copy of it", async () => {
     // ADR-0005 §6 asks for one visual language across the three surfaces, in
     // one stylesheet. This branch carried a second copy of it for a while, with
@@ -526,6 +537,44 @@ describe("the cards screen", () => {
   });
 });
 
+describe("a merchant who has left", () => {
+  // Nothing in the pilot sets this, so it is reached through the store — the
+  // same reason `sellingFor`'s departed branch is tested directly. What is
+  // asserted is the page, because the gateway was fixed in round one and the
+  // fold that undoes the fix lives here.
+  it("is not offered a button that puts them back on sale", async () => {
+    const { browser, gateway, harnessed } = await started();
+    await publish(gateway, roomCard);
+    await browser.signIn(KEY);
+    await harnessed.store.setSelling("departed");
+
+    const text = readable((await browser.get("/cards")).html);
+
+    expect(text).toContain("left");
+    expect(text).not.toContain("Start selling again");
+    // And it does not tell them their accepted orders are playing out, which is
+    // what a pause means and a departure does not.
+    expect(text).not.toContain("play out as usual");
+    expect(text).toContain("closed with you");
+  });
+
+  it("is told what the gateway said, not that the gateway is down", async () => {
+    // The gateway answers 409 with a reason. Rendered as "the gateway did not
+    // answer", a merchant goes and checks a service that is running.
+    const { browser, gateway, harnessed } = await started();
+    await publish(gateway, roomCard);
+    await browser.signIn(KEY);
+    await harnessed.store.setSelling("departed");
+
+    const refused = await browser.post("/selling/resume");
+
+    expect(refused.status).toBe(409);
+    const text = readable(refused.html);
+    expect(text).toContain("this merchant has left");
+    expect(text).not.toContain("did not answer");
+  });
+});
+
 describe("the orders screen", () => {
   it("shows a finished order with its state in the merchant's words", async () => {
     const { browser, gateway, harnessed } = await started();
@@ -561,6 +610,39 @@ describe("the orders screen", () => {
     // so rather than looking like a screen that failed to load.
     expect(openOnly).toContain("Nothing is open");
     expect(openOnly).toContain("Every order you have is finished");
+  });
+
+  it("does not tell a merchant nothing is owed while an order is still running", async () => {
+    // The sentence this pins was wrong twice before. An order under way has, in
+    // the asynchronous mode, already taken the buyer's money against goods that
+    // have not gone out — so "none of them is owed money or goods by you" is a
+    // claim the code cannot make. What it can say is scoped to the two endings
+    // it actually counts.
+    const { browser, gateway, harnessed } = await started();
+    const itemId = await publish(gateway, esimCard);
+    await buyOverHttp(harnessed, gateway, itemId, { onOrder: () => ({ accepted: {} }) });
+    await browser.signIn(KEY);
+
+    const text = readable((await browser.get("/orders?open=true")).html);
+
+    expect(text).toContain("awaiting fulfilment");
+    expect(text).not.toContain("owed money or goods");
+    expect(text).toContain("None of them owes a refund");
+  });
+
+  it("says which orders it cannot show at all", async () => {
+    // A purchase that closed before anybody named a price for it is absent from
+    // this list by construction — the row every order is drawn in carries the
+    // price it sold at. Absence that is never mentioned is the truncation the
+    // fifth gate asks about.
+    const { browser, gateway } = await started();
+    await publish(gateway, roomCard);
+    await browser.signIn(KEY);
+
+    const text = readable((await browser.get("/orders")).html);
+
+    expect(text).toContain("closed before anybody named a price");
+    expect(text).toContain("Nothing was charged for them");
   });
 
   it("says there are no orders rather than showing an empty table", async () => {
@@ -635,7 +717,7 @@ describe("the receipts screen", () => {
     const row = text.slice(text.indexOf("rcp_"));
     expect(row.match(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC/g)).toHaveLength(3);
     // And the summary above the table, which counts what it can stand behind.
-    expect(text).toContain("Delivered 1 of 1 paid");
+    expect(text).toContain("Delivered 1 of 1 receipt");
   });
 
   it("marks money that was never real as what it is", async () => {
@@ -665,11 +747,12 @@ describe("the receipts screen", () => {
     expect(receipts).not.toContain("paid in USD");
   });
 
-  it("does not offer a refund figure it could only ever report as nought", async () => {
-    // No receipt is ever written saying "refund due" — receipts are written
-    // when goods are released and an order owing a refund released none. A tile
-    // counting them would read "nothing owed back" while the orders screen of
-    // the same cabinet told the merchant to return money from their wallet.
+  it("counts nothing it cannot count, and says what is missing instead", async () => {
+    // This gateway writes a receipt only when goods are released, so a purchase
+    // that has been paid for and not delivered has none. Any tile counting
+    // those would read nought forever — and a nought is a positive claim that
+    // there is none, printed on the screen a merchant reads for money they are
+    // owed. The page says so in words and names where those orders are.
     const { browser, gateway } = await started();
     await publish(gateway, roomCard);
     await browser.signIn(KEY);
@@ -677,8 +760,35 @@ describe("the receipts screen", () => {
     const text = readable((await browser.get("/receipts")).html);
 
     expect(text).not.toContain("Refund due");
-    expect(text).toContain("appears on Orders");
-    expect(text).toContain("Awaiting fulfilment");
+    expect(text).not.toContain("Awaiting fulfilment");
+    expect(text).not.toContain("nothing outstanding");
+    expect(text).toContain("has no receipt yet");
+    expect(text).toContain("Both are on Orders");
+  });
+
+  it("does not claim a receipt appears when the money moves", async () => {
+    // The sentence this replaces was falsified by the money path itself: in the
+    // asynchronous mode the payment executes at the purchase and the receipt is
+    // written only when the goods go out, so a merchant told otherwise looks
+    // for a payment on a page that cannot show it yet.
+    const { browser, gateway, harnessed } = await started();
+    const itemId = await publish(gateway, esimCard);
+    await buyOverHttp(harnessed, gateway, itemId, { onOrder: () => ({ accepted: {} }) });
+    await browser.signIn(KEY);
+
+    const text = readable((await browser.get("/receipts")).html);
+
+    // The money moved at the purchase and there is no receipt for it.
+    expect((await gateway.call("GET", "/v0/receipts", { headers: asMerchant })).body).toStrictEqual(
+      {
+        receipts: [],
+      },
+    );
+    expect(text).not.toContain("the moment a payment goes through");
+    expect(text).toContain("released");
+    // And the orders screen does show it, which is where the receipts page says
+    // to look.
+    expect(readable((await browser.get("/orders?open=true")).html)).toContain("8.00 USD");
   });
 
   it("says nothing has been sold rather than showing a summary of nothing", async () => {
@@ -690,7 +800,6 @@ describe("the receipts screen", () => {
 
     expect(text).toContain("No receipts yet");
     expect(text).toContain("nothing sold yet");
-    expect(text).toContain("nothing outstanding");
   });
 
   it("does not add money up", async () => {
