@@ -180,8 +180,9 @@ the case with you rather than instead of you.
 
 ## What is not settled yet
 
-- The conditions for the automatic stop: how many failures in a row and over
-  what period switch it on, and how selling comes back.
+- The automatic stop itself. Nothing builds it yet, and neither its conditions
+  — how many failures in a row and over what period — nor the way selling
+  comes back afterwards is settled.
 - The limit on the share of purchases that run into missing goods.
 - The timeout on a price answer, and the freshness threshold past which an
   answer counts as silence.

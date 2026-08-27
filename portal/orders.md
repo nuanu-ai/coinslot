@@ -85,6 +85,10 @@ A handler has three answers:
 - taking the order on, where the goods leave later: you confirm the delivery
   itself with a separate call.
 
+Those three are what a handler returns. The same three exist as calls you make
+from outside a handler — `deliver`, `refuse` and `accept` — and the two that
+close an order have sections of their own below.
+
 Those three are the whole set, and that matters for how you report a temporary
 failure. An exception in the handler, a process that fell over, a connection
 that broke — for us each of these means the order never reached you: the
@@ -146,9 +150,11 @@ against.
 Errors from `deliver` and `refuse` are returned rather than thrown, and they
 carry a flag saying whether repeating is worth anything. The network let you
 down, or our side was slow to answer — repeat with the same call, which is
-idempotent. Where the error is marked final — the refund already paid out, for
-one — repeating changes nothing, and the case is worth writing down on your
-side instead of looping.
+idempotent by the order's identifier, and the error it hands back says so.
+`refuse` carries no such promise, so a refusal that failed is worth checking
+on with `get` before it is sent again. Where the error is marked final — the
+refund already paid out, for one — repeating changes nothing, and the case is
+worth writing down on your side instead of looping.
 
 ## Refusing after you have taken the order on
 
@@ -363,6 +369,10 @@ no separate address and no separate key, and nothing to set the flag from — so
 read it if you like, and do not fork on it, or everything goes into your test
 environment. What will separate the two in the end is still being chosen; the
 item is in the list on [The first test sale](/quickstart).
+
+The price question that comes before an order carries no flag of its own, so a
+card with a price check cannot route the question the way it routes the
+order.
 
 ## You did not deliver in time
 

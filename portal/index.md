@@ -134,5 +134,6 @@ we see for ourselves where it is awkward for you.
   buying the same access again are not designed yet.
 - What we promise you when it is our side that goes quiet. There is a great
   deal here about your side falling silent and nothing about ours.
-- What counts as your side having gone quiet, the limit on the share of "the
-  goods are gone" answers, and how selling comes back.
+- Stopping your selling without being asked. Nothing does it today, and what
+  will count as your side having gone quiet, where the limit on "the goods are
+  gone" answers sits, and how selling comes back are all open.

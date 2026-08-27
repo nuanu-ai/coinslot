@@ -49,8 +49,8 @@ the moment of purchase, ahead of your delivery, and then a product that was
 never delivered leaves a debt: such an order is marked as needing a refund.
 
 Which of the two comes first is your choice, and you make it product by
-product — it is written in that product's card alongside the price and the
-description. There is no switch for the whole shop: one product can be paid for
+product — it is written in the card for that product, the description a
+catalogue shows a buyer, alongside its price. There is no switch for the whole shop: one product can be paid for
 after delivery and the one next to it before.
 
 Say you sell a month of access for five dollars (an example figure). If the

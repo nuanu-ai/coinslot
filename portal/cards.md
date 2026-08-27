@@ -6,6 +6,9 @@ If you keep the cards yourself, this reference is yours. By default we write
 them and the owner of the business approves them; the whole path, from an
 empty project to a test sale, is on [The first test sale](/quickstart).
 
+The working words — handler, order, agent — are defined on
+[The first test sale](/quickstart).
+
 A card is the description of one product in a catalogue: everything the agent
 sees before buying, and everything it decides to buy from. From that follows
 the requirement that runs through every field at once — an agent has to be
@@ -95,8 +98,10 @@ agent decides from it whether to look any further.
 
 The list of what the agent has to give at purchase: an email address, a
 country, a period, any other input without which the delivery is impossible.
-Each parameter has a type, a mark saying whether it is required, and an
-explanation a person can read of what it is for.
+Each parameter has a type — `string`, `number`, `integer` or `boolean` — a
+mark saying whether it is required, and an explanation a person can read of
+what it is for. Those four are the whole language today, so a date, a list or
+a choice from a set travels as one of them.
 
 Nothing checks this field against your delivery, and it is where the card's
 main requirement breaks. A parameter your delivery needs and the card does not

@@ -52,6 +52,10 @@ data. Nothing beyond those arrives in your project.
 npm install @coinslot/sdk
 ```
 
+The package is not published yet, so that line has nothing to fetch today; how
+it reaches you during the pilot is in the list at the end of this page, and
+the name above is a working one like the rest.
+
 You are given a key to our API when you connect, and you keep it wherever you
 keep the rest of your secrets.
 
@@ -64,11 +68,11 @@ const coinslot = createClient({
 })
 ```
 
-The address in `baseUrl` comes with the key when you connect. The sandbox and
-the live system are at different addresses, so the client supplies neither by
-itself. This step worked if the package installed and the client was built.
-Whether the key is the right one is answered by the first call that reaches
-us, and that call is on the next step.
+The address in `baseUrl` comes with the key when you connect. The client
+supplies none by itself, because nothing in the contract says where we are.
+This step worked if the client was built. Whether the key is the right one is
+answered by the first call that reaches us, and that call is on the next
+step.
 
 ## 2. Describe the product with a card
 
@@ -101,6 +105,10 @@ An invalid card raises no exception. In place of `ok` the call answers with
 `errors`: a list of the fields at fault, each with an explanation of what is
 wrong with it, and never an empty list. Where there is an `ok`, the card was
 accepted, and our catalogue identifier is inside it.
+
+A call that fails for some other reason — a key we do not accept, an address
+that does not answer — does throw. The `errors` answer is about the card and
+nothing else.
 
 The field `merchant_item_id` is your own identifier for the product, the same
 one it has in your database. We issue our catalogue `id` beside it, but your
@@ -410,6 +418,8 @@ code.
 - `coinslot verify` as a command you can run. The card check is written and the
   package exports it; what the package does not declare is the command that
   wraps it.
+- How the package reaches you. It is not published anywhere, and the name it
+  is installed under is a working one.
 - Where to say that you are ready for a test purchase: we have no channel for
   that yet.
 - Starting the test purchase with a command of your own — after the pilot.
