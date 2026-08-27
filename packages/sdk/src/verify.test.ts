@@ -106,13 +106,22 @@ describe("npx coinslot verify", () => {
 
   it("stops rather than scolds when it is given no card files", async () => {
     // The documentation shows the bare command, and the bare command cannot
-    // work: it would check the cards the merchant has already published, and
-    // no call hands those back. That is a check that did not run — the same
-    // answer as the idempotency half — and not a merchant who typed it wrong.
+    // work: it takes no key and no address, so nothing that was published is
+    // within its reach — and the call that would hand those cards back,
+    // list_merchant_cards, returns cards that passed this very check on their
+    // way in. That is a check that did not run — the same answer as the
+    // idempotency half — and not a merchant who typed it wrong.
+    //
+    // Every part of the reason is pinned, because the reason is what the
+    // merchant is owed here, and this text went stale once already: it named
+    // an absent call after the call had been added. The tense is pinned too.
+    // "passed on the day they went out" is the claim the code can support;
+    // "have passed" would be a promise about a schema that is allowed to move.
     const { code, said } = await verifying("verify");
 
     expect(said).toMatch(/takes no key and no address/);
-    expect(said).toMatch(/no call returns a merchant's own published/);
+    expect(said).toMatch(/list_merchant_cards/);
+    expect(said).toMatch(/passed this check on the day they went out/);
     expect(said).toMatch(/Name the card files instead/);
     expect(code).toBe(VERIFY_EXIT.COULD_NOT_RUN);
   });
