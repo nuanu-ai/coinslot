@@ -66,8 +66,9 @@ declare global {
   /** An identifier the merchant kept in their own record, without the order. */
   const savedId: string;
   const url: string;
+  const expiresAt: string;
   const until: string;
-  function accessFor(orderId: string): Promise<{ url: string } | null>;
+  function accessFor(orderId: string): Promise<{ url: string; expiresAt: string } | null>;
   function grantAccess(
     recipient: unknown,
     options: { idempotencyKey: string },

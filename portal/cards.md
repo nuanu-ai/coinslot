@@ -118,8 +118,10 @@ actually buying.
 
 We pass the delivery to the agent as it is: the handler returns JSON to this
 shape, and we neither rewrite it nor rename anything in it. So the declaration
-has to match what the handler really sends; a mismatch is something the agent
-discovers after it has paid.
+has to match what the handler really sends. A mismatch does not reach the agent
+— we refuse the delivery, name the fields that are wrong and leave the order
+where it was, so your handler can send the right thing. It is the merchant who
+finds out, not the buyer.
 
 Every field of the result is required until you mark it `required: false`. The
 result is a promise, and a delivery missing a promised field does not go
