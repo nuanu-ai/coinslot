@@ -371,9 +371,17 @@ export const AgentOrderStatusSchema = z
     status: OrderStatusSchema,
 
     /**
-     * What this order sold for, or null where nobody ever named a price for
-     * it. It is the sale's own price and not the card's number: a card with a
-     * price check sells at what the check answered.
+     * The price this order was priced at, or null where nobody ever named one
+     * for it. It is the order's own price and not the card's number: a card
+     * with a price check is priced at what the check answered.
+     *
+     * "Priced at" and not "sold for", and the difference is worth the extra
+     * word. An order that was priced and then ended without a sale — the
+     * product was gone, a deadline ran out, the merchant left — still carries
+     * the number it was priced at, because that is what the buyer was asked
+     * for. Whether any money moved is the status's business and not this
+     * field's, and a reader taking this for an amount charged would be
+     * reconciling against sales that never happened.
      */
     price: SalePriceSchema.nullable(),
 
@@ -392,7 +400,7 @@ export const AgentOrderStatusSchema = z
   })
   .meta({
     description:
-      "What became of one purchase, in the words an agent and a merchant both read: where the order stands, what it sold for, and the goods once they are the buyer's. It is smaller than the merchant's own view of the same order on purpose — no merchant, no merchant's own key for the product, none of the purchase parameters and nothing about any other order. A null price means nobody ever named one for this order, and a null delivery means there are no goods to hand over yet; both fields are always present, because an absent field is a silence a reader cannot tell from an oversight. One omission is worth knowing about: \"rejected\" covers a product that was gone, a payment that failed its check and parameters that did not fit, and nothing in this contract yet carries that reason to an agent.",
+      "What became of one purchase, in the words an agent and a merchant both read: where the order stands, what it was priced at, and the goods once they are the buyer's. It is smaller than the merchant's own view of the same order on purpose — no merchant, no merchant's own key for the product, none of the purchase parameters and nothing about any other order. The price is what the buyer was asked for and not proof that anything was charged: an order that was priced and then ended without a sale still carries it, and the status is what says which happened. A null price means nobody ever named one for this order, and a null delivery means there are no goods here to hand over; both fields are always present, because an absent field is a silence a reader cannot tell from an oversight. Two omissions are worth knowing about. \"rejected\" covers a product that was gone, a payment that failed its check and parameters that did not fit, and nothing in this contract yet carries that reason to an agent. And a null delivery is not a promise that no goods were ever made: a purchase whose charge failed or went unanswered can leave goods the buyer has not paid for, and this document withholds them rather than describing them.",
   });
 
 /**
@@ -428,9 +436,15 @@ export type HttpMethod = (typeof HTTP_METHODS)[number];
  * where the payment is what stands in for authorisation.
  *
  * `order_id` is the agent's own door and there is exactly one route behind it:
- * knowing an order's identifier is what stands in for a key (ADR-0011). The
- * identifier is generated from a random source, it is long enough not to be
- * guessed, and it is handed to one party — the agent that made the purchase.
+ * knowing an order's identifier is what stands in for a key (ADR-0011). What
+ * that leans on is the identifier being generated from a random source and long
+ * enough not to be guessed — not on it being secret, which it is not. It
+ * travels in the payment challenge, on the merchant's stream and in the
+ * merchant's receipts, so the merchant who sold an order holds every identifier
+ * they would need to read one of these documents. That is why ownership of an
+ * order is settled by the verified payer and not by the identifier, and why the
+ * document behind this door carries only what the buyer is owed.
+ *
  * It is a separate word from `none` because the two are not the same call: a
  * route marked `none` answers everybody the same thing, and this one answers
  * about the order the caller named and about no other. Whoever mounts it reads

@@ -249,20 +249,35 @@ describe("an identifier that names nothing", () => {
     expect(second.body).toStrictEqual(first.body);
   });
 
-  it("answers a real order's identifier the same way to everyone, so a guess is not a probe", async () => {
-    // The pair the sentence above is about: an identifier that names an order
-    // and one that names nothing differ in the answer's content and in nothing
-    // else — no second refusal code, no "this exists but is not yours", which
-    // is what would turn a guess into a way of counting the orders here.
+  it("has one refusal and not two, so an unknown identifier is never told from a forbidden one", async () => {
+    // What this route can and cannot hide, said plainly, because the two are
+    // easy to run together.
+    //
+    // It cannot hide that an identifier names an order. The identifier is the
+    // proof, so a real one has to be answered, and the answer is visibly not
+    // the refusal — that is the door working, and no arrangement of codes
+    // changes it. What the decision leans on instead is that the identifier is
+    // long and random, so walking them finds nothing.
+    //
+    // What it can hide, and does, is the second refusal: there is no "this
+    // order exists and is not yours" anywhere on this route, because there is
+    // no such thing here — nothing is scoped to a caller. So the one refusal
+    // covers every identifier that does not resolve, and the test above holds
+    // that two of those are answered byte for byte alike.
     const { served, harnessed } = await started();
     const itemId = await publish(served, laterCard);
     const orderId = await orderTakenOn(harnessed, served, itemId);
 
     const real = await statusOf(served, orderId);
     const invented = await statusOf(served, `${orderId}_no`);
+    const nothingLikeOne = await statusOf(served, "not-an-order-at-all");
 
     expect(real.status).toBe(200);
+    // Every identifier that resolves to nothing gets the one refusal, whatever
+    // it looks like: a near-miss of a real order and a string that was never
+    // shaped like one are not told apart either.
     expect(invented.status).toBe(404);
+    expect(nothingLikeOne.body).toStrictEqual(invented.body);
     expect((invented.body as { error: { code: string } }).error.code).toBe("no_such_order");
   });
 });

@@ -1003,7 +1003,13 @@ describe("the route table", () => {
     // the word says which of the three it is so that a gateway mounting from
     // this table cannot read it as either of the others.
     expect(API_ROUTES.get_order_status.auth).toBe("order_id");
-    expect(API_ROUTES.get_order_status.description).toContain("identifier");
+    // And it is the only route behind that door. The word means "the caller
+    // named the order", which is a sentence about one path parameter — put on
+    // a route that takes no order, it would be a door with nothing to check.
+    for (const [name, route] of Object.entries(API_ROUTES) as [string, RouteDefinition][]) {
+      if (route.auth !== "order_id") continue;
+      expect(pathParamsOf(route.path), name).toContain("order_id");
+    }
   });
 
   it("warns whoever mounts the agent's route that it sits under the merchant's prefix", () => {
@@ -1011,7 +1017,13 @@ describe("the route table", () => {
     // `/v0/orders` because every other route under it is the merchant's. The
     // agent has no key, so that check turns the one route an agent can use into
     // one it can never open, and nothing about the table would look wrong.
+    //
+    // This pins that the warning is there and not what it says — prose cannot
+    // be held to its meaning by a test. What holds the behaviour is in the
+    // gateway: every call in the table is made with no key, and the ones that
+    // are not the merchant's must not be turned away.
     expect(API_ROUTES.get_order_status.description).toContain("/v0/orders");
+    expect(API_ROUTES.get_order_status.path.startsWith("/v0/orders/")).toBe(true);
   });
 
   it("warns that the paid route has to answer a challenge on any method", () => {

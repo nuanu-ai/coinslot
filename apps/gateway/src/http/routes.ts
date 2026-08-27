@@ -293,11 +293,17 @@ async function orderStatus(
     // that did not happen.
     price: salePriceOf(record),
     // The goods only once they are the buyer's, which is narrower than once
-    // the merchant handed them over. A synchronous delivery whose charge did
-    // not go through leaves goods on an order nothing was paid for; the
-    // purchase itself refuses to hand those over until a repeat carries the
-    // payment home, and a door that answered with them anyway would be a way
-    // of collecting for free whatever a failed charge left behind.
+    // the merchant handed them over. A synchronous delivery whose charge came
+    // back failed leaves goods on an order nothing was paid for; the purchase
+    // itself refuses to hand those over, and a door that answered with them
+    // anyway would be a way of collecting for free whatever a failed charge
+    // left behind. Where the charge failed outright a repeat purchase carries
+    // the payment home against the goods that already exist. Where it went
+    // silent instead, no repeat is taken either — the machine will not spend a
+    // second authorisation on a guess about the first — and the word this
+    // answers with is `in_progress`, because that is the truth of it: we are
+    // still waiting on the payment layer. That is the one case where goods
+    // exist, the buyer may have been charged, and nothing here hands them over.
     delivered: status === "delivered" ? (record.delivery ?? null) : null,
   };
   return { status: OK, document };

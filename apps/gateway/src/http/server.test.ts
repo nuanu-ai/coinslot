@@ -5,7 +5,14 @@ import { decodePaymentRequiredHeader, encodePaymentSignatureHeader } from "@x402
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { setServiceName } from "../app/merchants.js";
-import { type Harness, harness, type Served, serve, workUntilStopped } from "../testing/harness.js";
+import {
+  buyOverHttp,
+  type Harness,
+  harness,
+  type Served,
+  serve,
+  workUntilStopped,
+} from "../testing/harness.js";
 import { buildApp } from "./server.js";
 import { ORDER_ID_IN_EXTRA, PAYMENT_REQUIRED_HEADER, PAYMENT_SIGNATURE_HEADER } from "./x402.js";
 
@@ -72,11 +79,19 @@ describe("the surface is the table", () => {
 
   it("puts the merchant's door on the merchant's calls and on no other", async () => {
     // The check that has to run over the whole table rather than over one
-    // route. Every call is made with no key at all: the merchant's are refused
-    // and nothing else is, so a door attached to an address prefix — the
+    // route. Every call is made with no key at all: the merchant's are turned
+    // away and nothing else is, so a door attached to an address prefix — the
     // natural mistake under `/v0/orders`, where every route but one is the
     // merchant's — turns the agent's own route into one it can never open, and
     // this test dies the moment it does.
+    //
+    // What is asserted for a route that takes no key is that it was not turned
+    // away, rather than that it did not answer 401. The difference is the whole
+    // value of the assertion: a check attached to a prefix is as likely to be
+    // somebody else's middleware answering 403, or redirecting to a sign-in, as
+    // it is to be a copy of this gateway's own refusal, and a test written
+    // against the one number would let the other two through.
+    const turnedAway = new Set([401, 403, 407, 302, 303, 307]);
     const { served } = await started({ WORKER_POLL_WAIT_MS: "1" });
 
     for (const [name, route] of mountableRoutes()) {
@@ -85,10 +100,36 @@ describe("the surface is the table", () => {
         ...(route.request === undefined ? {} : { body: {} }),
       });
 
-      expect(answered.status === 401, `${name} with no key answered ${answered.status}`).toBe(
-        route.auth === "merchant_key",
-      );
+      expect(
+        turnedAway.has(answered.status),
+        `${name} with no key answered ${answered.status}`,
+      ).toBe(route.auth === "merchant_key");
     }
+  });
+
+  it("answers the agent's own route with no key on it at all", async () => {
+    // The half the loop above cannot state, because it is written against
+    // whatever the table says rather than against what any one route is for.
+    // This route is the agent's, an agent has no key, and the placeholder the
+    // loop calls it with names no order — so a route that had quietly grown a
+    // door would still answer 404 there and the loop would be satisfied.
+    // Here a real order is bought and read back with nothing in the header.
+    const { served, harnessed } = await started();
+    const itemId = await publish(served, {
+      ...syncCard,
+      merchant_item_id: "SKU 200/1",
+      fulfillment: "async",
+      fulfill_deadline_seconds: 3_600,
+    });
+    const bought = await buyOverHttp(harnessed, served, itemId, {
+      onOrder: () => ({ accepted: {} }),
+    });
+    const orderId = (bought.body as { order: { id: string } }).order.id;
+
+    const answered = await served.call("GET", `/v0/orders/${orderId}/status`);
+
+    expect(answered.status, JSON.stringify(answered.body)).toBe(200);
+    expect((answered.body as { order_id: string }).order_id).toBe(orderId);
   });
 
   it("will not mount a route whose door nobody has chosen, whoever hands it over", async () => {
