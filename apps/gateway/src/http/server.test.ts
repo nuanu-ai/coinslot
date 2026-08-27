@@ -1151,6 +1151,34 @@ describe("a product that is declared and a product that is not", () => {
     expect((await served.call("GET", `/v0/items/${itemId}/purchase`)).status).toBe(402);
   });
 
+  it("says who is selling, reading the name off the merchant who published it", async () => {
+    // The name comes from the merchants table and from nowhere else. Nothing
+    // else on the wire carries a seller's name, so a challenge that lost it on
+    // the way out would list every product of ours under nobody.
+    const { served, harnessed } = await started();
+    await harnessed.store.setServiceName(harnessed.merchant.id, "The pilot merchant", Date.now());
+    const itemId = await publish(served, syncCard);
+
+    const answered = await served.call("GET", `/v0/items/${itemId}/purchase`);
+
+    expect(
+      decodePaymentRequiredHeader(answered.headers.get(PAYMENT_REQUIRED_HEADER) ?? "").resource
+        .serviceName,
+    ).toBe("The pilot merchant");
+  });
+
+  it("says nothing about a seller whose merchant has not been given a listing name", async () => {
+    const { served } = await started();
+    const itemId = await publish(served, syncCard);
+
+    const answered = await served.call("GET", `/v0/items/${itemId}/purchase`);
+    const { resource } = decodePaymentRequiredHeader(
+      answered.headers.get(PAYMENT_REQUIRED_HEADER) ?? "",
+    );
+
+    expect("serviceName" in resource).toBe(false);
+  });
+
   it("names the same resource however the address was typed", async () => {
     // The resource identity is what a listing is keyed on, and a query string
     // or a second method must not change it. Read off the request it would:

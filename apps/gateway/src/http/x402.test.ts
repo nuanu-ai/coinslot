@@ -607,11 +607,11 @@ describe("the shape a live validation once accepted", () => {
     );
     const declared = decoded.extensions?.bazaar as DiscoveryExtension | undefined;
     if (declared === undefined) throw new Error("the challenge carried no declaration");
-    return declared.info;
+    return declared;
   };
 
   it("puts the same fields in the same places as the GET probe that was accepted", () => {
-    expect(skeleton(ourDeclaration("GET"))).toStrictEqual([
+    expect(skeleton(ourDeclaration("GET").info)).toStrictEqual([
       "input.method: string",
       "input.queryParams: {}",
       "input.type: string",
@@ -623,13 +623,27 @@ describe("the shape a live validation once accepted", () => {
     // And the accepted one, read the same way, differs only in the leaves that
     // describe a different product.
     expect(unique(skeleton(acceptedOnGet).map(named))).toStrictEqual(
-      unique(skeleton(ourDeclaration("GET")).map(named)),
+      unique(skeleton(ourDeclaration("GET").info).map(named)),
     );
+  });
+
+  it("names the schema dialect once, at the top, the way the accepted shape does", () => {
+    // The schema that came back from the accepted validation carries `$schema`
+    // exactly once, at its root. Ours is built partly from a document rendered
+    // on its own — the purchase body — and such a document names its dialect at
+    // the top, which nested inside another schema is a second declaration in a
+    // place the accepted shape has none. It is dropped on the way in, and this
+    // is what says so: a comparison against a shape that passed.
+    const dialects = skeleton(ourDeclaration("POST").schema).filter((path) =>
+      path.includes("$schema"),
+    );
+
+    expect(dialects).toStrictEqual(["$schema: string"]);
   });
 
   it("puts the same fields in the same places as the POST probe that was accepted", () => {
     expect(unique(skeleton(acceptedOnPost).map(named))).toStrictEqual(
-      unique(skeleton(ourDeclaration("POST")).map(named)),
+      unique(skeleton(ourDeclaration("POST").info).map(named)),
     );
   });
 });
