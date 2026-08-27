@@ -83,9 +83,16 @@ const quoted = async (harnessed: Harness, card: Card): Promise<string> => {
  * it says it repaired.
  */
 const sweep = async (harnessed: Harness): Promise<Swept> => {
+  const swept = await runSweep(harnessed);
+  if (swept === null) throw new Error("the sweep found another run holding it");
+  return swept;
+};
+
+/** The same, for a test that expects a run to find somebody else holding it. */
+const runSweep = async (harnessed: Harness): Promise<Swept | null> => {
   const work = harnessed.queue.daily.get(SWEEP_EFFECTS);
   if (work === undefined) throw new Error("the gateway registered no sweep of effects");
-  return (await work()) as Swept;
+  return (await work()) as Swept | null;
 };
 
 describe("an effect that could not be written down", () => {
@@ -340,6 +347,37 @@ describe("the sweep of what an order is still owed", () => {
 
     await sweep(harnessed);
     expect(await harnessed.queue.draw(harnessed.merchant.id, 10, 0)).toStrictEqual([]);
+  });
+
+  it("lets only one run happen at a time, whatever starts it", async () => {
+    // Two runs one after another are safe because each arm asks the world what
+    // is missing before it acts. Two runs beside each other are not, and the
+    // shape is the ordinary one: both ask the stream whether the order is still
+    // held, both are told no, and both send it — which is the double hand-over
+    // this whole arm exists to avoid, arrived at by the thing meant to avoid
+    // it. The receipt arm has the same shape, both reading the orders without
+    // receipts before either writes one.
+    //
+    // It is not a hypothetical overlap. The sweep's own job takes pg-boss's
+    // defaults, so a run that outlasts the library's window is handed out again
+    // while the first is still going.
+    const harnessed = await started();
+    const orderId = await paidWithNothingOnTheStream(harnessed);
+
+    const [first, second] = await Promise.all([runSweep(harnessed), runSweep(harnessed)]);
+
+    // One of them ran and one of them found the work already in hand. Which is
+    // which is a race, and neither answer is the wrong one.
+    const ran = [first, second].filter((swept) => swept !== null);
+    expect(ran).toHaveLength(1);
+    expect(ran[0]?.dispatched).toBe(1);
+
+    // And the order was handed over once, which is the fact underneath.
+    const drawn = await harnessed.queue.draw(harnessed.merchant.id, 10, 0);
+    expect(drawn).toHaveLength(1);
+    expect(drawn[0]?.envelope.kind === "order" ? drawn[0]?.envelope.payload.id : null).toBe(
+      orderId,
+    );
   });
 
   it("does nothing at all on the second run, with nobody drawing in between", async () => {

@@ -267,11 +267,27 @@ export class PgBossQueue implements Queue {
   async holdsOrder(merchantId: string, orderId: string): Promise<boolean> {
     const stream = await this.#stream(merchantId);
     // `queued` is the library's word for a job that has not been handed to
-    // anybody: created or waiting on a retry, which takes in a redelivery
-    // sitting out its delay. A job somebody has drawn is `active` and is not
-    // counted here, and that is the honest answer rather than a gap — an
-    // envelope in a worker's hands is exactly what this cannot tell from one
-    // that was never written, and the sweep covers that with patience instead.
+    // anybody, which it reads as a state before `active` — `created` or
+    // `retry`. On a stream that means `created` and only `created`: a
+    // redelivery waiting out its delay is a created job with its start time in
+    // the future, and `retry` cannot occur here at all, because every envelope
+    // is published with no retries of the library's own. A job somebody has
+    // drawn is `active` and is not counted, and one that was drawn and never
+    // answered ends up `failed` rather than back on the stream, so it is not
+    // counted either — which is right, because that order really has reached
+    // nobody and the sweep should send it again.
+    //
+    // What this cannot tell apart is an envelope in a worker's hands from one
+    // that was never written. That is the honest answer rather than a gap, and
+    // the sweep covers part of it with patience instead.
+    //
+    // One difference from how the library hands work out, harmless today and
+    // worth knowing before it is not: fetching also excludes a job whose
+    // dependencies have not finished, and this does not. Nothing here ever
+    // makes a dependent job — an envelope is a plain send — so no job on a
+    // stream can be in that state. The day one could be, this would answer
+    // "held" for an envelope nobody will ever be handed, and the sweep would
+    // leave that order alone for good.
     //
     // The match is on what the envelope carries rather than on its identifier,
     // because the caller knows the order and not which envelope was written for

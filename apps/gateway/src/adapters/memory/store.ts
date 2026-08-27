@@ -35,6 +35,7 @@ import type {
   OrderChange,
   OrderLookup,
   PaymentClaim,
+  Ran,
   Store,
   StoredCard,
   StoredKey,
@@ -109,6 +110,8 @@ export class MemoryStore implements Store {
   readonly #paymentClaims = new Map<string, { orderId: string; at: number }>();
   /** The tail of the queue of decisions waiting on each order. */
   readonly #locks = new Map<string, Promise<unknown>>();
+  /** Work being run alone right now, by the name it was asked for under. */
+  readonly #running = new Set<string>();
   readonly #ids: Ids;
   readonly #now: Clock;
   readonly #envelopes: Envelopes;
@@ -392,6 +395,23 @@ export class MemoryStore implements Store {
     return [...this.#orders.values()].filter((record) => isOpen(record.order.state));
   }
 
+  async runAlone<T>(name: string, work: () => Promise<T>): Promise<Ran<T>> {
+    // One process, so a name held in memory is the same guarantee the advisory
+    // lock gives across several. It is taken before anything is awaited, which
+    // is what makes it a lock at all here: two callers starting in the same
+    // turn both reach this line before either yields.
+    if (this.#running.has(name)) {
+      return { ran: false };
+    }
+    this.#running.add(name);
+    try {
+      return { ran: true, result: await work() };
+    } finally {
+      // Let go however it ended. Work that threw is work nobody is doing.
+      this.#running.delete(name);
+    }
+  }
+
   async deliveredWithoutReceipt(): Promise<readonly StoredOrder[]> {
     return [...this.#orders.values()].filter(
       (record) => record.order.state === "delivered" && !this.#receipts.has(record.order.id),
@@ -402,11 +422,20 @@ export class MemoryStore implements Store {
    * Takes one write that goes with an order, and hands back the call that makes
    * it visible.
    *
-   * A receipt is visible the moment it is written and there is nothing to hold
-   * back: nothing reads a receipt except by asking for it, and an order that
-   * has one before it says `delivered` claims nothing on its own. It goes
-   * through the store's own method rather than into the map behind its back, so
-   * there is one place a receipt is written and one rule about whose it is.
+   * A receipt is visible the moment it is written rather than held back with
+   * the envelopes, and the reason is narrow: writing it is the step that cannot
+   * refuse, so holding it would buy nothing against a half-written list. What
+   * it costs is a window — a microtask, between this and the order being
+   * written — in which somebody asking for the receipt of an order would be
+   * handed one saying `delivered` while the order still says otherwise. Nothing
+   * looks: a receipt is read by the agent's answer to its own purchase and by a
+   * merchant's list, both of which arrive long afterwards, and neither is woken
+   * by a receipt appearing. It is a smaller window than the alternative and not
+   * a closed one.
+   *
+   * It goes through the store's own method rather than into the map behind its
+   * back, so there is one place a receipt is written and one rule about whose
+   * it is.
    */
   async #takeWithTheOrder(write: WithTheOrder): Promise<() => void> {
     if (write.kind === "receipt") {

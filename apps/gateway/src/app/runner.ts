@@ -426,8 +426,22 @@ export class OrderRunner {
    * memory of having run: the receipt is there, so the order is no longer one
    * without a receipt; the reminder ended the order, so the order is no longer
    * open; the envelope the first run wrote is still on the stream, so the order
-   * is no longer one that has reached nobody. Two runs beside each other come
-   * to the same thing for the same reasons.
+   * is no longer one that has reached nobody.
+   *
+   * That argument covers one run after another and it does not cover two at
+   * once, which is why only one runs at a time. Every arm reads the world and
+   * then acts on what it read, so two runs beside each other both find the
+   * envelope missing and both send it — the double hand-over the dispatch arm
+   * exists to prevent, and one of that order's deliveries spent. The overlap is
+   * ordinary rather than theoretical: two gateways would do it, and so does one
+   * gateway handed its own job again after the queue's window ran out. So the
+   * work is taken under a name, and a run that finds the name held does
+   * nothing at all and says so.
+   *
+   * Nothing is written down about having run. The lock is let go however the
+   * work ends, a process that dies holding it leaves the work free for the next
+   * one, and a run that skipped is not a run that failed — the work it wanted
+   * is already being done.
    *
    * What may not be swept, which is the part ADR-0013 asks every future effect
    * to be measured against. An arm here may only re-drive an effect whose
@@ -439,7 +453,17 @@ export class OrderRunner {
    * most once — so there is no arm for them here and there must not be one. A
    * debt announced twice is a second refund somebody may act on.
    */
-  async sweep(): Promise<Swept> {
+  async sweep(): Promise<Swept | null> {
+    const ran = await this.#runtime.store.runAlone(SWEEP_EFFECTS, () => this.#sweepAlone());
+    if (!ran.ran) {
+      console.log("[gateway] the sweep found another run already holding it, and did nothing");
+      return null;
+    }
+    return ran.result;
+  }
+
+  /** The sweep itself, with nothing else in the gateway running it. */
+  async #sweepAlone(): Promise<Swept> {
     const now = this.#runtime.clock();
     const swept: Swept = { dispatched: 0, receipted: 0, rearmed: 0, refused: 0 };
 
@@ -494,15 +518,23 @@ export class OrderRunner {
    * sitting there unclaimed is left alone: sending it again would spend a
    * delivery the merchant never failed.
    *
-   * The patience covers what the stream cannot answer. An envelope somebody has
-   * already drawn is on no stream, and from out here that is indistinguishable
-   * from one that was never written — the order stays `paid` until the
-   * hand-over is recorded either way. A worker part-way through a batch is the
-   * ordinary version of that, and the patience is what keeps this off him.
+   * The patience covers part of what the stream cannot answer, and it is worth
+   * being exact about which part. An envelope somebody has already drawn is on
+   * no stream, and from out here that is indistinguishable from one that was
+   * never written — the order stays `paid` until the hand-over is recorded
+   * either way. The patience runs from the moment the money landed, not from
+   * the moment the envelope was drawn, so what it actually covers is a worker
+   * who drew the order promptly and is working through a batch. A merchant
+   * whose worker polls once an hour draws long after the patience has run out,
+   * and this sends the order again while he is holding it: two hand-overs, one
+   * of which he never failed. That is a real cost and it is bounded — one extra
+   * per sweep, and the sweep runs daily — and the number that decides it is
+   * `sweepDispatchGraceMs`, which is where somebody with a slow-polling
+   * merchant should look first.
    *
-   * What is left after both is an order that has been paid for longer than any
-   * worker would have taken, with nothing on the stream for it. That one really
-   * does look like an envelope that went nowhere, and it goes out again.
+   * What is left after both is an order that has been paid for longer than the
+   * patience allows, with nothing on the stream for it. That one really does
+   * look like an envelope that went nowhere, and it goes out again.
    */
   async #sweepTheDispatch(record: StoredOrder, now: number): Promise<number> {
     const paidAt = record.order.timestamps.paidAt;

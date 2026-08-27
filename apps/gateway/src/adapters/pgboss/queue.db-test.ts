@@ -65,6 +65,7 @@ const SCHEMAS = [
   "pgboss_queue_names",
   "pgboss_queue_settings",
   "pgboss_holds_order",
+  "pgboss_holds_failed",
 ] as const;
 
 if (databaseUrl === null) {
@@ -503,6 +504,10 @@ if (databaseUrl === null) {
       // And an event about an order is not an order. Nothing ever re-sends an
       // event, so nothing should ever be told an order is still in hand
       // because a message about it is.
+      //
+      // The state this whole repair rests on is checked next door, in its own
+      // test: an envelope whose window ran out is `failed`, and this has to
+      // answer "not held" for it or the order it carried reaches nobody, ever.
       await queue.publish(A, {
         kind: "order_event",
         id: "env_held_3",
@@ -514,6 +519,56 @@ if (databaseUrl === null) {
         },
       });
       expect(await queue.holdsOrder(A, "ord_held")).toBe(false);
+    }, 60_000);
+
+    it("says a failed envelope is not held, which is what the repair rests on", async () => {
+      // The one state the whole repair depends on. An envelope drawn into a
+      // poll response that never reached its worker is failed once its window
+      // runs out — the test above pins that — and it is never offered again. If
+      // this said "held" for it, the sweep would leave that order alone
+      // forever: paid, with nobody ever handed the work, until its own
+      // fulfillment deadline turned it into a debt.
+      const schema = "pgboss_holds_failed" satisfies (typeof SCHEMAS)[number];
+      const { boss, queue } = await labQueue(schema, {
+        [STREAM]: { expireInSeconds: 1 },
+      });
+      const envelope: WorkerEnvelope = {
+        kind: "order",
+        id: "env_failed_1",
+        sent_at: "2026-08-26T12:00:00.000Z",
+        payload: {
+          id: "ord_failed",
+          merchant_item_id: "sku-1",
+          params: {},
+          price: {
+            amount: "12.00",
+            currency: "USD",
+            at: "2026-08-26T12:00:00.000Z",
+            as_of: "2026-08-26T12:00:00.000Z",
+          },
+          test: true,
+        },
+      };
+
+      await queue.publish(A, envelope);
+      expect(await queue.holdsOrder(A, "ord_failed")).toBe(true);
+
+      // Drawn and never answered, which is the process that died holding it.
+      const drawn = await queue.draw(A, 10, 5_000);
+      expect(drawn.map((delivery) => delivery.envelope.id)).toStrictEqual(["env_failed_1"]);
+
+      await sleep(1_500);
+      await boss.supervise();
+
+      // Failed, said by the library rather than assumed, and then the answer
+      // that matters: nothing is holding this order, so the sweep is free to
+      // send it again.
+      const { rows } = await pool.query<{ state: string }>(
+        `select state from ${schema}.job where name = $1`,
+        [STREAM],
+      );
+      expect(rows.map((row) => row.state)).toStrictEqual(["failed"]);
+      expect(await queue.holdsOrder(A, "ord_failed")).toBe(false);
     }, 60_000);
 
     it("takes on work to run every day, runs it, and does not stack up schedules", async () => {

@@ -103,8 +103,10 @@ export async function bootGateway(
     attempts: config.reminderAttempts,
     retryDelayMs: config.reminderRetryDelayMs,
   });
-  // The queue is made first because the store publishes through it: an envelope
-  // that must not be lost is written where the order is (ADR-0013).
+  // The queue is made first because the store writes through it: an envelope
+  // that must not be lost is written where the order is (ADR-0013). It is
+  // `stage` rather than `publish` because the store needs the two halves apart
+  // — take it before the order is written, make it visible after.
   const store = new MemoryStore(randomIds, systemClock, (merchantId, envelope, afterMs) =>
     queue.stage(merchantId, envelope, afterMs),
   );

@@ -173,12 +173,20 @@ export class Gateway {
     // is written to be safe run twice, because it will be.
     //
     // Twice at once, in fact, and not only one after another. This job runs on
-    // pg-boss's defaults, so a run that outlasts the library's own window is
-    // taken back and handed out again while the first one is still going. That
-    // is survivable for the same reason a second run is: each arm asks the
-    // world what is missing at the moment it acts, so the one that gets there
-    // second finds the receipt written, the order closed or the envelope back
-    // on the stream, and does nothing.
+    // pg-boss's defaults — no singleton policy, no heartbeat, nothing here
+    // asking for one — so a run that outlasts the library's window is taken
+    // back and handed out again while the first one is still going. That is not
+    // survivable by the argument that covers a second run afterwards: every arm
+    // reads the world and then acts on what it read, so two at once both find
+    // the same thing missing and both do it. The sweep takes the work under a
+    // name for exactly that reason, and the run that finds the name held does
+    // nothing.
+    //
+    // The lock is in the sweep rather than here on purpose. Registering with a
+    // queue policy would leave it to a call whose settings the library writes
+    // only when the queue is first made — every database that has already run
+    // this would ignore it in silence — and it would say nothing at all about
+    // a second gateway.
     await this.runtime.queue.everyDay(SWEEP_EFFECTS, () => this.runner.sweep());
   }
 
