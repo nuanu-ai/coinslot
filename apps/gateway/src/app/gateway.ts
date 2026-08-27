@@ -22,6 +22,7 @@ import {
   type CatalogPage,
   CONTRACT_VERSION,
   type Delivery,
+  deliveryCheckFor,
   type HandlerAnswer,
   type MerchantCard,
   type MerchantCardList,
@@ -776,12 +777,49 @@ export class Gateway {
     return this.#takeOrderOn(merchantId, orderId, answer.accepted);
   }
 
+  /**
+   * The goods, held to the card that sold them before anything is written down.
+   *
+   * The check is here rather than in the machine because it is a fact about a
+   * card and the machine knows nothing about cards — it decides what a delivery
+   * does to an order, not whether these are the goods. And it is before the
+   * interpreter rather than inside it because the answer to a delivery that
+   * does not fit is that nothing happened: no goods on the order, no receipt,
+   * no instant moved, and the delivery still open with the merchant so his own
+   * clock and our redelivery are unchanged. That is the same shape as an event
+   * the machine refuses, arrived at one step earlier.
+   */
   async deliverOrder(
     merchantId: string,
     orderId: string,
     delivery: Delivery,
     from: "handler" | "call" = "call",
   ): Promise<OrderCallResponse | null> {
+    // Read before the check, so that an order that is not this merchant's is
+    // answered exactly as one that never existed — the same silence every other
+    // call of his gets, and one that tells him nothing about a stranger's sale.
+    const record = await this.runtime.store.merchantOrder(merchantId, orderId);
+    if (record === null) {
+      return null;
+    }
+
+    // Goods are weighed against the card only where they could actually be
+    // written, and that is the one condition the interpreter uses for the same
+    // fact: this order does not carry goods yet. A repeat is not weighed at
+    // all, and the reason is what a refusal would tell the merchant. The
+    // answer to a repeat is that the order already has its goods and nothing
+    // was done — true whatever the repeat carried — while a refusal is marked
+    // as worth calling again, which on a delivered order is an invitation to
+    // loop on a call that can never take anything. Delivery is at least once
+    // by design, so repeats are ordinary rather than a sign of trouble, and
+    // making one of them fail would turn a merchant's safe retry into a
+    // failure branch on a sale that went through.
+    const misfit =
+      record.delivery === null ? await this.#goodsAgainstTheCard(record, delivery) : null;
+    if (misfit !== null) {
+      return { ok: false, error: misfit };
+    }
+
     const at = this.runtime.clock();
     const applied = await this.runner.apply(
       orderId,
@@ -947,6 +985,64 @@ export class Gateway {
   }
 
   /**
+   * What is wrong with these goods against this order's card, or null where
+   * nothing is.
+   *
+   * The card is read by the order's own catalog identifier, which is what the
+   * order carries. There is a window in that, it runs both ways, and both are
+   * written down here rather than left to be discovered.
+   *
+   * A merchant may republish under the same key while an order of his is still
+   * in flight — the catalog keeps one version per key and republishing
+   * overwrites it — and the goods are then held to the card as it now stands
+   * rather than to the one the agent read before it paid. One way, a result
+   * loosened after the sale lets through goods the agent was not promised. The
+   * other way is the expensive one: for an order already paid for under the
+   * old card, delivering exactly what the agent read is refused, the merchant
+   * cannot close that sale at all, and it runs to its deadline and becomes a
+   * refund. Nothing here can tell the two apart, because nothing anywhere
+   * remembers what the older card said.
+   *
+   * So this is narrower than it should be rather than merely imperfect, and
+   * what it wants is versioned cards — an order naming the version it was sold
+   * under, and that version still being readable. That is a change to the
+   * catalog and not to this check, and it is somebody's decision to take.
+   * Until then: every case this gets wrong needs the merchant to have
+   * republished mid-sale, and every case it gets right is one the gateway used
+   * not to look at at all.
+   */
+  async #goodsAgainstTheCard(
+    record: StoredOrder,
+    delivery: Delivery,
+  ): Promise<OrderCallError | null> {
+    const stored = await this.runtime.store.cardById(record.itemId);
+    if (stored === null) {
+      // Our own catalog has lost the card an order of ours was made against.
+      // Nothing removes a card, so this cannot be reached by anything a
+      // merchant does; if it ever is, the honest thing is to stop rather than
+      // to wave through goods nothing can be compared with.
+      throw new Error(
+        `the order ${record.order.id} was sold against ${record.itemId}, and there is no such card to hold its goods to`,
+      );
+    }
+
+    const fit = deliveryCheckFor(stored.card).safeParse(delivery);
+    if (fit.success) {
+      return null;
+    }
+
+    return {
+      code: "delivery_does_not_match_card",
+      message: `these goods are not what the card "${cutShort(stored.card.merchant_item_id)}" declares it delivers, so nothing was written down and this order still stands where it did — ${misfitsIn(findingsOf(fit.error.issues))}`,
+      // He can fix his handler and deliver again; the order is his to finish
+      // until its own deadline says otherwise. The alternative — closing the
+      // order on the merchant's behalf — would end a sale he could still make,
+      // and would do it on the strength of one bad call.
+      retryable: true,
+    };
+  }
+
+  /**
    * Leaves a reminder that this delivery has gone unanswered, but never one
    * that would land after the order's own deadline has already closed it —
    * a redelivery decided after the ending is a decision about a purchase that
@@ -1070,6 +1166,70 @@ function merchantCardOf(stored: StoredCard, merchant: MerchantSelling): Merchant
     selling: sellingFor(merchant, stored),
     paused: stored.paused,
   };
+}
+
+/**
+ * How many misfits a refusal names before it starts counting instead.
+ *
+ * The answer a merchant's call comes back in has one line for the reason, not a
+ * list, so everything wrong with a delivery has to fit in a sentence somebody
+ * will read in a log. A card may declare a dozen fields and a broken handler
+ * can miss all of them; naming them all makes a paragraph nobody reads, and
+ * naming one makes a merchant fix his handler a field per round trip. Five is
+ * enough to see the shape of the mistake, and what is left over is counted
+ * rather than dropped in silence — a reader has to be able to tell "these five"
+ * from "these five and eleven more".
+ */
+const MISFITS_NAMED = 5;
+
+/**
+ * How much of one misfit is quoted before it is cut short.
+ *
+ * Counting the findings is not enough on its own and the reason is worth
+ * writing down, because it is not obvious and it was found by measurement
+ * rather than by reading. Every field the card never declared arrives as a
+ * single finding whose own text lists all of them — three hundred undeclared
+ * names come back as one finding fourteen thousand characters long, and a cap
+ * on the number of findings never fires. What the merchant sends is what sets
+ * that length, so this bound is on the letters as well as on the count.
+ *
+ * A hundred and sixty is a wide log line: enough for a path and a sentence
+ * about it, or for the first several names in a list of them. A cut is marked
+ * where it happens rather than left to look like the whole of the finding.
+ */
+const LETTERS_PER_MISFIT = 160;
+
+/**
+ * One piece of somebody else's text, held to a length, saying where it was cut.
+ *
+ * Everything this trims comes from outside and none of it has a maximum of its
+ * own: a card's `merchant_item_id` is any non-blank string the contract will
+ * take, and a finding's words are set by what the merchant delivered. Marked
+ * rather than silent, so nobody reads a cut as the whole of it.
+ */
+function cutShort(text: string): string {
+  return text.length <= LETTERS_PER_MISFIT
+    ? text
+    : `${text.slice(0, LETTERS_PER_MISFIT)}… (cut short)`;
+}
+
+/** Everything wrong with a delivery, in one line a person can act on. */
+function misfitsIn(findings: readonly PublishError[]): string {
+  // An unrecognized key carries no path — zod names it in the message instead —
+  // so the path is a prefix where there is one rather than the whole of it.
+  const named = findings
+    .slice(0, MISFITS_NAMED)
+    .map((finding) =>
+      cutShort(
+        finding.path.length === 0
+          ? finding.message
+          : `${finding.path.join(".")}: ${finding.message}`,
+      ),
+    )
+    .join("; ");
+
+  const rest = findings.length - MISFITS_NAMED;
+  return rest > 0 ? `${named} (and ${rest} more)` : named;
 }
 
 /** Zod's account of what is wrong, in the shape the contract publishes. */

@@ -113,6 +113,84 @@ describe("when the time runs out", () => {
     expect(events.map((e) => e.type)).toContain("order.refund_due");
   });
 
+  it("keeps the first of two late answers in the drawer, and the buyer collects that one", async () => {
+    // The one place "the first delivery is what the buyer keeps" applies to
+    // goods nobody has been handed yet, so it is pinned rather than inferred.
+    //
+    // A synchronous purchase ran out of time and the handler finished after
+    // it. The work is not thrown away: it goes in the drawer and a repeat
+    // purchase collects it. If the handler is sent the order again and makes a
+    // second set of goods, the first stays. That is consistent with every
+    // other repeat, and it is worth knowing that it cuts differently here: a
+    // handler that issues a fresh code per run — the natural thing when the
+    // first was released back to stock on the timeout — has its later code
+    // discarded, and the buyer collects the earlier one. Which of the two
+    // belongs to the buyer is a question about the product rather than about
+    // this code, and this test is where the answer would change.
+    const harnessed = await started();
+    const orderId = await bought(harnessed, syncCard);
+
+    const settled = await harnessed.gateway.payPurchase(orderId, "buyer#one", "buyer#one");
+    expect(settled.step).toBe("settled");
+    expect((await state(harnessed, orderId))?.state).toBe("expired");
+
+    const first = await harnessed.gateway.answerOrder(harnessed.merchant.id, orderId, {
+      delivered: { access_code: "CODE-ONE" },
+    });
+    const second = await harnessed.gateway.answerOrder(harnessed.merchant.id, orderId, {
+      delivered: { access_code: "CODE-TWO" },
+    });
+
+    expect(first).toStrictEqual({ ok: true, result: "purchase_already_closed" });
+    expect(second).toStrictEqual({ ok: true, result: "purchase_already_closed" });
+    expect((await state(harnessed, orderId))?.heldFulfillment).toBe(true);
+    expect((await harnessed.store.orderById(orderId))?.delivery).toStrictEqual({
+      access_code: "CODE-ONE",
+    });
+
+    // And the repeat purchase that collects the drawer gets that same one. A
+    // fresh authorisation from the same wallet, which is how the owner of the
+    // order is recognised across a repeat.
+    const collected = await harnessed.gateway.payPurchase(orderId, "buyer#two", "buyer#two");
+    expect(collected.step).toBe("settled");
+    if (collected.step !== "settled") throw new Error("the repeat did not settle");
+    expect(collected.delivery).toStrictEqual({ access_code: "CODE-ONE" });
+  });
+
+  it("brings the money back when a handler never sends what the card declares", async () => {
+    // The cost of the choice made when goods do not match the card: the
+    // delivery is refused and the order is left open, so the merchant can fix
+    // his handler and deliver. That is only defensible if an order nobody ever
+    // fixes still ends — otherwise the refusal is a way of parking a buyer's
+    // money forever. The deadline is what ends it, and this is that promise:
+    // a merchant who keeps sending the wrong shape runs out of time exactly as
+    // one who sends nothing at all does, and the buyer is owed his money back.
+    const harnessed = await started();
+    const orderId = await bought(harnessed, asyncCard);
+    await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
+
+    const refused = await harnessed.gateway.deliverOrder(harnessed.merchant.id, orderId, {
+      // The card declares an activation code; this handler sends a serial.
+      serial: "89310410106543789301",
+    });
+    if (refused?.ok !== false) throw new Error("goods the card never declared were taken");
+    expect(refused.error.code).toBe("delivery_does_not_match_card");
+
+    await vi.waitFor(
+      async () => expect((await state(harnessed, orderId))?.state).toBe("refund_due"),
+      { timeout: 2_000, interval: 5 },
+    );
+
+    const owing = await state(harnessed, orderId);
+    expect(owing?.closure).toStrictEqual({
+      cause: "deadline_expired",
+      deadline: "async_fulfillment",
+    });
+    // And nothing of his was ever written against the order.
+    expect((await harnessed.store.orderById(orderId))?.delivery).toBeNull();
+    expect(await harnessed.store.receiptForOrder(orderId)).toBeNull();
+  });
+
   it("lets a price the agent sat on stop being a price", async () => {
     // "The agent got a price and is thinking" — the price stops applying, and
     // an agent who still wants it asks for a fresh one. Nothing was charged, so

@@ -105,11 +105,30 @@ export const OrderCallResultSchema = z.enum(ORDER_CALL_RESULTS);
  * an ending that no call reopens. `not_applicable_in_mode` — the call does not
  * exist for this card's mode, as refusing separately does not in the
  * synchronous one, where the handler's own answer is the refusal.
+ * `delivery_does_not_match_card` — the goods are not the ones the card for
+ * this order declares it delivers, so nothing was written down and the order
+ * still stands where it did.
+ *
+ * The fourth is the only one of them a merchant fixes rather than records, and
+ * it is the reason it is promised rather than left to the open set. It is
+ * marked retryable, and the retry that clears it is not the same retry the
+ * other three mean: those say "the call may not have reached us, send it
+ * again", while this says the call arrived and was understood and the goods in
+ * it were wrong. Sending the same delivery again produces the same refusal
+ * until the goods change, and a merchant told only "retryable" would loop on
+ * it — which is why the code is named and the message says which field is
+ * wrong.
+ *
+ * Adding to this list is safe in a way that adding a success word is not: the
+ * code is an open string on the wire, so an older client parses an unfamiliar
+ * one and reads it as the failure it is. What it loses is the meaning, which is
+ * what this list and the dictionary below carry.
  */
 export const ORDER_CALL_ERROR_CODES = Object.freeze([
   "refund_already_settled",
   "order_already_closed",
   "not_applicable_in_mode",
+  "delivery_does_not_match_card",
 ] as const);
 
 /** One thing wrong with a card, in a place, in a code and in words. */
@@ -167,7 +186,7 @@ export const OrderCallErrorSchema = z.strictObject({
     // Same reason as the refusal code: the dictionary travels with the field
     // or it does not reach the reader the export exists for.
     description:
-      'Why the call did not go through. The set is open, and three are promised to mean one thing: "refund_already_settled" (the debt was paid back, so there is nothing left to deliver against), "order_already_closed" (the order reached an ending that no call reopens), "not_applicable_in_mode" (the call does not exist for this card\'s mode — refusing separately does not, in the synchronous one, where the handler\'s own answer is the refusal).',
+      'Why the call did not go through. The set is open, and four are promised to mean one thing: "refund_already_settled" (the debt was paid back, so there is nothing left to deliver against), "order_already_closed" (the order reached an ending that no call reopens), "not_applicable_in_mode" (the call does not exist for this card\'s mode — refusing separately does not, in the synchronous one, where the handler\'s own answer is the refusal), "delivery_does_not_match_card" (the goods are not the ones the card for this order declares it delivers — nothing was written down, the order still stands where it did, and the message names the fields that did not fit). The last of those is retryable in a different sense from a lost connection: the call arrived and was understood, so sending the same goods again gives the same refusal, and what clears it is delivering what the card declares.',
   }),
   message: z.string().regex(/\S/, "an error carries an explanation a person can read"),
   retryable: z.boolean(),
