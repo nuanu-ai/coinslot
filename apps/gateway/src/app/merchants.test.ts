@@ -132,6 +132,11 @@ describe("seeding the sandbox", () => {
     const broken = {
       ...store,
       addMerchant: store.addMerchant.bind(store),
+      // The seed reads the merchant back to see whether it needs a listing
+      // name, and writes one if it has none. Both are the real store's, so
+      // this stays a test about the key write and nothing else.
+      merchantById: store.merchantById.bind(store),
+      setServiceName: store.setServiceName.bind(store),
       keyByDigest: async () => null,
       addKey: async () => {
         throw new Error("the disk is full");
