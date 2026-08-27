@@ -1104,6 +1104,30 @@ describe("the merchant's calls", () => {
     // ever mean the one thing, so there is nothing for a word to tell apart.
     expect(await harnessed.gateway.acceptOrder(orderId, {})).toStrictEqual({ ok: true });
   });
+
+  it("names what the merchant answered, not what the order had already become", async () => {
+    // A delivered order whose envelope comes round again — deliveries are at
+    // least once — and a worker that takes it on a second time. The machine has
+    // nothing to do about that and says nothing, so the answer is built from
+    // what he sent. It has to stay his word: told "delivered" for an acceptance
+    // he would have a success naming goods he never handed over, which is the
+    // one thing an answer to a merchant may never invent.
+    const harnessed = await started();
+    const itemId = await published(harnessed, asyncCard);
+    const offered = await harnessed.gateway.beginPurchase(itemId, {});
+    if (offered.step !== "pay") throw new Error("no price was offered");
+    const orderId = offered.order.order.id;
+    await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
+    await harnessed.gateway.poll(10, 0);
+    await harnessed.gateway.answerOrder(orderId, { accepted: {} });
+    await harnessed.gateway.deliverOrder(orderId, { activation_code: "A" });
+    expect((await harnessed.store.orderById(orderId))?.order.state).toBe("delivered");
+
+    expect(await harnessed.gateway.answerOrder(orderId, { accepted: {} })).toStrictEqual({
+      ok: true,
+      result: "accepted",
+    });
+  });
 });
 
 describe("the claims on payments", () => {
