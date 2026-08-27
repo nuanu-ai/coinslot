@@ -10,6 +10,7 @@
  * a screen.
  */
 
+import { scrypt } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   fingerprintOf,
@@ -94,6 +95,76 @@ describe("a person's password", () => {
     // derivation is two orders of magnitude above this floor on any machine
     // that can run the cabinet at all.
     expect(took).toBeGreaterThan(5);
+  });
+});
+
+describe("a stored value whose key is too short to be one", () => {
+  it("is refused rather than compared against its first byte", async () => {
+    // At one byte, one guess in 256 matches — which is not a password. The
+    // first version of this guarded only the zero-length case, one byte short
+    // of the reasoning its own comment gave, and a test that merely tried a
+    // wrong password against such a row passed 255 times in 256.
+    //
+    // So the row here is built to match: the key in it is the first byte of the
+    // derivation of a password this test knows. Refused, that password does not
+    // match. Compared, it does, and there is no luck in it either way.
+    const salt = Buffer.from("c2FsdGVkc2FsdGVk", "base64url");
+    const cheap = { N: 2, r: 1, p: 1 };
+    const shortened = async (length: number): Promise<string> => {
+      const key = await new Promise<Buffer>((resolve, reject) => {
+        scrypt(PASSWORD, salt, length, cheap, (failed, derived) =>
+          failed === null ? resolve(derived) : reject(failed),
+        );
+      });
+      return [
+        "scrypt",
+        cheap.N,
+        cheap.r,
+        cheap.p,
+        salt.toString("base64url"),
+        key.toString("base64url"),
+      ].join("$");
+    };
+
+    for (const length of [1, 8, 16, 31]) {
+      await expect(
+        passwordMatches(PASSWORD, await shortened(length)),
+        `${length} bytes`,
+      ).resolves.toBe(false);
+    }
+    // And at the length we actually write, the same construction matches — so
+    // what is refused above is the shortness and not the construction.
+    await expect(passwordMatches(PASSWORD, await shortened(32))).resolves.toBe(true);
+  });
+});
+
+describe("what an address with no account costs", () => {
+  it("costs what a wrong password against a real account costs", async () => {
+    // Not merely "some work" — the same work. The decoy carries the cost that
+    // is written into every value this file stores, and a decoy at a different
+    // cost turns the sign-in form into a list of who has an account: one
+    // request, and the two answers take visibly different times.
+    //
+    // The floor test below cannot see that. This one is why raising the cost is
+    // not the free change it looks like: rows written under the old one have to
+    // be re-derived, or they and the decoy stop matching.
+    const stored = await hashPassword(PASSWORD);
+    await passwordMatches(PASSWORD, stored); // warm the pool before either clock
+
+    const timed = async (against: string | null): Promise<number> => {
+      const started = performance.now();
+      await passwordMatches("whatever-was-typed", against);
+      return performance.now() - started;
+    };
+
+    const known = Math.min(await timed(stored), await timed(stored));
+    const unknown = Math.min(await timed(null), await timed(null));
+
+    // Generous in both directions: what this has to catch is a decoy at a
+    // different cost, which is a factor of two at the very least and usually
+    // eight or more. Ordinary scheduling noise is nothing like that.
+    expect(unknown / known).toBeGreaterThan(0.4);
+    expect(unknown / known).toBeLessThan(2.5);
   });
 });
 

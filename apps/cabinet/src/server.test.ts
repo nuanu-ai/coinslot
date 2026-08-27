@@ -117,13 +117,17 @@ interface Running {
 let open: Running | null = null;
 
 const started = async (
-  options: { readonly base?: string; readonly gateway?: Record<string, string> } = {},
+  options: {
+    readonly base?: string;
+    readonly gateway?: Record<string, string>;
+    readonly cabinet?: Record<string, string>;
+  } = {},
 ): Promise<Running> => {
   const harnessed = await harness({ PAY_TO_ADDRESS: PAY_TO, ...options.gateway });
   const gateway = await serve(harnessed);
   const accounts = await withOneAccount();
   const basePath = options.base ?? "";
-  const { browser, url } = await visiting(gateway.url, basePath, accounts);
+  const { browser, url } = await visiting(gateway.url, basePath, accounts, options.cabinet);
   let stopped = false;
 
   open = {
@@ -156,6 +160,7 @@ async function visiting(
   gatewayUrl: string,
   basePath: string,
   accounts: Accounts,
+  environment: Record<string, string> = {},
 ): Promise<{ browser: Browser; url: string }> {
   const app = buildApp(
     loadConfig({
@@ -163,6 +168,7 @@ async function visiting(
       DATABASE_URL: "postgres://nobody@nowhere:5432/unused",
       MERCHANT_API_KEY: KEY,
       ...(basePath === "" ? {} : { BASE_PATH: basePath }),
+      ...environment,
     }),
     { accounts },
   );
@@ -388,6 +394,25 @@ describe("getting into the cabinet", () => {
     }
   });
 
+  it("refuses a body larger than any of its forms without calling itself broken", async () => {
+    // The body parser runs above the gate, so a visitor with no session reaches
+    // it — and a refusal that lands on the internal-error page is both a wrong
+    // message and a way for a stranger to put a stack trace in the log on every
+    // request. Answered as what it is instead.
+    const { browser } = await started();
+
+    const answered = await browser.postRaw(
+      "/sign-in",
+      "application/x-www-form-urlencoded",
+      `email=${"x".repeat(30_000)}`,
+    );
+
+    expect(answered.status).toBe(413);
+    const text = readable(answered.html);
+    expect(text).not.toContain("broken");
+    expect(text).toMatch(/larger/i);
+  });
+
   it("puts no key and no password into the cookie, and none on any page", async () => {
     // The whole reason this decision exists: a merchant's API key used to be
     // typed into a form and kept in a browser. Nothing here may carry one.
@@ -414,6 +439,48 @@ describe("getting into the cabinet", () => {
 
     expect(cookie).toContain("HttpOnly");
     expect(cookie).toMatch(/SameSite=Strict/i);
+  });
+
+  it("marks the cookie Secure where the cabinet is served over https, and only there", async () => {
+    // The one line a deployment has to change, and the one most likely to be
+    // forgotten: without it a merchant's session travels in the clear. It is
+    // off by default because the cabinet is developed over plain http, where a
+    // Secure cookie is never sent back and nobody can sign in at all.
+    const overHttps = await started({ cabinet: { COOKIE_SECURE: "true" } });
+    const marked = await overHttps.browser.post("/sign-in", {
+      email: PERSON,
+      password: PASSWORD,
+    });
+
+    expect(marked.headers.getSetCookie().join(" ")).toMatch(/;\s*Secure/i);
+    await overHttps.browser.close();
+    await overHttps.accounts.close();
+    await overHttps.stopGateway();
+
+    const overHttp = await started();
+    const plain = await overHttp.browser.post("/sign-in", { email: PERSON, password: PASSWORD });
+
+    expect(plain.headers.getSetCookie().join(" ")).not.toMatch(/;\s*Secure/i);
+  });
+
+  it("gives a session twelve hours and not a day, an hour or a year", async () => {
+    // ADR-0009 §6. The store honours whatever it is handed and the contract
+    // suite says so; this is the only place the number itself is written down,
+    // and a typo in it is a session that lasts a year.
+    const { browser, accounts } = await started();
+    const signedIn = await browser.post("/sign-in", { email: PERSON, password: PASSWORD });
+    const at = Date.now();
+    const held = fingerprintOf(browser.sessionToken() ?? "");
+    const twelveHours = 12 * 60 * 60 * 1_000;
+
+    // What the browser is told to keep the cookie for.
+    const maxAge = /Max-Age=(\d+)/i.exec(signedIn.headers.getSetCookie().join(" "))?.[1];
+    expect(Number(maxAge)).toBe(twelveHours / 1_000);
+
+    // And what the store will answer, which is the one that decides. A minute
+    // of slack on each side, because the session opened a moment before `at`.
+    await expect(accounts.whose(held, new Date(at + twelveHours - 60_000))).resolves.not.toBeNull();
+    await expect(accounts.whose(held, new Date(at + twelveHours + 60_000))).resolves.toBeNull();
   });
 
   it("clears the old cookie that used to hold a live merchant key", async () => {

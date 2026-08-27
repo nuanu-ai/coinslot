@@ -172,6 +172,36 @@ export function describeAccounts(name: string, open: () => Promise<Accounts>): v
         await expect(accounts.end("never-issued")).resolves.toBeUndefined();
       });
 
+      it("is refused for an account that is not there", async () => {
+        // The database refuses it, because a session points at an account. The
+        // in-memory store used to accept it and answer `null` afterwards, which
+        // is the shape of divergence this suite exists to catch: the forgiving
+        // one is the one everybody develops against.
+        const accounts = await fresh();
+        const at = new Date("2026-08-27T09:00:00.000Z");
+
+        await expect(
+          accounts.open("laptop", "acc_nobody", at, new Date(+at + HOUR)),
+        ).rejects.toThrow();
+        await expect(accounts.whose("laptop", at)).resolves.toBeNull();
+      });
+
+      it("is refused under an identifier that already has one", async () => {
+        // Thirty-two random bytes twice, which is not a thing that happens.
+        // What must not happen if it ever did is the identifier somebody is
+        // already holding quietly becoming somebody else's session.
+        const accounts = await fresh();
+        const at = new Date("2026-08-27T09:00:00.000Z");
+        const one = await accounts.add("dmitry@example.com", "hash-one", at);
+        const other = await accounts.add("someone@example.com", "hash-two", at);
+        await accounts.open("laptop", one?.id ?? "", at, new Date(+at + 12 * HOUR));
+
+        await expect(
+          accounts.open("laptop", other?.id ?? "", at, new Date(+at + 12 * HOUR)),
+        ).rejects.toThrow();
+        expect((await accounts.whose("laptop", at))?.email).toBe("dmitry@example.com");
+      });
+
       it("does not pile up after it has expired", async () => {
         // Nothing sweeps this table on a timer, so opening a session is what
         // clears out the ones whose time is up. Without it the table grows for

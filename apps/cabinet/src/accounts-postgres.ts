@@ -167,13 +167,18 @@ export function postgresAccounts(pool: Pool): Accounts {
           })
           .from(accounts)
           .leftJoin(sessions, and(eq(sessions.accountId, accounts.id), gt(sessions.expiresAt, now)))
-          .groupBy(accounts.email, accounts.createdAt)
-          .orderBy(accounts.email);
-        return rows.map((row) => ({
-          email: row.email,
-          createdAt: row.createdAt,
-          sessions: Number(row.sessions),
-        }));
+          .groupBy(accounts.email, accounts.createdAt);
+        // Sorted here rather than by the database, so that the order a person
+        // reads off a terminal is the same one whichever store answered. A
+        // database sorts by its own collation, and `C` and ICU disagree about
+        // where a hyphen or a dot in an address goes.
+        return rows
+          .map((row) => ({
+            email: row.email,
+            createdAt: row.createdAt,
+            sessions: Number(row.sessions),
+          }))
+          .sort((one, other) => one.email.localeCompare(other.email));
       });
     },
 
@@ -184,13 +189,12 @@ export function postgresAccounts(pool: Pool): Accounts {
         });
         await db
           .insert(sessions)
-          .values({ fingerprint, accountId, createdAt: at, expiresAt: until })
-          // A fingerprint is 32 random bytes, so this never happens; if it ever
-          // did, the second sign-in must not fail on top of the first.
-          .onConflictDoUpdate({
-            target: sessions.fingerprint,
-            set: { accountId, createdAt: at, expiresAt: until },
-          });
+          // No clause for a fingerprint that is already there, and that is a
+          // decision rather than an omission. It would mean 32 random bytes came
+          // up twice; the previous version updated the row instead, which hands
+          // an identifier somebody is already holding to a different person.
+          // Stopping is the right answer to something that cannot happen.
+          .values({ fingerprint, accountId, createdAt: at, expiresAt: until });
         return swept.length;
       });
     },

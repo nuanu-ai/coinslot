@@ -143,10 +143,13 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
   };
 
   app.disable("x-powered-by");
-  // No `trust proxy` here on purpose: nothing in the cabinet reads the client's
-  // address or whether the connection was secure, so trusting a forwarding
-  // header would make a spoofable header authoritative for no benefit at all.
-  // The forms are the only thing a browser posts here, and they are small.
+  // No `trust proxy` here: nothing in the cabinet reads the client's address,
+  // and express's own handling of the forwarding headers would put a spoofable
+  // value behind `request.ip` and `request.secure` where nobody reading a
+  // handler would think to doubt it. One forwarding header is read, in exactly
+  // one place, and that place says what it trusts and why — see
+  // `sameOriginUnder`. The forms are the only thing a browser posts here, and
+  // they are small.
   app.use(express.urlencoded({ extended: false, limit: "16kb" }));
   app.use(sameOriginUnder(base));
 
@@ -410,6 +413,19 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
         next(thrown);
         return;
       }
+      // A body larger than any of these forms. It arrives from a visitor and
+      // not from a defect, so it is answered as what it is rather than as a
+      // broken cabinet — and without a stack, because a stranger who can post
+      // at this address must not be able to fill the log with them. The body
+      // parser runs above the gate, which is why a visitor with no session
+      // reaches this at all.
+      if (tooLarge(thrown)) {
+        response
+          .status(413)
+          .type("html")
+          .send(problemPage(base, "That was larger than any form on this page sends."));
+        return;
+      }
       // A defect. The merchant is told that something here is broken and
       // nothing about what: an error text assembled out of an exception makes
       // claims about our internals to somebody who cannot act on them.
@@ -467,8 +483,20 @@ function sameOriginUnder(base: string) {
     // exists to make, since SameSite does not make it either. The scheme comes
     // from the forwarded header where a terminator set one, because behind
     // Caddy this process speaks http and the browser does not.
+    //
+    // The last value in the header and not the first. A chain that appends
+    // rather than replaces leaves the client's own claim leftmost, so reading
+    // the front is reading whatever the browser sent; the nearest proxy's word
+    // is at the back. Caddy replaces, so behind the stack in this repository
+    // there is one value and the two readings agree.
+    //
+    // What this costs when the header is absent is worth knowing before it
+    // happens: over https with a terminator that sets nothing, the fallback is
+    // "http", every origin then mismatches, and every form post on the site —
+    // the sign-in included — answers "This form did not come from the cabinet."
     const forwarded = request.headers["x-forwarded-proto"];
-    const scheme = (Array.isArray(forwarded) ? forwarded[0] : forwarded)?.split(",")[0]?.trim();
+    const said = Array.isArray(forwarded) ? forwarded[forwarded.length - 1] : forwarded;
+    const scheme = said?.split(",").at(-1)?.trim();
     const asked = request.headers.host;
 
     if (asked !== undefined && origin === `${scheme ?? "http"}://${asked}`) {
@@ -600,6 +628,22 @@ function trouble(response: Response, base: string, answer: Answer<unknown>): voi
   // The gateway answered and refused. Its own sentence, under its own status:
   // nothing is claimed about what did or did not happen beyond what it said.
   response.status(answer.status).type("html").send(problemPage(base, answer.why));
+}
+
+/**
+ * Whether this is the body parser refusing a body, rather than a defect.
+ *
+ * `body-parser` marks its own refusals with a `type`, which is what this reads;
+ * the status it carries is not enough on its own, because an exception from
+ * anywhere else can have one too.
+ */
+function tooLarge(thrown: unknown): boolean {
+  return (
+    typeof thrown === "object" &&
+    thrown !== null &&
+    "type" in thrown &&
+    (thrown as { type: unknown }).type === "entity.too.large"
+  );
 }
 
 function problemPage(base: string, said: string): string {

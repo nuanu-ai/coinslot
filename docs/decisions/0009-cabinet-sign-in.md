@@ -42,11 +42,23 @@ knows how to type and that no two people share — it is not a channel, and
 nothing in this system ever sends anything to it.
 
 **2. Passwords are stored as `scrypt` derivations, using `node:crypto`.** The
-stored value names its own parameters — `scrypt$N$r$p$salt$key` — so the cost
-can be raised later without a migration and without a second field to keep in
-step. The comparison is `timingSafeEqual` over the derived keys, and a sign-in
-for an address that has no account derives against a decoy anyway, so the time
-an answer takes does not say whether the address exists.
+stored value names its own parameters — `scrypt$N$r$p$salt$key` — so a row
+written under one cost keeps verifying under another, and there is no second
+field beside the rows that can disagree with them. The comparison is
+`timingSafeEqual` over the derived keys, and a sign-in for an address that has
+no account derives against a decoy anyway, so the time an answer takes does not
+say whether the address exists.
+
+Raising the cost is therefore possible without a migration, and it is not free,
+which an earlier draft of this section had wrong. The decoy is derived at
+whatever the current cost is, and the rows are not: raise the constant, and an
+address with an old row answers visibly faster than an address with no account
+at all — which turns the sign-in form into a list of who has an account here.
+Raising it means re-deriving the stored rows in the same change. With accounts
+we create by hand and count on one hand, that is the command that sets a new
+password, run once per person. A test holds the two costs together, so a decoy
+that drifts from the rows fails rather than being noticed by somebody timing a
+form.
 
 This is the one place the charter's rule about not hand-building infrastructure
 (ADR-0003 §9) is worth arguing rather than obeying. The rule is about

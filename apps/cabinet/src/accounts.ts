@@ -150,13 +150,25 @@ export function memoryAccounts(): Accounts {
         .sort((one, other) => one.email.localeCompare(other.email));
     },
 
-    async open(fingerprint, accountId, _at, until) {
+    async open(fingerprint, accountId, at, until) {
       let swept = 0;
       for (const [held, session] of sessions) {
-        if (session.expiresAt <= _at) {
+        if (session.expiresAt <= at) {
           sessions.delete(held);
           swept += 1;
         }
+      }
+      // Both of these are what the database refuses, and they are here so that
+      // the two stores refuse the same things rather than one of them being
+      // quietly more forgiving in the suite everybody develops against.
+      if (!byId.has(accountId)) {
+        throw new Error(`there is no account ${accountId} to open a session for`);
+      }
+      if (sessions.has(fingerprint)) {
+        // Thirty-two random bytes twice. Improvising over it — by handing an
+        // identifier somebody is already holding to a different person — is
+        // worse than stopping.
+        throw new Error("a session is already open under that identifier");
       }
       sessions.set(fingerprint, { accountId, expiresAt: new Date(until) });
       return swept;

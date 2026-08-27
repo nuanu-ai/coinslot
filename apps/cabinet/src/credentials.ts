@@ -35,9 +35,15 @@ import { createHash, randomBytes, randomInt, scrypt, timingSafeEqual } from "nod
  * raised past its own default of 32 MiB, because the derivation asks for
  * exactly that and a little more for its state.
  *
- * These numbers are written into every stored value, so raising them later is a
- * change to this constant and nothing else: rows written under the old cost
- * keep saying what they were derived under, and keep verifying.
+ * These numbers are written into every stored value, so a row written under one
+ * cost keeps verifying under another. Raising them is still not a change to
+ * this constant alone: the decoy below is derived at whatever this says and the
+ * existing rows are not, so an address with an old row would answer visibly
+ * faster than an address with no account — which is the sign-in form telling
+ * anybody who asks which addresses have accounts. Raising it means re-deriving
+ * the stored rows in the same change, which for accounts we create by hand is
+ * the command that sets a new password, run once per person. ADR-0009 §2 says
+ * so, and a test holds the decoy's cost against a freshly written row's.
  */
 const COST = { N: 32_768, r: 8, p: 1 } as const;
 const KEY_LENGTH = 32;
@@ -207,9 +213,12 @@ function parse(stored: string): Stored | null {
     return null;
   }
   const held = Buffer.from(key, "base64url");
-  // A stored key of no length would make the comparison below say yes to
-  // anything, and `scrypt` refuses to derive nothing anyway. Unreadable.
-  if (held.length === 0) {
+  // A short stored key is unreadable, not merely a shorter comparison. At one
+  // byte, one guess in 256 matches — which is not a password at all — and the
+  // first version of this guarded only the zero-length case, one byte short of
+  // the reasoning its own comment gave. Nothing we write is below the length
+  // we derive, so a row under it is corrupt.
+  if (held.length < KEY_LENGTH) {
     return null;
   }
   return { N, r, p, salt: Buffer.from(salt, "base64url"), key: held };

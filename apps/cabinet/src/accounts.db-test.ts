@@ -75,7 +75,10 @@ if (databaseUrl === null) {
     const broken = async (): Promise<Accounts> => {
       const its = connect(databaseUrl);
       const store = postgresAccounts(its);
-      await its.end();
+      // Through the store's own `close`, which is the one member of the
+      // contract the suite next door cannot exercise: it runs against a shared
+      // pool and has to leave it open.
+      await store.close();
       return store;
     };
 
