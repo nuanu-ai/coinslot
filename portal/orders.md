@@ -220,9 +220,18 @@ in it, only the calls that close an order.
 
 Besides orders, the same subscription carries events: messages about something
 that happened to an order without you. A handler for them is declared the way
-one is for orders, with `coinslot.on('event', ...)`. They need no answer: an
-event tells you something happened and asks nothing of you, and the
-subscription sends nothing back for one.
+one is for orders, with `coinslot.on('event', ...)`, and it sends nothing back
+— an event tells you something happened and asks for no answer.
+
+Which is why an event can reach you twice. An order is acknowledged by the
+call that closes it and a price question by its answer, and an event has
+neither, so nothing on our side can tell that you already have one. Your
+handler is given the message's own identifier beside the event, and that
+identifier does not change when the same message is delivered again; telling a
+repeat from a new message is yours to do, because it means remembering what
+you have seen across restarts and that belongs in your database rather than in
+our tools. The event to guard first is the one saying an order needs a refund:
+acted on twice, it is a second refund out of your own wallet.
 
 | Event | What happened |
 | --- | --- |
@@ -339,15 +348,16 @@ for taking several at once is among the things [not settled](/quickstart).
 
 ## Test orders
 
-A test order is marked with the `test` flag, and it is how the handler tells a
-check from a live sale. What to do with the flag is yours to decide: send such
-an order into your own test environment, answer with a stub, or serve it like
-any other.
+A test order is marked with the `test` flag, which is how a handler is meant
+to tell a check from a live sale: send such an order into your own test
+environment, answer with a stub, or serve it like any other.
 
-The flag arrives with the order, and during the pilot there is no separate
-address and no separate key for tests. What will separate the sandbox from the
-live system in the end is still being chosen; the item is in the list on
-[The first test sale](/quickstart).
+During the pilot the flag tells them apart for nobody, because every order
+carries it. The sandbox is not separated from the live system yet — there is
+no separate address and no separate key, and nothing to set the flag from — so
+read it if you like, and do not fork on it, or everything goes into your test
+environment. What will separate the two in the end is still being chosen; the
+item is in the list on [The first test sale](/quickstart).
 
 ## You did not deliver in time
 

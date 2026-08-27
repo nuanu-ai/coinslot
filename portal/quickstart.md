@@ -347,9 +347,10 @@ afterwards the whole chain can be seen working.
 
 During the pilot we start that purchase on your signal: say you are ready, and
 we run it with you watching, so that you see what happens at every step. The
-order from the sandbox buyer arrives with the `test` flag, and your handler
-tells a check from a live sale by that flag — sending such an order into your
-own test environment, for instance.
+order from the sandbox buyer arrives with the `test` flag — and so does every
+other order during the pilot, because the sandbox is not separated from the
+live system yet. Read the flag; do not fork on it until it can tell one order
+from another.
 
 It all came together if the order reached your handler, the sandbox buyer
 received the goods, and the purchase left a receipt behind it.
