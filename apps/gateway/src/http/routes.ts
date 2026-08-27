@@ -20,7 +20,6 @@ import type {
   WorkerPollRequest,
 } from "@coinslot/contracts";
 import { outcomeFor } from "@coinslot/core";
-import { ACCEPTANCE_HAS_NO_WORD } from "../app/answers.js";
 import type { Gateway, PurchaseAttempt } from "../app/gateway.js";
 import { orderDocumentOf } from "../app/runner.js";
 import type { MountedRoute, RouteAnswer, RouteCall } from "./server.js";
@@ -142,20 +141,8 @@ export function handlersFor(gateway: Gateway): Partial<Record<RouteName, Mounted
     },
 
     answer_order: {
-      serve: async ({ params, body, response }) => {
-        const answered = await gateway.answerOrder(params.order_id ?? "", body as never);
-        if (answered === null) {
-          return written(response, NOT_FOUND, refusal("no_such_order", "there is no such order"));
-        }
-        // An acceptance landed here comes back as ok:false because the contract
-        // has no word for a successful one, and that shape must not arrive under
-        // a status meaning the call failed as well. An SDK that branched on the
-        // status would turn a recorded acceptance into a retry loop, which is
-        // exactly what the message inside is trying to prevent.
-        const understood =
-          answered.ok || answered.error.code === ACCEPTANCE_HAS_NO_WORD.code ? OK : CONFLICT;
-        return { status: understood, document: answered };
-      },
+      serve: async ({ params, body, response }) =>
+        answeredOrder(response, await gateway.answerOrder(params.order_id ?? "", body as never)),
     },
 
     deliver_order: {
@@ -169,13 +156,8 @@ export function handlersFor(gateway: Gateway): Partial<Record<RouteName, Mounted
     },
 
     accept_order: {
-      serve: async ({ params, body, response }) => {
-        const taken = await gateway.acceptOrder(params.order_id ?? "", body as never);
-        if (taken === null) {
-          return written(response, NOT_FOUND, refusal("no_such_order", "there is no such order"));
-        }
-        return { status: taken.ok ? OK : CONFLICT, document: taken };
-      },
+      serve: async ({ params, body, response }) =>
+        answeredOrder(response, await gateway.acceptOrder(params.order_id ?? "", body as never)),
     },
 
     answer_quote: {

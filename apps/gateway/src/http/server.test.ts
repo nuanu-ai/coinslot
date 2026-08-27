@@ -699,11 +699,12 @@ describe("the worker's calls over HTTP", () => {
     expect(answered.body).toStrictEqual({ ok: true, result: "delivered" });
   });
 
-  it("does not answer a recorded acceptance under a status meaning the call failed", async () => {
-    // The body says ok:false because the contract has no word for a successful
-    // acceptance. An SDK branching on the status as well would turn a landed
-    // acceptance into a retry loop, which is what the message inside is trying
-    // to talk it out of.
+  it("answers a recorded acceptance as a success, in the body and in the status", async () => {
+    // Both halves matter and they have to agree. An SDK reads the body and
+    // reports anything but a success to the merchant; a client library reads
+    // the status and retries what looks like a failure. A landed acceptance
+    // that says no in either place turns an order going through into a problem
+    // in the merchant's log, or into a retry loop.
     const { served, harnessed } = await started();
     const itemId = await publish(served, {
       ...syncCard,
@@ -721,11 +722,44 @@ describe("the worker's calls over HTTP", () => {
     });
 
     expect(answered.status).toBe(200);
-    expect(answered.body).toMatchObject({
-      ok: false,
-      error: { code: "acceptance_has_no_word_in_this_contract" },
-    });
+    expect(answered.body).toStrictEqual({ ok: true, result: "accepted" });
     expect((await harnessed.store.orderById(orderId))?.order.dispatch.accepted).toBe(true);
+  });
+
+  it("still says no in the status when the answer route refuses one", async () => {
+    // The other half of the promise above, and what makes it mean anything: a
+    // success reads as one because a refusal does not. Nothing has been paid
+    // for this order, so there is no work to take on and the machine turns the
+    // answer away — and a client library that reads the status rather than the
+    // body has to see that, or it records an order as under way that the
+    // gateway never accepted.
+    const { served, harnessed } = await started();
+    const itemId = await publish(served, {
+      ...syncCard,
+      merchant_item_id: "esim-unpaid",
+      fulfillment: "async",
+    });
+    const offered = await harnessed.gateway.beginPurchase(itemId, {});
+    if (offered.step !== "pay") throw new Error("no price was offered");
+
+    const early = await served.call("POST", `/v0/orders/${offered.order.order.id}/answer`, {
+      body: { accepted: {} },
+      headers: asMerchant,
+    });
+
+    expect(early.status).toBe(409);
+    // Refused, and the order was not taken on — that is what this pins. The
+    // code itself is deliberately not pinned: it is the machine's own word
+    // rather than one of the three the contract promises, and `results.ts`
+    // calls that set open and free to change, so asserting it here would
+    // certify a stability the contract declines to offer. Nor is `retryable`
+    // pinned, because on this fixture it is not true in the sense the field
+    // promises: the order is merely unpaid, and the identical call succeeds
+    // once the buyer pays. The flag has two values where the truth has three.
+    expect(early.body).toMatchObject({ ok: false });
+    expect((await harnessed.store.orderById(offered.order.order.id))?.order.dispatch.accepted).toBe(
+      false,
+    );
   });
 
   it("refuses a body that is not JSON in the shape everything else refuses in", async () => {

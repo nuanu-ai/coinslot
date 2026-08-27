@@ -174,6 +174,30 @@ function answer(order: Order, merchantAnswer: MerchantAnswer): TransitionResult 
   return ok(order, [{ kind: "answer_merchant", answer: merchantAnswer }]);
 }
 
+/**
+ * The merchant is told his acceptance landed.
+ *
+ * Written once and used from two arms — dispatched, and the confirmation the
+ * same event answers — because those are the same fact about him and a
+ * merchant reading two different answers to his one answer would be reading a
+ * difference that is not there. Arms, not states: an acceptance arriving while
+ * our record still says `paid` is routed into the dispatched arm, so three
+ * states reach this effect and five in all can handle the event.
+ * It rides alongside the other effects rather than through `answer`, which
+ * replaces them.
+ *
+ * The two states where an acceptance arrives for an order that has moved on
+ * are answered elsewhere and not with this. A delivered order says so in its
+ * own arm below, because the goods are not owed and telling him otherwise
+ * would send him looking for them. An order owed a refund says this word, but
+ * through the gateway rather than from here — there the machine has nothing to
+ * do about the event, and the answer is what his own call amounted to.
+ */
+const ACCEPTANCE_LANDED: Effect = {
+  kind: "answer_merchant",
+  answer: { ok: true, result: "accepted" },
+};
+
 function closedToMerchant(order: Order): TransitionResult {
   return answer(order, { ok: false, error: "order_already_closed", retryable: false });
 }
@@ -533,7 +557,14 @@ function fromAwaitingConfirmation(order: Order, event: StateEvent): TransitionRe
           state: "confirmed",
           timestamps: { ...order.timestamps, confirmedAt: event.at },
         },
-        [{ kind: "invite_payment" }],
+        // The agent is invited to pay, and the answer says his "I will"
+        // landed — the same word the asynchronous mode uses, because what an
+        // answer names is which of the three things he said, not what the
+        // machine did about it. Nobody reads it yet: the confirmation mode has
+        // no shape on the wire, and the gateway throws on `invite_payment`
+        // rather than invent one. The machine still says it, because the day
+        // that mode is wired up the merchant's answer is already answered.
+        [{ kind: "invite_payment" }, ACCEPTANCE_LANDED],
       );
     case "handler_refused":
       return ok(
@@ -747,7 +778,10 @@ function handedOver(order: Order): Order {
 function fromDispatched(order: Order, event: StateEvent): TransitionResult {
   switch (event.kind) {
     case "handler_accepted":
-      return ok({ ...order, dispatch: { ...order.dispatch, accepted: true } });
+      // The order is his, and he is told so. Delivery is at least once, so the
+      // same acceptance arrives again on every redelivery and is answered the
+      // same way each time — there is nothing here for a repeat to get wrong.
+      return ok({ ...order, dispatch: { ...order.dispatch, accepted: true } }, [ACCEPTANCE_LANDED]);
     case "handler_delivered":
       return deliverGoods(order, event.at);
     case "handler_refused":
@@ -879,9 +913,23 @@ function fromDelivered(order: Order, event: StateEvent): TransitionResult {
       // fulfillment and no second charge.
       return answer(order, { ok: true, result: "already_delivered" });
     case "handler_accepted":
+      // A worker taking on an order that is already delivered. Deliveries are
+      // at least once, so this is ordinary rather than a fault, and the answer
+      // is the state he is in: told his acceptance landed he would write the
+      // order down as under way — which is what that word means here — and go
+      // looking for goods he has already handed over.
+      //
+      // Where the line falls, since the same at-least-once argument reaches
+      // further than this arm: a redelivered acceptance is answered as
+      // ordinary only where the order still stands and nothing failed. On an
+      // order that ran out its deadline or closed with a departed merchant the
+      // refusal stays, and the entry it writes in his log is one he wants —
+      // there the order genuinely did fail, and `order_already_closed` is
+      // exactly true of it rather than merely safe to say.
+      return answer(order, { ok: true, result: "already_delivered" });
     case "order_dispatched":
-      // The order came round again off the queue. The merchant answers with
-      // the state he is in, and what must not appear is a second fulfillment.
+      // The order came round again off the queue. Nothing is owed on it and
+      // what must not appear is a second fulfillment.
       return ok(order);
     case "refuse_called":
       return closedToMerchant(order);
