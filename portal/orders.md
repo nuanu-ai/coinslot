@@ -93,7 +93,8 @@ Those three are the whole set, and that matters for how you report a temporary
 failure. An exception in the handler, a process that fell over, a connection
 that broke — for us each of these means the order never reached you: the answer
 did not arrive, so we send the order again, after a delay, until the mode's
-deadline runs out. We read a refusal the other way, as a final "this cannot be
+deadline runs out or we have made enough attempts. Either way the order closes
+as though the deadline had passed. We read a refusal the other way, as a final "this cannot be
 delivered", and we close the order on it. So a supplier that did not answer
 within five seconds is not worth a refusal: throw instead.
 
@@ -196,8 +197,8 @@ for (const waiting of open) {
 
 The first call returns one order, the second every order still open. They are
 for the case where your process restarted and no record of the order is left on
-your side: the list of open orders shows what is still waiting for a delivery,
-so the picture does not have to be rebuilt from your database alone. Both throw
+your side: the list of open orders shows what is still owed something, so the
+picture does not have to be rebuilt from your database alone. Both throw
 when they cannot reach us, which is worth remembering about a loop that runs
 the moment a process comes back up.
 
@@ -205,8 +206,12 @@ Orders from here carry the same calls that orders from the handler do:
 `deliver` and `refuse` are made directly on them. After a restart your process
 therefore walks the list, asks itself what is ready for each order, and closes
 what is ready — without collecting identifiers of ours into a variable of its
-own. What is ready is something you know and we do not: the list holds
-everything still open, including the orders whose delivery is still under way.
+own. What is ready is yours to know and not ours. Open here means open and not
+owed: the list holds the orders whose delivery is under way, and also an order
+already marked as needing a refund, and delivering against one of those closes
+the debt with the goods instead of paying the money back. That may be what you
+want, and it is a decision, so a loop over this list is worth writing against
+where each order stands.
 
 If your own record of the order did survive and it holds our identifier — a job
 in a queue, a row in your database — the order can be assembled from it without
@@ -299,10 +304,11 @@ We name the numbers before the pilot. An asynchronous card carries one deadline
 of yours, on the delivery, counted from the moment the buyer was charged, and
 the agent sees it before it buys; the confirmation mode has a deadline of its
 own and it arrives together with the mode. How long to wait for a synchronous
-answer is set by us — that is the general ceiling on how long an agent waits,
-no card carries it, and it is a ceiling on the whole purchase rather than on
-your handler: it runs from the moment the agent buys, so asking your price and
-checking the payment come out of it before your handler is called.
+answer is set by us and no card carries it. It runs from the moment the agent
+buys rather than from the moment your handler is called, so asking your price
+and checking the payment come out of it first. It is not the whole of the
+agent's wait either: executing the charge happens after your answer, on a clock
+of its own, and the two together fit inside the ceiling we promise the agent.
 
 | Situation | Time ran out — what happened |
 | --- | --- |
@@ -376,7 +382,8 @@ nothing charged.
 
 Say ten seconds are allowed for a synchronous answer (an example figure),
 counted from the moment the agent bought — asking your price and checking the
-payment come out of the same ten. Your handler began the delivery in the ninth
+payment come out of the same ten, and so does whatever the agent spends
+deciding to pay. Your handler began the delivery in the ninth
 second and finished in the twelfth. By that second the agent has already had a
 refusal and spent nothing, but the access you gave out has not gone anywhere.
 
@@ -414,5 +421,6 @@ failed, and your side never hears about it — no order appears at all.
   path where an order arrives as a message, after the pilot.
 - How your side learns that a refund on an order has gone out: together with
   the mechanics of refunding ([Money](/money)).
-- Telling your code that a synchronous answer arrived after its deadline. Our
-  side records it; nothing carries the word back to you.
+- Telling your code that a synchronous answer arrived after its deadline. The
+  answer carries the word; the tools drop it, because they report only the
+  answers we refuse.

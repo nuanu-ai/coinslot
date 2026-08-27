@@ -309,8 +309,8 @@ on it.
 
 Both calls take `as_of` as their last argument — the moment the answer is true
 for. It separates "went and looked" from "handed over what was in the cache",
-we read it to decide how far the answer can be trusted, and it goes into the
-record of the sale. In the example above it is named where the price came from
+it is meant to tell us how far the answer can be trusted — nothing compares it
+against a threshold yet — and it goes into the record of the sale. In the example above it is named where the price came from
 a lookup that carries its own timestamp, and left out where the handler has
 just been and confirmed there is none: an `as_of` left out is the moment of the
 answer itself. So if you take the price from a cache, name the moment that

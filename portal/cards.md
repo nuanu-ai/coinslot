@@ -42,10 +42,10 @@ asynchronous product is the moment of purchase — so the clock is already going
 when the order reaches your handler, and it covers every attempt we make to
 deliver that order to you. The agent sees the deadline before it buys, and what
 happens when it runs out is in [Time ran out](/orders). A synchronous card has
-no such field, because how long to wait for a synchronous answer is our own
-ceiling on how long an agent waits, the same for every product. That one runs
-from the moment of purchase, so the price question and the payment check come
-out of it before your handler is called. The confirmation mode has a deadline
+no such field, because how long to wait for a synchronous answer is set by us,
+the same for every product. That one runs from the moment of purchase rather
+than from the moment your handler is called, so the price question and the
+payment check come out of it first. The confirmation mode has a deadline
 of its own and it arrives together with the mode.
 
 ### Two identifiers

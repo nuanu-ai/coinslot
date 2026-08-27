@@ -106,11 +106,11 @@ chosen: [Money](/money).
 
 We ask you at the moment of purchase, where the card has a price check turned
 on. Your code answers it, in a price handler that sits in the same process as
-the order handler. A second transport for a separate pricing service — a price
-hook at an address of your own — is designed and not called yet, so a card that
-names one is priced as though nobody had answered ([what to answer
-with](/cards)). The sale then goes at the price you named, and an answer of
-"there is none" closes the purchase before any money moves. Without a check we
+the order handler; the sale then goes at the price you named, and an answer of
+"there is none" closes the purchase before any money moves
+([what to answer with](/cards)). A second transport for a separate pricing
+service — a price hook at an address of your own — is designed and not called
+yet, so a card that names one is priced as though nobody had answered. Without a check we
 sell at the card's price and hear that the goods have run out from your refusal
 at delivery; what happens when the check is silent is on [What can go
 wrong](/failures).
