@@ -101,11 +101,13 @@ const LISTED_TAGS_MAX = 5;
 /**
  * A word the discovery channel can render, held to the channel's own rule.
  *
- * Printable ASCII and nothing else, because the channel measures length in
- * bytes and drops anything outside that range. The restriction is real and it
- * costs something worth saying out loud: a seller whose name is written in
- * Cyrillic, Greek or Arabic cannot be listed under it, and this refuses the
- * name rather than listing them under a mangled one.
+ * Printable ASCII and nothing else, because that is what the channel's own
+ * check tests for before it drops a value: a pattern over the printable range
+ * and a length counted in the units a JavaScript string counts in, which is
+ * why the same word measures the same on every side that implements this. The
+ * restriction is real and it costs something worth saying out loud: a seller
+ * whose name is written in Cyrillic, Greek or Arabic cannot be listed under
+ * it, and this refuses the name rather than listing them under a mangled one.
  */
 const listedText = (what: string) =>
   z
