@@ -22,6 +22,7 @@
 
 import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
+import { connect } from "node:net";
 import type { Card } from "@coinslot/contracts";
 import { buyOverHttp, type Harness, harness, type Served, serve } from "@coinslot/gateway/testing";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -30,6 +31,7 @@ import { loadConfig } from "./config.js";
 import { fingerprintOf, hashPassword } from "./credentials.js";
 import type { Answer } from "./gateway.js";
 import { buildApp } from "./server.js";
+import { sessionFor } from "./testing/accounts-contract.js";
 
 const KEY = "a-merchant-key-long-enough";
 const asMerchant = { authorization: `Bearer ${KEY}` };
@@ -40,6 +42,15 @@ const COOKIE = "coinslot_session";
 
 /** The person whose account every test in this file signs in as. */
 const PERSON = "dmitry@example.com";
+/**
+ * A second person with an account on the same cabinet.
+ *
+ * ADR-0009 §9 says the pilot has one merchant and one person, and this is the
+ * fixture for the case that does not care: a request can carry a session that
+ * belongs to somebody else, and "somebody else" cannot be tested with one
+ * account in the store.
+ */
+const OTHER = "someone@example.com";
 const PASSWORD = "a-password-nobody-guesses";
 /**
  * Derived once for the whole file. A scrypt derivation is a tenth of a second
@@ -48,10 +59,11 @@ const PASSWORD = "a-password-nobody-guesses";
  */
 const PASSWORD_HASH = await hashPassword(PASSWORD);
 
-/** The store a cabinet under test signs people in against, with one account. */
-const withOneAccount = async (): Promise<Accounts> => {
+/** The store a cabinet under test signs people in against, with two accounts. */
+const withAccounts = async (): Promise<Accounts> => {
   const accounts = memoryAccounts();
   await accounts.add(PERSON, PASSWORD_HASH, new Date());
+  await accounts.add(OTHER, PASSWORD_HASH, new Date());
   return accounts;
 };
 
@@ -99,6 +111,13 @@ interface Browser {
   withRawCookie(cookie: string): Browser;
   /** The same browser claiming its page came from somewhere else. */
   from(origin: string): Browser;
+  /**
+   * The same browser behind something that adds headers of its own.
+   *
+   * A terminator in front of the cabinet is not a browser and cannot be driven
+   * as one, so the headers it would add are put on the request here.
+   */
+  sending(headers: Record<string, string>): Browser;
   close(): Promise<void>;
 }
 
@@ -106,6 +125,14 @@ interface Running {
   readonly harnessed: Harness;
   readonly gateway: Served;
   readonly browser: Browser;
+  /**
+   * Where the cabinet under test is listening.
+   *
+   * A test that has to name an origin needs the host and the port the cabinet
+   * is actually answering on, because an origin the browser claims is compared
+   * against the `Host` header of the same request.
+   */
+  readonly url: string;
   /** The store the cabinet under test signs people in against. */
   readonly accounts: Accounts;
   /** A second browser on the same cabinet, for two people or two devices. */
@@ -125,7 +152,7 @@ const started = async (
 ): Promise<Running> => {
   const harnessed = await harness({ PAY_TO_ADDRESS: PAY_TO, ...options.gateway });
   const gateway = await serve(harnessed);
-  const accounts = await withOneAccount();
+  const accounts = await withAccounts();
   const basePath = options.base ?? "";
   const { browser, url } = await visiting(gateway.url, basePath, accounts, options.cabinet);
   let stopped = false;
@@ -134,6 +161,7 @@ const started = async (
     harnessed,
     gateway,
     browser,
+    url,
     accounts,
     another: async () => await attachedTo(url, basePath),
     async stopGateway() {
@@ -208,6 +236,7 @@ async function attachedTo(url: string, basePath: string): Promise<Browser> {
     sent: {
       readonly cookie?: string;
       readonly origin?: string;
+      readonly extra?: Record<string, string>;
       readonly raw?: { readonly contentType: string; readonly body: string };
     } = {},
   ): Promise<Visit> => {
@@ -218,6 +247,7 @@ async function attachedTo(url: string, basePath: string): Promise<Browser> {
       headers: {
         ...(cookie === "" ? {} : { cookie }),
         ...(sent.origin === undefined ? {} : { origin: sent.origin }),
+        ...(sent.extra ?? {}),
         ...(form === undefined ? {} : { "content-type": "application/x-www-form-urlencoded" }),
         ...(sent.raw === undefined ? {} : { "content-type": sent.raw.contentType }),
       },
@@ -266,11 +296,73 @@ async function attachedTo(url: string, basePath: string): Promise<Browser> {
       get: (path) => call("GET", path, undefined, { origin }),
       post: (path, form) => call("POST", path, form ?? {}, { origin }),
     }),
+    sending: (extra) => ({
+      ...browser,
+      get: (path) => call("GET", path, undefined, { extra }),
+      post: (path, form) => call("POST", path, form ?? {}, { extra }),
+    }),
     close: async () => undefined,
   };
 
   return browser;
 }
+
+/**
+ * One request written straight onto a socket, with nothing added to it.
+ *
+ * `fetch` sends headers of its own — an accept, a user agent, an encoding — and
+ * they count against the 16 KB of headers the runtime will read. A test about
+ * how many cookies one request can carry cannot be written with it, because
+ * what it would be measuring is those headers. This sends a request line, a
+ * Host, the cookies, and nothing else.
+ */
+const overASocket = (
+  url: string,
+  path: string,
+  cookie: string,
+): Promise<{ status: number; body: string }> =>
+  new Promise((resolve, reject) => {
+    const { hostname, port } = new URL(url);
+    const socket = connect(Number(port), hostname, () => {
+      socket.write(
+        `GET ${path} HTTP/1.1\r\nHost: ${hostname}:${port}\r\n` +
+          `Cookie: ${cookie}\r\nConnection: close\r\n\r\n`,
+      );
+    });
+    let said = "";
+    socket.on("data", (chunk: Buffer) => {
+      said += chunk.toString();
+    });
+    socket.on("error", reject);
+    socket.on("close", () => {
+      resolve({
+        status: Number(said.split(" ")[1] ?? 0),
+        body: readable(said.split("\r\n\r\n").slice(1).join("\r\n\r\n")),
+      });
+    });
+  });
+
+/**
+ * A store that keeps a note of what the cabinet asked it about sessions.
+ *
+ * The cabinet under test is built on this store rather than beside it, so what
+ * a test reads is the cabinet's own behaviour and not the test's arithmetic.
+ * Each entry is one question, and what is in it is the identifiers that
+ * question carried.
+ */
+const counting = (accounts: Accounts): { asked: (readonly string[])[]; cabinet: Accounts } => {
+  const asked: (readonly string[])[] = [];
+  return {
+    asked,
+    cabinet: {
+      ...accounts,
+      whose: (fingerprints, now) => {
+        asked.push(fingerprints);
+        return accounts.whose(fingerprints, now);
+      },
+    },
+  };
+};
 
 /**
  * The page's text with the tags taken out, so a test reads what a person does.
@@ -479,8 +571,12 @@ describe("getting into the cabinet", () => {
 
     // And what the store will answer, which is the one that decides. A minute
     // of slack on each side, because the session opened a moment before `at`.
-    await expect(accounts.whose(held, new Date(at + twelveHours - 60_000))).resolves.not.toBeNull();
-    await expect(accounts.whose(held, new Date(at + twelveHours + 60_000))).resolves.toBeNull();
+    await expect(
+      sessionFor(accounts, held, new Date(at + twelveHours - 60_000)),
+    ).resolves.not.toBeNull();
+    await expect(
+      sessionFor(accounts, held, new Date(at + twelveHours + 60_000)),
+    ).resolves.toBeNull();
   });
 
   it("keeps a person signed in when the merchant key is rotated under them", async () => {
@@ -552,9 +648,32 @@ describe("getting into the cabinet", () => {
 
     expect((await browser.get("/cards")).to).toBe("/sign-in");
     // The row is gone, and replaying the exact cookie gets nowhere.
-    await expect(accounts.whose(fingerprintOf(token), new Date())).resolves.toBeNull();
+    await expect(sessionFor(accounts, fingerprintOf(token), new Date())).resolves.toBeNull();
     const replayed = await browser.withRawCookie(`${COOKIE}=${token}`).get("/cards");
     expect(replayed.to).toBe("/sign-in");
+  });
+
+  it("signs a merchant out even when another cookie of this name arrives first", async () => {
+    // A browser sends cookies of one name longest-path first and, among equal
+    // paths, oldest first, so the merchant's own is not necessarily the one
+    // this handler sees first. Ending only the first identifier the request
+    // carried would leave the session alive behind a sign-out that said it had
+    // worked — the exact case a shared machine is signed out of.
+    const { browser, gateway, accounts } = await started();
+    await publish(gateway, roomCard);
+    await browser.signIn();
+    const token = browser.sessionToken() ?? "";
+    // Shaped like one of ours, so it is looked up rather than skipped, and
+    // belonging to nobody.
+    const planted = "b".repeat(43);
+
+    const out = await browser
+      .withRawCookie(`${COOKIE}=${planted}; ${COOKIE}=${token}`)
+      .post("/sign-out");
+
+    expect(out.to).toBe("/sign-in");
+    await expect(sessionFor(accounts, fingerprintOf(token), new Date())).resolves.toBeNull();
+    expect((await browser.withRawCookie(`${COOKIE}=${token}`).get("/cards")).to).toBe("/sign-in");
   });
 
   it("hangs every link and form off the path it is mounted at", async () => {
@@ -1127,7 +1246,7 @@ describe("when something goes wrong that the merchant has to get out of", () => 
     reply: () => Promise<Answer<never>>,
   ): Promise<{ browser: Browser; close: () => Promise<void> }> => {
     const answer = async () => await reply();
-    const accounts = await withOneAccount();
+    const accounts = await withAccounts();
     const app = buildApp(
       loadConfig({
         GATEWAY_URL: "http://127.0.0.1:1",
@@ -1265,40 +1384,128 @@ describe("when something goes wrong that the merchant has to get out of", () => 
     // considered — a cap is a way to push the merchant's own cookie out of
     // sight and lock them out — so the shape is what does the work, and it
     // costs nothing.
+    //
+    // Both halves of the shape, because a value of the right length with a
+    // character we never write is exactly what somebody planting cookies would
+    // reach for once the length alone stopped working.
     const { browser, accounts } = await started();
     await browser.signIn();
     const mine = browser.sessionToken() ?? "";
-    let asked = 0;
-    const counting = {
-      ...accounts,
-      whose: (...given: Parameters<Accounts["whose"]>) => {
-        asked += 1;
-        return accounts.whose(...given);
-      },
-    };
-    // The counting store is what the cabinet under test is built on, so what is
-    // measured is the cabinet's own behaviour and not the test's arithmetic.
-    const own = await visiting("http://127.0.0.1:1", "", counting as Accounts);
+    const { asked, cabinet } = counting(accounts);
+    const own = await visiting("http://127.0.0.1:1", "", cabinet);
     try {
-      const junk = Array.from({ length: 50 }, (_, at) => `${COOKIE}=planted-${at}`).join("; ");
-      await own.browser.withRawCookie(`${junk}; ${COOKIE}=${mine}`).get("/cards");
+      const junk = [
+        // Too short, and too long, and the right length spelled wrong.
+        ...Array.from({ length: 20 }, (_, at) => `planted-${at}`),
+        ...Array.from({ length: 20 }, (_, at) => `${"A".repeat(43)}${at}`),
+        "!".repeat(43),
+        `${"A".repeat(42)}+`,
+        `${"A".repeat(42)}/`,
+        `${"A".repeat(42)}=`,
+        `${"A".repeat(42)}.`,
+      ].map((value) => `${COOKIE}=${value}`);
+      await own.browser.withRawCookie(`${junk.join("; ")}; ${COOKIE}=${mine}`).get("/cards");
 
-      expect(asked).toBe(1);
+      // The merchant's own identifier and nothing else reached the store.
+      expect(asked.flat()).toStrictEqual([fingerprintOf(mine)]);
     } finally {
       await own.browser.close();
     }
   });
 
-  it("refuses to choose when two of the cookies are live sessions", async () => {
-    // The case where the ambiguity actually matters: working inside a session
-    // somebody else opened would put the wrong person on the one record of who
-    // stopped the selling. Two live ones is nobody.
+  it("asks about every identifier a request carried, in one question and with no cap", async () => {
+    // Two promises at once, and the second is why this is written over a socket
+    // rather than through `fetch`.
+    //
+    // The first: however many identifiers arrive, they are one question to the
+    // database. Asked one at a time this was that many sequential round trips
+    // on a route a stranger can reach, and ten such requests occupy a pool of
+    // ten connections where ten ordinary requests occupy ten.
+    //
+    // The second: there is no cap on how many are considered. A cap is a way
+    // in, because a browser sends cookies of one name longest-path first and
+    // then oldest first, so somebody able to plant cookies could push the
+    // merchant's own past it and lock them out of the control that stops their
+    // selling. A cap anywhere below what a request can actually carry would
+    // pass a test built to a smaller number, so this one is built to the
+    // runtime's own ceiling: Node stops reading a request's headers at 16 KB,
+    // one cookie of this name and shape is 60 bytes and the separator adds two,
+    // and a request carrying nothing else buys 263 of them. `fetch` sends
+    // headers of its own and buys 262, which is why the request here is written
+    // onto the socket by hand.
+    const { browser, accounts, gateway } = await started();
+    await browser.signIn();
+    const mine = browser.sessionToken() ?? "";
+    const { asked, cabinet } = counting(accounts);
+    const own = await visiting(gateway.url, "", cabinet);
+    const carrying = (count: number): string =>
+      [...Array.from({ length: count - 1 }, (_, at) => `${`${at}`.padStart(43, "a")}`), mine]
+        .map((value) => `${COOKIE}=${value}`)
+        .join("; ");
+    try {
+      const most = await overASocket(own.url, "/cards", carrying(263));
+
+      // The merchant is still the person asking, with 262 planted cookies in
+      // front of their own, and it cost one question.
+      expect(most.status).toBe(200);
+      expect(most.body).toContain(PERSON);
+      expect(asked.length).toBe(1);
+      expect(asked[0]?.length).toBe(263);
+
+      // And one more than that is not the cabinet's problem: the runtime
+      // refuses to read the headers at all, so nothing here ever sees it.
+      const tooMany = await overASocket(own.url, "/cards", carrying(264));
+
+      expect(tooMany.status).toBe(431);
+      expect(asked.length).toBe(1);
+    } finally {
+      await own.browser.close();
+    }
+  });
+
+  it("is one person's cabinet when both live cookies are that person's", async () => {
+    // What a change of mount point leaves in a browser: the cookie from the old
+    // path and the cookie from the new one, both this person's and both alive.
+    // There is no ambiguity in that to refuse, and refusing it would end a
+    // session the merchant is sitting in for a reason that is ours.
     const { browser, another } = await started();
     await browser.signIn();
     const mine = browser.sessionToken() ?? "";
     const telephone = await another();
     await telephone.signIn();
-    const theirs = telephone.sessionToken() ?? "";
+    const also = telephone.sessionToken() ?? "";
+
+    expect(mine).not.toBe(also);
+    const answered = await browser
+      .withRawCookie(`${COOKIE}=${mine}; ${COOKIE}=${also}`)
+      .get("/cards");
+
+    expect(answered.status).toBe(200);
+    expect(readable(answered.html)).toContain(PERSON);
+    // And neither session was ended on the way: both still work on their own.
+    expect((await browser.withRawCookie(`${COOKIE}=${mine}`).get("/cards")).status).toBe(200);
+    expect((await browser.withRawCookie(`${COOKIE}=${also}`).get("/cards")).status).toBe(200);
+  });
+
+  it("ends both sessions rather than choosing when they belong to two people", async () => {
+    // The case where the ambiguity actually matters: working inside a session
+    // somebody else opened would put the wrong person on the one record of who
+    // stopped the selling (ADR-0009 §7). Nobody is signed in.
+    //
+    // And the sessions are ended, which is the half that decides whether this
+    // rule is safe to have. The cabinet cannot take a cookie out of a browser —
+    // a cookie set for a broader domain or a broader path survives everything
+    // this process can send — so a rule that only refused would meet the
+    // planted session again on every redirect and every fresh sign-in, and the
+    // merchant would never reach the control that stops their selling again.
+    // Ending them means the planted value stops being a session, and the next
+    // sign-in works.
+    const { browser, another } = await started();
+    await browser.signIn();
+    const mine = browser.sessionToken() ?? "";
+    const somebody = await another();
+    await somebody.signIn(OTHER);
+    const theirs = somebody.sessionToken() ?? "";
 
     expect(mine).not.toBe(theirs);
     const answered = await browser
@@ -1307,10 +1514,18 @@ describe("when something goes wrong that the merchant has to get out of", () => 
 
     expect(answered.status).toBe(303);
     expect(answered.to).toBe("/sign-in");
-    // And either one on its own is still a session: this refuses the choice,
-    // not the sessions.
-    expect((await browser.withRawCookie(`${COOKIE}=${mine}`).get("/cards")).status).toBe(200);
-    expect((await browser.withRawCookie(`${COOKIE}=${theirs}`).get("/cards")).status).toBe(200);
+    // Neither is a session any more, so the plant is spent rather than waiting.
+    expect((await browser.withRawCookie(`${COOKIE}=${mine}`).get("/cards")).to).toBe("/sign-in");
+    expect((await browser.withRawCookie(`${COOKIE}=${theirs}`).get("/cards")).to).toBe("/sign-in");
+    // And the merchant gets back in, which is the whole point of ending them:
+    // the dead cookie is still in the browser and no longer decides anything.
+    const back = await browser.signIn();
+    expect(back.status).toBe(200);
+    const carrying = await browser
+      .withRawCookie(`${COOKIE}=${theirs}; ${COOKIE}=${browser.sessionToken() ?? ""}`)
+      .get("/cards");
+    expect(carrying.status).toBe(200);
+    expect(readable(carrying.html)).toContain(PERSON);
   });
 
   it("turns away a form post that came from another site", async () => {
@@ -1325,6 +1540,56 @@ describe("when something goes wrong that the merchant has to get out of", () => 
 
     expect(forged.status).toBe(403);
     expect(await purchasable(gateway, itemId)).toBe(true);
+  });
+
+  it("takes the scheme from the terminator in front of it, or refuses every form", async () => {
+    // Behind Caddy this process speaks http and the browser speaks https, so
+    // the origin a browser sends says "https" and the request arriving here
+    // says nothing of the sort. A cabinet that did not read the forwarded
+    // scheme would compare `https://host` against `http://host`, decide the
+    // form came from somewhere else, and refuse every form post on the site —
+    // the sign-in included, which is a cabinet nobody can get into.
+    //
+    // The sign-in is what this drives for exactly that reason: it is the post
+    // that has to work before any other one can.
+    const { browser, url } = await started();
+    const asHttps = `https://${new URL(url).host}`;
+    const credentials = { email: PERSON, password: PASSWORD };
+
+    const behindTls = await browser
+      .sending({ origin: asHttps, "x-forwarded-proto": "https" })
+      .post("/sign-in", credentials);
+    expect(behindTls.status).toBe(303);
+    expect(behindTls.to).toBe("/cards");
+
+    // With no terminator in front at all, the scheme falls back to http, which
+    // is what the cabinet is actually speaking when it is run on its own —
+    // which is how it is developed and how every test here drives it. A
+    // fallback of https instead would refuse every form post on that setup,
+    // the sign-in included, and there would be no way in.
+    const onItsOwn = await browser
+      .sending({ origin: `http://${new URL(url).host}` })
+      .post("/sign-in", credentials);
+    expect(onItsOwn.status).toBe(303);
+    expect(onItsOwn.to).toBe("/cards");
+
+    // The leftmost value, not the last. What this is compared against is the
+    // scheme the browser used at the edge of the chain, and that is the first
+    // entry; preferring the last would tell an honest merchant behind a chain
+    // that terminates TLS early that their form came from somewhere else.
+    const throughAChain = await browser
+      .sending({ origin: asHttps, "x-forwarded-proto": "https, http" })
+      .post("/sign-in", credentials);
+    expect(throughAChain.status).toBe(303);
+
+    // And the scheme is part of the origin rather than decoration: a page
+    // served over http on the same host is a different origin, which is the
+    // distinction this check exists to make because SameSite does not make it.
+    const overHttp = await browser
+      .sending({ origin: `http://${new URL(url).host}`, "x-forwarded-proto": "https" })
+      .post("/sign-in", credentials);
+    expect(overHttp.status).toBe(403);
+    expect(readable(overHttp.html)).toContain("did not come from the cabinet");
   });
 });
 

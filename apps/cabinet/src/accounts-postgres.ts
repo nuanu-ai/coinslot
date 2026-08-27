@@ -14,7 +14,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { and, count, eq, gt, lte, sql } from "drizzle-orm";
+import { and, count, eq, gt, inArray, lte, sql } from "drizzle-orm";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool } from "pg";
@@ -33,6 +33,12 @@ const MIGRATIONS_TABLE = "cabinet_migrations";
 /** Postgres's own answer for "that value is already in a unique column". */
 const ALREADY_THERE = "23505";
 
+/** What this file throws: a sentence, a code, and nothing else. */
+export interface DatabaseTrouble extends Error {
+  /** The database's own code for what went wrong, where it gave one. */
+  readonly code?: string;
+}
+
 /**
  * What is allowed out of this file when the database will not answer.
  *
@@ -47,13 +53,22 @@ const ALREADY_THERE = "23505";
  * what went wrong, which is what somebody reading the log can act on. There is
  * deliberately no `cause`: an exception printed by `console.error` prints its
  * causes too, so keeping one would put the parameters straight back.
+ *
+ * The code is a property as well as a word in the sentence, and that is not
+ * decoration. A caller that has something better to say about one particular
+ * failure has to be able to tell which one it is, and the first version of this
+ * left the code inside a string — which turned the account command's "your
+ * tables are not there yet, run the migration" into a sentence naming a table
+ * an operator has never heard of, on their very first run. A code is the
+ * database's own five characters and carries no parameter with it.
  */
-function databaseTrouble(operation: string, thrown: unknown): Error {
+function databaseTrouble(operation: string, thrown: unknown): DatabaseTrouble {
   const code = codeIn(thrown);
-  return new Error(
+  const failed: DatabaseTrouble = new Error(
     `the cabinet's ${operation} was not answered by the database` +
       (code === null ? "" : ` (${code})`),
   );
+  return code === null ? failed : Object.assign(failed, { code });
 }
 
 /** Runs one query, letting nothing out of it that carries a parameter. */
@@ -77,8 +92,32 @@ function codeIn(thrown: unknown): string | null {
   return null;
 }
 
+/**
+ * One pool for the process, with the one listener it cannot run without.
+ *
+ * A pool reports the failure of a connection nobody is waiting on — a database
+ * restart, a failover, an idle reaper — as an `error` event on itself, and an
+ * `error` event with no listener is an uncaught exception and a dead process.
+ * Every other kind of database trouble arrives at a caller, where `guarded`
+ * turns it into a sentence; this one arrives at nobody, so without this the
+ * cabinet exits and the merchant cannot reach the control that stops their
+ * selling until somebody starts the process again.
+ *
+ * The gateway's store has carried the same three lines and the same reasoning
+ * since before this file existed, and it did not travel here on its own.
+ *
+ * What is logged is the name and the message, not the object. Everywhere else
+ * in this file the rule is that nothing the driver produced goes into a log
+ * unread, because drizzle's wrapper carries the query's bound parameters; a
+ * connection failure carries none, and `String` leaves every property behind in
+ * either case.
+ */
 export function connect(databaseUrl: string): Pool {
-  return new Pool({ connectionString: databaseUrl });
+  const pool = new Pool({ connectionString: databaseUrl });
+  pool.on("error", (failed) => {
+    console.error(`[cabinet] an idle database connection failed: ${String(failed)}`);
+  });
+  return pool;
 }
 
 /** Brings the cabinet's two tables up to date. A step somebody takes. */
@@ -169,9 +208,12 @@ export function postgresAccounts(pool: Pool): Accounts {
           .leftJoin(sessions, and(eq(sessions.accountId, accounts.id), gt(sessions.expiresAt, now)))
           .groupBy(accounts.email, accounts.createdAt);
         // Sorted here rather than by the database, so that the order a person
-        // reads off a terminal is the same one whichever store answered. A
-        // database sorts by its own collation, and `C` and ICU disagree about
-        // where a hyphen or a dot in an address goes.
+        // reads off a terminal is the same one whichever store answered and on
+        // whatever server. A database sorts by its own collation, and the
+        // disagreement is real rather than theoretical: on Postgres 17, `C` and
+        // `en-US-x-icu` put `renée@example.com` on opposite sides of
+        // `renz@example.com`. Hyphens and dots, which is where one would look
+        // for this first, are ordered the same way by both.
         return rows
           .map((row) => ({
             email: row.email,
@@ -203,10 +245,20 @@ export function postgresAccounts(pool: Pool): Accounts {
       });
     },
 
-    async whose(fingerprint, now) {
+    async whose(fingerprints, now) {
+      // Nothing to ask about is not a query. Left to drizzle an empty list
+      // becomes `where false`, which is correct and is still a round trip to
+      // the database — and a request carrying no cookie at all is the
+      // commonest request this cabinet answers, every visitor's first one
+      // among them.
+      const asked = [...new Set(fingerprints)];
+      if (asked.length === 0) {
+        return [];
+      }
       return await guarded("reading of a session", async () => {
-        const [row] = await db
+        const rows = await db
           .select({
+            fingerprint: sessions.fingerprint,
             id: accounts.id,
             email: accounts.email,
             passwordHash: accounts.passwordHash,
@@ -214,9 +266,8 @@ export function postgresAccounts(pool: Pool): Accounts {
           })
           .from(sessions)
           .innerJoin(accounts, eq(accounts.id, sessions.accountId))
-          .where(and(eq(sessions.fingerprint, fingerprint), gt(sessions.expiresAt, now)))
-          .limit(1);
-        return row === undefined ? null : accountFrom(row);
+          .where(and(inArray(sessions.fingerprint, asked), gt(sessions.expiresAt, now)));
+        return rows.map((row) => ({ fingerprint: row.fingerprint, account: accountFrom(row) }));
       });
     },
 

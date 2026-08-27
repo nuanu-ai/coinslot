@@ -15,6 +15,7 @@ import { describe, expect, it } from "vitest";
 import { runAccount } from "./account-command.js";
 import { type Accounts, memoryAccounts } from "./accounts.js";
 import { hashPassword, passwordMatches } from "./credentials.js";
+import { sessionFor } from "./testing/accounts-contract.js";
 
 const HOUR = 60 * 60 * 1_000;
 
@@ -117,7 +118,7 @@ describe("setting a new password from the command line", () => {
     const stored = (await accounts.byEmail("dmitry@example.com"))?.passwordHash ?? "";
     await expect(passwordMatches("old", stored)).resolves.toBe(false);
     await expect(passwordMatches(changed.password ?? "", stored)).resolves.toBe(true);
-    await expect(accounts.whose("laptop", at)).resolves.toBeNull();
+    await expect(sessionFor(accounts, "laptop", at)).resolves.toBeNull();
   });
 
   it("says so rather than inventing an account for an address nobody has", async () => {
@@ -143,8 +144,8 @@ describe("ending somebody's sessions from the command line", () => {
 
     expect(ended.code).toBe(0);
     expect(ended.said).toContain("2");
-    await expect(accounts.whose("laptop", at)).resolves.toBeNull();
-    await expect(accounts.whose("telephone", at)).resolves.toBeNull();
+    await expect(sessionFor(accounts, "laptop", at)).resolves.toBeNull();
+    await expect(sessionFor(accounts, "telephone", at)).resolves.toBeNull();
     // The account is still there: ending a session is not deleting a person.
     await expect(accounts.byEmail("dmitry@example.com")).resolves.not.toBeNull();
   });
@@ -186,6 +187,119 @@ describe("listing what accounts there are", () => {
 
     expect(listed.code).toBe(0);
     expect(listed.said).toMatch(/no accounts/i);
+  });
+});
+
+describe("an address carrying characters a terminal acts on", () => {
+  /**
+   * Three ways of writing something other than what is on the page.
+   *
+   * The carriage return goes back to the start of the line, so whatever is
+   * printed after it lands on top of what the terminal has already shown. The
+   * escape turns the colours over. The last one is a right-to-left override: it
+   * reverses the direction the rest of the line reads in, reordering an address
+   * without changing a byte of it — and it is a format character rather than a
+   * control one, so a rendering that knew only about control characters would
+   * let it straight through.
+   */
+  const ERASES_A_ROW = "\u001b[7m\r\u202e";
+
+  it("is shown rather than obeyed, wherever it is printed", async () => {
+    // The shape check catches a missing half and a space in the middle, which
+    // are the mistakes people make at a terminal; it says nothing about an
+    // escape sequence, and a row can also arrive from a hand-written insert or
+    // a restored dump that never went through it at all. So the rendering is
+    // where the printing happens rather than where the input arrives, and it
+    // covers every line this command writes.
+    //
+    // What is at stake is small and specific: `account list` is the only answer
+    // to "who can sign into this cabinet", and a row that can erase the row
+    // above it is an answer with somebody quietly missing from it.
+    const accounts = memoryAccounts();
+    const at = new Date("2026-08-27T09:00:00.000Z");
+    await accounts.add(`a${ERASES_A_ROW}b@example.com`, "hash", at);
+    await accounts.add("dmitry@example.com", "hash", at);
+
+    const listed = await run(accounts, "list");
+
+    expect(listed.code).toBe(0);
+    expect(listed.said).not.toContain("\u001b");
+    expect(listed.said).not.toContain("\r");
+    expect(listed.said).not.toContain("\u202e");
+    expect(listed.said).toContain("a\\x1b[7m\\x0d\\u{202e}b@example.com");
+    // Both people are still there, and neither row is short of a column.
+    expect(listed.said).toContain("dmitry@example.com");
+    const columns = listed.said.split("\n").map((line) => line.indexOf("made"));
+    expect(new Set(columns).size).toBe(1);
+  });
+
+  it("is shown rather than obeyed in a refusal as well", async () => {
+    // The rejection echoes what was typed, which is a path into the terminal
+    // that needs no account and no database at all.
+    const accounts = memoryAccounts();
+
+    const refused = await run(accounts, "add", `${ERASES_A_ROW}not an address`);
+
+    expect(refused.code).not.toBe(0);
+    expect(refused.said).not.toContain("\u001b");
+    expect(refused.said).toContain("\\x1b");
+  });
+});
+
+describe("a database the migrations have never been run against", () => {
+  /** A store whose every call fails the way the Postgres one does. */
+  const withoutTables = (): Accounts => {
+    const failing = () => {
+      throw Object.assign(
+        new Error("the cabinet's listing of accounts was not answered by the database (42P01)"),
+        { code: "42P01" },
+      );
+    };
+    return new Proxy(memoryAccounts(), {
+      get: (store, member) => (member === "close" ? store.close.bind(store) : failing),
+    }) as Accounts;
+  };
+
+  it("says which command puts the tables there, on every verb", async () => {
+    // The first thing a person meets on a new machine. What the database says
+    // for itself names a table nobody has heard of and does not say what to
+    // run, and a stack trace into the store's internals is worse than either.
+    //
+    // This was unreachable for a while and nothing noticed: the store stopped
+    // letting the driver's exception out, in order to keep the query's bound
+    // parameters from reaching the log, and the recognition further up was
+    // still looking for a property the new exception did not carry.
+    for (const argv of [
+      ["list"],
+      ["add", "dmitry@example.com"],
+      ["revoke", "dmitry@example.com"],
+    ]) {
+      const said = await run(withoutTables(), ...argv);
+
+      expect(said.code, argv.join(" ")).toBe(1);
+      expect(said.said, argv.join(" ")).toContain("tables are not in this database yet");
+      expect(said.said, argv.join(" ")).toContain("db:migrate");
+      // Not the database's own words, and nothing about a table or a column.
+      expect(said.said, argv.join(" ")).not.toContain("42P01");
+      expect(said.said, argv.join(" ")).not.toContain("cabinet_accounts");
+    }
+  });
+
+  it("lets any other failure go up rather than blaming the migrations", async () => {
+    // An unfamiliar failure with a confident sentence written over it sends
+    // somebody to run a migration that was never the problem.
+    const elsewhere: Accounts = new Proxy(memoryAccounts(), {
+      get: () => () => {
+        throw Object.assign(
+          new Error("the cabinet's listing of accounts was not answered (57P03)"),
+          {
+            code: "57P03",
+          },
+        );
+      },
+    }) as Accounts;
+
+    await expect(run(elsewhere, "list")).rejects.toThrow("57P03");
   });
 });
 
