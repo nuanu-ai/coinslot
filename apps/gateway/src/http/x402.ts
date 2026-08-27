@@ -150,7 +150,8 @@ export class PaymentEdge {
    * The canonical address of one product, which is what a listing is keyed on.
    *
    * It is built from the configured base and the route table, never from the
-   * request. Behind a terminator the request says `http://` and carries
+   * request. Behind a reverse proxy that ends the agent's TLS connection and
+   * passes the request on to us, the request says `http://` and carries
    * whatever query string the caller wrote, and two spellings of one address
    * are two resources to a catalog — two listings for one product, or one that
    * flickers between them. The identifier is put through the route table's own

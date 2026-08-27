@@ -289,6 +289,32 @@ describe("loadConfig", () => {
     );
   });
 
+  it("refuses the other spellings that make one product two addresses", () => {
+    // Everything here is a value that parses as a URL, is kept verbatim, and
+    // then goes into a payment challenge as the thing an agent is invited to
+    // pay for. A scheme spelled in capitals is the one with a measured cost:
+    // the validation endpoint this repository talks to answers 400 to anything
+    // that does not begin with a lower-case https, so a gateway configured that
+    // way is simply absent from a listing with nothing to say why. A space
+    // inside makes an address that answers nothing. A user name and password
+    // in front of the host would be published to every agent that asks a price.
+    const broken = (PUBLIC_BASE_URL: string) => () => loadConfig({ ...required, PUBLIC_BASE_URL });
+
+    expect(broken("HTTPS://coinslot.example")).toThrowError(/http:\/\/ or https:\/\//);
+    expect(broken("ftp://coinslot.example")).toThrowError(/http:\/\/ or https:\/\//);
+    expect(broken("https://user:secret@coinslot.example")).toThrowError(/name and password/);
+    expect(broken("https://coinslot.example/a b")).toThrowError(/space/);
+
+    // And the ordinary spellings still start, including a mount path.
+    for (const good of [
+      "http://localhost:3000",
+      "https://coinslot.example",
+      "https://coinslot.example/gateway",
+    ]) {
+      expect(loadConfig({ ...required, PUBLIC_BASE_URL: good }).publicBaseUrl, good).toBe(good);
+    }
+  });
+
   it("names both arithmetic problems at once when both are wrong", () => {
     const broken = () =>
       loadConfig({
