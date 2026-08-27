@@ -279,12 +279,19 @@ if (databaseUrl === undefined || databaseUrl === "") {
               // It gives up rather than throwing, so that a lock that never
               // took shows up below as two owners — the defect itself — and
               // not as a timeout in the plumbing.
+              //
+              // The query text is part of what is looked for, because any
+              // backend waiting on any lock anywhere in this database would
+              // otherwise do: the gateway's own queue is running against it,
+              // and a count that something somewhere was waiting would pass
+              // this whether or not it was bob and whether or not it was
+              // this row.
               const until = Date.now() + 5_000;
               while (Date.now() < until && !bobWasBlocked) {
                 const { rows } = await pool.query<{ blocked: number }>(
                   "select count(*)::int as blocked from pg_stat_activity" +
                     " where datname = current_database() and wait_event_type = 'Lock'" +
-                    " and pid <> pg_backend_pid()",
+                    " and pid <> pg_backend_pid() and query ilike '%for update%'",
                 );
                 bobWasBlocked = (rows[0]?.blocked ?? 0) > 0;
                 if (!bobWasBlocked) {
