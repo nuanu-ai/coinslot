@@ -397,10 +397,22 @@ export const AgentOrderStatusSchema = z
      * says null for exactly as long as that is true.
      */
     delivered: DeliverySchema.nullable(),
+
+    /**
+     * Whether the money behind this purchase was real.
+     *
+     * The receipt a merchant reads carries this word already, and the buyer's
+     * own view of the same purchase is the one place it matters more: a
+     * sandbox settles against nothing (ADR-0008) and every other field here
+     * reads exactly as it would after a real charge. Without it, this document
+     * is indistinguishable from proof of a purchase that moved money, which is
+     * the one thing it must never be mistaken for.
+     */
+    test: z.boolean(),
   })
   .meta({
     description:
-      "What became of one purchase, in the words an agent and a merchant both read: where the order stands, what it was priced at, and the goods once they are the buyer's. It is smaller than the merchant's own view of the same order on purpose — no merchant, no merchant's own key for the product, none of the purchase parameters and nothing about any other order. The price is what the buyer was asked for and not proof that anything was charged: an order that was priced and then ended without a sale still carries it, and the status is what says which happened. A null price means nobody ever named one for this order, and a null delivery means there are no goods here to hand over; both fields are always present, because an absent field is a silence a reader cannot tell from an oversight. Two omissions are worth knowing about. \"rejected\" covers a product that was gone, a payment that failed its check and parameters that did not fit, and nothing in this contract yet carries that reason to an agent. And a null delivery is not a promise that no goods were ever made: a purchase whose charge failed or went unanswered can leave goods the buyer has not paid for, and this document withholds them rather than describing them.",
+      "What became of one purchase, in the words an agent and a merchant both read: where the order stands, what it was priced at, and the goods once they are the buyer's. It is smaller than the merchant's own view of the same order on purpose — no merchant, no merchant's own key for the product, none of the purchase parameters and nothing about any other order. The price is what the buyer was asked for and not proof that anything was charged: an order that was priced and then ended without a sale still carries it, and the status is what says which happened. A null price means nobody ever named one for this order, and a null delivery means there are no goods here to hand over; both fields are always present, because an absent field is a silence a reader cannot tell from an oversight. Two omissions are worth knowing about. \"rejected\" covers a product that was gone, a payment that failed its check and parameters that did not fit, and nothing in this contract yet carries that reason to an agent. And a null delivery is not a promise that no goods were ever made: a purchase whose charge failed or went unanswered can leave goods the buyer has not paid for, and this document withholds them rather than describing them. Every answer says whether the money behind the purchase was real: a gateway settling against nothing produces every other field here exactly as a real charge would, so a reader taking this for proof of a payment has to read that word first.",
   });
 
 /**

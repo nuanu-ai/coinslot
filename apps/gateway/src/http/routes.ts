@@ -292,6 +292,10 @@ async function orderStatus(
     // standing the catalogue's figure in for it would be a claim about a sale
     // that did not happen.
     price: salePriceOf(record),
+    // The same word the merchant's receipt carries. Every other field here
+    // reads the same whether the charge was real or not, so a buyer with no
+    // way to ask would be holding what looks like proof of a payment.
+    test: record.order.test,
     // The goods only once they are the buyer's, which is narrower than once
     // the merchant handed them over. A synchronous delivery whose charge came
     // back failed leaves goods on an order nothing was paid for; the purchase

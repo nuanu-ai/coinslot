@@ -221,6 +221,7 @@ describe("what the answer carries", () => {
       "order_id",
       "price",
       "status",
+      "test",
     ]);
     const written = JSON.stringify(answered.body);
     // Whose sale it is, what they call the product, and which card it came from
@@ -316,6 +317,10 @@ describe("the goods as the merchant wrote them", () => {
         as_of: "2026-08-26T12:00:00.000Z",
       },
       delivered: goods,
+      // Every order the pilot writes is a test order, and the buyer's own view
+      // of a purchase says so — every other field here reads the same whether
+      // the charge was real or not.
+      test: true,
     });
   });
 });

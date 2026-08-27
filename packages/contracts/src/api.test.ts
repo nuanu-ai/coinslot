@@ -546,6 +546,7 @@ describe("the status an agent reads", () => {
     status: "in_progress",
     price,
     delivered: null,
+    test: true,
   };
 
   it("names the order it is about", () => {
