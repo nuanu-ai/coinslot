@@ -444,6 +444,31 @@ describe("the discovery declaration a challenge carries", () => {
     });
   });
 
+  it("loses nothing at the edge of what our own schemas allow", () => {
+    // The control the first version of this test was missing: not a value that
+    // comfortably passes, but the largest one our schemas accept — five tags at
+    // the full length, a name at the full length — put through the catalog's
+    // own sanitiser. Anything it hands back short of what went in is a rule of
+    // theirs our schemas do not have, and a merchant would be the last to know.
+    const wide = CardSchema.parse({
+      ...JSON.parse(JSON.stringify(card)),
+      tags: ["a", "b", "c", "d", "e"].map((letter) => letter.repeat(32)),
+    });
+    const { resource } = decodePaymentRequiredHeader(
+      edge().challengeFor(
+        { amount: "5.00", currency: "USD" },
+        null,
+        { itemId: "itm_4d21bb", card: wide, serviceName: "n".repeat(32) },
+        "POST",
+      ),
+    );
+
+    expect(sanitizeResourceServiceMetadata(resource)).toStrictEqual({
+      serviceName: resource.serviceName,
+      tags: resource.tags,
+    });
+  });
+
   it("says nothing about a seller nobody has named", () => {
     const { resource } = challenge("POST", { serviceName: null });
 
