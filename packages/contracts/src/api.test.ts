@@ -10,6 +10,7 @@ import {
   MERCHANT_KEY_HEADER,
   merchantKeyFrom,
   merchantKeyHeaderValue,
+  MerchantCardListSchema,
   mountableRoutes,
   OrderAcceptResponseSchema,
   OrderCallResponseSchema,
@@ -19,6 +20,7 @@ import {
   PurchaseRequestSchema,
   pathParamsOf,
   QuoteAnswerAckSchema,
+  ReceiptListSchema,
   type RouteDefinition,
   WorkerPollRequestSchema,
   WorkerPollResponseSchema,
@@ -132,6 +134,120 @@ describe("the list of orders", () => {
 
   it("holds every order in the list to the same document", () => {
     expect(OrderListSchema.safeParse({ orders: [order] }).success).toBe(false);
+  });
+});
+
+describe("the merchant's own cards", () => {
+  // The promise: a merchant sees what they published, whether each card is
+  // selling, and whether the whole catalog is stopped. The public catalog
+  // answers none of those — it is unscoped, it hides a paused card entirely,
+  // and it carries no word about the merchant at all.
+  const merchantCard = {
+    id: "itm_4d21bb",
+    as_of: "2026-08-26T09:00:00Z",
+    card: {
+      merchant_item_id: "access-monthly",
+      title: "Доступ к сервису на один месяц",
+      description: "Доступ на 30 дней с момента выдачи, продление не входит.",
+      price: { amount: "5.00", currency: "USD" },
+      result: { access_url: { type: "string" } },
+      fulfillment: "sync",
+    },
+    selling: "open",
+    paused: false,
+  };
+  const cards = { selling: "open", cards: [merchantCard] };
+
+  it("accepts a merchant who has published nothing yet", () => {
+    // The first screen a merchant ever sees. A schema that refused it would
+    // make "you have published nothing" indistinguishable from a broken call.
+    expect(MerchantCardListSchema.parse({ selling: "open", cards: [] })).toStrictEqual({
+      selling: "open",
+      cards: [],
+    });
+  });
+
+  it("says whether the merchant is selling at all, beside the cards", () => {
+    // The two are separate facts and both are needed on one screen: a merchant
+    // whose catalog is stopped sees every card read paused, and the reason is
+    // this field rather than any of the cards.
+    const stopped = MerchantCardListSchema.parse({
+      selling: "paused",
+      cards: [{ ...merchantCard, selling: "paused" }],
+    });
+
+    expect(stopped.selling).toBe("paused");
+  });
+
+  for (const field of ["selling", "cards"]) {
+    it(`refuses the merchant's catalog without ${field} and names it`, () => {
+      expectMissingFieldRejected(MerchantCardListSchema, cards, field);
+    });
+  }
+
+  it("is an object rather than a bare array", () => {
+    // A bare array could not carry the merchant's own selling word at all, and
+    // could never grow a cursor without breaking every reader.
+    expect(MerchantCardListSchema.safeParse([merchantCard]).success).toBe(false);
+  });
+
+  it("holds every card in the list to the document a merchant reads", () => {
+    expect(
+      MerchantCardListSchema.safeParse({ selling: "open", cards: [merchantCard.card] }).success,
+    ).toBe(false);
+  });
+
+  it("refuses a field it does not know", () => {
+    expect(errorOf(MerchantCardListSchema, { ...cards, revenue: "1000.00" })).toContain("revenue");
+  });
+});
+
+describe("the merchant's own receipts", () => {
+  // The promise: a merchant can read back the payments that went through
+  // without holding their own copy. A receipt exists from the moment the money
+  // moves, so this is the list the merchant reconciles their wallet against.
+  const receipt = {
+    id: "rcp_4b90de",
+    order_id: "ord_7c1e05",
+    item_id: "itm_9f2c4a",
+    price: {
+      amount: "5.00",
+      currency: "USD",
+      at: "2026-08-26T10:20:00Z",
+      as_of: "2026-08-26T10:15:00Z",
+    },
+    paid_at: "2026-08-26T10:20:03Z",
+    outcome: "delivered",
+    test: false,
+  };
+
+  it("accepts a merchant who has sold nothing yet", () => {
+    expect(ReceiptListSchema.parse({ receipts: [] })).toStrictEqual({ receipts: [] });
+  });
+
+  it("accepts the receipts of purchases that were paid for", () => {
+    expect(
+      ReceiptListSchema.safeParse({
+        receipts: [receipt, { ...receipt, id: "rcp_c30f45", outcome: "refund_due" }],
+      }).success,
+    ).toBe(true);
+  });
+
+  it("is an object rather than a bare array", () => {
+    expect(ReceiptListSchema.safeParse([receipt]).success).toBe(false);
+    expect(errorOf(ReceiptListSchema, {})).toContain("receipts");
+  });
+
+  it("holds every receipt in the list to the receipt document", () => {
+    // A row missing the moment the price behind it was true is a row a
+    // merchant cannot reconcile, and it must not travel as a receipt.
+    const withoutAsOf = { ...receipt, price: { amount: "5.00", currency: "USD", at: receipt.paid_at } };
+
+    expect(ReceiptListSchema.safeParse({ receipts: [withoutAsOf] }).success).toBe(false);
+  });
+
+  it("refuses a field it does not know", () => {
+    expect(errorOf(ReceiptListSchema, { receipts: [], total: "5.00" })).toContain("total");
   });
 });
 
@@ -614,8 +730,22 @@ describe("the route table", () => {
   const surface: [string, string, string, string, string, string, string][] = [
     // name, method, path, auth, query, request, response
     ["publish_card", "POST", "/v0/catalog/publish", "merchant_key", "-", "card", "publish_result"],
+    ["list_merchant_cards", "GET", "/v0/cards", "merchant_key", "-", "-", "merchant_card_list"],
+    ["pause_card", "POST", "/v0/cards/:item_id/pause", "merchant_key", "-", "-", "merchant_card"],
+    ["resume_card", "POST", "/v0/cards/:item_id/resume", "merchant_key", "-", "-", "merchant_card"],
+    ["pause_selling", "POST", "/v0/selling/pause", "merchant_key", "-", "-", "merchant_card_list"],
+    [
+      "resume_selling",
+      "POST",
+      "/v0/selling/resume",
+      "merchant_key",
+      "-",
+      "-",
+      "merchant_card_list",
+    ],
     ["get_order", "GET", "/v0/orders/:order_id", "merchant_key", "-", "-", "order_with_status"],
     ["list_orders", "GET", "/v0/orders", "merchant_key", "order_list_query", "-", "order_list"],
+    ["list_receipts", "GET", "/v0/receipts", "merchant_key", "-", "-", "receipt_list"],
     [
       "poll_worker",
       "POST",
@@ -826,6 +956,34 @@ describe("the route table", () => {
     // catalog invisible. A table keyed by method is exactly where that would
     // be reproduced.
     expect(API_ROUTES.purchase_item.description).toContain("GET");
+  });
+
+  it("pauses and resumes with verbs, so leaving cannot be reached by a side door", () => {
+    // Written as one route taking a selling word, the switch would accept
+    // "departed" as easily as "paused" — and leaving is not a heavier pause.
+    // It closes the open orders and leaves the merchant owing refunds on
+    // whatever was paid for and never delivered. That is a decision with its
+    // own design, not a value in a body, so no route here takes one.
+    const switches = [
+      API_ROUTES.pause_card,
+      API_ROUTES.resume_card,
+      API_ROUTES.pause_selling,
+      API_ROUTES.resume_selling,
+    ];
+
+    for (const route of switches) {
+      expect(route.request, route.path).toBeUndefined();
+      expect(route.auth, route.path).toBe("merchant_key");
+    }
+  });
+
+  it("says what a pause does and does not do to the orders already open", () => {
+    // The one thing a merchant most needs to know before pressing it, and the
+    // one the shape cannot carry: a pause stops new orders and lets the ones
+    // already accepted play out. A merchant who read it as "everything stops"
+    // would go looking for orders that are still theirs to deliver.
+    expect(API_ROUTES.pause_selling.description).toContain("already");
+    expect(API_ROUTES.pause_card.description).toContain("already");
   });
 });
 

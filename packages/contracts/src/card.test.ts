@@ -3,6 +3,7 @@ import {
   CardSchema,
   deliveryCheckFor,
   FulfillmentSchema,
+  MerchantCardSchema,
   PriceCheckSchema,
   PublicCardSchema,
   publicCardOf,
@@ -523,5 +524,79 @@ describe("the card an agent reads", () => {
         JSON.stringify(card),
       ).toBe("");
     }
+  });
+});
+
+describe("a card as its own merchant reads it", () => {
+  // The promise: a merchant can see what they published and the word each card
+  // is selling under, without reading the public catalog and working out which
+  // entries are theirs. The catalog is unscoped and carries our identifier in
+  // place of the merchant's key; this document carries the card itself.
+  const merchantCard = {
+    id: "itm_4d21bb",
+    as_of: "2026-08-26T09:00:00Z",
+    card: syncCard,
+    selling: "open",
+    paused: false,
+  };
+
+  it("carries the card exactly as the merchant published it", () => {
+    // Not a third projection of a card. A merchant looking at their own
+    // catalog is looking at what they wrote, and a shape that copied some
+    // fields across would be one more thing to keep in step with the published
+    // card — the drift `publicCardOf` already exists to prevent once.
+    const parsed = MerchantCardSchema.parse(merchantCard);
+
+    expect(parsed.card).toStrictEqual(CardSchema.parse(syncCard));
+    expect(parsed.id).toBe("itm_4d21bb");
+  });
+
+  it("refuses a card its own merchant could not have published", () => {
+    // The card inside is held to the rules publishing holds it to. A document
+    // that admitted a card the publish route refuses would describe a catalog
+    // entry that cannot exist.
+    const impossible = { ...merchantCard, card: { ...syncCard, fulfillment: "confirm" } };
+
+    expect(errorOf(MerchantCardSchema, impossible)).toContain("confirm");
+  });
+
+  for (const field of ["id", "as_of", "card", "selling", "paused"]) {
+    it(`refuses a merchant's card without ${field} and names it`, () => {
+      expectMissingFieldRejected(MerchantCardSchema, merchantCard, field);
+    });
+  }
+
+  it("says both what this card sells under and whether the pause is its own", () => {
+    // The two differ exactly when the whole catalog is paused: every card then
+    // reads paused, and only the ones paused in their own right stay paused
+    // when the merchant starts selling again. A merchant given one fact would
+    // press resume on a card and watch nothing happen.
+    const stoppedAll = MerchantCardSchema.parse({
+      ...merchantCard,
+      selling: "paused",
+      paused: false,
+    });
+
+    expect(stoppedAll.selling).toBe("paused");
+    expect(stoppedAll.paused).toBe(false);
+  });
+
+  it("refuses a selling word the order machine would not recognise", () => {
+    expect(errorOf(MerchantCardSchema, { ...merchantCard, selling: "off" })).toContain("selling");
+  });
+
+  it("refuses a field it does not know", () => {
+    expect(errorOf(MerchantCardSchema, { ...merchantCard, revenue: "1000.00" })).toContain(
+      "revenue",
+    );
+  });
+
+  it("tells the reader of the document alone what the two selling fields mean", () => {
+    // The trap is invisible from the shape: two fields that agree most of the
+    // time and disagree exactly when the difference matters.
+    const description = toJsonSchemas().merchant_card.description ?? "";
+
+    expect(description).toContain("paused");
+    expect(description).toContain("resume");
   });
 });
