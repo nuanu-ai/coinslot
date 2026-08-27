@@ -748,7 +748,13 @@ describe("the worker's calls over HTTP", () => {
     });
 
     expect(early.status).toBe(409);
-    expect(early.body).toMatchObject({ ok: false, error: { retryable: false } });
+    // The code is the machine's own word rather than one of the three the
+    // contract promises, which the open set allows for, and the flag is what
+    // the merchant acts on: repeating this call changes nothing.
+    expect(early.body).toMatchObject({
+      ok: false,
+      error: { code: "event_not_applicable", retryable: false },
+    });
     expect((await harnessed.store.orderById(offered.order.order.id))?.order.dispatch.accepted).toBe(
       false,
     );

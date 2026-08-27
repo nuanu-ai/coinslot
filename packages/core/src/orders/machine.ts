@@ -177,11 +177,19 @@ function answer(order: Order, merchantAnswer: MerchantAnswer): TransitionResult 
 /**
  * The merchant is told his acceptance landed.
  *
- * Written once and used from both states an order can be taken on in, because
- * the two are the same fact about him — he said he will fulfill it — and a
- * merchant reading two different answers to his one answer would be reading a
- * difference that is not there. It rides alongside the other effects rather
- * than through `answer`, which replaces them.
+ * Written once and used from the two states where taking the order on moves it
+ * forward — dispatched, and the confirmation the same event answers — because
+ * those are the same fact about him and a merchant reading two different
+ * answers to his one answer would be reading a difference that is not there.
+ * It rides alongside the other effects rather than through `answer`, which
+ * replaces them.
+ *
+ * The two states where an acceptance arrives for an order that has moved on
+ * are answered elsewhere and not with this. A delivered order says so in its
+ * own arm below, because the goods are not owed and telling him otherwise
+ * would send him looking for them. An order owed a refund says this word, but
+ * through the gateway rather than from here — there the machine has nothing to
+ * do about the event, and the answer is what his own call amounted to.
  */
 const ACCEPTANCE_LANDED: Effect = {
   kind: "answer_merchant",

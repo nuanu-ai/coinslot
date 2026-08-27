@@ -500,7 +500,7 @@ export const API_ROUTES = Object.freeze({
     path: "/v0/orders/:order_id/answer",
     auth: "merchant_key",
     description:
-      "What the merchant's handler returned for an order it was given: the goods, a refusal, or an acceptance. The SDK sends this itself, in every mode, and it is the only way a synchronous answer reaches us at all — there the handler's return is the delivery and the refusal, and the explicit deliver and refuse calls do not apply. An acceptance is answered with the word accepted — the order is taken on, and the goods follow through the deliver call. A synchronous answer that arrives after its deadline is not an error: the work exists and a repeat purchase collects it, and the answer says so in the word purchase_already_closed.",
+      "What the merchant's handler returned for an order it was given: the goods, a refusal, or an acceptance. The SDK sends this itself, in every mode, and it is the only way a synchronous answer reaches us at all — there the handler's return is the delivery and the refusal, and the explicit deliver and refuse calls do not apply. An acceptance is answered with the word accepted — the order is taken on, and the goods follow through the deliver call — or with already_delivered when the order closed before the acceptance reached us, which a redelivered order makes ordinary rather than a fault. A synchronous answer that arrives after its deadline is not an error: the work exists and a repeat purchase collects it, and the answer says so in the word purchase_already_closed.",
     request: HandlerAnswerSchema,
     response: { document: OrderCallResponseSchema },
   },

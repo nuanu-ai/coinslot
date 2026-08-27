@@ -600,11 +600,17 @@ export class Gateway {
   }
 
   /**
-   * Takes an order on, through the route written for it. The success carries no
-   * word: this route succeeds in only one way, so `accepted` beside it would
-   * tell the merchant nothing he does not know from having called it. The word
-   * belongs to the answer route, which carries whichever of the three things his
-   * handler returned and has to name which.
+   * Takes an order on, through the route written for it. Its answer is the
+   * same one the answer route gives with the word taken out, because the shape
+   * this route publishes has nowhere to put a word.
+   *
+   * That is thinner than it looks and is worth knowing rather than discovering.
+   * The word is not always `accepted`: an acceptance of an order already
+   * delivered is answered `already_delivered`, and a merchant who called this
+   * route rather than answering his handler does not hear it. He is not told
+   * anything untrue — a bare success is what this route promises — but he is
+   * told less, and widening the shape is a change to a published document
+   * rather than something to do here.
    */
   async acceptOrder(orderId: string, acceptance: Acceptance): Promise<OrderAcceptResponse | null> {
     const taken = await this.#takeOrderOn(orderId, acceptance);
