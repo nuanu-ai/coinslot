@@ -36,10 +36,20 @@ so the job insert can be made on the client already inside the store's
 transaction, and it commits or rolls back with the order. Read from the
 installed library rather than assumed.
 
-That covers the queue-shaped effects: the dispatch, the redelivery, the
-reminders, the merchant events. It does not cover the receipt, which is a row
-of ours in the same database — and that one is simpler still, because a write
-in the same transaction is all it needs.
+That covers the queue-shaped effects that carry something to a merchant: the
+dispatch, the redelivery, the merchant events. It does not cover the receipt,
+which is a row of ours in the same database — and that one is simpler still,
+because a write in the same transaction is all it needs.
+
+It does not cover the reminders either, and this decision said it did until
+the work implementing it showed why it should not. A reminder is armed before
+the order is written rather than after, so the direction that cannot be
+repaired — an order handed out with no clock running — is already impossible;
+and a reminder left behind for a transition that never happened is refused by
+the machine when it fires. Pulling it into the transaction would remove
+harmless litter at the cost of a longer hold on the row, which is the wrong
+trade. The sweep re-arms a clock that was never armed, which is the half that
+matters.
 
 **A periodic sweep derives what is still owed from the state itself**, as the
 answer to whatever slips anyway. It is not a second bookkeeping of intent; it
