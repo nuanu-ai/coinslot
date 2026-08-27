@@ -714,8 +714,14 @@ function tokensIn(request: Request): readonly string[] {
     // in: a browser sends cookies with the longest path first and, among equal
     // paths, the oldest first, so somebody able to plant cookies could push the
     // merchant's own past the cap and lock them out of the control that stops
-    // their selling. What is left is bounded by the size of a header, and each
-    // one is a lookup by primary key on a small table.
+    // their selling.
+    //
+    // What is left is bounded, and the bound was measured rather than assumed:
+    // Node stops reading request headers at 16 KB, one cookie of this name and
+    // shape is 62 bytes of that, so the worst a request can ask for is 264
+    // lookups by primary key on a small table. Somebody willing to send that
+    // could send 264 requests instead, so there is no amplification here worth
+    // buying a lockout to prevent.
     if (looksLikeSessionToken(value)) {
       found.add(value);
     }
