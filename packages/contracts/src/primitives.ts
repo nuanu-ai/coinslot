@@ -116,11 +116,11 @@ export const IdentifierSchema = z.string().regex(
  * Four fields because the merchant's handler is meant to write the sale down
  * without looking the card up: the sum and its currency, `at` — the moment this
  * price was fixed for this sale, and `as_of` — the moment the price behind it
- * was true. The two differ on purpose. Asked at 10:15, a merchant who answers
- * out of a list published at 10:00 sells at an `at` of 10:15 and an `as_of` of
- * 10:00; a card with no price check is quoted off its own snapshot the instant
- * the agent asks, so `at` is that instant and `as_of` is when the card's price
- * was published.
+ * was true. The two differ on purpose. A merchant whose answer lands at 10:15,
+ * out of a price list published at 10:00, sells at an `at` of 10:15 and an
+ * `as_of` of 10:00; a card with no price check is quoted off its own snapshot
+ * the instant the agent asks, so `at` is that instant and `as_of` is when the
+ * card's price was published.
  *
  * Neither of them is when the money moved, and a handler that read `at` as the
  * charge would file the sale under the wrong minute. On a card with a price

@@ -47,9 +47,9 @@ Leaving it out does not leave you off a clock. A default of ours applies
 instead, an order that runs past it is marked as needing a refund exactly as one
 past a number of your own would be, and the agent is shown no deadline at all —
 so the clock you are held to is one neither of you ever saw. That number is
-among the ones this page leaves open at the end, and until it is settled, naming
-your own is the only way either side knows what it is. What happens when a
-delivery deadline runs out is in [Time ran out](/orders).
+among the ones [not settled yet](#what-is-not-settled-yet), and until it is,
+naming your own is the only way either side knows what it is. What happens when
+a delivery deadline runs out is in [Time ran out](/orders).
 
 A synchronous card has no such field, because how long to wait for a synchronous
 answer is set by us, the same for every product. That one runs from the moment
