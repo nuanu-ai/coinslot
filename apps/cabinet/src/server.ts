@@ -776,10 +776,10 @@ function tokensIn(request: Request): readonly string[] {
     //
     // That number used to matter, because each identifier was a separate
     // question to the database: ten such requests bought two and a half
-    // thousand round trips through a pool of ten, which is nothing like the
-    // ten a request usually costs. `whose` now takes every identifier at once,
-    // so a request carrying the most a runtime will read is one query, and the
-    // bound is a fact about the runtime rather than a thing being relied on.
+    // thousand round trips through a pool of ten connections, where ten
+    // ordinary requests buy ten. `whose` now takes every identifier at once, so
+    // a request carrying the most a runtime will read is one query, and the
+    // bound is a fact about the runtime rather than something being relied on.
     if (looksLikeSessionToken(value)) {
       found.add(value);
     }
