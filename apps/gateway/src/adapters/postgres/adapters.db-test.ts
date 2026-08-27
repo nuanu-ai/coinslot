@@ -29,12 +29,12 @@
 import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Card } from "@coinslot/contracts";
+import type { Card, Receipt, WorkerEnvelope } from "@coinslot/contracts";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool } from "pg";
 import { PgBoss } from "pg-boss";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { Gateway } from "../../app/gateway.js";
 import type { Runtime } from "../../app/runtime.js";
 import type { OrderChange, Store } from "../../ports/store.js";
@@ -42,7 +42,7 @@ import { noDatabaseHere, readyDatabase, testDatabaseUrl } from "../../testing/da
 import { countedIds, testConfig, workUntilStopped } from "../../testing/harness.js";
 import { ScriptedFacilitator } from "../memory/facilitator.js";
 import { MemoryStore } from "../memory/store.js";
-import { PgBossQueue } from "../pgboss/queue.js";
+import { PgBossQueue, streamOf } from "../pgboss/queue.js";
 import { connect, PostgresStore } from "./store.js";
 
 /** The merchant everything in this suite belongs to, and a second one beside it. */
@@ -163,12 +163,16 @@ if (databaseUrl === null) {
       // nowhere. That is a thing to remember at the next pg-boss upgrade.
       await pool.query(`drop schema if exists ${QUEUE_SCHEMA} cascade`);
 
-      store = new PostgresStore(connected.db, countedIds());
       boss = new PgBoss({ connectionString: databaseUrl, schema: QUEUE_SCHEMA });
       queue = new PgBossQueue(boss, {
         pollIntervalMs: 50,
         reminders: { attempts: 3, retryDelayMs: 1_000 },
       });
+      // The queue is made first because the store writes through it: an
+      // envelope that must not be lost goes into the same transaction as the
+      // order that implies it (ADR-0013), which is the arrangement `main.ts`
+      // makes and the one the tests below are about.
+      store = new PostgresStore(connected.db, countedIds(), queue.envelopes());
       facilitator = new ScriptedFacilitator();
 
       const runtime: Runtime = {
@@ -773,6 +777,206 @@ if (databaseUrl === null) {
       expect(
         await store.withOrder(theirOrder, () => ({ result: "moved it" }), { merchantId: A }),
       ).toStrictEqual({ found: false });
+    });
+
+    /**
+     * The effects that must not be lost, against the database where the losing
+     * would happen (ADR-0013).
+     *
+     * In memory the promise is an ordering inside one process, which is a
+     * different problem from this one: here the envelope is a row pg-boss owns,
+     * written on our connection through the handle it takes in its send
+     * options, and whether it is really in our transaction is a fact about
+     * Postgres that no offline test can establish.
+     */
+    describe("an effect written where the state is", () => {
+      /** How many jobs with this envelope's identifier are on that stream. */
+      const jobsFor = async (merchantId: string, envelopeId: string): Promise<number> => {
+        const { rows } = await pool.query<{ n: string }>(
+          `select count(*) as n from ${QUEUE_SCHEMA}.job where name = $1 and data->>'id' = $2`,
+          [streamOf(merchantId), envelopeId],
+        );
+        return Number(rows[0]?.n ?? "0");
+      };
+
+      const anEnvelope = (id: string): WorkerEnvelope => ({
+        kind: "order_event",
+        id,
+        sent_at: "2026-08-26T12:00:00.000Z",
+        payload: {
+          type: "order.unpaid_after_confirmation",
+          order_id: "ord_written_with_the_state",
+          at: "2026-08-26T12:00:00.000Z",
+        },
+      });
+
+      const aReceipt = (orderId: string, itemId: string): Receipt => ({
+        id: `rcp_${randomUUID()}`,
+        order_id: orderId,
+        item_id: itemId,
+        price: {
+          amount: "80.00",
+          currency: "USD",
+          at: "2026-08-26T12:00:00.000Z",
+          as_of: "2026-08-26T12:00:00.000Z",
+        },
+        paid_at: "2026-08-26T12:00:00.000Z",
+        outcome: "delivered",
+        test: true,
+      });
+
+      /** An order of A's, priced and waiting to be paid for. */
+      const anOrder = async (name: string): Promise<{ id: string; itemId: string }> => {
+        const card = await store.publishCard(A, { ...syncCard, merchant_item_id: name }, now);
+        const offered = await gateway.beginPurchase(card.id, {});
+        if (offered.step !== "pay") throw new Error("no price was offered");
+        return { id: offered.order.order.id, itemId: card.id };
+      };
+
+      it("is not there at all when the write it went in with rolled back", async () => {
+        // The decisive one. The envelope goes into the transaction first and
+        // the receipt after it names a merchant that does not exist, so
+        // Postgres refuses the second write and takes the first down with it.
+        // A pg-boss insert that had gone out on the library's own connection
+        // would survive that, and the count below would be one.
+        const order = await anOrder("rolled-back");
+        const envelopeId = `env_${randomUUID()}`;
+
+        await expect(
+          store.withOrder(order.id, (found) => ({
+            save: { ...found, priceId: "the write that never happened" },
+            alongside: [
+              { kind: "envelope", merchantId: A, envelope: anEnvelope(envelopeId) },
+              { kind: "receipt", merchantId: "mch_nobody", receipt: aReceipt(order.id, "item") },
+            ],
+            result: null,
+          })),
+        ).rejects.toThrow();
+
+        expect(await jobsFor(A, envelopeId)).toBe(0);
+        expect(await store.receiptForOrder(order.id)).toBeNull();
+        expect((await store.orderById(order.id))?.priceId).not.toBe(
+          "the write that never happened",
+        );
+      });
+
+      it("is there with the order when the write went through", async () => {
+        // The negative control for the case above: the same three writes with
+        // nothing refusing, so that "no job" there means the rollback and not
+        // that this never writes one.
+        const order = await anOrder("went-through");
+        const envelopeId = `env_${randomUUID()}`;
+
+        await store.withOrder(order.id, (found) => ({
+          save: { ...found, priceId: "the write that happened" },
+          alongside: [
+            { kind: "envelope", merchantId: A, envelope: anEnvelope(envelopeId) },
+            { kind: "receipt", merchantId: A, receipt: aReceipt(order.id, order.itemId) },
+          ],
+          result: null,
+        }));
+
+        expect(await jobsFor(A, envelopeId)).toBe(1);
+        expect((await store.receiptForOrder(order.id))?.order_id).toBe(order.id);
+        expect((await store.orderById(order.id))?.priceId).toBe("the write that happened");
+      });
+    });
+
+    describe("the sweep of what an order is still owed", () => {
+      const asyncCard: Card = {
+        merchant_item_id: "swept-esim",
+        title: "A seven day eSIM",
+        description: "Seven days of data",
+        price: { amount: "12.00", currency: "USD" },
+        result: { activation_code: { type: "string" } },
+        fulfillment: "async",
+        fulfill_deadline_seconds: 3_600,
+      };
+
+      beforeEach(async () => {
+        // The sweep asks about every order in the gateway, so what the earlier
+        // tests in this file left behind would be swept too and the counts
+        // below would be reading their orders as well as this one's. Emptied
+        // here rather than in `beforeAll`, which runs once for the file.
+        await pool.query("truncate table receipts, orders");
+        // And the stream is drained, because the envelopes the earlier tests
+        // wrote are still on it and this one counts what arrives.
+        await queue.draw(A, 100, 0);
+      });
+
+      it("is a no-op on the second run once the first has been acted on", async () => {
+        // Run twice against a live database, which is the thing to prove rather
+        // than to promise. Two of the three arms are no-ops for a reason in the
+        // orders themselves: the receipt is there, so the order is no longer
+        // one without a receipt; the merchant has taken the order, so it is no
+        // longer sitting in paid.
+        const card = await store.publishCard(A, asyncCard, now);
+        const offered = await gateway.beginPurchase(card.id, {});
+        if (offered.step !== "pay") throw new Error("no price was offered");
+        const orderId = offered.order.order.id;
+
+        const paid = `swept-${randomUUID()}`;
+        await gateway.runner.presentVerifiedPayment(orderId, paid, paid, now);
+        expect((await store.orderById(orderId))?.order.state).toBe("paid");
+
+        // The envelope this sale wrote is drawn off the stream and thrown away.
+        // With the dispatch committing alongside the order there is no longer a
+        // way to make the gateway produce one without the other, so the state
+        // the sweep exists for has to be arranged.
+        expect(await queue.draw(A, 10, 2_000)).toHaveLength(1);
+
+        now += gateway.runtime.config.sweepDispatchGraceMs + 60_000;
+
+        const first = await gateway.runner.sweep();
+        expect(first.dispatched).toBe(1);
+        expect(first.refused).toBe(0);
+
+        // The merchant's worker takes the order, which is what the envelope was
+        // for and what makes the order no longer one that has reached nobody.
+        const worker = workUntilStopped(
+          { gateway, merchant: { id: A, name: "", key: "", keyId: "" } },
+          { onOrder: () => ({ accepted: {} }) },
+        );
+        await vi.waitFor(async () => {
+          expect((await store.orderById(orderId))?.order.state).toBe("dispatched");
+        });
+        await worker.stop();
+
+        const second = await gateway.runner.sweep();
+        expect(second).toStrictEqual({ dispatched: 0, receipted: 0, rearmed: 0, refused: 0 });
+      }, 30_000);
+
+      it("writes the receipt a delivered order has none of, once", async () => {
+        const card = await store.publishCard(A, { ...asyncCard, merchant_item_id: "swept-r" }, now);
+        const offered = await gateway.beginPurchase(card.id, {});
+        if (offered.step !== "pay") throw new Error("no price was offered");
+        const orderId = offered.order.order.id;
+
+        const paid = `swept-r-${randomUUID()}`;
+        await gateway.runner.presentVerifiedPayment(orderId, paid, paid, now);
+        const worker = workUntilStopped(
+          { gateway, merchant: { id: A, name: "", key: "", keyId: "" } },
+          { onOrder: () => ({ delivered: { activation_code: "CODE" } }) },
+        );
+        await vi.waitFor(async () => {
+          expect((await store.orderById(orderId))?.order.state).toBe("delivered");
+        });
+        await worker.stop();
+
+        // The receipt is taken out from under it, which is what a record from
+        // an older version of this code looks like from here.
+        await pool.query("delete from receipts where order_id = $1", [orderId]);
+        expect(await store.receiptForOrder(orderId)).toBeNull();
+
+        const first = await gateway.runner.sweep();
+        expect(first.receipted).toBe(1);
+        const written = await store.receiptForOrder(orderId);
+        expect(written?.outcome).toBe("delivered");
+
+        const second = await gateway.runner.sweep();
+        expect(second.receipted).toBe(0);
+        expect(await store.receiptForOrder(orderId)).toStrictEqual(written);
+      }, 30_000);
     });
   });
 }
