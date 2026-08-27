@@ -84,6 +84,59 @@ describe("when the time runs out", () => {
     expect(await harnessed.store.receiptForOrder(orderId)).toBeNull();
   });
 
+  it("does not tell a merchant a closed order still stands", async () => {
+    // Goods are weighed against the card before the machine sees the call, and
+    // that check does not ask whether the order is still alive. Its refusal
+    // said the order "still stands where it did" and marked itself worth
+    // calling again — literally true of a call that moved nothing, and read as
+    // "the sale is still yours". A merchant told that on an order whose
+    // deadline has passed goes and fixes his handler for a sale he has already
+    // lost, and finds out on the next call.
+    const harnessed = await started();
+    const orderId = await bought(harnessed, syncCard);
+
+    const settled = await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
+    if (settled.step !== "settled") throw new Error("the purchase did not settle");
+    expect(settled.order.order.state).toBe("expired");
+
+    // The card declares an access code; this handler sends a serial. Both
+    // things are true at once here — the goods are wrong and the order is
+    // over — and it is the second that decides what he can do next.
+    const refused = await harnessed.gateway.deliverOrder(harnessed.merchant.id, orderId, {
+      serial: "89310410106543789301",
+    });
+
+    if (refused?.ok !== false) throw new Error("goods were taken against a closed order");
+    expect(refused.error.code).toBe("delivery_does_not_match_card");
+    expect(refused.error.message).toContain("expired");
+    expect(refused.error.message).not.toContain("still stands where it did");
+    expect(refused.error.retryable).toBe(false);
+    // He is still told which fields were wrong: the order being over is the
+    // news, not a reason to stop naming what he sent.
+    expect(refused.error.message).toContain("serial");
+
+    // And still nothing was written against the order.
+    expect((await harnessed.store.orderById(orderId))?.delivery).toBeNull();
+  });
+
+  it("still says an open order stands where it did", async () => {
+    // The negative control for the sentence above. The clause is right on an
+    // order the merchant can still finish, and a fix that removed it from
+    // everything would take away the one thing that tells him his goods are
+    // still wanted.
+    const harnessed = await started({ DEFAULT_ASYNC_FULFILLMENT_MS: "5000" });
+    const orderId = await bought(harnessed, asyncCard);
+    await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
+
+    const refused = await harnessed.gateway.deliverOrder(harnessed.merchant.id, orderId, {
+      serial: "89310410106543789301",
+    });
+
+    if (refused?.ok !== false) throw new Error("goods the card never declared were taken");
+    expect(refused.error.message).toContain("still stands where it did");
+    expect(refused.error.retryable).toBe(true);
+  });
+
   it("marks an asynchronous order for a refund, because the money is already gone", async () => {
     // The other row of the same table, and the reason the two are different
     // words: here the charge went through at the purchase, so an ending that
