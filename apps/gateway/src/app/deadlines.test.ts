@@ -264,6 +264,41 @@ describe("when the time runs out", () => {
   });
 });
 
+describe("a card that names no delivery deadline", () => {
+  it("holds its merchant to ours, and shows the agent no deadline at all", async () => {
+    // The delivery deadline is optional on an asynchronous card, and this is
+    // what leaving it out costs. Our own number applies, and an order that runs
+    // past it is marked as needing a refund exactly as one past a number the
+    // merchant chose would be — while the card an agent reads carries no
+    // deadline for it to see. So the clock the merchant is held to was shown to
+    // neither of them, and the page has to say so rather than promise the agent
+    // a deadline that is not there.
+    const harnessed = await started();
+    const published = await harnessed.gateway.publishCard(harnessed.merchant.id, asyncCard);
+    if (!("ok" in published)) throw new Error("the card would not publish");
+    expect(asyncCard.fulfill_deadline_seconds).toBeUndefined();
+
+    const shown = (await harnessed.gateway.catalog()).items[0];
+    if (shown === undefined) throw new Error("the card did not reach the catalog");
+    expect(shown.fulfillment).toBe("async");
+    expect("fulfill_deadline_seconds" in shown).toBe(false);
+
+    const offered = await harnessed.gateway.beginPurchase(published.ok.id, {});
+    if (offered.step !== "pay") throw new Error("no price was offered");
+    const orderId = offered.order.order.id;
+    await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
+
+    await vi.waitFor(async () => expect((await state(harnessed, orderId))?.state).toBe("refund_due"), {
+      timeout: 2_000,
+      interval: 5,
+    });
+    expect((await state(harnessed, orderId))?.closure).toStrictEqual({
+      cause: "deadline_expired",
+      deadline: "async_fulfillment",
+    });
+  });
+});
+
 describe("when a delivery goes unanswered", () => {
   it("sends the order again, after the wait the machine asked for", async () => {
     // An exception in the handler, a dead process and a broken connection are
@@ -287,6 +322,45 @@ describe("when a delivery goes unanswered", () => {
 
     // Still open, still owed the goods, and never refused on our own account.
     expect((await state(harnessed, orderId))?.state).toBe("dispatched");
+  });
+
+  it("wraps each repeat in a new message, so only the order's identifier holds still", async () => {
+    // The mirror of the event that is never sent twice, and the reason the
+    // portal gives two rules rather than one for a subscription that carries
+    // both. An order does come again — and what does not come with it is the
+    // message it arrived in the first time: a redelivery is built fresh, with a
+    // new envelope identifier. A handler telling a repeat apart by that would
+    // read the second hand-over as a new sale and make the goods twice. The
+    // order's own identifier is what does not move, and it is what the portal
+    // tells a merchant to answer from.
+    const harnessed = await started({
+      HANDLER_ANSWER_MS: "10",
+      REDELIVERY_BASE_DELAY_MS: "10",
+      DEFAULT_ASYNC_FULFILLMENT_MS: "3000",
+    });
+    const orderId = await bought(harnessed, asyncCard);
+    await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
+
+    // A worker that draws its stream and answers nothing, keeping what it was
+    // handed rather than only how much of it there was.
+    const seen: { readonly message: string; readonly order: string }[] = [];
+    let running = true;
+    const drawing = (async () => {
+      while (running) {
+        const { envelopes } = await harnessed.gateway.poll(harnessed.merchant.id, 10, 20);
+        for (const envelope of envelopes) {
+          if (envelope.kind === "order") {
+            seen.push({ message: envelope.id, order: envelope.payload.id });
+          }
+        }
+      }
+    })();
+    await vi.waitFor(() => expect(seen.length).toBeGreaterThan(1), { timeout: 2_000, interval: 5 });
+    running = false;
+    await drawing;
+
+    expect(new Set(seen.map((each) => each.order))).toStrictEqual(new Set([orderId]));
+    expect(new Set(seen.map((each) => each.message)).size).toBe(seen.length);
   });
 
   it("stops repeating once the attempts are spent, and leaves the debt behind", async () => {

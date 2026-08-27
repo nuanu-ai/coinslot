@@ -1085,6 +1085,53 @@ describe("the price question", () => {
     expect(offered.order.order.quoteSource).toBe("merchant_answer");
   });
 
+  it("stamps the sale price when the price was struck, not when the money moved", async () => {
+    // The order carries a price so the handler can write the sale down without
+    // looking the card up, and `at` is the moment we fixed that price for this
+    // sale — here, the moment the merchant's answer came back. It is not the
+    // moment of payment: on a card with a price check the agent can spend as
+    // long as it likes deciding in between, and a handler that filed the sale
+    // under `at` as though it were the charge would have the two records
+    // disagree by exactly that thinking time. When the money moved is on the
+    // receipt, under its own name.
+    const harnessed = await started({ QUOTE_TTL_MS: "600000" });
+    const itemId = await published(harnessed, livePriced(asyncCard));
+
+    const worker = workUntilStopped(harnessed, {
+      onQuote: () => ({
+        available: true,
+        price: { amount: "14.00", currency: "USD" },
+        // The merchant answers out of a list published an hour before he was
+        // asked, which is what keeps `as_of` a third moment rather than a copy.
+        as_of: "2026-08-26T11:00:00.000Z",
+      }),
+    });
+    const struck = harnessed.now();
+    const offered = await harnessed.gateway.beginPurchase(itemId, {});
+    await worker.stop();
+    if (offered.step !== "pay") throw new Error("no price was offered");
+    const orderId = offered.order.order.id;
+
+    // The agent thinks it over for a minute and a half, and then pays.
+    harnessed.advance(90_000);
+    const paid = harnessed.now();
+    await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
+
+    const record = await harnessed.store.orderById(orderId);
+    if (record === null) throw new Error("the order went missing");
+    const document = orderDocumentOf(record);
+    expect(document.price.amount).toBe("14.00");
+    expect(document.price.at).toBe(asTimestamp(struck));
+    expect(document.price.as_of).toBe("2026-08-26T11:00:00.000Z");
+
+    await harnessed.gateway.deliverOrder(harnessed.merchant.id, orderId, {
+      activation_code: "A",
+    });
+    const receipt = await harnessed.store.receiptForOrder(orderId);
+    expect(receipt?.price.at).toBe(asTimestamp(struck));
+    expect(receipt?.paid_at).toBe(asTimestamp(paid));
+  });
+
   it("does not sell what the merchant says is gone", async () => {
     const harnessed = await started();
     const itemId = await published(harnessed, livePriced(syncCard));
@@ -1468,6 +1515,47 @@ describe("the worker's stream", () => {
     await harnessed.gateway.payPurchase(offered.order.order.id, "PAYMENT", "PAYMENT");
 
     expect((await parked).envelopes).toHaveLength(1);
+  });
+
+  it("hands an event over once, and never again if the batch it went in is lost", async () => {
+    // The portal tells a merchant two different rules for one subscription, and
+    // this is the half that costs money when it is read as the other one. An
+    // event is finished the moment it is handed into a batch: nothing answers
+    // it, nothing takes it back after a window, and a batch that never reached
+    // the process that asked for it takes the event with it. So the merchant is
+    // never told what it carried, and the thing it carried here is a debt to a
+    // buyer who has paid and has no goods.
+    //
+    // The second half is the recovery the page now points at: the debt is on
+    // the order, and the order is on the list of open ones whether the event
+    // arrived or not.
+    const harnessed = await started();
+    const itemId = await published(harnessed, asyncCard);
+    const offered = await harnessed.gateway.beginPurchase(itemId, {});
+    if (offered.step !== "pay") throw new Error("no price was offered");
+    const orderId = offered.order.order.id;
+    await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
+    await harnessed.gateway.refuseOrder(harnessed.merchant.id, orderId, {
+      code: "out_of_stock",
+      message: "the supplier has none",
+    });
+
+    // This batch stands for the poll response that was drawn and never
+    // arrived — it is answered by nobody, which is all an event ever gets.
+    const drawn = await harnessed.gateway.poll(harnessed.merchant.id, 10, 0);
+    expect(
+      drawn.envelopes.flatMap((each) => (each.kind === "order_event" ? [each.payload.type] : [])),
+    ).toStrictEqual(["order.refund_due"]);
+
+    harnessed.advance(60_000);
+    expect((await harnessed.gateway.poll(harnessed.merchant.id, 10, 50)).envelopes).toStrictEqual(
+      [],
+    );
+
+    // What the merchant can still find out for himself.
+    const owing = await harnessed.gateway.orders(harnessed.merchant.id, true);
+    expect(owing.map((held) => held.order.id)).toStrictEqual([orderId]);
+    expect(owing[0]?.order.state).toBe("refund_due");
   });
 
   it("never hands out more than the gateway's own batch, whatever is asked for", async () => {
