@@ -416,9 +416,14 @@ export interface Store {
   /**
    * One order by its identifier, whoever it belongs to.
    *
-   * Unscoped because two callers have no merchant to be scoped to: the payment
-   * route, which takes no key and is answered by the payment itself, and the
-   * gateway's own clocks, which act on an order rather than for somebody.
+   * Unscoped because its callers have no merchant to be scoped to: the payment
+   * route, which takes no key and is answered by the payment itself; the
+   * agent's read of what became of its own purchase, which is answered by the
+   * order's identifier (ADR-0011); and the gateway's own clocks, which act on
+   * an order rather than for somebody. What keeps the agent's read from
+   * becoming a way of reading across the merchants is the shape of the document
+   * it answers with, which names none of them.
+   *
    * A merchant's own read of one order is {@link merchantOrder}.
    */
   orderById(id: string): Promise<StoredOrder | null>;

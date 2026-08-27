@@ -13,6 +13,7 @@
  */
 
 import type {
+  AgentOrderStatus,
   OrderListQuery,
   OrderWithStatus,
   PurchaseRequest,
@@ -21,7 +22,7 @@ import type {
 } from "@coinslot/contracts";
 import { outcomeFor } from "@coinslot/core";
 import type { Gateway, PurchaseAttempt } from "../app/gateway.js";
-import { orderDocumentOf } from "../app/runner.js";
+import { orderDocumentOf, salePriceOf } from "../app/runner.js";
 import type { MountedRoute, RouteAnswer, RouteCall } from "./server.js";
 import { refusal } from "./server.js";
 import {
@@ -248,7 +249,68 @@ export function handlersFor(gateway: Gateway): Partial<Record<RouteName, Mounted
     },
 
     purchase_item: { serve: (call) => purchase(gateway, edge, call) },
+
+    get_order_status: { serve: (call) => orderStatus(gateway, call) },
   };
+}
+
+/**
+ * What became of one purchase, for the agent that made it.
+ *
+ * The one route here that is the agent's rather than the merchant's. Knowing
+ * the order's identifier is what stands in for a key (ADR-0011), so nothing
+ * about a merchant enters into it: the read is across the whole gateway,
+ * because the caller has no merchant to be scoped to and the order belongs to
+ * whichever merchant sold it.
+ *
+ * That makes the shape of the answer the whole of the protection, and it is
+ * built field by field rather than taken from the order and trimmed. The
+ * merchant's own document for this order carries their key for the product and
+ * the buyer's parameters back; assembled by subtraction, a field added to it
+ * later would arrive here too, and nobody would be told. Assembled by
+ * addition, the same field arrives nowhere until somebody writes it down.
+ *
+ * An identifier that names no order is answered in the words the merchant's
+ * own read of a stranger's order gets — there is no such order, and nothing
+ * about whether the string was ever one.
+ */
+async function orderStatus(
+  gateway: Gateway,
+  { params, response }: RouteCall,
+): Promise<RouteAnswer> {
+  const record = await gateway.orderById(params.order_id ?? "");
+  if (record === null) {
+    return written(response, NOT_FOUND, refusal("no_such_order", "there is no such order"));
+  }
+
+  const status = outcomeFor(record.order);
+  const document: AgentOrderStatus = {
+    order_id: record.order.id,
+    status,
+    // Null where nobody named a price rather than the card's own number: an
+    // order that closed before it was priced was never sold at anything, and
+    // standing the catalogue's figure in for it would be a claim about a sale
+    // that did not happen.
+    price: salePriceOf(record),
+    // The same word the merchant's receipt carries. Every other field here
+    // reads the same whether the charge was real or not, so a buyer with no
+    // way to ask would be holding what looks like proof of a payment.
+    test: record.order.test,
+    // The goods only once they are the buyer's, which is narrower than once
+    // the merchant handed them over. A synchronous delivery whose charge came
+    // back failed leaves goods on an order nothing was paid for; the purchase
+    // itself refuses to hand those over, and a door that answered with them
+    // anyway would be a way of collecting for free whatever a failed charge
+    // left behind. Where the charge failed outright a repeat purchase carries
+    // the payment home against the goods that already exist. Where it went
+    // silent instead, no repeat is taken either — the machine will not spend a
+    // second authorisation on a guess about the first — and the word this
+    // answers with is `in_progress`, because that is the truth of it: we are
+    // still waiting on the payment layer. That is the one case where goods
+    // exist, the buyer may have been charged, and nothing here hands them over.
+    delivered: status === "delivered" ? (record.delivery ?? null) : null,
+  };
+  return { status: OK, document };
 }
 
 /**
@@ -470,11 +532,15 @@ async function answerPurchase(
         throw new Error(`the order ${attempt.order.order.id} was offered for sale with no price`);
       }
       // The product this order is for, read from the order and not from the
-      // address the call came in on. Two calls reach this line: one that just
-      // opened an order against the product in the address, where the two are
-      // the same, and one that presented a payment naming an order — and an
-      // order's identifier travels, so nothing says that order was made
-      // against this address. The resource an agent is invited to pay for and
+      // address the call came in on.
+      //
+      // Every call that reaches this line today opened its own order a moment
+      // ago, against the product in the address, so the two agree — nobody has
+      // been able to construct one where they do not. The reading is off the
+      // order anyway, and the reason is what happens when they ever differ:
+      // an order's identifier travels, in a challenge and in a receipt, so a
+      // payment may name an order that was not made here, and the shape above
+      // has a branch for a payment naming an order. The resource an agent is invited to pay for and
       // the resource a catalog lists are one string, and it belongs to the
       // order rather than to whoever typed the URL.
       const offered = await gateway.paidResource(attempt.order.itemId);

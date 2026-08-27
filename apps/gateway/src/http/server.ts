@@ -11,10 +11,19 @@
  * Two consequences are deliberate and both are loud. A route in the table with
  * nothing to serve it stops the gateway from starting, so a call cannot be
  * agreed and quietly unimplemented. And a route whose door nobody has chosen is
- * never mounted at all, because the list this loop walks is the one the contract
- * calls mountable — leaving it out of the loop is what stops the agent's status
- * route, the only route under the merchant's prefix that is not the merchant's,
- * from being served to the whole world by accident.
+ * never mounted: the list this loop walks is the one the contract calls
+ * mountable, and the loop refuses such a route again on its own account, so a
+ * door nobody chose cannot be opened by editing a list.
+ *
+ * Which door a call is behind is read off `auth` and off nothing else — never
+ * off the address. That is the one rule this file has to keep, and the reason
+ * is one route: the agent's order status sits under `/v0/orders`, where every
+ * other route is the merchant's. A key check attached to that prefix would shut
+ * the only caller that route is for out of it, and nothing about the table
+ * would look wrong. So there is no path-scoped middleware here at all, and the
+ * function that resolves the door names every mode the contract has — adding
+ * one stops the build until somebody says which door it is, rather than
+ * defaulting it to open.
  *
  * What the table deliberately does not carry, this file supplies: the header the
  * merchant's key arrives in, and the status code each answer comes back under.
@@ -107,6 +116,15 @@ export function buildApp(
   });
 
   for (const [name, route] of routes) {
+    // The contract's own list already leaves these out, and that is one filter
+    // away from not doing so. Refusing them here as well puts the guard at the
+    // place the mistake would land, so a route whose door nobody has chosen
+    // cannot be served by handing it over by name.
+    if (route.auth === "undecided") {
+      throw new Error(
+        `the contract leaves ${name}'s door undecided, so this gateway will not serve it at ${route.method} ${route.path}`,
+      );
+    }
     const handler = handlers[name];
     if (handler === undefined) {
       throw new Error(
@@ -253,8 +271,15 @@ async function answer(
 const REFUSED = Symbol("the key on this call opens nothing");
 
 /**
- * Which merchant is behind this call: one of them, nobody at all on an open
- * route, or the refusal.
+ * Which merchant is behind this call: one of them, nobody at all on a route
+ * that takes no key, or the refusal.
+ *
+ * Every door the contract has is named below, and the last branch is why: a
+ * mode added to the contract and not answered here stops the build, naming the
+ * omission. Written as "is it the merchant's key, and otherwise nobody", the
+ * same addition would have quietly made the new route open, and the one route
+ * that already takes no key is the agent's own — under the merchant's prefix,
+ * where nobody would look for it.
  *
  * There is no comparison here and there is nothing to compare against — the key
  * presented is hashed and the digest looked up, and a key nobody was issued and
@@ -274,14 +299,33 @@ async function merchantBehind(
   request: Request,
   gateway: Gateway,
 ): Promise<string | null | typeof REFUSED> {
-  if (auth !== "merchant_key") {
-    return null;
+  switch (auth) {
+    case "merchant_key": {
+      const presented = bearerIn(request.header(MERCHANT_KEY_HEADER) ?? undefined);
+      if (presented === null) {
+        return REFUSED;
+      }
+      return (await gateway.merchantForKey(presented)) ?? REFUSED;
+    }
+
+    // Neither of these carries a key, and they are two different reasons for
+    // that rather than one. On an open route the payment stands in for
+    // authorisation, or there is nothing to authorise — the catalog. On the
+    // agent's own route the order's identifier does, so whatever arrives in the
+    // key's header is not read at all: a stranger's key neither opens this door
+    // nor closes it.
+    case "none":
+    case "order_id":
+      return null;
+
+    case "undecided":
+      throw new Error("a route whose door nobody has chosen reached the door");
+
+    default: {
+      const unanswered: never = auth;
+      throw new Error(`this gateway builds no door for ${String(unanswered)}`);
+    }
   }
-  const presented = bearerIn(request.header(MERCHANT_KEY_HEADER) ?? undefined);
-  if (presented === null) {
-    return REFUSED;
-  }
-  return (await gateway.merchantForKey(presented)) ?? REFUSED;
 }
 
 type Held = { ok: true; value: unknown } | { ok: false; problems: readonly unknown[] };

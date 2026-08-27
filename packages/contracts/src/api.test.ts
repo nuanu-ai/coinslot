@@ -535,7 +535,19 @@ describe("the purchase an agent sends", () => {
 });
 
 describe("the status an agent reads", () => {
-  const status = { order_id: "ord_7c1e05", status: "in_progress" };
+  const price = {
+    amount: "80.00",
+    currency: "USD",
+    at: "2026-08-26T12:00:00.000Z",
+    as_of: "2026-08-26T11:59:00.000Z",
+  };
+  const status = {
+    order_id: "ord_7c1e05",
+    status: "in_progress",
+    price,
+    delivered: null,
+    test: true,
+  };
 
   it("names the order it is about", () => {
     // A status with no order on it is a sentence an agent cannot file against
@@ -543,11 +555,45 @@ describe("the status an agent reads", () => {
     expect(AgentOrderStatusSchema.parse(status)).toStrictEqual(status);
   });
 
-  for (const field of ["order_id", "status"]) {
+  it("carries the goods once they are released", () => {
+    // The whole reason this document exists: an agent that bought something
+    // whose goods come later has to be able to come back for them, and what
+    // comes back is the delivery the merchant made.
+    const collected = { ...status, status: "delivered", delivered: { access_code: "SESAME" } };
+
+    expect(AgentOrderStatusSchema.parse(collected)).toStrictEqual(collected);
+  });
+
+  it("says an order was never priced rather than leaving the field out", () => {
+    // A purchase can close before anybody names a price for it — the product
+    // was gone, or the price question went unanswered. Null is that fact; an
+    // absent field is an oversight, and a reader cannot tell them apart.
+    expect(AgentOrderStatusSchema.parse({ ...status, price: null }).price).toBeNull();
+  });
+
+  for (const field of ["order_id", "status", "price", "delivered"]) {
     it(`refuses a status without ${field} and names it`, () => {
       expectMissingFieldRejected(AgentOrderStatusSchema, status, field);
     });
   }
+
+  it("carries nothing about the sale that is the merchant's rather than the buyer's", () => {
+    // The buyer is owed where their order stands, what it cost and what came
+    // of it. The merchant's own key for the product, their notes and the
+    // internals of the sale are theirs, and this document is read by whoever
+    // holds an order identifier.
+    for (const theirs of [
+      { merchant_item_id: "esim-30d" },
+      { merchant_id: "mrc_1" },
+      { item_id: "item_1" },
+      { params: { email: "buyer@example.com" } },
+    ]) {
+      expect(
+        AgentOrderStatusSchema.safeParse({ ...status, ...theirs }).success,
+        JSON.stringify(theirs),
+      ).toBe(false);
+    }
+  });
 
   it("admits in the exported document what one of its words folds together", () => {
     // The vocabulary defends folding three endings into "rejected" on the
@@ -821,7 +867,7 @@ describe("the route table", () => {
       "get_order_status",
       "GET",
       "/v0/orders/:order_id/status",
-      "undecided",
+      "order_id",
       "-",
       "-",
       "agent_order_status",
@@ -939,22 +985,46 @@ describe("the route table", () => {
 
   it("leaves a route whose door nobody has chosen out of what a gateway may serve", () => {
     // The natural way to mount a table is to ask whether a route needs the key
-    // and treat the rest as open, which serves the undecided route to the whole
+    // and treat the rest as open, which serves an undecided route to the whole
     // world. Mounting from this list makes the safe reading the easy one.
-    const mountable = mountableRoutes().map(([name]) => name);
-
-    expect(mountable).not.toContain("get_order_status");
-    expect(mountable).toHaveLength(Object.keys(API_ROUTES).length - 1);
-    for (const [, route] of mountableRoutes()) expect(route.auth).not.toBe("undecided");
+    //
+    // Every route in the table has a door today, so nothing is being dropped
+    // here and this reads as a property rather than as a subtraction. It is
+    // still the promise a gateway relies on, and the gateway keeps its own half
+    // of it: `buildApp` refuses to mount an undecided route whoever hands it
+    // over, so this list going wrong stops the process rather than opening a
+    // door.
+    for (const [name, route] of mountableRoutes()) expect(route.auth, name).not.toBe("undecided");
   });
 
-  it("says out loud that it does not know who may read an order's status", () => {
-    // Not `none`: a route open to everyone would let anyone read anyone's
-    // purchase. Not a scheme invented here either. "I do not know" and "I know
-    // there is no door" have to be different words, and this is the one route
-    // where the first is the true one.
-    expect(API_ROUTES.get_order_status.auth).toBe("undecided");
-    expect(API_ROUTES.get_order_status.description).toContain("open question");
+  it("names the door on the one route that is the agent's rather than the merchant's", () => {
+    // Not `merchant_key`: an agent has no key. Not `none` either — a route open
+    // to everyone with nothing to name a purchase would be no door at all.
+    // Knowing the order's identifier is what stands in for one (ADR-0011), and
+    // the word says which of the three it is so that a gateway mounting from
+    // this table cannot read it as either of the others.
+    expect(API_ROUTES.get_order_status.auth).toBe("order_id");
+    // And it is the only route behind that door. The word means "the caller
+    // named the order", which is a sentence about one path parameter — put on
+    // a route that takes no order, it would be a door with nothing to check.
+    for (const [name, route] of Object.entries(API_ROUTES) as [string, RouteDefinition][]) {
+      if (route.auth !== "order_id") continue;
+      expect(pathParamsOf(route.path), name).toContain("order_id");
+    }
+  });
+
+  it("warns whoever mounts the agent's route that it sits under the merchant's prefix", () => {
+    // The failure this sentence exists to stop: a key check attached to
+    // `/v0/orders` because every other route under it is the merchant's. The
+    // agent has no key, so that check turns the one route an agent can use into
+    // one it can never open, and nothing about the table would look wrong.
+    //
+    // This pins that the warning is there and not what it says — prose cannot
+    // be held to its meaning by a test. What holds the behaviour is in the
+    // gateway: every call in the table is made with no key, and the ones that
+    // are not the merchant's must not be turned away.
+    expect(API_ROUTES.get_order_status.description).toContain("/v0/orders");
+    expect(API_ROUTES.get_order_status.path.startsWith("/v0/orders/")).toBe(true);
   });
 
   it("warns that the paid route has to answer a challenge on any method", () => {

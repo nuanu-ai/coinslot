@@ -270,6 +270,51 @@ describe("loadConfig", () => {
     expect(of("https://coinslot.example/gateway/")).toBe("https://coinslot.example/gateway");
   });
 
+  it("refuses a base address that carries a question mark or a fragment", () => {
+    // Same operator and the same class of mistake as the trailing slash, and it
+    // cannot be quietly repaired the way a slash can: a path is joined onto
+    // this string, so a query or a fragment ends up in the middle of every
+    // resource address, which then answers nothing — and a discovery listing
+    // would be keyed on it. There is no reading of either that was meant, so
+    // this is a refusal at start-up where somebody is looking, and not a
+    // silent trim of something they typed on purpose.
+    const broken = (PUBLIC_BASE_URL: string) => () => loadConfig({ ...required, PUBLIC_BASE_URL });
+
+    expect(broken("https://coinslot.example/?utm=abc")).toThrowError(/PUBLIC_BASE_URL/);
+    expect(broken("https://coinslot.example?utm=abc")).toThrowError(/query/);
+    expect(broken("https://coinslot.example/#top")).toThrowError(/fragment/);
+    // And the ordinary ones still start.
+    expect(loadConfig({ ...required, PUBLIC_BASE_URL: "https://a.example/x" }).publicBaseUrl).toBe(
+      "https://a.example/x",
+    );
+  });
+
+  it("refuses the other spellings that make one product two addresses", () => {
+    // Everything here is a value that parses as a URL, is kept verbatim, and
+    // then goes into a payment challenge as the thing an agent is invited to
+    // pay for. A scheme spelled in capitals is the one with a measured cost:
+    // the validation endpoint this repository talks to answers 400 to anything
+    // that does not begin with a lower-case https, so a gateway configured that
+    // way is simply absent from a listing with nothing to say why. A space
+    // inside makes an address that answers nothing. A user name and password
+    // in front of the host would be published to every agent that asks a price.
+    const broken = (PUBLIC_BASE_URL: string) => () => loadConfig({ ...required, PUBLIC_BASE_URL });
+
+    expect(broken("HTTPS://coinslot.example")).toThrowError(/http:\/\/ or https:\/\//);
+    expect(broken("ftp://coinslot.example")).toThrowError(/http:\/\/ or https:\/\//);
+    expect(broken("https://user:secret@coinslot.example")).toThrowError(/name and password/);
+    expect(broken("https://coinslot.example/a b")).toThrowError(/space/);
+
+    // And the ordinary spellings still start, including a mount path.
+    for (const good of [
+      "http://localhost:3000",
+      "https://coinslot.example",
+      "https://coinslot.example/gateway",
+    ]) {
+      expect(loadConfig({ ...required, PUBLIC_BASE_URL: good }).publicBaseUrl, good).toBe(good);
+    }
+  });
+
   it("names both arithmetic problems at once when both are wrong", () => {
     const broken = () =>
       loadConfig({
