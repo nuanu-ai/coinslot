@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Coinslot gateway \u2014 the 402 edge, the order queue, receipts",
+  "description": "Coinslot gateway — the 402 edge, the order queue, receipts",
   "exports": {
     ".": "./src/index.ts",
     "./testing": "./src/testing/harness.ts",
@@ -21,6 +21,7 @@
     "@coinslot/core": "workspace:*",
     "@x402/core": "2.23.0",
     "@x402/evm": "2.23.0",
+    "@x402/extensions": "2.23.0",
     "drizzle-orm": "0.45.2",
     "express": "5.2.1",
     "pg": "8.23.0",

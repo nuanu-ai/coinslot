@@ -170,3 +170,60 @@ describe("disabling a key", () => {
     expect(await aTerminal().run("disable")).toBe(2);
   });
 });
+
+describe("the name a merchant is listed under", () => {
+  it("sets it and says what it now is", async () => {
+    const terminal = aTerminal();
+    await terminal.run("add", "Someone's shop");
+    const [made] = await terminal.store.merchants();
+
+    const code = await terminal.run("listed-as", made?.id ?? "", "Someone's shop");
+
+    expect(code).toBe(0);
+    expect((await terminal.store.merchantById(made?.id ?? ""))?.serviceName).toBe("Someone's shop");
+    expect(terminal.text()).toContain("Someone's shop");
+  });
+
+  it("refuses a name the catalog would cut down, and says why", async () => {
+    // The whole point of holding it here: the catalog drops what it cannot
+    // render and tells nobody, so a merchant would trade under a word they did
+    // not choose and never find out.
+    const terminal = aTerminal();
+    await terminal.run("add", "A merchant");
+    const [made] = await terminal.store.merchants();
+
+    const code = await terminal.run("listed-as", made?.id ?? "", "Кафе");
+
+    expect(code).toBe(1);
+    expect(terminal.text()).toMatch(/ASCII/i);
+    expect((await terminal.store.merchantById(made?.id ?? ""))?.serviceName).toBeNull();
+  });
+
+  it("takes it away when nothing is named", async () => {
+    const terminal = aTerminal();
+    await terminal.run("add", "A merchant");
+    const [made] = await terminal.store.merchants();
+    await terminal.run("listed-as", made?.id ?? "", "Freeland");
+
+    const code = await terminal.run("listed-as", made?.id ?? "", "--none");
+
+    expect(code).toBe(0);
+    expect((await terminal.store.merchantById(made?.id ?? ""))?.serviceName).toBeNull();
+  });
+
+  it("says there is no such merchant rather than writing a row for one", async () => {
+    const terminal = aTerminal();
+
+    const code = await terminal.run("listed-as", "mch_nobody", "Freeland");
+
+    expect(code).toBe(1);
+    expect(terminal.text()).toContain("mch_nobody");
+  });
+
+  it("asks for a merchant rather than guessing at one", async () => {
+    const terminal = aTerminal();
+
+    expect(await terminal.run("listed-as")).toBe(2);
+    expect(terminal.text()).toContain("listed-as");
+  });
+});

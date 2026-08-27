@@ -40,11 +40,20 @@ import type { StoredOrder } from "../../ports/store.js";
  * There is no address, no password and no record of who signed them up. That is
  * registration, which is the decision after this one (ADR-0010), and a column
  * nobody fills in is a column that lies. The name is what a person reads at a
- * terminal; nothing on the wire carries it.
+ * terminal; nothing on the wire carries it. What does go out is the separate
+ * listing name beside it, and only where somebody set one.
  */
 export const merchants = pgTable("merchants", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
+  /**
+   * The name this seller is listed under in a discovery catalog, where anybody
+   * has named one. Null is the ordinary state and it is never filled in from
+   * the name above: that one is for a person at a terminal and may be written
+   * in any alphabet, and this one goes out to strangers through a catalog that
+   * carries printable ASCII and cuts anything else without a word.
+   */
+  serviceName: text("service_name"),
   /** The order machine's own word: open, paused or departed. */
   selling: text("selling").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull(),

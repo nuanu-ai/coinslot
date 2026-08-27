@@ -48,6 +48,8 @@ interface MerchantRow {
   readonly name: string;
   readonly createdAt: number;
   selling: MerchantSelling;
+  /** The name this seller is listed under in a catalog, where one is named. */
+  serviceName: string | null;
 }
 
 export class MemoryStore implements Store {
@@ -91,6 +93,7 @@ export class MemoryStore implements Store {
       name: merchant.name,
       createdAt: at,
       selling: "open",
+      serviceName: null,
     };
     this.#merchants.set(merchant.id, row);
     return storedMerchantOf(row);
@@ -103,6 +106,19 @@ export class MemoryStore implements Store {
 
   async merchants(): Promise<readonly StoredMerchant[]> {
     return [...this.#merchants.values()].map(storedMerchantOf);
+  }
+
+  async setServiceName(
+    id: string,
+    serviceName: string | null,
+    _at: number,
+  ): Promise<StoredMerchant | null> {
+    const row = this.#merchants.get(id);
+    if (row === undefined) {
+      return null;
+    }
+    row.serviceName = serviceName;
+    return storedMerchantOf(row);
   }
 
   async addKey(
@@ -379,5 +395,11 @@ function catalogKey(merchantId: string, merchantItemId: string): string {
 }
 
 function storedMerchantOf(row: MerchantRow): StoredMerchant {
-  return { id: row.id, name: row.name, selling: row.selling, createdAt: row.createdAt };
+  return {
+    id: row.id,
+    name: row.name,
+    serviceName: row.serviceName,
+    selling: row.selling,
+    createdAt: row.createdAt,
+  };
 }

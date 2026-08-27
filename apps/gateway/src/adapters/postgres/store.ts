@@ -81,6 +81,19 @@ export class PostgresStore implements Store {
     return rows.map(storedMerchantOf);
   }
 
+  async setServiceName(
+    id: string,
+    serviceName: string | null,
+    at: number,
+  ): Promise<StoredMerchant | null> {
+    const [row] = await this.#db
+      .update(merchants)
+      .set({ serviceName, updatedAt: new Date(at) })
+      .where(eq(merchants.id, id))
+      .returning();
+    return row === undefined ? null : storedMerchantOf(row);
+  }
+
   async addKey(
     key: {
       readonly id: string;
@@ -439,12 +452,14 @@ function storedCardOf(row: {
 function storedMerchantOf(row: {
   id: string;
   name: string;
+  serviceName: string | null;
   selling: string;
   createdAt: Date;
 }): StoredMerchant {
   return {
     id: row.id,
     name: row.name,
+    serviceName: row.serviceName,
     selling: sellingWordOf(row.selling),
     createdAt: row.createdAt.getTime(),
   };
