@@ -32,6 +32,12 @@ type Waiter = () => void;
 /** One merchant's stream: what is waiting on it and who is waiting for it. */
 interface Stream {
   readonly ready: WorkerEnvelope[];
+  /**
+   * Published with a delay and not arrived yet. It is on the stream in every
+   * sense that matters to somebody asking whether an order is still waiting to
+   * be handed over, and out of reach of a worker until its moment.
+   */
+  readonly held: Set<WorkerEnvelope>;
   readonly waiters: Set<Waiter>;
 }
 
@@ -62,11 +68,45 @@ export class MemoryQueue implements Queue {
   }
 
   async publish(merchantId: string, envelope: WorkerEnvelope, afterMs?: number): Promise<void> {
-    if (afterMs === undefined || afterMs <= 0) {
-      this.#arrive(merchantId, envelope);
-      return;
-    }
-    this.#later(() => this.#arrive(merchantId, envelope), afterMs);
+    (await this.stage(merchantId, envelope, afterMs))();
+  }
+
+  /**
+   * Takes an envelope for a stream without putting it there, and hands back the
+   * call that puts it there.
+   *
+   * It exists for one caller: the store, writing an envelope that has to land
+   * with the order implying it (ADR-0013). In a deployment those two are one
+   * transaction and nothing sees the envelope until it commits. Here there is
+   * no transaction, and the two halves are what stands in for one — anything
+   * that would refuse refuses in this call, before the order is written, and
+   * the envelope becomes visible in the call this hands back, after it. Without
+   * the split, a worker could be handed an envelope for a change to an order
+   * that the store had not written down yet.
+   */
+  async stage(merchantId: string, envelope: WorkerEnvelope, afterMs?: number): Promise<() => void> {
+    const stream = this.#streamOf(merchantId);
+    return () => {
+      if (afterMs === undefined || afterMs <= 0) {
+        this.#arrive(merchantId, envelope);
+        return;
+      }
+      stream.held.add(envelope);
+      this.#later(() => {
+        stream.held.delete(envelope);
+        this.#arrive(merchantId, envelope);
+      }, afterMs);
+    };
+  }
+
+  async holdsOrder(merchantId: string, orderId: string): Promise<boolean> {
+    const stream = this.#streamOf(merchantId);
+    // Both what a worker could draw now and what is waiting out a delay. An
+    // envelope somebody has already drawn is in neither, which is the same
+    // answer the real queue gives and for the same reason.
+    return [...stream.ready, ...stream.held].some(
+      (envelope) => envelope.kind === "order" && envelope.payload.id === orderId,
+    );
   }
 
   async draw(merchantId: string, max: number, waitMs: number): Promise<readonly DrawnEnvelope[]> {
@@ -159,7 +199,7 @@ export class MemoryQueue implements Queue {
     if (found !== undefined) {
       return found;
     }
-    const made: Stream = { ready: [], waiters: new Set() };
+    const made: Stream = { ready: [], held: new Set(), waiters: new Set() };
     this.#streams.set(merchantId, made);
     return made;
   }

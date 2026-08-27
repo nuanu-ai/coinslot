@@ -38,7 +38,7 @@ async function aGatewayOnAPort() {
   const store = new MemoryStore(
     ids,
     () => Date.now(),
-    (merchantId, envelope, afterMs) => queue.publish(merchantId, envelope, afterMs),
+    (merchantId, envelope, afterMs) => queue.stage(merchantId, envelope, afterMs),
   );
   const facilitator = new ScriptedFacilitator();
 

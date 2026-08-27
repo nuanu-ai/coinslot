@@ -180,9 +180,17 @@ export interface PaymentWord {
  * has never known about one.
  *
  * Only two things are on this list and adding a third is a decision rather than
- * a detail. Everything here also has to be something its receiver already
- * tolerates arriving twice, because the sweep re-drives exactly these; an
- * effect that does not tolerate a repeat cannot be one of them.
+ * a detail.
+ *
+ * What is on it is not the same as what the sweep may write again afterwards,
+ * and running the two together is the mistake worth naming here. Landing with
+ * the state is about an effect that cannot be re-driven once the order has
+ * moved past it. Being re-drivable is about what its receiver was promised: a
+ * merchant's handler is told the same order can reach it twice, and a receipt
+ * is one row keyed by its order, but a merchant event is delivered at most once
+ * and must never be sent a second time. All three are written here; only the
+ * first two have an arm in the sweep, and that is a decision rather than an
+ * omission.
  */
 export type WithTheOrder =
   | {

@@ -64,6 +64,7 @@ const SCHEMAS = [
   "pgboss_every_day",
   "pgboss_queue_names",
   "pgboss_queue_settings",
+  "pgboss_holds_order",
 ] as const;
 
 if (databaseUrl === null) {
@@ -447,6 +448,72 @@ if (databaseUrl === null) {
       const carried = await drawer.queue.draw(A, 10, 20_000);
       expect(carried.map((delivery) => delivery.envelope.id)).toStrictEqual(["env_immediate_1"]);
       await drawer.queue.finish(A, carried[0]?.handle ?? "");
+    }, 60_000);
+
+    it("says whether a stream is still holding an order, and only about orders", async () => {
+      // The sweep asks this before it sends an order out again, and what it
+      // buys is the order's own deliveries: the machine counts every hand-over,
+      // the count is what its attempt cap reads, and the closure at that cap is
+      // a refund. A wrong answer here costs a merchant who was merely between
+      // polls one of his retries.
+      //
+      // It cannot be checked offline, because the whole of it is a filter the
+      // library builds — containment against the job's document — and an
+      // in-memory queue agreeing with itself proves nothing about that.
+      const { queue } = await labQueue("pgboss_holds_order", { [STREAM]: {} });
+      const orderEnvelope = (id: string, orderId: string): WorkerEnvelope => ({
+        kind: "order",
+        id,
+        sent_at: "2026-08-26T12:00:00.000Z",
+        payload: {
+          id: orderId,
+          merchant_item_id: "sku-1",
+          params: {},
+          price: {
+            amount: "12.00",
+            currency: "USD",
+            at: "2026-08-26T12:00:00.000Z",
+            as_of: "2026-08-26T12:00:00.000Z",
+          },
+          test: true,
+        },
+      });
+
+      // Nothing there at all.
+      expect(await queue.holdsOrder(A, "ord_held")).toBe(false);
+
+      await queue.publish(A, orderEnvelope("env_held_1", "ord_held"));
+      expect(await queue.holdsOrder(A, "ord_held")).toBe(true);
+      // And it is about this order rather than about the stream having
+      // anything on it.
+      expect(await queue.holdsOrder(A, "ord_somebody_else")).toBe(false);
+
+      // A redelivery waiting out its delay counts: it is going to be handed
+      // over, so an order with one is not an order that has reached nobody.
+      await queue.publish(A, orderEnvelope("env_held_2", "ord_delayed_hold"), 60_000);
+      expect(await queue.holdsOrder(A, "ord_delayed_hold")).toBe(true);
+
+      // Drawn is not held. This is the gap the port names in its own words: an
+      // envelope in a worker's hands looks from here exactly like one that was
+      // never written, which is why the sweep has patience as well as this.
+      const drawn = await queue.draw(A, 10, 2_000);
+      expect(drawn.map((delivery) => delivery.envelope.id)).toStrictEqual(["env_held_1"]);
+      expect(await queue.holdsOrder(A, "ord_held")).toBe(false);
+
+      // And an event about an order is not an order. Nothing ever re-sends an
+      // event, so nothing should ever be told an order is still in hand
+      // because a message about it is.
+      await queue.publish(A, {
+        kind: "order_event",
+        id: "env_held_3",
+        sent_at: "2026-08-26T12:00:00.000Z",
+        payload: {
+          type: "order.unpaid_after_confirmation",
+          order_id: "ord_held",
+          at: "2026-08-26T12:00:00.000Z",
+        },
+      });
+      expect(await queue.holdsOrder(A, "ord_held")).toBe(false);
     }, 60_000);
 
     it("takes on work to run every day, runs it, and does not stack up schedules", async () => {

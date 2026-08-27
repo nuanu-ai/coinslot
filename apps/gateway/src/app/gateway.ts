@@ -171,6 +171,14 @@ export class Gateway {
     // same reasons (ADR-0013). It asks the orders themselves what is missing
     // rather than keeping a second record of what was meant to happen, and it
     // is written to be safe run twice, because it will be.
+    //
+    // Twice at once, in fact, and not only one after another. This job runs on
+    // pg-boss's defaults, so a run that outlasts the library's own window is
+    // taken back and handed out again while the first one is still going. That
+    // is survivable for the same reason a second run is: each arm asks the
+    // world what is missing at the moment it acts, so the one that gets there
+    // second finds the receipt written, the order closed or the envelope back
+    // on the stream, and does nothing.
     await this.runtime.queue.everyDay(SWEEP_EFFECTS, () => this.runner.sweep());
   }
 

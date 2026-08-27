@@ -225,3 +225,76 @@ describe("MemoryQueue reminders", () => {
     expect(await parked).toStrictEqual([]);
   });
 });
+
+describe("MemoryQueue holding an order", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const orderEnvelope = (id: string, orderId: string): WorkerEnvelope => ({
+    kind: "order",
+    id,
+    sent_at: "2026-08-26T00:00:00.000Z",
+    payload: {
+      id: orderId,
+      merchant_item_id: "sku-1",
+      params: {},
+      price: {
+        amount: "12.00",
+        currency: "USD",
+        at: "2026-08-26T00:00:00.000Z",
+        as_of: "2026-08-26T00:00:00.000Z",
+      },
+      test: true,
+    },
+  });
+
+  it("counts an envelope waiting out a delay, which is one that will be handed over", async () => {
+    // The sweep sends a paid order out again only when the stream is holding
+    // nothing for it, because the machine counts every hand-over and the count
+    // is what its attempt cap reads. A delayed envelope is going to arrive —
+    // the poll puts one back with a wait when it meets a charge in flight, and
+    // the order is in `paid` while that happens — so an order with one is not
+    // an order that has reached nobody. Missed, the sweep would spend one of
+    // that order's deliveries on a hand-over already on its way.
+    const queue = await started();
+    await queue.publish(A, orderEnvelope("env_1", "ord_waiting"), 60_000);
+
+    expect(await queue.holdsOrder(A, "ord_waiting")).toBe(true);
+
+    // And it is still true once it has landed and is there to be drawn.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(await queue.holdsOrder(A, "ord_waiting")).toBe(true);
+  });
+
+  it("stops counting one that a worker has drawn, and never counts an event", async () => {
+    // Two halves of the same honesty. A drawn envelope is in nobody's stream
+    // and this says so, which is why the sweep has patience as well as this
+    // question; and an event about an order is not the order, because nothing
+    // ever re-sends an event and nothing should be told otherwise.
+    const queue = await started();
+    await queue.publish(A, orderEnvelope("env_1", "ord_1"));
+    expect(await queue.holdsOrder(A, "ord_1")).toBe(true);
+
+    await queue.draw(A, 10, 0);
+    expect(await queue.holdsOrder(A, "ord_1")).toBe(false);
+
+    // `envelope` above is an order event carrying this very order.
+    await queue.publish(A, envelope("env_2"));
+    expect(await queue.holdsOrder(A, "ord_1")).toBe(false);
+  });
+
+  it("answers about one merchant's stream and not another's", async () => {
+    // The streams are separate things, and an order on A's stream is not one B
+    // is holding. Answered across the two, a sweep would leave an order alone
+    // because somebody else's stream had something on it.
+    const queue = await started();
+    await queue.publish(A, orderEnvelope("env_1", "ord_1"));
+
+    expect(await queue.holdsOrder(A, "ord_1")).toBe(true);
+    expect(await queue.holdsOrder(B, "ord_1")).toBe(false);
+  });
+});

@@ -186,9 +186,16 @@ export class PgBossQueue implements Queue {
    * Making the merchant's stream is not part of the transaction and must not
    * be: it is `create_queue` ending in `on conflict do nothing`, it goes on the
    * library's own connection, and a stream left behind by a transaction that
-   * rolled back is a row nobody minds. It costs one round trip per merchant per
-   * process, and the trip is inside the caller's hold on the order — worth
-   * knowing for a first sale, invisible for every one after it.
+   * rolled back is a row nobody minds.
+   *
+   * What it costs is worth naming, because it is more than a round trip. The
+   * library wraps that statement in an advisory lock whose key is the schema
+   * and the word "create-queue" — one key for every queue rather than one per
+   * name — so two merchants making their first stream at the same moment wait
+   * for each other, and they do it while each holds an order row. It is a
+   * queue rather than a hang: the lock is held for pg-boss's own short
+   * transaction, and `#made` means one process asks once per merchant. A first
+   * sale pays for it and no later one does.
    */
   async publishWithin(
     tx: DrizzleTransactionLike,
@@ -255,6 +262,26 @@ export class PgBossQueue implements Queue {
       }
     }
     return [];
+  }
+
+  async holdsOrder(merchantId: string, orderId: string): Promise<boolean> {
+    const stream = await this.#stream(merchantId);
+    // `queued` is the library's word for a job that has not been handed to
+    // anybody: created or waiting on a retry, which takes in a redelivery
+    // sitting out its delay. A job somebody has drawn is `active` and is not
+    // counted here, and that is the honest answer rather than a gap — an
+    // envelope in a worker's hands is exactly what this cannot tell from one
+    // that was never written, and the sweep covers that with patience instead.
+    //
+    // The match is on what the envelope carries rather than on its identifier,
+    // because the caller knows the order and not which envelope was written for
+    // it. Containment on the document is the library's own filter, so the
+    // shape below is the shape a worker reads.
+    const held = await this.#boss.findJobs(stream, {
+      data: { kind: "order", payload: { id: orderId } },
+      queued: true,
+    });
+    return held.length > 0;
   }
 
   async finish(merchantId: string, handle: string): Promise<void> {

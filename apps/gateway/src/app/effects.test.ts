@@ -12,15 +12,19 @@
  * checked is that the order did not move without it. That is the same fact from
  * the other side — either both landed or neither did.
  *
- * The second is that the sweep is safe to run twice, because it will be. Two of
- * its three arms are no-ops on a second run and are checked to be exactly that:
- * the receipt it wrote is the receipt that is still there, and an order its
- * reminder closed is no longer open. The third arm — the envelope for an order
- * that is paid and has reached nobody — is not a no-op when the first envelope
- * still has not been picked up, and it is not pretended to be. What is checked
- * for that one is the thing that actually matters: after the merchant's worker
- * has turned, an order swept twice ends exactly where an order swept once ends,
- * with one delivery kept and one receipt.
+ * The second is that the sweep is safe to run twice, because it will be, and
+ * every one of its three arms is checked to do nothing at all on a second run.
+ * Each is a no-op for a reason that is in the world rather than in a memory of
+ * having run: the receipt it wrote is still there, the order its reminder
+ * closed is no longer open, and the envelope it put on the stream is still
+ * waiting on it.
+ *
+ * That last one is checked harder than the other two, because the cost of
+ * getting it wrong lands on the order rather than on the merchant. A second
+ * envelope is ordinary on the wire and the handler is told to expect one; what
+ * it is not is free, because the machine counts every hand-over and the count
+ * is what its attempt cap reads. So the tests here follow the count as well as
+ * the stream.
  */
 
 import type { Card } from "@coinslot/contracts";
@@ -92,7 +96,7 @@ describe("an effect that could not be written down", () => {
     const harnessed = await started();
     const orderId = await quoted(harnessed, asyncCard);
 
-    harnessed.queue.publish = async () => {
+    harnessed.queue.stage = async () => {
       throw new Error("the queue would not take the envelope");
     };
 
@@ -235,10 +239,40 @@ describe("the sweep of what an order is still owed", () => {
     expect(sent?.kind === "order" ? sent.payload.id : null).toBe(orderId);
   });
 
-  it("leaves alone an order that has only just been paid for", async () => {
-    // Every sale is in `paid` for a while — from the moment the money is in
-    // until a worker draws its envelope — and a sweep with no patience would
-    // hand a duplicate to every merchant who happened to be between polls.
+  it("leaves alone an order whose envelope is still waiting to be drawn", async () => {
+    // The one that costs the order rather than the merchant. A second envelope
+    // is ordinary on the wire, and it is not ordinary for the order: when the
+    // worker draws both, each hand-over is counted, and the counter is what the
+    // attempt cap reads. A merchant who was merely between polls would come
+    // back to an order that had already spent two of its deliveries without
+    // ever having failed one.
+    const harnessed = await started();
+    const orderId = await quoted(harnessed, asyncCard);
+    await harnessed.gateway.runner.presentVerifiedPayment(
+      orderId,
+      "alice",
+      "PAY-A",
+      harnessed.now(),
+    );
+
+    // Long past any patience, and the envelope is still sitting on the stream
+    // where the sale put it.
+    harnessed.advance(harnessed.runtime.config.sweepDispatchGraceMs * 10);
+    expect((await sweep(harnessed)).dispatched).toBe(0);
+
+    // The merchant comes back and takes what is there: one hand-over, and the
+    // order still has every delivery the policy allows it.
+    await workOnce(harnessed, { onOrder: () => ({ accepted: {} }) }, 0);
+    const after = await harnessed.store.orderById(orderId);
+    expect(after?.order.state).toBe("dispatched");
+    expect(after?.order.dispatch.attempts).toBe(1);
+  });
+
+  it("leaves alone an order whose envelope is in a worker's hands", async () => {
+    // The gap the queue cannot answer for. A drawn envelope is not waiting on
+    // the stream any more, and the worker holding it may simply be working
+    // through a batch. The patience is what covers that, and it is the whole of
+    // what the patience is still for.
     const harnessed = await started();
     const orderId = await quoted(harnessed, asyncCard);
     await harnessed.gateway.runner.presentVerifiedPayment(
@@ -248,11 +282,48 @@ describe("the sweep of what an order is still owed", () => {
       harnessed.now(),
     );
     expect(await harnessed.queue.draw(harnessed.merchant.id, 10, 0)).toHaveLength(1);
+    expect((await harnessed.store.orderById(orderId))?.order.state).toBe("paid");
 
-    // Just inside the grace, which is the whole difference from the case above.
     harnessed.advance(harnessed.runtime.config.sweepDispatchGraceMs - 1_000);
-    await sweep(harnessed);
 
+    expect((await sweep(harnessed)).dispatched).toBe(0);
+    expect(await harnessed.queue.draw(harnessed.merchant.id, 10, 0)).toStrictEqual([]);
+  });
+
+  it("never sends a merchant event a second time", async () => {
+    // An order is delivered at least once and an event at most once — the
+    // contract says so in its own words, and the difference is not decoration.
+    // A merchant's handler is told to expect the same order twice; nothing tells
+    // it to expect the same event twice, and a debt announced twice is a second
+    // refund somebody may act on. So the sweep has no arm for events, and this
+    // is what says so out loud.
+    const harnessed = await started();
+    const orderId = await quoted(harnessed, asyncCard);
+    await harnessed.gateway.runner.presentVerifiedPayment(
+      orderId,
+      "alice",
+      "PAY-A",
+      harnessed.now(),
+    );
+
+    // The merchant never fulfils it and his deadline runs out, so the money
+    // that came in is owed back and he is told once.
+    harnessed.advance(harnessed.runtime.config.deadlines.defaultAsyncFulfillmentMs + 1_000);
+    await harnessed.gateway.runner.apply(orderId, {
+      kind: "deadline_expired",
+      at: harnessed.now(),
+      deadline: "async_fulfillment",
+    });
+    expect((await harnessed.store.orderById(orderId))?.order.state).toBe("refund_due");
+
+    // Everything said so far is drawn off and answered, the way a worker that
+    // was running would have done.
+    const said = await harnessed.queue.draw(harnessed.merchant.id, 10, 0);
+    expect(said.map((delivery) => delivery.envelope.kind)).toContain("order_event");
+
+    // From here nothing may put that debt on the stream again.
+    await sweep(harnessed);
+    await sweep(harnessed);
     expect(await harnessed.queue.draw(harnessed.merchant.id, 10, 0)).toStrictEqual([]);
   });
 
@@ -271,38 +342,34 @@ describe("the sweep of what an order is still owed", () => {
     expect(await harnessed.queue.draw(harnessed.merchant.id, 10, 0)).toStrictEqual([]);
   });
 
-  it("leaves an order swept twice where an order swept once ends up", async () => {
-    // With nobody drawing anything in between, the second run does put a second
-    // envelope on the stream: from where the sweep stands the first one reached
-    // no one, and that is the case it exists for. What must hold is the ending
-    // — one delivery kept, one receipt, and a merchant asked twice for an order
-    // his handler is already told to expect twice.
+  it("does nothing at all on the second run, with nobody drawing in between", async () => {
+    // The envelope the first run put there is still waiting, and an order whose
+    // envelope is waiting is not an order that has reached nobody. So the second
+    // run has nothing to say about it — literally nothing, not a harmless
+    // repeat — and the merchant who finally polls is handed the order once.
     const harnessed = await started();
     const orderId = await paidWithNothingOnTheStream(harnessed);
 
-    await sweep(harnessed);
-    await sweep(harnessed);
+    expect((await sweep(harnessed)).dispatched).toBe(1);
+    expect(await sweep(harnessed)).toStrictEqual({
+      dispatched: 0,
+      receipted: 0,
+      rearmed: 0,
+      refused: 0,
+    });
 
-    // Both envelopes are answered, the way a merchant's handler answers a
-    // repeat: with goods of its own, made a second time.
-    let made = 0;
     const answered = await workOnce(
       harnessed,
-      {
-        onOrder: () => {
-          made += 1;
-          return { delivered: { activation_code: `CODE-${made}` } };
-        },
-      },
+      { onOrder: () => ({ delivered: { activation_code: "CODE" } }) },
       0,
     );
-    expect(answered).toBe(2);
+    expect(answered).toBe(1);
 
     const after = await harnessed.store.orderById(orderId);
     expect(after?.order.state).toBe("delivered");
-    expect(after?.delivery).toStrictEqual({ activation_code: "CODE-1" });
-    const receipt = await harnessed.store.receiptForOrder(orderId);
-    expect(receipt?.outcome).toBe("delivered");
+    expect(after?.order.dispatch.attempts).toBe(1);
+    expect(after?.delivery).toStrictEqual({ activation_code: "CODE" });
+    expect((await harnessed.store.receiptForOrder(orderId))?.outcome).toBe("delivered");
   });
 });
 
