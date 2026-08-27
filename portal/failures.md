@@ -2,11 +2,10 @@
 
 *A preliminary contract: the wording can still change before the pilot.*
 
-You have written the handler, or you are writing it now, and what is collected
-here is what will go wrong with it. Refusals and failures are part of ordinary
-work for us, and every case below is laid out the same way: first how it ends
-for the buyer and for you, then why it is built that way and what to do about
-it.
+You have written the handler, or you are writing it now, and this page is what
+will go wrong with it. Refusals and failures are part of ordinary work for us,
+and every case below is laid out the same way: first how it ends for the buyer
+and for you, then why it is built that way and what to do about it.
 
 There is one thing that decides every case below. Faced with not knowing, we
 either carry the sale on or stop it, and what settles that is not the severity
@@ -37,8 +36,8 @@ before the pilot. Which transport you answer over makes no difference: a price
 handler has the same boundaries as a hook.
 
 Silence like this does not stop your selling. The automatic stop described
-below watches deliveries, and a side that cannot name a price but delivers the
-goods reliably does not count as having gone quiet.
+below goes by deliveries, and a side that cannot name a price but hands over
+the goods reliably has not gone quiet by that measure.
 
 What follows for you differs by mode. For synchronous products and products
 with confirmation, keep the price in the card current: in a minute of silence
