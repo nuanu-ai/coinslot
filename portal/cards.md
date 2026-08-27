@@ -62,8 +62,19 @@ the point of connection that survives you publishing your cards again.
 ### Title
 
 A short line by which the product is told apart from its neighbours in a
-catalogue's listing. Catalogues have their own limits on length and on the
-characters allowed, and we fit the title to them at publication.
+listing. It reaches the agent in our own catalogue, beside the description and
+the price.
+
+It does not reach a catalogue outside ours. Those carry one field of prose for
+a product where a card has two, and joining your headline to your description
+with punctuation of our own would be us writing your listing for you — so what
+goes out there is the description, the field a card writes for a program to
+read.
+
+A title has to be there and it has to be more than blank space. Nothing else is
+checked: no length is measured and nothing is shortened, so what you write is
+what an agent is shown, whole, and a title long enough to be a paragraph is one
+nothing on our side will stop. What the limits ought to be is not settled.
 
 ### Description
 
