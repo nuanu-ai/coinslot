@@ -1,21 +1,28 @@
-# The database a developer runs the gateway against.
+# The whole thing, on one command.
 #
-# One Postgres holds everything (ADR-0003 §6): the cards, the orders, the
-# receipts and the queue. There is nothing else here on purpose — the gateway
-# itself runs from the terminal so that a change is visible without a rebuild,
-# and what a deployment looks like is a later step.
+# ADR-0005 §7: `docker compose up` brings up everything a merchant's engineer
+# would look at — the landing, the documentation and the gateway, all
+# on http://localhost:8080, with one Postgres behind them (ADR-0003 §6).
+# Nothing here needs a build on the host first: the documentation is built
+# inside its image and the two Node processes run their TypeScript through tsx,
+# the same way `pnpm --filter @coinslot/gateway start` does on a laptop.
 #
-#   docker compose up -d
-#   DATABASE_URL=postgres://coinslot:coinslot@localhost:5432/coinslot \
-#     pnpm --filter @coinslot/gateway db:migrate
+#   docker compose up --build
+#   open http://localhost:8080
 #
-# The volume outlives `docker compose down`, so the migrations are what bring an
-# existing database up to date; `docker compose down -v` is how to start from
-# nothing.
+# The database volume outlives `docker compose down`; `down -v` starts from
+# nothing. Migrations run as their own service before the gateway, so an
+# existing database is brought up to date rather than found to be a version
+# behind on the first query.
 #
-# The password is in the file and that is deliberate: this database holds
-# nothing but a developer's own test orders, and a secret that has to be found
-# somewhere else to bring up a sandbox is a secret people paste into chat.
+# The cabinet is the one thing not here yet: it is being written, and the
+# route to it in deploy/Caddyfile answers with a bad gateway until its service
+# joins this file.
+#
+# The passwords and the key are in this file and that is deliberate. This
+# stack holds a developer's own test orders and talks to a test network, and a
+# secret that has to be found somewhere else to bring up a sandbox is a secret
+# people paste into chat. Nothing here is a value any deployment reuses.
 
 services:
   postgres:
@@ -25,6 +32,8 @@ services:
       POSTGRES_PASSWORD: coinslot
       POSTGRES_DB: coinslot
     ports:
+      # Published so that `pnpm test:db` and a psql from the terminal reach the
+      # same database the containers use.
       - "5432:5432"
     volumes:
       - coinslot-postgres:/var/lib/postgresql/data
@@ -35,6 +44,68 @@ services:
       interval: 2s
       timeout: 3s
       retries: 15
+
+  # Its own service rather than a line in the gateway's startup: a migration
+  # that runs inside the process it is migrating for runs once per replica and
+  # races itself. Here it runs to completion, and the gateway waits for it.
+  migrate:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.app
+    command: ["pnpm", "--filter", "@coinslot/gateway", "db:migrate"]
+    environment:
+      DATABASE_URL: postgres://coinslot:coinslot@postgres:5432/coinslot
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  gateway:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.app
+    command: ["pnpm", "--filter", "@coinslot/gateway", "start"]
+    environment:
+      DATABASE_URL: postgres://coinslot:coinslot@postgres:5432/coinslot
+      PORT: "3000"
+      MERCHANT_API_KEY: local-sandbox-merchant-key
+      # The address an agent is sent back to in order to pay, which is the door
+      # Caddy answers and not the port this process listens on. Given the
+      # process's own port here, a payment challenge would name a door that is
+      # closed from outside.
+      PUBLIC_BASE_URL: http://localhost:8080
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  web:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.web
+    ports:
+      - "8080:8080"
+    volumes:
+      # The landing and the routing are mounted over the copies baked into the
+      # image so that editing either shows up on reload. The documentation is
+      # not: it is a build, and it comes from the image.
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./apps/landing/public:/srv/landing:ro
+    depends_on:
+      gateway:
+        condition: service_started
 
 volumes:
   coinslot-postgres:
