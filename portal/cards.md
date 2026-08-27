@@ -27,7 +27,7 @@ are working names and can still change before the pilot.
 | `title` | string | required | `One month of access to the service` |
 | `description` | string | required | `Access for 30 days from delivery, renewal not included` |
 | `price` | an amount as a string, and a currency | required | `{ amount: '5.00', currency: 'USD' }` |
-| `price_check` | what to ask the price and availability with: a handler, or an address | optional | `'handler'` |
+| `price_check` | what to ask the price and availability with: a handler, or an address we do not call yet | optional | `'handler'` |
 | `params` | the shape of the purchase parameters | required where the delivery needs input | `{ email: { type: 'string', required: true } }` |
 | `result` | the shape of what the agent receives on delivery | required | `{ access_url: { type: 'string' } }` |
 | `fulfillment` | `'sync'` or `'async'`; `'confirm'` is not published during the pilot | required | `'sync'` |
@@ -156,9 +156,9 @@ fields of the question and of the answer are the same for both, and what
 differs is only where your code stands. The forms below are working ones and
 can change before the pilot.
 
-By default the question travels the same channel as the orders: you put a
-price handler beside the order handler, in the same process. Nothing of yours
-faces outward — no address, no open ports.
+The question travels the same channel as the orders: you put a price handler
+beside the order handler, in the same process. Nothing of yours faces outward
+— no address, no open ports. This is the transport we serve.
 
 ```ts
 coinslot.on('quote', async (q) => {
@@ -175,10 +175,17 @@ coinslot.on('quote', async (q) => {
 The subscription channel is authenticated when it connects, so your side does
 not have to check that a price question really came from us.
 
-The second transport is the price hook: an address on your side that we reach
-over HTTP. It is for a business whose price is worked out by a separate
-pricing service that the order handler cannot reach. The address is declared
-in the card, and the question and the answer are the same ones.
+A second transport is designed for a business whose price is worked out by a
+separate pricing service the order handler cannot reach: the price hook, an
+https address declared in the card, carrying the same question and the same
+answer.
+
+We do not call it yet. A card that names an address is priced as though nobody
+had answered, which costs different things in different modes — a synchronous
+product sells at the price in its card, every time, with your pricing service
+never once consulted, and an asynchronous one does not sell at all. So until
+the transport is served, a card whose price moves belongs behind a price
+handler.
 
 ```http
 POST https://api.example.com/quote
@@ -311,8 +318,9 @@ and what that ought to be is not settled.
   yet.
 - The thresholds that limit how often price questions go out, and how long we
   wait for an answer.
-- How your side satisfies itself that a request to a price hook came from us:
-  signatures on our HTTP requests. A price handler has no such question — the
-  subscription channel is authenticated.
+- The price hook. We do not call the address a card names, and when we do,
+  your side will need something to check a request against to know that it
+  came from us. A price handler has neither question — the subscription
+  channel is authenticated when it connects.
 - How a card is removed altogether rather than paused, and how long that
   takes.

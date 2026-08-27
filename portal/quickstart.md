@@ -28,9 +28,9 @@ up and run the link to an online shop ourselves. Both are described on
   ([Three fulfillment modes](/orders)).
 - Price check — the question of how much a product costs and whether it is
   there, which we ask at the moment of purchase about products whose price
-  moves. It is answered either by a price handler, standing in your process
-  beside the order handler, or by a price hook, an address on your side that
-  we reach over HTTP.
+  moves. A price handler answers it, standing in your process beside the order
+  handler. A second transport is designed — a price hook, an address of your
+  own — and is not called yet.
 - Delivery result — what the agent receives once the delivery has gone
   through: a link, a key, a set of fields. Its shape is declared in the card.
 
@@ -300,11 +300,14 @@ the answer itself. So if you take the price from a cache, name the moment that
 cache was filled; left to the default, the answer claims more freshness than
 you have.
 
-This is the default path: the same channel the orders use, and nothing of
-yours facing outward. The second transport, the price hook, is an HTTP address
-on your side, for a business whose price is worked out by a separate pricing
-service. The fields of the question and of the answer are the same for both,
-and they are described in the [card reference](/cards).
+This is the path we serve: the same channel the orders use, and nothing of
+yours facing outward. A second transport is designed for a business whose
+price is worked out by a separate pricing service — the price hook, an https
+address of your own that we would call instead. We do not call it yet, and a
+card that names one is priced as though nobody had answered, so during the
+pilot the price handler is the price check that works. The fields of the
+question and of the answer are the same for both and are described in the
+[card reference](/cards).
 
 Success here is modest: the process starts, holds the connection and does not
 fall over. The first order reaches it on step 5.
@@ -370,9 +373,10 @@ code.
 
 ## What is not settled yet
 
-- Signatures on our HTTP requests to a price hook: what your side checks a
-  request against to know that it came from us. A price handler has no such
-  question — the subscription channel is authenticated when it connects.
+- The price hook. We do not call the address a card names, and when we do,
+  your side will need something to check a request against to know that it
+  came from us. A price handler has neither question — the subscription
+  channel is authenticated when it connects.
 - The exact names of an order's fields, and the shape of a refusal.
 - The names of the fields a card sets deadlines in, and all of the numbers:
   how long a price holds, how long we wait for a synchronous answer, and the

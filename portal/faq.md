@@ -105,10 +105,10 @@ chosen: [Money](/money).
 ### The goods ran out or the price changed — how do you find out?
 
 We ask you at the moment of purchase, where the card has a price check turned
-on. Your code answers it: by default a price handler in the same process as
-the order handler, and where the price is worked out by a separate pricing
-service, a price hook instead — an address on your side. The fields of the
-question and of the answer are the same for both
+on. Your code answers it, in a price handler that sits in the same process as
+the order handler. A second transport for a separate pricing service — a price
+hook at an address of your own — is designed and not called yet, so a card
+that names one is priced as though nobody had answered
 ([what to answer with](/cards)). The sale then goes at the price you named,
 and an answer of "there is none" closes the purchase before any money moves.
 Without a check we sell at the card's price and hear that the goods have run

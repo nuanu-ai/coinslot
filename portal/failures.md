@@ -36,8 +36,9 @@ Four things count as silence: no answer for longer than the timeout; a server
 error or a network failure in place of an answer; an answer that did not parse
 against the declared shape; and a timestamp in the answer older than the
 freshness threshold. Both numbers, the timeout and the threshold, we name
-before the pilot. Which transport you answer over makes no difference: a price
-handler has the same boundaries as a hook.
+before the pilot. Those boundaries are a price handler's. A card that names a
+price hook instead counts as silent every time, because we do not call that
+address yet ([the card reference](/cards)).
 
 Silence like this does not stop your selling. The automatic stop described
 below goes by deliveries, and a side that cannot name a price but hands over
