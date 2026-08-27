@@ -122,10 +122,17 @@ has to match what the handler really sends, in both directions: a promised
 field that does not arrive is a mismatch, and so is a field the card never
 declared. A mismatch does not reach the agent — we refuse the delivery, name
 the fields that are wrong and leave the order where it was, so your handler can
-send the right thing. It is the merchant who finds out, not the buyer. Where a
-handler has got everything wrong at once, the refusal names the first few and
-says how many more there are, rather than growing into a paragraph nobody
-reads.
+send the right thing. It is the merchant who finds out, not the buyer.
+
+Where a handler has got everything wrong at once, the refusal is held to a
+single line rather than allowed to grow into a paragraph nobody reads. A field
+your card declares and your handler got wrong is one item in that line, and
+where there are more items than fit, the refusal names the first few and says
+how many are left. Every field your card never declared goes into a single item
+listing all of them at once, and that item is cut at a fixed length with the
+cut marked, so a handler that sent a hundred names nobody asked for is told the
+first several of them and that the text went on, without a count of what was
+left out.
 
 Every field of the result is required until you mark it `required: false`. The
 result is a promise, and a delivery missing a promised field does not go
