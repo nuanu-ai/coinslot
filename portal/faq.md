@@ -48,8 +48,8 @@ keep the cards yourself, the tools for it are there:
 
 No. The buyers here are programs carrying out a person's instruction and
 paying from a budget they were given; the person themselves does not visit
-your site, does not fill a basket and does not write to your support. Whether
-to buy is decided by the program from the text of the card, and what that text
+your site, does not fill a basket and does not write to your support. The
+program decides whether to buy from the text of the card, and what that text
 has to do is described in the [card reference](/cards).
 
 ### How do I find out about a sale?

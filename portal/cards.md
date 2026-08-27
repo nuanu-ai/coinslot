@@ -136,9 +136,9 @@ card cannot be published in it during the pilot — the request that asks you
 has no shape on the wire yet, so a handler could not tell one from a paid
 order, and publishing such a card would sell you a mode we cannot serve.
 
-The mode is decided by the product. The channel only narrows the choice: an
-order that came as a message is never synchronous, while a connected API
-delivers both synchronously and asynchronously. What happens inside each mode
+The product decides the mode. The channel only narrows the choice: an order
+that arrived as a message is never synchronous, while a connected API delivers
+both synchronously and asynchronously. What happens inside each mode
 is on [Orders and fulfillment modes](/orders).
 
 ## Asking the price and availability
