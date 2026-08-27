@@ -10,9 +10,10 @@ how connecting begins.
 ## Who buys here
 
 Coinslot puts the goods of an ordinary online business into the catalogues
-where AI agents buy. An agent is a program that a person handed a task and a
-budget; to finish the task it finds the goods it needs, pays for them and
-takes delivery, all by itself.
+where AI agents buy — the listings an agent searches when it is looking for
+something, run by other people and not by you. An agent is a program that a
+person handed a task and a budget; to finish the task it finds the goods it
+needs, pays for them and takes delivery, all by itself.
 
 For you that is one more place to sell. Your range does not have to change,
 the prices stay yours, and your shop goes on working the way it works now. One
@@ -35,7 +36,7 @@ purchase. That, and the rest of what there is to say about the money, is on
 The conversation about connecting comes down to four questions, and once you
 have answered them we have no more questions for you.
 
-1. What you sell. A link to your site, your catalogue or your documentation is
+1. What you sell. A link to your site, your product list or your documentation is
    enough — we write the cards from those materials. A card carries the title,
    the description, the price and the list of what has to be given at
    purchase. You check the finished card and approve it. Approval goes by
@@ -50,7 +51,7 @@ have answered them we have no more questions for you.
    again. Access, a key, a link, a subscription go out a second time to the
    same buyer without loss; a unit off a shelf or a one-off code from a
    limited batch does not. During the pilot we take on goods of the first kind
-   only, and that is our limit rather than a property of your catalogue: we
+   only, and that is our limit rather than a property of what you sell: we
    have not chosen how money goes back yet, so we sell what we are almost
    certain we can deliver. Once there is a way to send money back, the limit
    comes off ([Money](/money)).
@@ -112,7 +113,7 @@ dispute — are collected in the [common questions](/faq).
 ## How to start
 
 During the pilot, connecting starts with a conversation. We go through the
-four questions above together, look at your catalogue and decide which
+four questions above together, look at what you sell and decide which
 products go out first and how they are sold. Then we write the cards, you
 approve them, and after a test purchase the products become visible in the
 catalogues. There is no sign-up button yet: we run the pilot by hand so that

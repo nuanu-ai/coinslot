@@ -8,7 +8,7 @@ export default defineConfig({
   lang: 'en',
   title: 'Coinslot',
   description:
-    'Seller documentation: connecting, cards, money and what can go wrong.',
+    'Selling to AI agents with Coinslot: connecting, cards, money and what can go wrong.',
   cleanUrls: true,
   srcExclude: ['WRITING.md'],
   themeConfig: {

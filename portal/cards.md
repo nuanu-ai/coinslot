@@ -2,10 +2,9 @@
 
 *A preliminary contract: the wording can still change before the pilot.*
 
-You create and edit the cards yourself, which is what makes this reference
-yours. By default we write the cards and the owner of the business approves
-them; the whole path, from an empty project to a test sale, is on
-[The first test sale](/quickstart).
+If you keep the cards yourself, this reference is yours. By default we write
+them and the owner of the business approves them; the whole path, from an
+empty project to a test sale, is on [The first test sale](/quickstart).
 
 A card is the description of one product in a catalogue: everything the agent
 sees before buying, and everything it decides to buy from. From that follows
@@ -53,7 +52,7 @@ is the identifier the product already has in your database.
 
 The second key saves you a lookup table. An order arrives carrying your own
 key, so there is nothing to translate from our numbering into yours. It is
-also the point of connection that survives a catalogue being republished.
+also the point of connection that survives you publishing your cards again.
 
 ### Title
 
@@ -281,15 +280,17 @@ agent can assemble a correct purchase from this card — and both read the card
 by the same contract, so a card the first accepts is not turned away by the
 second.
 
-## Updating or withdrawing a card
+## Updating a card, and taking one off sale
 
-With the same tools it was created with. Publishing again under the same
+Updating is the call that created it. Publishing again under the same
 `merchant_item_id` updates the card that is there rather than creating a
 second one: the key is yours, and we find what is already published by it. So
 a card can be uploaded from a script without checking first whether we have it.
 
-A withdrawn card stops being visible in the catalogues, and the orders still
-open against it play out in the ordinary way.
+Taking a card off sale is the pause in the cabinet rather than a call. Paused,
+the card stops being visible in the catalogues, and the orders still open
+against it play out in the ordinary way. Nothing removes a card altogether,
+and what that ought to be is not settled.
 
 ## What is not settled yet
 
@@ -314,4 +315,5 @@ open against it play out in the ordinary way.
 - How your side satisfies itself that a request to a price hook came from us:
   signatures on our HTTP requests. A price handler has no such question — the
   subscription channel is authenticated.
-- The procedure for withdrawing a card, and its timings.
+- How a card is removed altogether rather than paused, and how long that
+  takes.

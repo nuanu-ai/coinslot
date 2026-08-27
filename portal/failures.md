@@ -14,6 +14,10 @@ before the money, your silence costs the buyer nothing; where the money moves
 at once, your silence stops the sale. The moments of charging in each mode are
 in a table on [Orders and fulfillment modes](/orders).
 
+The confirmation mode appears below because the design has three of them. A
+card cannot be published in it during the pilot, and the reason is on
+[The product card](/cards).
+
 ## The price check is silent
 
 In the synchronous mode and in the confirmation mode the purchase carries on:
