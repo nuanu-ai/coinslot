@@ -30,16 +30,29 @@ becomes `"order_id"`, and whoever presents an identifier is answered about that
 order and no other.
 
 The identifier already has the properties this leans on. It is generated from a
-random source, it is long enough not to be guessed, and it is handed to exactly
-one party: the agent that made the purchase. Nothing else publishes it — it is
-not in the catalogue, not in any listing an agent can read, and the merchant's
-own routes are behind a key.
+random source, it is long enough not to be guessed, and it is never published —
+it is not in the catalogue and not in any listing an agent can read.
+
+It is not, however, held by one party alone, and an earlier draft of this
+decision said it was. It travels in the payment challenge, down the merchant's
+own stream and into their receipts, so a merchant holds every identifier of
+every buyer they sold to. That does not weaken the door: the merchant already
+holds the whole of those orders, because they are their own sales, and this
+route shows a buyer strictly less than the merchant's routes already show
+them. What it does mean is that the identifier is a key to one order among the
+parties to that order's sale, and not a secret between us and the buyer. The
+gateway does not lean on it for anything else — ownership of a payment is
+decided by the verified payer, never by who knows an identifier.
 
 The answer is deliberately smaller than the merchant's view of the same order.
 It carries what the buyer is owed and what became of their money: the state,
-the price, and the goods once released. It does not carry the merchant's own
-identifier for the product, the merchant's notes, or anything about other
-orders.
+the price, and the goods once the order has closed as delivered. Once the order
+has closed, and not merely once the merchant has handed something over: a
+synchronous delivery whose charge then failed would otherwise be a way to take
+the goods and pay nothing, and the two doors would disagree about one order.
+
+It does not carry the merchant's own identifier for the product, the merchant's
+notes, or anything about other orders.
 
 An identifier that names no order is answered exactly as one that names
 somebody else's would be, so the route does not tell the two apart for anybody
