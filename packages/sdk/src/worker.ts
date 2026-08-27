@@ -117,8 +117,9 @@ export interface Delivered {
  * The second argument is this delivery's own name, and it is the reason this
  * signature is not just the event. An order is answered against its own
  * identifier and a price question against its `price_id`; an event is answered
- * against nothing, so the envelope's name is the only handle it has, and a
- * merchant writing one of these down has nothing else to write it under.
+ * against nothing at all, so this pair is the only thing naming the message
+ * itself rather than the order it is about, which is what a log line or a
+ * question to us afterwards needs.
  *
  * It is not there to be deduplicated against. Nothing acknowledges an event, so
  * nothing asks for one again, and the contract makes no promise that one is ever
