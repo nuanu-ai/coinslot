@@ -67,24 +67,54 @@ describe("the invariants of the order's money", () => {
     expect(accepted).toBeGreaterThan(60);
   });
 
+  // The negative controls. Without them the invariants would be decoration and
+  // the two sweeps above would prove nothing.
+  //
+  // Each one names the rule it is about by the sentence that rule writes, and
+  // reads the whole list rather than its length. The sentence is not an
+  // implementation detail: `refuseToWriteAnImpossibleOrder` in the gateway
+  // joins these into the error a person reads when an order will not persist,
+  // and it is all that person is given to work out which of eight things went
+  // wrong. Asserting only that some rule fired left one rule deletable and
+  // every sentence but one rewritable to "xxx" with the suite still green.
+  //
+  // Two of the rules are narrower restatements of the first, which catches any
+  // settled order in a state that records neither goods nor a debt. They earn
+  // their place by saying something sharper about the two cases that matter
+  // most, and reading the full list is what holds them to it.
+
   it("catches an order that claims a debt without a charge behind it", () => {
-    // The negative control. If this passed, the invariants would be decoration
-    // and the test above would prove nothing.
     const impossible: Order = { ...reach("dispatched"), state: "refund_due", payment: "none" };
 
-    expect(moneyInvariantViolations(impossible).length).toBeGreaterThan(0);
+    expect(moneyInvariantViolations(impossible)).toStrictEqual([
+      "the order is in refund_due with no charge behind the debt",
+    ]);
   });
 
   it("catches a success that nobody paid for", () => {
     const impossible: Order = { ...reach("dispatched"), state: "delivered", payment: "verified" };
 
-    expect(moneyInvariantViolations(impossible).length).toBeGreaterThan(0);
+    expect(moneyInvariantViolations(impossible)).toStrictEqual([
+      "the order is a success and the money never moved",
+    ]);
   });
 
   it("catches money taken on an order closed as free", () => {
     const impossible: Order = { ...reach("dispatched"), state: "expired", payment: "settled" };
 
-    expect(moneyInvariantViolations(impossible).length).toBeGreaterThan(0);
+    expect(moneyInvariantViolations(impossible)).toStrictEqual([
+      "the buyer paid and the order sits in expired, which records neither goods nor a debt",
+      "the buyer paid and the order is closed as expired, owing nothing",
+    ]);
+  });
+
+  it("catches an order marked unpaid while the buyer's money did move", () => {
+    const impossible: Order = { ...reach("delivered_unpaid"), payment: "settled" };
+
+    expect(moneyInvariantViolations(impossible)).toStrictEqual([
+      "the buyer paid and the order sits in delivered_unpaid, which records neither goods nor a debt",
+      "the order is marked unpaid and the money did move",
+    ]);
   });
 
   it("catches an order carrying on with an unaccounted charge behind it", () => {
@@ -94,16 +124,47 @@ describe("the invariants of the order's money", () => {
     // money behind it.
     const impossible: Order = { ...reach("dispatched"), payment: "outcome_unknown" };
 
-    expect(moneyInvariantViolations(impossible).length).toBeGreaterThan(0);
+    expect(moneyInvariantViolations(impossible)).toStrictEqual([
+      "a charge on this order never reported back and the order is in dispatched, " +
+        "which is not a place to wait in",
+    ]);
   });
 
   it("catches an order that moved on while its charge was still being executed", () => {
     // The machine will not produce this, and that is exactly why the rule is
     // here: it is the shape the gateway's own records have to be checked
     // against. Whatever the charge does now, it happens to a decided order.
-    const impossible: Order = { ...reach("dispatched"), state: "cancelled", payment: "settling" };
+    const dispatched = reach("dispatched");
+    const impossible: Order = {
+      ...dispatched,
+      state: "cancelled",
+      payment: "settling",
+      // The charge has a start time, so the only thing wrong with this order is
+      // the state it moved on to.
+      timestamps: { ...dispatched.timestamps, settleStartedAt: T0 + 3 },
+    };
 
-    expect(moneyInvariantViolations(impossible).length).toBeGreaterThan(0);
+    expect(moneyInvariantViolations(impossible)).toStrictEqual([
+      "the payment is being executed and the order has moved on to cancelled, " +
+        "so whatever happens to the money now happens to a decided order",
+    ]);
+  });
+
+  it("catches a charge in flight with no record of when it started", () => {
+    // Nothing but the settle's own outcome moves an order in this stage, and
+    // the outcome is asked for on a clock that runs from this instant. Without
+    // it the order is frozen and invisible, which is the one way an order can
+    // wait forever with the buyer's money in the air.
+    const fulfilled = reach("fulfilled");
+    const impossible: Order = {
+      ...fulfilled,
+      timestamps: { ...fulfilled.timestamps, settleStartedAt: null },
+    };
+
+    expect(fulfilled.payment).toBe("settling");
+    expect(moneyInvariantViolations(impossible)).toStrictEqual([
+      "the payment is being executed and the order has no record of when that began",
+    ]);
   });
 });
 
