@@ -600,6 +600,8 @@ function tokenIn(request: Request): string | null {
   if (header === undefined) {
     return null;
   }
+
+  const found: string[] = [];
   for (const pair of header.split(";")) {
     const at = pair.indexOf("=");
     if (at === -1) {
@@ -613,13 +615,23 @@ function tokenIn(request: Request): string | null {
     // to throw, it reached the error page — whose only control leads to a page
     // that throws again, with the cookie HttpOnly and no way for a merchant to
     // clear it from the page they are stuck on.
-    let value: string;
     try {
-      value = decodeURIComponent(pair.slice(at + 1).trim());
+      found.push(decodeURIComponent(pair.slice(at + 1).trim()));
     } catch {
       return null;
     }
-    return value === "" ? null : value;
   }
-  return null;
+
+  // Two of them is nobody, not the first of them. A page on a sibling subdomain
+  // can set a cookie of this name on a broader path, and the browser then sends
+  // both; taking the first is taking whichever the browser happened to put
+  // there, which is a way of getting a merchant to work inside a session
+  // somebody else opened — and the one record of who stopped their selling then
+  // names the wrong person. The `Path` this cookie is set on rules out the
+  // `__Host-` prefix that would refuse the plant outright, so the ambiguity is
+  // refused here instead.
+  if (found.length !== 1) {
+    return null;
+  }
+  return found[0] === "" ? null : (found[0] ?? null);
 }

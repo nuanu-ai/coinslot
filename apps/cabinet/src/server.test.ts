@@ -1138,6 +1138,32 @@ describe("when something goes wrong that the merchant has to get out of", () => 
     }
   });
 
+  it("treats two session cookies at once as nobody being signed in", async () => {
+    // A page on a sibling subdomain can set a cookie of this name on a broader
+    // path, and the browser then sends two of them. Picking one is picking
+    // whichever the browser happened to put first — which is a way of getting a
+    // merchant to work inside a session somebody else opened, so that the one
+    // record of who stopped their selling names the wrong person. An ambiguous
+    // session is not a session.
+    const { browser } = await started();
+    await browser.signIn();
+    const mine = browser.sessionToken() ?? "";
+    expect(mine).not.toBe("");
+
+    for (const raw of [
+      `${COOKIE}=${mine}; ${COOKIE}=somebody-elses`,
+      `${COOKIE}=somebody-elses; ${COOKIE}=${mine}`,
+    ]) {
+      const answered = await browser.withRawCookie(raw).get("/cards");
+      expect(answered.status, raw).toBe(303);
+      expect(answered.to, raw).toBe("/sign-in");
+    }
+
+    // And the real one on its own still works: this refuses the ambiguity, not
+    // the session.
+    expect((await browser.withRawCookie(`${COOKIE}=${mine}`).get("/cards")).status).toBe(200);
+  });
+
   it("turns away a form post that came from another site", async () => {
     // The session this form rides on can stop all selling. SameSite=Strict is
     // the main lock; this is the second, because SameSite is scoped to the
