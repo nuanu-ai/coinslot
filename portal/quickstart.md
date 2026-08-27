@@ -314,6 +314,10 @@ same order arrives twice.
 npx coinslot verify
 ```
 
+That command does not exist yet: the package does not declare it, and until it
+does, the same check is reached through the functions the package exports. The
+item is in the list at the end of this page.
+
 The check's orders travel the ordinary path: against your card, published and
 not yet visible in the catalogues, through the same live subscription, with
 the `test` flag on. There is no separate environment for it, so your handler
@@ -373,6 +377,9 @@ code.
   yours, and the cursor that pulls batches.
 - What separates the sandbox from the live system: a separate environment, a
   separate access key, or only the `test` flag on the order.
+- `coinslot verify` as a command you can run. The check itself is written and
+  the package exports it; what the package does not yet declare is the command
+  that wraps it.
 - Where to say that you are ready for a test purchase: we have no channel for
   that yet.
 - Starting the test purchase with a command of your own — after the pilot.
