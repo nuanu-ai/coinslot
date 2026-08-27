@@ -439,9 +439,22 @@ describe("getting into the cabinet", () => {
     const page = await browser.signIn();
 
     expect((await browser.get("/cabinet/")).to).toBe("/cabinet/cards");
+    // And without the trailing slash, which is what a person types and what
+    // Caddy passes through as its own exact path.
+    expect((await browser.get("/cabinet")).to).toBe("/cabinet/cards");
     expect(page.html).toContain('href="/cabinet/orders"');
     expect(page.html).toContain('action="/cabinet/selling/pause"');
     expect(page.html).toContain('href="/cabinet/coinslot.css"');
+  });
+
+  it("sends a stranger at the bare mount point to the sign-in, not to a page", async () => {
+    // The address a person types first. Above the gate this used to read the
+    // cookie itself; below it, it is guarded by being below it — and this is
+    // the assertion that says so for the one address most likely to be typed.
+    const { browser } = await started({ base: "/cabinet" });
+
+    expect((await browser.get("/cabinet")).to).toBe("/cabinet/sign-in");
+    expect((await browser.get("/cabinet/")).to).toBe("/cabinet/sign-in");
   });
 
   it("serves one stylesheet whose two themes define the same tokens", async () => {
