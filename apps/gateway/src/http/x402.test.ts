@@ -510,3 +510,143 @@ describe("the discovery declaration a challenge carries", () => {
     expect(forOrder.accepts[0]?.extra?.order_id).toBe("ord_1");
   });
 });
+
+describe("the shape a live validation once accepted", () => {
+  /**
+   * What this test is, said plainly, because it would be easy to read it as
+   * more than it is.
+   *
+   * The spike that preceded this work put a public resource in front of the
+   * CDP validation endpoint and was answered `valid: true`. That resource is a
+   * POST resource whose paid address also answers GET — the same arrangement
+   * ours has — and the endpoint echoed back the declaration it accepted, on
+   * each method. The two objects below are that echo, copied from the answer.
+   *
+   * This compares the shape of what we emit against the shape of what was
+   * accepted: which fields are present at which paths, not what is in them,
+   * since the two describe different products. It is a comparison against
+   * something that passed once. It is not a validation, it says nothing about
+   * what the endpoint would do today, and it cannot: that is `pnpm
+   * smoke:listing`, which makes the call.
+   */
+  const acceptedOnGet = {
+    input: { method: "GET", queryParams: {}, type: "http" },
+    output: {
+      example: {
+        expiresAt: "2026-08-26T00:00:00Z",
+        messagesUrl: "/freeland/numbers/msg-mock-id/messages",
+        number: "+1 202 555 0139",
+      },
+      type: "json",
+    },
+  };
+
+  const acceptedOnPost = {
+    input: { body: { country: "US" }, bodyType: "json", method: "POST", type: "http" },
+    output: {
+      example: {
+        expiresAt: "2026-08-26T00:00:00Z",
+        messagesUrl: "/freeland/numbers/msg-mock-id/messages",
+        number: "+1 202 555 0139",
+      },
+      type: "json",
+    },
+  };
+
+  /** Every path through an object, with the leaves replaced by their types. */
+  const skeleton = (value: unknown, at = ""): string[] => {
+    if (Array.isArray(value)) {
+      return value.length === 0
+        ? [`${at}: []`]
+        : value.flatMap((held, index) => skeleton(held, `${at}[${index}]`));
+    }
+    if (typeof value === "object" && value !== null) {
+      const entries = Object.entries(value).sort(([a], [b]) => (a < b ? -1 : 1));
+      // An empty object is a fact about the shape and has no paths under it, so
+      // it is written out rather than vanishing.
+      return entries.length === 0
+        ? [`${at}: {}`]
+        : entries.flatMap(([name, held]) => skeleton(held, at === "" ? name : `${at}.${name}`));
+    }
+    return [`${at}: ${typeof value}`];
+  };
+
+  const ourDeclaration = (method: "GET" | "POST") => {
+    const card = CardSchema.parse({
+      merchant_item_id: "numbers-rent",
+      title: "A virtual number",
+      description: "Rent a virtual phone number for inbound SMS in the given country.",
+      price: { amount: "2.00", currency: "USD" },
+      params: { country: { type: "string", required: true } },
+      result: {
+        number: { type: "string" },
+        messages_url: { type: "string" },
+        expires_at: { type: "string" },
+      },
+      fulfillment: "sync",
+    });
+    const edge = new PaymentEdge(
+      {
+        facilitatorUrl: "https://x402.org/facilitator",
+        network: "eip155:84532",
+        timeoutSeconds: 300,
+        payTo: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        cdpApiKeyId: null,
+        cdpApiKeySecret: null,
+      },
+      "https://coinslot.example",
+      300,
+    );
+    const decoded = decodePaymentRequiredHeader(
+      edge.challengeFor(
+        { amount: "2.00", currency: "USD" },
+        null,
+        { itemId: "itm_1", card, serviceName: "Freeland" },
+        method,
+      ),
+    );
+    const declared = decoded.extensions?.bazaar as DiscoveryExtension | undefined;
+    if (declared === undefined) throw new Error("the challenge carried no declaration");
+    return declared.info;
+  };
+
+  it("puts the same fields in the same places as the GET probe that was accepted", () => {
+    expect(skeleton(ourDeclaration("GET"))).toStrictEqual([
+      "input.method: string",
+      "input.queryParams: {}",
+      "input.type: string",
+      "output.example.expires_at: string",
+      "output.example.messages_url: string",
+      "output.example.number: string",
+      "output.type: string",
+    ]);
+    // And the accepted one, read the same way, differs only in the leaves that
+    // describe a different product.
+    expect(unique(skeleton(acceptedOnGet).map(named))).toStrictEqual(
+      unique(skeleton(ourDeclaration("GET")).map(named)),
+    );
+  });
+
+  it("puts the same fields in the same places as the POST probe that was accepted", () => {
+    expect(unique(skeleton(acceptedOnPost).map(named))).toStrictEqual(
+      unique(skeleton(ourDeclaration("POST")).map(named)),
+    );
+  });
+});
+
+/**
+ * One path with the product's own field names taken out of it.
+ *
+ * The declarations being compared describe different products, so the names
+ * under `body` and under `output.example` differ and are not the subject. What
+ * is the subject is that both have a body and an example at all, and that the
+ * protocol's own fields sit at the same places in both.
+ */
+const named = (path: string): string =>
+  path
+    .replace(/^(input\.body)\..*/, "$1.<field>")
+    .replace(/^(input\.queryParams)\..*/, "$1.<field>")
+    .replace(/^(output\.example)\..*/, "$1.<field>");
+
+/** The same path once, however many of a product's own fields folded into it. */
+const unique = (paths: readonly string[]): string[] => [...new Set(paths)].sort();

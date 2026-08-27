@@ -192,6 +192,27 @@ describe("asking the catalog whether it would take our resources", () => {
     expect(run.text()).toContain("Nothing was checked.");
   });
 
+  it("says up front that an address which is not https will get no verdict", async () => {
+    // Measured against the live endpoint: it refuses an http resource outright
+    // with a 400 and no verdict. Without this line a run against the local
+    // sandbox is two identical refusals and no explanation.
+    const run = aRun({ answers: () => accepted });
+
+    await run.run("http://localhost:3000", "itm_1");
+
+    expect(run.text()).toContain("not an https address");
+    // A warning and not a refusal: it still asks, and still reports what it got.
+    expect(run.asked).toHaveLength(2);
+  });
+
+  it("says nothing of the kind about an https address", async () => {
+    const run = aRun({ answers: () => accepted });
+
+    await run.run("https://coinslot.example", "itm_1");
+
+    expect(run.text()).not.toContain("not an https address");
+  });
+
   it("asks for an address rather than guessing at one", async () => {
     const run = aRun({});
 

@@ -94,6 +94,19 @@ export async function runListingCheck(
   }
 
   const base = baseUrl.replace(/\/+$/, "");
+
+  if (!base.toLowerCase().startsWith("https://")) {
+    // Measured rather than read: put an http address to the endpoint and it
+    // answers 400 with "doesn't match the regular expression ^https://.*$".
+    // Said here so that a run against a sandbox is a sentence somebody
+    // understands instead of two identical refusals with no verdict in them.
+    // It is a warning and not a refusal: the endpoint's rules are the
+    // endpoint's, and a run that asks and reports what came back is worth more
+    // than one that decided in advance.
+    say(`${base} is not an https address, and the endpoint only takes those.`);
+    say("Expect no verdict. A listing needs a public https gateway.");
+  }
+
   let items: readonly string[];
 
   if (named.length > 0) {
