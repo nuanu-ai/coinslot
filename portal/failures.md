@@ -1,168 +1,179 @@
-# Что может пойти не так
+# What can go wrong
 
-*Предварительная версия контракта — до пилота формулировки могут уточняться.*
+*A preliminary contract: the wording can still change before the pilot.*
 
-Вы уже написали обработчик или пишете его сейчас, а здесь собрано то, что у
-него пойдёт не так. Отказы и сбои у нас часть нормальной работы, и каждый
-случай ниже устроен по одному образцу: сначала чем он кончается для
-покупателя и для вас, потом почему устроено именно так и что с этим делать.
+You have written the handler, or you are writing it now, and what is collected
+here is what will go wrong with it. Refusals and failures are part of ordinary
+work for us, and every case below is laid out the same way: first how it ends
+for the buyer and for you, then why it is built that way and what to do about
+it.
 
-Все случаи ниже мы разбираем по одному признаку. Столкнувшись с
-неизвестностью, мы либо продолжаем продажу, либо останавливаем её, и решает
-здесь не тяжесть сбоя, а то, где в этот момент деньги: пока ваш ответ стоит
-до них, ваше молчание ничего не стоит покупателю; когда деньги идут сразу,
-ваше молчание останавливает продажу. Моменты списания по режимам сведены в
-таблицу на странице [«Заказы и режимы выдачи»](/orders).
+There is one thing that decides every case below. Faced with not knowing, we
+either carry the sale on or stop it, and what settles that is not the severity
+of the failure but where the money is at that moment: while your answer comes
+before the money, your silence costs the buyer nothing; where the money moves
+at once, your silence stops the sale. The moments of charging in each mode are
+in a table on [Orders and fulfillment modes](/orders).
 
-## Проверка цены и наличия молчит
+## The price check is silent
 
-В синхронном режиме и в режиме с подтверждением покупка продолжается: мы
-берём цену из карточки и продаём по ней. В асинхронном режиме покупка не
-начинается — агент получает отказ, заказа у вас не появляется.
+In the synchronous mode and in the confirmation mode the purchase carries on:
+we take the price from the card and sell at it. In the asynchronous mode the
+purchase does not begin — the agent gets a refusal, and no order appears on
+your side.
 
-Разницу задаёт положение денег. В первых двух режимах между ценой и списанием
-стоит ваш живой ответ: вы ещё успеете выдать или отказаться, и секундная
-недоступность вашей стороны не должна отменять продажу, которую можно честно
-провести по известной цене. В асинхронном режиме деньги уходят сразу, и
-продажа при неизвестном наличии превращалась бы в долг перед покупателем —
-потерянная продажа обходится дешевле такого долга.
+The difference is set by where the money is. In the first two modes your live
+answer stands between the price and the charge: you still have time to deliver
+or to refuse, and a second of your side being unreachable should not cancel a
+sale that can be made honestly at a known price. In the asynchronous mode the
+money leaves at once, and a sale made while availability is unknown would turn
+into a debt to the buyer — a lost sale is cheaper than that debt.
 
-Молчанием мы считаем четыре вещи: ответа нет дольше таймаута; вместо ответа
-пришла ошибка сервера или не прошла сеть; ответ не разобрался по схеме;
-отметка времени в ответе старше порога свежести. Оба числа, таймаут и порог,
-назовём до пилота. Каким транспортом вы отвечаете, роли не играет: у
-обработчика цены границы те же, что у хука.
+Four things count as silence: no answer for longer than the timeout; a server
+error or a network failure in place of an answer; an answer that did not parse
+against the declared shape; and a timestamp in the answer older than the
+freshness threshold. Both numbers, the timeout and the threshold, we name
+before the pilot. Which transport you answer over makes no difference: a price
+handler has the same boundaries as a hook.
 
-Продажи такое молчание не останавливает. Автоматическая остановка, о которой
-сказано ниже, смотрит на выдачу: сторона, которая не может назвать цену, но
-исправно выдаёт товар, замолчавшей не считается.
+Silence like this does not stop your selling. The automatic stop described
+below watches deliveries, and a side that cannot name a price but delivers the
+goods reliably does not count as having gone quiet.
 
-Выводы для вас получаются разные по режимам. Для синхронных товаров и товаров
-с подтверждением держите цену в карточке в актуальном состоянии: в минуту
-молчания она и есть цена продажи. Для асинхронных товаров молчащая проверка
-стоит вам продаж всё время, пока оно длится.
+What follows for you differs by mode. For synchronous products and products
+with confirmation, keep the price in the card current: in a minute of silence
+it is the price of the sale. For asynchronous products a silent check costs
+you sales for as long as it lasts.
 
-## Выдать не получилось
+## You could not deliver
 
-Чем обернётся ваш отказ, зависит от момента, в который он пришёл. В синхронном
-режиме покупка не состоится: списания ещё не было, и покупатель не потратит
-ничего. В режиме с подтверждением ответ «не выдам» на запрос подтверждения
-закрывает заказ так же бесплатно, а отказ после подтверждения приходит уже на
-списанные деньги. В асинхронном режиме деньги у вас с самого начала, и такой
-заказ помечается требующим возврата.
+What your refusal turns into depends on the moment it arrives. In the
+synchronous mode the purchase does not happen: nothing has been charged yet
+and the buyer spends nothing. In the confirmation mode an "I will not deliver"
+answer to a request to confirm closes the order just as freely, while a
+refusal after the confirmation arrives against money already charged. In the
+asynchronous mode the money has been with you from the start, and such an
+order is marked as needing a refund.
 
-Сам по себе отказ — обычный ответ обработчика: товара нет, параметры не
-подходят, выдача невозможна. Покупатель получает внятный ответ, а у вас не
-остаётся заказа, который потом придётся разбирать руками.
+A refusal in itself is an ordinary answer from a handler: there is none, the
+parameters do not fit, the delivery is impossible. The buyer gets a clear
+answer, and you are not left with an order to sort out by hand later.
 
-Отсюда и выбор режима: если отказы при выдаче у вас случаются регулярно,
-ловите их раньше — ответом на вопрос о цене и наличии, до денег. Что
-происходит с деньгами по заказам, требующим возврата, — в разделе
-[«Если покупатель не получил товар»](/money).
+From which the choice of mode follows: if refusals at delivery happen to you
+regularly, catch them earlier, in the answer to the question about price and
+availability, before the money. What happens to the money on orders that need
+a refund is in [If the buyer did not get the goods](/money).
 
-## Обработчик упал, не ответив
+## The handler crashed without answering
 
-Заказ придёт снова. Ответ обработчика мы засчитываем только тогда, когда он
-вернулся: исключение внутри обработчика, упавший процесс, оборванная связь —
-всё это для нас недоставленный заказ, и мы повторяем доставку с задержкой,
-пока не выйдет срок режима.
+The order will arrive again. We count a handler's answer only once it has come
+back: an exception inside the handler, a process that fell over, a connection
+that broke — for us all of these mean the order never reached you, and we
+repeat the delivery, after a delay, until the mode's deadline runs out.
 
-Отсюда практическое правило: временный сбой выражается исключением, а не
-отказом. Отказ мы понимаем как окончательное «выдать нельзя» и закрываем на
-нём заказ, поэтому на поставщика, не ответившего за пять секунд, отказом
-отвечать не стоит: повтор через минуту вполне мог бы пройти.
+From which a practical rule follows: a temporary failure is expressed by
+throwing rather than by refusing. We read a refusal as a final "this cannot be
+delivered" and close the order on it, so a supplier that did not answer within
+five seconds is not worth a refusal — a repeat a minute later might well have
+gone through.
 
-Повторы не бесконечны, они упираются в срок — что бывает дальше, в следующем
-разделе.
+The repeats are not endless; they run into the deadline, and what happens
+after that is in the next section.
 
-## Ответа на выдачу нет
+## No answer about the delivery
 
-Молчание кончается тем же, чем отказ, только по сроку. В синхронном режиме
-покупка закрывается без списания. В асинхронном заказ помечается требующим
-возврата, потому что деньги уже ушли. В режиме с подтверждением молчание на
-запрос подтверждения закрывает заказ бесплатно, а молчание после
-подтверждения кончается тем же, чем в асинхронном режиме.
+Silence ends the same way a refusal does, only on a deadline. In the
+synchronous mode the purchase closes with nothing charged. In the asynchronous
+mode the order is marked as needing a refund, because the money has already
+gone. In the confirmation mode, silence in answer to a request to confirm
+closes the order at no cost, while silence after the confirmation ends the way
+the asynchronous mode does.
 
-Скажем, у асинхронного товара вы отвели на выдачу сутки (число примерное).
-Сутки прошли, подтверждения выдачи от вас нет — заказ помечается требующим
-возврата, а деньги за него уже у вас. Срок асинхронной выдачи вы задаёте сами,
-в карточке, и агент видит его до покупки; сколько ждать синхронного ответа,
-назначаем мы.
+Say you have allowed a day for delivering an asynchronous product (an example
+figure). The day passes with no confirmation of a delivery from you — the
+order is marked as needing a refund, and the money for it is already with you.
+You set the deadline for asynchronous delivery yourself, in the card, and the
+agent sees it before it buys; how long to wait for a synchronous answer is set
+by us.
 
-Устроено так потому, что бесконечно ждущий заказ хуже честного отказа: агент
-держит бюджет занятым и не может ни купить у соседа, ни закрыть задачу.
+It works this way because an order that waits forever is worse than an honest
+refusal: the agent holds its budget tied up and can neither buy from your
+neighbour nor finish its task.
 
-Поздний ответ нужен в одном случае: выдача началась до срока, а закончилась
-после него. Покупка к тому моменту уже закрыта, но сделанная работа не
-пропадает — повтор покупки забирает произведённую выдачу вместе с оплатой, и
-об этом сказано в разделе [«Не успели выдать вовремя»](/orders).
+A late answer matters in one case: the delivery started before the deadline
+and finished after it. By then the purchase is closed, but the work already
+done is not lost — a repeat purchase collects the delivery along with the
+payment, and that is described in
+[You did not deliver in time](/orders).
 
-## Заказ пришёл дважды
+## An order arrived twice
 
-Обработчик получает уже знакомый ему заказ и отдаёт по ключу идемпотентности
-прежний результат. Второй выдачи не происходит, второго списания тоже.
+The handler receives an order it already knows and answers with the earlier
+result under the idempotency key. No second delivery happens, and no second
+charge either.
 
-Повторы у нас штатное событие: доставка заказов гарантирует «не меньше одного
-раза», и один и тот же заказ приходит снова после обрыва связи, после
-перезапуска вашего процесса, после нашей повторной попытки.
+Repeats are an ordinary event here: orders are delivered at least once, and
+the same order arrives again after a connection breaks, after your process
+restarts, after a retry of ours.
 
-Проверить, что ваша сторона действительно держит повторы, можно до
-публикации: наша проверка посылает один заказ дважды и смотрит, не появилась
-ли вторая выдача — это [шаг «Проверить себя»](/quickstart). Идут эти заказы
-обычным путём, через живую подписку, поэтому обработчик на время проверки
-должен быть запущен. Сравнивает она эффект, а не байты ответов, поэтому два
-по-разному заполненных ответа на один заказ ошибкой не считаются.
+That your side really does hold against repeats can be checked before
+publishing: our check sends one order twice and watches for a second delivery
+— that is the [step where you check yourself](/quickstart). Those orders
+travel the ordinary path, through the live subscription, so the handler has to
+be running while the check runs. It compares the effect and not the bytes of
+the answers, so two differently filled answers to one order are not a fault.
 
-## Покупатель заплатил, а ответ потерялся
+## The buyer paid and the answer was lost
 
-Покупатель повторяет покупку и получает то, что вы уже выдали. Второго
-списания не происходит, и вторая выдача с вас не требуется.
+The buyer repeats the purchase and receives what you have already delivered.
+No second charge happens, and no second delivery is asked of you.
 
-Случай выглядит так: агент отправил покупку, вы её исполнили, а ответ до
-агента не дошёл — оборвалась связь, упал его собственный процесс. Агент не
-знает, состоялась покупка или нет, и повторяет её с тем же ключом. Мы находим
-по этому ключу уже проведённую покупку и отдаём готовый результат, а до вашей
-стороны повтор в этом случае не доходит вовсе.
+The case looks like this: the agent sent the purchase, you carried it out, and
+the answer did not reach the agent — the connection broke, or its own process
+fell over. Not knowing whether the purchase went through, it repeats it under
+the same key. We find the completed purchase by that key and hand back the
+result that is ready, and in this case the repeat does not reach your side at
+all.
 
-Ваша часть работы здесь та же самая: отдавать по ключу идемпотентности прежний
-результат. Если повтор всё-таки дошёл до обработчика — например, покупка не
-успела закрыться, — вы отвечаете тем же, чем ответили в первый раз. Какой
-именно ключ опознаёт повтор в каком режиме, сказано в разделе
-[«Как опознать повтор»](/orders).
+Your part of the work is the same as ever: answer with the earlier result
+under the idempotency key. If a repeat did reach the handler — because the
+purchase had not finished closing, for instance — you answer with what you
+answered the first time. Which key recognises a repeat in which mode is in
+[Telling a repeat apart](/orders).
 
-## Товар кончился
+## The goods ran out
 
-Покупка не состоится, а деньги покупателя не двинутся — при условии, что вы
-сказали об этом вовремя. Сказать можно ответом на вопрос о цене и наличии или
-отказом при выдаче; первое дешевле, потому что срабатывает до денег во всех
-режимах.
+The purchase does not happen and the buyer's money does not move, provided you
+said so in time. You can say it in the answer to the question about price and
+availability, or by refusing at delivery; the first is cheaper, because it
+lands before the money in every mode.
 
-Остатков мы не ведём и не считаем их за вас: единственный источник правды о
-наличии — ваша сторона. Именно поэтому товары, которые могут кончиться, стоит
-выставлять с проверкой цены и наличия.
+We keep no stock counts and do not work them out for you: the only source of
+truth about availability is your side. Which is exactly why goods that can run
+out are worth listing with a price check.
 
-Долю покупок, упирающихся в отсутствие товара, мы измеряем и держим ниже
-предела, который назовём до пилота: для агента такая покупка выглядит как
-обещание каталога, которое не сбылось.
+The share of purchases that run into missing goods is something we measure and
+hold below a limit we name before the pilot: to an agent, a purchase like that
+looks like a promise the catalogue did not keep.
 
-## Ваша сторона замолчала надолго
+## Your side went quiet for a long time
 
-Продажи останавливаются сами, без вашего участия. Карточки перестают
-продаваться, уже принятые заказы доигрываются обычным порядком — это та же
-пауза, что вы включаете руками, только включённая автоматически.
+Selling stops by itself, without you. Cards stop selling and the orders
+already taken on play out in the ordinary way — the same pause you switch on
+by hand, switched on automatically.
 
-Так мы защищаемся от худшего сценария: покупатели платят за товар, который
-никто не выдаёт. Ставить продажи на паузу и снимать с неё можно и вручную, в
-любой момент — [как это делается](/faq).
+That is how we defend against the worst case, where buyers pay for goods
+nobody delivers. Selling can be paused and unpaused by hand at any moment as
+well — [how that is done](/faq).
 
-## Что ещё не решено
+## What is not settled yet
 
-- Условия автоматической остановки: сколько неудач подряд и за какое время её
-  включают, и как продажи возвращаются обратно.
-- Предельная доля покупок, упирающихся в отсутствие товара.
-- Таймаут ответа о цене и порог свежести, после которого ответ считается
-  молчанием.
-- С какой задержкой и сколько раз мы повторяем доставку недоставленного
-  заказа.
-- Что происходит, когда замолкаем мы: чем это видно вашей стороне и что мы в
-  этом случае обещаем.
+- The conditions for the automatic stop: how many failures in a row and over
+  what period switch it on, and how selling comes back.
+- The limit on the share of purchases that run into missing goods.
+- The timeout on a price answer, and the freshness threshold past which an
+  answer counts as silence.
+- The delay before we repeat the delivery of an order that never reached you,
+  and how many times we repeat it.
+- What happens when it is we who go quiet: how your side sees it, and what we
+  promise in that case.

@@ -369,14 +369,14 @@ describe('portal/orders.md, "Events on the same subscription"', () => {
 // --- portal/failures.md -----------------------------------------------------
 
 const FAILURES = [
-  "Проверка цены и наличия молчит",
-  "Выдать не получилось",
-  "Обработчик упал, не ответив",
-  "Ответа на выдачу нет",
-  "Заказ пришёл дважды",
-  "Покупатель заплатил, а ответ потерялся",
-  "Товар кончился",
-  "Ваша сторона замолчала надолго",
+  "The price check is silent",
+  "You could not deliver",
+  "The handler crashed without answering",
+  "No answer about the delivery",
+  "An order arrived twice",
+  "The buyer paid and the answer was lost",
+  "The goods ran out",
+  "Your side went quiet for a long time",
 ] as const;
 
 describe("portal/failures.md", () => {
@@ -574,7 +574,7 @@ describe("the portal and this machine cannot drift apart quietly", () => {
   it("has exactly the encoded failure scenarios", () => {
     // The portal's own open-questions section is not a scenario, so it is the
     // one heading this list excludes.
-    expect(headings(FAILURES_PAGE).filter((h) => h !== "Что ещё не решено")).toStrictEqual([
+    expect(headings(FAILURES_PAGE).filter((h) => h !== "What is not settled yet")).toStrictEqual([
       ...FAILURES,
     ]);
   });
