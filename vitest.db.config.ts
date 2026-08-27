@@ -5,12 +5,22 @@ import { defineConfig } from "vitest/config";
  *
  * It is a separate command because `pnpm test` is free, deterministic and works
  * without a network, and a suite that needs a Postgres server is none of those.
- * These tests skip themselves with a sentence saying so when DATABASE_URL is
- * absent, so running the command without a database is a clear message rather
- * than a wall of connection errors.
+ * These tests skip themselves with a sentence saying so when there is no server
+ * to reach, so running the command without one is a clear message rather than a
+ * wall of connection errors.
  *
- *   docker compose up -d
- *   DATABASE_URL=postgres://coinslot:coinslot@localhost:5432/coinslot pnpm test:db
+ *   docker compose up -d --wait postgres
+ *   pnpm test:db
+ *
+ * Naming the service matters: `docker compose up -d` with nothing after it
+ * starts the whole stack, six services of it.
+ *
+ * There is nothing to set. The suite runs against `coinslot_test`, which is its
+ * own database on that server and not the `coinslot` the gateway and the
+ * cabinet use, and it makes that database if it is not there. DATABASE_URL
+ * still overrides it, and naming `coinslot` is refused: this suite empties
+ * every table it finds and drops the queue's schema, which is not a thing to do
+ * quietly to the database somebody is watching.
  */
 export default defineConfig({
   test: {

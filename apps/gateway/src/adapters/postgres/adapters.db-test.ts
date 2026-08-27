@@ -3,9 +3,13 @@
  *
  * These are not in `pnpm test`. That command is free, deterministic and works
  * without a network, and a suite that needs a database server is none of those.
- * They run under `pnpm test:db`, which needs DATABASE_URL pointing at a
- * Postgres — `docker compose up -d` brings one up — and skips itself with that
- * sentence when there is none.
+ * They run under `pnpm test:db`, which needs a Postgres — `docker compose up -d
+ * --wait postgres` brings one up — and skips itself with a sentence saying so
+ * when there is none.
+ *
+ * The database it runs against is `coinslot_test`, which is this suite's own
+ * and not the one the stack runs on: see `testing/database.ts` for what
+ * happened when they were the same.
  *
  * What is checked here is only what cannot be checked in memory: that the two
  * adapters keep the same promises the in-memory ones do, in the one place where
@@ -13,6 +17,13 @@
  * chain of promises in one process and a row lock in a database, and which is
  * the thing standing between two events about one order and a charge that
  * happens twice.
+ *
+ * The queue's own promises — the delayed reminder, the retry after a handler
+ * throws, the window after which an unanswered delivery is taken back — are
+ * next door in `pgboss/queue.db-test.ts`. They cannot be checked here: this
+ * file starts a gateway, a started gateway has a worker on `coinslot_reminders`
+ * already, and a test that waits for its own second consumer to be handed the
+ * job is waiting for the queue to do the wrong thing.
  */
 
 import { randomUUID } from "node:crypto";
@@ -23,15 +34,41 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool } from "pg";
 import { PgBoss } from "pg-boss";
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { Gateway } from "../../app/gateway.js";
 import type { Runtime } from "../../app/runtime.js";
+import type { OrderChange, Store } from "../../ports/store.js";
+import { noDatabaseHere, readyDatabase, testDatabaseUrl } from "../../testing/database.js";
 import { countedIds, testConfig, workUntilStopped } from "../../testing/harness.js";
 import { ScriptedFacilitator } from "../memory/facilitator.js";
+import { MemoryStore } from "../memory/store.js";
 import { PgBossQueue } from "../pgboss/queue.js";
 import { connect, PostgresStore } from "./store.js";
 
-const databaseUrl = process.env.DATABASE_URL;
+// Made if it is not there, so that an existing volume needs nothing done to it.
+const wanted = testDatabaseUrl();
+const databaseUrl = await readyDatabase(wanted);
+
+/**
+ * Where this suite's pg-boss lives, which is not where a deployment's does.
+ *
+ * The suite has a database of its own now, so this is belt and braces rather
+ * than the thing standing between a test run and somebody's queue. It stays
+ * because it is also what keeps the two db-test files out of each other's way,
+ * and because `DATABASE_URL` can still be pointed at a database somebody else
+ * is using.
+ */
+const QUEUE_SCHEMA = "pgboss_adapters";
+
+/** Which server session a connection is, so a lock can be attributed to it. */
+async function backendPid(of: Pool): Promise<number> {
+  const { rows } = await of.query<{ pid: number }>("select pg_backend_pid() as pid");
+  const pid = rows[0]?.pid;
+  if (pid === undefined) {
+    throw new Error("a connection would not say which backend it is");
+  }
+  return pid;
+}
 
 const syncCard: Card = {
   merchant_item_id: "room-101",
@@ -42,17 +79,13 @@ const syncCard: Card = {
   fulfillment: "sync",
 };
 
-if (databaseUrl === undefined || databaseUrl === "") {
+if (databaseUrl === null) {
   // Said out loud as well as in the skipped test's name, because a run that
   // reports "1 skipped" and nothing else looks like a suite that passed.
-  console.log(
-    "\n  The database tests need a Postgres and DATABASE_URL is not set." +
-      "\n  Start one with `docker compose up -d`, then:" +
-      "\n    DATABASE_URL=postgres://coinslot:coinslot@localhost:5432/coinslot pnpm test:db\n",
-  );
+  console.log(noDatabaseHere(wanted));
 
   describe("the real adapters", () => {
-    it.skip("are skipped: DATABASE_URL is not set, so there is no database to run them against", () => {
+    it.skip("are skipped: there is no Postgres to run them against", () => {
       // Intentionally empty: the message above is the whole point.
     });
   });
@@ -81,14 +114,51 @@ if (databaseUrl === undefined || databaseUrl === "") {
       pool = connected.pool;
       // Every run starts from an empty catalog, or the counts below would be
       // reading somebody else's leftovers.
-      // Every table, claims included. Left behind, a claim from the last run
-      // owns the fingerprint this run presents and every purchase below is
-      // refused — a suite that passes once and never again, on a volume that
-      // outlives it.
-      await pool.query("truncate table cards, orders, receipts, payment_claims");
+      //
+      // Every table this schema has, and the list is meant to stay that way. A
+      // claim on a payment left behind owns the fingerprint this run presents,
+      // and every purchase below is refused — a suite that passes once and
+      // never again, on a volume that outlives it. The merchant's row is here
+      // for the same reason before it has cost anybody an afternoon: it carries
+      // whether they are selling at all, so a run that ever pauses them would
+      // leave every later run's purchases turned away, and the failure would
+      // look like anything but its cause. A table added to `schema.ts` belongs
+      // in this list.
+      await pool.query("truncate table cards, orders, receipts, payment_claims, merchants");
+      // And the queue's own tables, which are none of ours. They are dropped
+      // rather than emptied, dropped before the gateway is up rather than
+      // after, and dropped from an installation of this suite's own rather than
+      // from the one a deployment uses. All three are lessons from runs that
+      // failed.
+      //
+      // Emptying them is what pg-boss's own deleteAllJobs does, and it does it
+      // as `TRUNCATE pgboss.job` — an exclusive lock on a partitioned table and
+      // every partition under it. Called after the gateway has started, that
+      // lands on top of the reminder worker already polling those same
+      // partitions, and the two deadlock: `deadlock detected`, in beforeAll,
+      // taking the whole file down before a single test runs. It is a race, so
+      // it does not happen every time, which is the worst way for it to fail.
+      //
+      // Dropping the schema also clears what emptying the jobs leaves behind:
+      // the queues themselves and their schedules. `everyDay` registers a cron
+      // entry that survives on the volume, so a suite that only deleted jobs
+      // would inherit yesterday's schedules for as long as the volume lives.
+      //
+      // And it is `pgboss_adapters` rather than `pgboss` because the port this
+      // suite connects to is published for exactly this, so the database it
+      // runs against is the one the containers use. Dropping the schema a
+      // running gateway's workers are polling takes that gateway's queue out
+      // from under it — it logs `relation "pgboss.job_common" does not exist`
+      // and goes on reporting itself healthy. This suite installs its own and
+      // leaves a deployment's alone.
+      //
+      // What it costs is that pg-boss arrives at a schema that is never there
+      // yet, so its own migration of an existing installation is exercised
+      // nowhere. That is a thing to remember at the next pg-boss upgrade.
+      await pool.query(`drop schema if exists ${QUEUE_SCHEMA} cascade`);
 
       store = new PostgresStore(connected.db, countedIds());
-      boss = new PgBoss(databaseUrl);
+      boss = new PgBoss({ connectionString: databaseUrl, schema: QUEUE_SCHEMA });
       queue = new PgBossQueue(boss, {
         pollIntervalMs: 50,
         reminders: { attempts: 3, retryDelayMs: 1_000 },
@@ -105,14 +175,16 @@ if (databaseUrl === undefined || databaseUrl === "") {
       };
       gateway = new Gateway(runtime);
       await gateway.start();
-      // The queue keeps its own tables, and a job left in them by a previous
-      // run is drawn by this one — which would fail a test about an empty
-      // stream for a reason that has nothing to do with what it checks.
-      await boss.deleteAllJobs();
     }, 60_000);
 
     afterAll(async () => {
       await gateway.stop();
+      // Taken away again, the way the queue suite next door takes its own away,
+      // so that a developer opening this database finds the gateway's tables
+      // and not a test run's pg-boss beside them. The drop in beforeAll is what
+      // makes the suite repeatable and stays there: a run that dies in the
+      // middle leaves this behind, and the next run must not care.
+      await pool.query(`drop schema if exists ${QUEUE_SCHEMA} cascade`);
       await pool.end();
     });
 
@@ -208,6 +280,124 @@ if (databaseUrl === undefined || databaseUrl === "") {
       expect((await store.orderById(orderId))?.order.dispatch.attempts).toBe(3);
     });
 
+    it("lets one of two separate database clients take an order, and makes the other wait to find out", async () => {
+      // The ownership rule, against two clients that share nothing in this
+      // process. The test above races three calls through one store, and a
+      // chain of promises in the adapter would pass it just as well as a row
+      // lock; the in-memory adapter passes its own version of it for exactly
+      // that reason. Here there are two pools and two connections, so the only
+      // thing that can make the second wait for the first is the database.
+      //
+      // What is being decided is the rule the gateway decides inside this same
+      // hold: an order is taken by the first verified payment, and a second
+      // buyer is turned away. Both callers read the order before either writes,
+      // if nothing holds them apart — and then both are its owner, both are
+      // sent to a merchant, and one of the two charges fails on a merchant who
+      // has already handed over the goods.
+      const published = await store.publishCard(
+        { ...syncCard, merchant_item_id: "contested" },
+        now,
+      );
+      const offered = await gateway.beginPurchase(published.id, {});
+      if (offered.step !== "pay") throw new Error("no price was offered");
+      const orderId = offered.order.order.id;
+
+      // One connection each, and that is load-bearing rather than tidy. The
+      // check below names the two backends by their identifiers, so a pool that
+      // quietly opened a second connection would leave it watching a session
+      // that is not doing the work.
+      const alicePool = new Pool({ connectionString: databaseUrl, max: 1 });
+      const bobPool = new Pool({ connectionString: databaseUrl, max: 1 });
+      const reads: string[] = [];
+      let aliceHeldBobUp = false;
+
+      try {
+        const alicePid = await backendPid(alicePool);
+        const bobPid = await backendPid(bobPool);
+        expect(alicePid).not.toBe(bobPid);
+
+        let letBobIn: () => void = () => undefined;
+        const bobMayStart = new Promise<void>((resolve) => {
+          letBobIn = resolve;
+        });
+
+        /** What one client came away with: the order, or the name of whoever has it. */
+        type Taken = { readonly took: true } | { readonly took: false; readonly heldBy: string };
+
+        const take = (client: PostgresStore, who: string) =>
+          client.withOrder(orderId, async (found): Promise<OrderChange<Taken>> => {
+            reads.push(who);
+            if (who === "alice") {
+              letBobIn();
+              // Waited for rather than slept through: what is wanted is the
+              // moment bob's transaction is actually stuck behind alice's. It
+              // gives up rather than throwing, so that a lock that never took
+              // shows up below as two owners — the defect itself — and not as
+              // a timeout in the plumbing.
+              //
+              // The question is asked about the two backends by name, and it
+              // took three goes to get there. Counting backends waiting on any
+              // lock passed whether or not the waiter was bob. Adding the query
+              // text ruled out pg-boss, which is running against this same
+              // database and whose own fetch is a `for update`, but still
+              // passed for any two sessions contending over any row of this
+              // table — an adversarial review demonstrated exactly that with a
+              // decoy pair and no row lock at all. `pg_blocking_pids(bobPid)`
+              // naming `alicePid` cannot be produced by anybody else: it says
+              // this session is held up by that one, and the only lock alice
+              // holds is the one her `select ... for update` took on this
+              // order's row.
+              const until = Date.now() + 5_000;
+              while (Date.now() < until && !aliceHeldBobUp) {
+                const { rows } = await pool.query<{ blockers: number[] }>(
+                  "select pg_blocking_pids($1) as blockers",
+                  [bobPid],
+                );
+                aliceHeldBobUp = (rows[0]?.blockers ?? []).includes(alicePid);
+                if (!aliceHeldBobUp) {
+                  await new Promise((resolve) => setTimeout(resolve, 50));
+                }
+              }
+            }
+
+            if (found.paidBy !== null && found.paidBy !== who) {
+              return { result: { took: false, heldBy: found.paidBy } };
+            }
+            // Noted before the write goes back, so that the order of these
+            // marks says something. Alice reads first because the test starts
+            // her first; what is not arranged is that she gets all the way to
+            // deciding before bob reads at all, and without the hold she does
+            // not — bob's read lands between her read and her write.
+            reads.push(`${who} decided`);
+            return { save: { ...found, paidBy: who }, result: { took: true } };
+          });
+
+        const aliceTaking = take(new PostgresStore(drizzle(alicePool), countedIds()), "alice");
+        await bobMayStart;
+        const bobTaking = take(new PostgresStore(drizzle(bobPool), countedIds()), "bob");
+        const [first, second] = await Promise.all([aliceTaking, bobTaking]);
+
+        const decided = [first, second].map((lookup) => (lookup.found ? lookup.result : null));
+        // Exactly one, and the other told whose it is. Without the hold both
+        // read an order nobody owns and both take it.
+        expect(decided).toStrictEqual([{ took: true }, { took: false, heldBy: "alice" }]);
+        // And the database is what made bob wait: his session, held up by her
+        // session, on the one row she had locked.
+        expect(aliceHeldBobUp).toBe(true);
+        // The marks are the same fact told as a sequence rather than as a
+        // catalogue query, and they stand on the wait above being a wait for
+        // the real lock. Without it alice polls out her five seconds, bob reads
+        // and decides while she waits, and the marks come out "alice", "bob",
+        // "bob decided", "alice decided" — both of them having read an order
+        // that was still nobody's.
+        expect(reads).toStrictEqual(["alice", "alice decided", "bob"]);
+        expect((await store.orderById(orderId))?.paidBy).toBe("alice");
+      } finally {
+        await alicePool.end();
+        await bobPool.end();
+      }
+    }, 30_000);
+
     it("gives one payment to one order, in one statement, and refuses it to any other", async () => {
       // The replay guard, against the primary key that actually enforces it.
       // Two requests presenting the same payment at the same instant both reach
@@ -231,6 +421,41 @@ if (databaseUrl === undefined || databaseUrl === "") {
       expect(won).toHaveLength(1);
     });
 
+    it("claims a payment the same way in memory and in the database", async () => {
+      // The whole of the application logic is tested against the in-memory
+      // store, so every promise the flows rely on is really a promise about
+      // both adapters. The replay guard is the one where the two are least
+      // alike: a map and a check in memory, one insert and a primary key here.
+      // The same script is run through each and the answers have to match, or
+      // a purchase that the offline suite says is refused is a purchase that
+      // goes through in production.
+      const script = async (subject: Store) => ({
+        first: await subject.claimPayment("fp-parity", "ord_one"),
+        anotherOrder: await subject.claimPayment("fp-parity", "ord_two"),
+        // The retry the portal promises is safe.
+        ownRetry: await subject.claimPayment("fp-parity", "ord_one"),
+        // The sweep runs against a table this suite shares, so what is compared
+        // is that something went and not how many — the count is not the same
+        // question in a table other tests have written to.
+        sweptSomething: (await subject.forgetClaimsBefore(Date.now() + 60_000)) > 0,
+        afterTheSweep: await subject.claimPayment("fp-parity", "ord_two"),
+      });
+
+      const inTheDatabase = await script(store);
+      const inMemory = await script(new MemoryStore(countedIds()));
+
+      expect(inTheDatabase).toStrictEqual(inMemory);
+      // Said outright as well as compared, so a day when both adapters are
+      // wrong in the same way is not a day this test passes.
+      expect(inTheDatabase).toStrictEqual({
+        first: { claimed: true },
+        anotherOrder: { claimed: false, heldBy: "ord_one" },
+        ownRetry: { claimed: true },
+        sweptSomething: true,
+        afterTheSweep: { claimed: true },
+      });
+    });
+
     it("forgets claims older than an instant, and says how many went", async () => {
       await store.claimPayment("fp-db-old", "ord_old");
 
@@ -238,50 +463,34 @@ if (databaseUrl === undefined || databaseUrl === "") {
       expect(await store.claimPayment("fp-db-old", "ord_new")).toStrictEqual({ claimed: true });
     });
 
-    it("delivers a reminder, and delivers it again when the handler throws", async () => {
-      // A reminder is the only thing that ever declares an overdue order, and
-      // the whole of that path — the schedule, the delivery, the retry — is
-      // pg-boss doing it. Nothing offline can watch that.
-      const seen: string[] = [];
-      let failures = 0;
-      const watching = new PgBoss(databaseUrl);
-      const own = new PgBossQueue(watching, {
-        pollIntervalMs: 50,
-        reminders: { attempts: 3, retryDelayMs: 1_000 },
-      });
-      own.onReminder(async (reminder) => {
-        seen.push(reminder.kind);
-        if (failures < 1) {
-          failures += 1;
-          throw new Error("the handler was briefly unhappy");
-        }
-      });
-      await own.start();
+    it("keeps the open column in step with the state inside the document", async () => {
+      // `open` is a column of its own, written from the document by `rowFor` on
+      // every insert and every update, and it is what `GET /orders?open=true`
+      // answers from. The in-memory adapter has no such column — it works the
+      // answer out from the state each time it is asked — so nothing offline
+      // can catch the two disagreeing, and a column that fell behind would
+      // quietly drop a live order out of the list the cabinet works from.
+      const published = await store.publishCard({ ...syncCard, merchant_item_id: "listed" }, now);
+      const offered = await gateway.beginPurchase(published.id, {});
+      if (offered.step !== "pay") throw new Error("no price was offered");
+      const orderId = offered.order.order.id;
 
-      try {
-        await own.remind(
-          { kind: "deadline", orderId: "ord_r", deadline: "quote_expiry", at: 1 },
-          0,
-        );
-        await vi.waitFor(() => expect(seen.length).toBeGreaterThan(1), {
-          timeout: 20_000,
-          interval: 200,
-        });
-      } finally {
-        await own.stop();
-      }
+      const idsOf = async (query?: { readonly open?: boolean }) =>
+        (await store.orders(query)).map((record) => record.order.id);
 
-      expect(failures).toBe(1);
-    }, 40_000);
+      expect(await idsOf({ open: true })).toContain(orderId);
 
-    it("takes on work to run every day without complaining", async () => {
-      // The sweep of claims on payments is registered through this on every
-      // start. It is unexecuted everywhere else, and a schedule pg-boss refuses
-      // would take the gateway's start down with it.
-      await expect(
-        queue.everyDay("coinslot_a_daily_sweep", async () => undefined),
-      ).resolves.toBeUndefined();
-    }, 30_000);
+      // Closed inside the document, and nothing said about the column.
+      await store.withOrder(orderId, (found) => ({
+        save: { ...found, order: { ...found.order, state: "expired" } },
+        result: null,
+      }));
+
+      expect(await idsOf({ open: true })).not.toContain(orderId);
+      // Still there, though: closed is not deleted, and the unfiltered list is
+      // what somebody reconciling a day's orders reads.
+      expect(await idsOf()).toContain(orderId);
+    });
 
     it("says an order is not there rather than throwing", async () => {
       expect(await store.withOrder("ord_nope", () => ({ result: 1 }))).toStrictEqual({
@@ -341,6 +550,13 @@ if (databaseUrl === undefined || databaseUrl === "") {
       const receipt = await store.receiptForOrder(offered.order.order.id);
       expect(receipt?.outcome).toBe("delivered");
       expect(receipt?.price.amount).toBe("80.00");
+      // And it is in the list as well as findable by its order. The two are
+      // different queries and only one of them had ever been run against a
+      // database; a receipt somebody can fetch but that never appears in the
+      // list is a day's takings that does not add up.
+      const listed = await store.receipts();
+      expect(listed.map((one) => one.order_id)).toContain(offered.order.order.id);
+      expect(listed.find((one) => one.order_id === offered.order.order.id)).toStrictEqual(receipt);
     }, 30_000);
   });
 }

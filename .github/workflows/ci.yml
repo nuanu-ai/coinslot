@@ -80,8 +80,6 @@ jobs:
           --health-interval 2s
           --health-timeout 3s
           --health-retries 15
-    env:
-      DATABASE_URL: postgres://coinslot:coinslot@localhost:5432/coinslot
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -93,7 +91,11 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @coinslot/gateway db:migrate
+      # No DATABASE_URL and no migration step. The suite runs against
+      # `coinslot_test` on the service above, makes that database if it is not
+      # there, and applies the checked-in migrations itself before the first
+      # test — which is the same code path a developer's run takes, so this job
+      # is not exercising a second way of arriving at a schema.
       - run: pnpm test:db
 
   # The decision log needs neither Node nor dependencies — only bash and files.

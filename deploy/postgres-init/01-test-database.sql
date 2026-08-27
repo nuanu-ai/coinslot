@@ -1,0 +1,16 @@
+-- The database `pnpm test:db` empties, beside the one the stack runs on.
+--
+-- The suite drops the queue's schema and truncates every table it finds. Given
+-- the stack's own database it does that to the catalogue a merchant has just
+-- published and the orders the cabinet is showing, while somebody is looking at
+-- them, and says nothing about it afterwards.
+--
+-- Postgres runs the files in /docker-entrypoint-initdb.d only when it
+-- initialises an empty data directory, and the volume outlives
+-- `docker compose down`. So this covers a fresh volume and nothing else: what
+-- makes the database exist on a volume that is already there is the suite
+-- itself, in apps/gateway/src/testing/database.ts. This file is here so that a
+-- psql session on a new machine finds the database without running the suite
+-- first, and so that the split is visible in the stack rather than only in the
+-- tests.
+CREATE DATABASE coinslot_test;
