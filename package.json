@@ -21,10 +21,13 @@
     "test:db": "vitest run --config vitest.db.config.ts",
     "smoke": "pnpm --filter @coinslot/slice run smoke",
     "outside": "./scripts/outside.sh",
-    "buy": "pnpm --filter @coinslot/slice run buy"
+    "buy": "pnpm --filter @coinslot/slice run buy",
+    "changeset": "changeset",
+    "release": "pnpm build && changeset publish"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.10",
+    "@changesets/cli": "^3.0.1",
     "@types/node": "^26.3.0",
     "typescript": "7.0.2",
     "vitest": "^4.1.11"
