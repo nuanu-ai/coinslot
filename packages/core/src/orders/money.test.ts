@@ -75,8 +75,14 @@ describe("the invariants of the order's money", () => {
   // implementation detail: `refuseToWriteAnImpossibleOrder` in the gateway
   // joins these into the error a person reads when an order will not persist,
   // and it is all that person is given to work out which of eight things went
-  // wrong. Asserting only that some rule fired left one rule deletable and
-  // every sentence but one rewritable to "xxx" with the suite still green.
+  // wrong.
+  //
+  // Asserting only that some rule fired cost more than it looks. Four of the
+  // eight rules could be deleted one at a time with the whole suite green,
+  // because a control that reads a length is satisfied by any other rule that
+  // fires on the same order; and seven of the eight sentences could be replaced
+  // with "xxx", the exception being the one the gateway's own test reads out of
+  // the error text.
   //
   // Two of the rules are narrower restatements of the first, which catches any
   // settled order in a state that records neither goods nor a debt. They earn
@@ -155,6 +161,10 @@ describe("the invariants of the order's money", () => {
     // the outcome is asked for on a clock that runs from this instant. Without
     // it the order is frozen and invisible, which is the one way an order can
     // wait forever with the buyer's money in the air.
+    //
+    // `deadlines.test.ts` already reaches for this rule while proving that such
+    // an order keeps its clock. This is its own control, in the file the rule
+    // lives beside, and it is what pins the sentence.
     const fulfilled = reach("fulfilled");
     const impossible: Order = {
       ...fulfilled,

@@ -22,17 +22,18 @@ describe("deciding whether to deliver an order again", () => {
   });
 
   it("never backs off further than the policy's ceiling", () => {
-    // Doubling from a thousand passes a minute at the eighth attempt and keeps
-    // going after it. The wait is what an agent's buyer sits through, so the
-    // ceiling is the promise and the growth stops at it rather than near it.
+    // Doubling from a thousand passes a minute at the eighth attempt: the
+    // seventh is still under it at thirty-two seconds, the eighth would be
+    // sixty-four. The wait is what an agent's buyer sits through, so the
+    // ceiling is the promise, and the growth is pinned on both sides of the
+    // attempt that crosses it and once well past.
     const patient = { ...policy, maxAttempts: 100 };
+    const madeSoFar = (attempts: number) =>
+      nextRedelivery({ attempts, now: 0, deadlineAt: null, policy: patient });
 
-    expect(
-      nextRedelivery({ attempts: 8, now: 0, deadlineAt: null, policy: patient }),
-    ).toStrictEqual({ retry: true, attempt: 9, delayMs: policy.maxDelayMs });
-    expect(
-      nextRedelivery({ attempts: 20, now: 0, deadlineAt: null, policy: patient }),
-    ).toStrictEqual({ retry: true, attempt: 21, delayMs: policy.maxDelayMs });
+    expect(madeSoFar(6)).toStrictEqual({ retry: true, attempt: 7, delayMs: 32_000 });
+    expect(madeSoFar(7)).toStrictEqual({ retry: true, attempt: 8, delayMs: policy.maxDelayMs });
+    expect(madeSoFar(20)).toStrictEqual({ retry: true, attempt: 21, delayMs: policy.maxDelayMs });
   });
 
   it("gives up once the policy's attempts are spent", () => {

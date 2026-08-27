@@ -54,12 +54,20 @@ function tableRows(page: string, heading: string, column = 1): readonly string[]
   const rows: string[] = [];
   for (const line of lines.slice(first)) {
     if (!line.startsWith("|")) break;
-    const cells = line.split("|");
-    const cell = cells[column]?.trim() ?? "";
-    if (cells.length <= column)
+    // A row is bounded by a pipe at each end, so splitting it leaves an empty
+    // piece on both sides: a two-column row is four pieces. The row has column
+    // N only if there is a piece after the Nth one.
+    const pieces = line.split("|");
+    if (pieces.length <= column + 1) {
       throw new Error(`the table in "${heading}" has no column ${column}`);
-    if (/^-+$/.test(cell)) continue;
-    rows.push(cell);
+    }
+    const cells = pieces.slice(1, -1).map((piece) => piece.trim());
+    // Being the separator is a property of the whole row rather than of the
+    // cell this call happens to select. Read off one cell, a data row whose
+    // selected cell was written as "---" would drop out and shift every promise
+    // after it up by one — silently, and into the wrong row.
+    if (cells.every((cell) => /^:?-+:?$/.test(cell))) continue;
+    rows.push(cells[column - 1] ?? "");
   }
   return rows.slice(1);
 }
@@ -571,5 +579,12 @@ describe("the portal and this machine cannot drift apart quietly", () => {
     expect(tableRows(ORDERS_PAGE, "Время вышло").length).toBe(5);
     expect(() => tableRows(ORDERS_PAGE, "Секция, которой нет")).toThrowError(/no section/);
     expect(() => tableRows(ORDERS_PAGE, "Тестовые заказы")).toThrowError(/no table/);
+    // And a column the table does not have is an error rather than a row of
+    // empty strings, which is what a guard against a moved column would
+    // otherwise compare itself against.
+    expect(() => tableRows(ORDERS_PAGE, "Время вышло", 3)).toThrowError(/no column 3/);
+    expect(() => tableRows(ORDERS_PAGE, "Чем заказ может закончиться", 4)).toThrowError(
+      /no column 4/,
+    );
   });
 });
