@@ -70,7 +70,7 @@ while "incoming messages only" settles whether the product fits.
 
 A price in the card is required in every case: it is what the agent sees in a
 catalogue while it is choosing, and it is what ends up in the receipt when the
-sale went through at it. For a product with a fixed price that is the whole
+sale goes through at it. For a product with a fixed price that is the whole
 story — the price is true until you change it.
 
 If your price is worked out on the fly, you add a price check to the card and
@@ -115,6 +115,11 @@ Every field of the result is required until you mark it `required: false`. The
 result is a promise, and a delivery missing a promised field does not go
 through as a delivery. Purchase parameters run the other way round: a
 parameter is required only where it is marked `required: true`.
+
+A card declares at least one field here, and at least one of them has to
+arrive every time. A result that might be entirely absent tells the agent
+nothing about what it is paying for, and a card carrying one is refused at
+publication.
 
 ```ts
 result: {
