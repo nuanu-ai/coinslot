@@ -25,7 +25,8 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { noDatabaseHere, readyDatabase, testDatabaseUrl } from "@coinslot/gateway/testing/database";
-import { afterAll, describe, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
+import type { Accounts } from "./accounts.js";
 import { connect, migrateAccounts, postgresAccounts } from "./accounts-postgres.js";
 import { describeAccounts } from "./testing/accounts-contract.js";
 
@@ -50,6 +51,78 @@ if (databaseUrl === null) {
 
   afterAll(async () => {
     await pool.end();
+  });
+
+  describe("when the database will not answer", () => {
+    /**
+     * Everything an unhandled exception would put in the log.
+     *
+     * `console.error` prints an exception's causes as well as its own message,
+     * so the whole chain is what actually reaches whatever collects the log —
+     * and the whole chain is what this reads.
+     */
+    const asLogged = (thrown: unknown): string => {
+      const said: string[] = [];
+      let at: unknown = thrown;
+      for (let deep = 0; deep < 8 && at !== null && at !== undefined; deep += 1) {
+        said.push(String(at), JSON.stringify(at) ?? "");
+        at = typeof at === "object" && "cause" in at ? (at as { cause: unknown }).cause : null;
+      }
+      return said.join(" ");
+    };
+
+    /** A store whose every query fails, which is a pool that has been let go. */
+    const broken = async (): Promise<Accounts> => {
+      const its = connect(databaseUrl);
+      const store = postgresAccounts(its);
+      await its.end();
+      return store;
+    };
+
+    it("does not put the parameters of the failed query into the exception", async () => {
+      // Drizzle wraps every driver error in one whose message is the SQL it
+      // tried followed by every bound parameter. Left alone, a connection reset
+      // during a sign-in put the live session's fingerprint into the log, and
+      // one during a password change put the new derivation there — the two
+      // values this whole arrangement exists to keep out of a log, on a path
+      // nobody reading the call site would think about.
+      const store = await broken();
+      const fingerprint = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
+      const stored = "scrypt$32768$8$1$c2FsdHNhbHRzYWx0c2E$VEhJUy1JUy1USEUtREVSSVZFRC1LRVk";
+
+      const said = await Promise.all(
+        [
+          () => store.whose(fingerprint, new Date()),
+          () => store.setPassword("dmitry@example.com", stored),
+          () => store.add("dmitry@example.com", stored, new Date()),
+          () => store.open(fingerprint, "acc_1", new Date(), new Date()),
+          () => store.end(fingerprint),
+          () => store.byEmail("dmitry@example.com"),
+          () => store.endEveryFor("dmitry@example.com"),
+          () => store.list(new Date()),
+        ].map(async (run) => {
+          try {
+            await run();
+            return "";
+          } catch (thrown) {
+            return asLogged(thrown);
+          }
+        }),
+      );
+
+      for (const line of said) {
+        expect(line, line).not.toBe("");
+        expect(line, line).not.toContain(fingerprint);
+        expect(line, line).not.toContain(stored);
+        expect(line, line).not.toContain("VEhJUy1JUy1USEUtREVSSVZFRC1LRVk");
+        // And no SQL either: a query's text names the tables, which is fine,
+        // but drizzle's message is the query *and* the parameters together and
+        // there is no version of it that carries one without the other.
+        expect(line, line).not.toContain("params:");
+      }
+      // What it does say is what somebody reading a log can act on.
+      expect(said[0]).toContain("session");
+    });
   });
 
   describeAccounts("the account store on Postgres", async () => {
