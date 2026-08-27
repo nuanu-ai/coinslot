@@ -133,7 +133,11 @@ services:
       # Caddy answers and not the port this process listens on. Given the
       # process's own port here, a payment challenge would name a door that is
       # closed from outside.
-      PUBLIC_BASE_URL: http://localhost:8080
+      # Follows the published port, because this address is not decoration: it
+      # is what a payment challenge tells an agent to come back to, and what a
+      # catalogue keys a listing on. Left at 8080 while the stack was moved to
+      # another port, every challenge named a door that answers nothing.
+      PUBLIC_BASE_URL: http://localhost:${COINSLOT_HOST_PORT:-8080}
       # No chain behind this stack (ADR-0008). Payments are verified and settled
       # against nothing, so a purchase completes here with no network, no wallet
       # and no faucet — which is what makes the cabinet worth opening. The
