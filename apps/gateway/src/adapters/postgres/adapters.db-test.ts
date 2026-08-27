@@ -110,11 +110,17 @@ if (databaseUrl === undefined || databaseUrl === "") {
       pool = connected.pool;
       // Every run starts from an empty catalog, or the counts below would be
       // reading somebody else's leftovers.
-      // Every table, claims included. Left behind, a claim from the last run
-      // owns the fingerprint this run presents and every purchase below is
-      // refused — a suite that passes once and never again, on a volume that
-      // outlives it.
-      await pool.query("truncate table cards, orders, receipts, payment_claims");
+      //
+      // Every table this schema has, and the list is meant to stay that way. A
+      // claim on a payment left behind owns the fingerprint this run presents,
+      // and every purchase below is refused — a suite that passes once and
+      // never again, on a volume that outlives it. The merchant's row is here
+      // for the same reason before it has cost anybody an afternoon: it carries
+      // whether they are selling at all, so a run that ever pauses them would
+      // leave every later run's purchases turned away, and the failure would
+      // look like anything but its cause. A table added to `schema.ts` belongs
+      // in this list.
+      await pool.query("truncate table cards, orders, receipts, payment_claims, merchants");
       // And the queue's own tables, which are none of ours. They are dropped
       // rather than emptied, dropped before the gateway is up rather than
       // after, and dropped from an installation of this suite's own rather than
