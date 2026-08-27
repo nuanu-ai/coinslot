@@ -87,11 +87,17 @@ describe("money and moments on a screen", () => {
   it("says which zone a moment is in", () => {
     // The server has no idea what zone the reader is in, and a time rendered
     // in the server's zone with nothing to say so is off by hours on a receipt.
-    expect(moment("2026-08-27T09:12:04Z")).toBe("2026-08-27 09:12 UTC");
-    expect(moment("2026-08-27T11:12:04+02:00")).toBe("2026-08-27 09:12 UTC");
+    expect(moment("2026-08-27T09:12:04Z")).toBe("2026-08-27 09:12:04 UTC");
+    expect(moment("2026-08-27T11:12:04+02:00")).toBe("2026-08-27 09:12:04 UTC");
   });
 
   it("shows a moment it cannot read rather than inventing one", () => {
     expect(moment("not a moment")).toBe("not a moment");
+  });
+
+  it("keeps the seconds, because this is reconciled against a wallet", () => {
+    // Cut to the minute, two payments a few seconds apart are one line twice
+    // and the merchant matching transfers cannot tell which is which.
+    expect(moment("2026-08-27T09:12:04Z")).not.toBe(moment("2026-08-27T09:12:39Z"));
   });
 });

@@ -119,7 +119,11 @@ export class PostgresStore implements Store {
   async setSelling(selling: MerchantSelling): Promise<void> {
     await this.#db
       .insert(merchants)
-      .values({ id: THE_MERCHANT, selling, updatedAt: new Date() })
+      // One clock for both branches. Written as `new Date()` on the insert and
+      // `now()` on the update, the two rows would carry stamps from different
+      // clocks — this process's and the database's — and the column exists to
+      // be compared.
+      .values({ id: THE_MERCHANT, selling, updatedAt: sql`now()` })
       .onConflictDoUpdate({
         target: merchants.id,
         set: { selling, updatedAt: sql`now()` },

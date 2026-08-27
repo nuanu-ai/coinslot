@@ -981,6 +981,41 @@ describe("the merchant's own catalog and the pause switch", () => {
     expect(again.body).toStrictEqual(first.body);
   });
 
+  it("does not put a merchant who has left back on sale", async () => {
+    // Leaving is not a heavier pause, and this switch does not undo one: a
+    // departure closed the orders that were open and left refunds owed, and
+    // resuming would return the merchant to the catalog with none of it
+    // unwound. Nothing in the pilot sets "departed", so the guard is reached
+    // through the store rather than through a route — the same reason
+    // `sellingFor`'s departed branch is tested directly.
+    const { served, harnessed } = await started();
+    const itemId = await publish(served, syncCard);
+    await harnessed.store.setSelling("departed");
+
+    const resumed = await served.call("POST", "/v0/selling/resume", { headers: asMerchant });
+
+    expect(resumed.status).toBe(409);
+    expect((resumed.body as { error: { code: string } }).error.code).toBe("merchant_departed");
+    expect(await harnessed.store.selling()).toBe("departed");
+    // And the merchant is still gone as far as an agent is concerned.
+    expect(
+      (await served.call("POST", `/v0/items/${itemId}/purchase`, { body: { params: {} } })).status,
+    ).toBe(409);
+  });
+
+  it("does not describe a departure as a pause either", async () => {
+    // The other direction of the same rule. Pausing a merchant who has left
+    // would say their open orders are playing out, which they are not.
+    const { served, harnessed } = await started();
+    await publish(served, syncCard);
+    await harnessed.store.setSelling("departed");
+
+    const paused = await served.call("POST", "/v0/selling/pause", { headers: asMerchant });
+
+    expect(paused.status).toBe(409);
+    expect(await harnessed.store.selling()).toBe("departed");
+  });
+
   it("says there is no such product rather than pausing nothing quietly", async () => {
     const { served } = await started();
 

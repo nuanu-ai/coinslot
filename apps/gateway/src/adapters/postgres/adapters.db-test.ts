@@ -129,6 +129,60 @@ if (databaseUrl === undefined || databaseUrl === "") {
       expect(await store.cards()).toHaveLength(1);
     });
 
+    it("publishes a card selling, and keeps a pause across the next publish", async () => {
+      // The rule that matters most in this adapter, and it is expressed by
+      // omission: `paused` is deliberately not in the upsert's `set:` clause.
+      // An edit that puts it back is invisible to `pnpm test` — the only other
+      // test for this rule runs against the in-memory store — and what it costs
+      // is stock a merchant took off sale back in front of an agent.
+      const card = { ...syncCard, merchant_item_id: "kept-paused" };
+      const first = await store.publishCard(card, now);
+      expect(first.paused).toBe(false);
+
+      await store.setCardPaused(first.id, true);
+      const again = await store.publishCard({ ...card, title: "Dearer" }, now + 1_000);
+
+      expect(again.paused).toBe(true);
+      expect(again.card.title).toBe("Dearer");
+      expect((await store.cardById(first.id))?.paused).toBe(true);
+      expect((await store.cards()).find((held) => held.id === first.id)?.paused).toBe(true);
+    });
+
+    it("takes a card off sale and puts it back, and says so about one that is not there", async () => {
+      const stored = await store.publishCard({ ...syncCard, merchant_item_id: "switched" }, now);
+
+      expect((await store.setCardPaused(stored.id, true))?.paused).toBe(true);
+      expect((await store.cardById(stored.id))?.paused).toBe(true);
+      expect((await store.setCardPaused(stored.id, false))?.paused).toBe(false);
+      expect(await store.setCardPaused("itm_nobody_published_this", true)).toBeNull();
+    });
+
+    it("has the merchant selling until somebody says otherwise, and remembers when they do", async () => {
+      // The row does not exist until the switch is first pressed, and an absent
+      // row means selling. There is no state of the world in which we hold a
+      // merchant's cards and cannot say whether they are selling, so this must
+      // never answer "I do not know".
+      expect(await store.selling()).toBe("open");
+
+      await store.setSelling("paused");
+      expect(await store.selling()).toBe("paused");
+
+      await store.setSelling("open");
+      expect(await store.selling()).toBe("open");
+    });
+
+    it("refuses to guess when the column holds a word the machine does not know", async () => {
+      // A hand-edited row, or a value from a version of this code that is not
+      // this one. Guessing here would be guessing about whether somebody is
+      // selling, which is the one thing this column exists to answer.
+      await store.setSelling("paused");
+      await pool.query("update merchants set selling = $1", ["sort-of"]);
+
+      await expect(store.selling()).rejects.toThrow(/sort-of/);
+
+      await store.setSelling("open");
+    });
+
     it("holds an order still, so two decisions cannot both write over the same read", async () => {
       // The double-charge test, against the lock that actually runs in
       // production. In memory this is a chain of promises; here it is

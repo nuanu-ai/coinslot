@@ -107,12 +107,18 @@ export const money = (sum: { readonly amount: string; readonly currency: string 
   `${sum.amount} ${sum.currency}`;
 
 /**
- * A moment as a merchant reads it, in UTC.
+ * A moment as a merchant reads it, in UTC, to the second.
  *
  * UTC and not the merchant's own zone, and it says so beside every one it
  * prints. The server has no idea what zone the reader is in — nothing in the
  * request carries it — and quietly rendering the server's zone would put a
  * time on a receipt that is off by hours with nothing to say it is.
+ *
+ * The seconds are here because this screen is reconciled against a wallet.
+ * Cut to the minute, two receipts a few seconds apart are one line twice, and
+ * the merchant matching transfers cannot tell which is which. The truncation
+ * that remains is below the second, and nothing in this contract is timed
+ * finely enough for that to separate two payments.
  */
 export const moment = (iso: string): string => {
   const at = new Date(iso);
@@ -123,5 +129,5 @@ export const moment = (iso: string): string => {
     return iso;
   }
   const date = at.toISOString();
-  return `${date.slice(0, 10)} ${date.slice(11, 16)} UTC`;
+  return `${date.slice(0, 10)} ${date.slice(11, 19)} UTC`;
 };

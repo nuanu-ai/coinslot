@@ -65,6 +65,17 @@ const STAGE_ONE_ORDERS_ARE_TESTS = true;
 /** The queue's name for the daily sweep of claims on payments. */
 export const SWEEP_CLAIMS = "coinslot_forget_old_claims";
 
+/**
+ * What the selling switch came to: the catalog as it now stands, or a refusal.
+ *
+ * A refusal rather than a thrown error, because a merchant who has left
+ * pressing "start selling again" is an ordinary thing that happens and the
+ * caller has to answer it rather than crash on it.
+ */
+export type SellingChange =
+  | { readonly ok: true; readonly cards: MerchantCardList }
+  | { readonly ok: false; readonly why: string };
+
 /** What a purchase attempt came to. */
 export type PurchaseAttempt =
   /** The order is priced and waiting to be paid for: here is what it costs. */
@@ -220,7 +231,18 @@ export class Gateway {
 
   // --- the merchant's own catalog -------------------------------------------
 
-  /** Every card this merchant published, with the word each is selling under. */
+  /**
+   * Every card this merchant published, with the word each is selling under.
+   *
+   * "This merchant" is stage one's one merchant, and the scoping is the store
+   * holding nobody else's cards rather than a filter here. The pilot plan's
+   * stage one is one merchant with one key, and the gateway holds exactly one
+   * `MERCHANT_API_KEY` to prove it — so there is nothing to scope against yet
+   * and a filter would be filtering on a field that does not exist. What that
+   * costs is named rather than left to be discovered: the day a second merchant
+   * exists, this and `receipts()` are two of the places that hand one merchant
+   * another's catalog, and the key check in front of them will not notice.
+   */
   async merchantCards(): Promise<MerchantCardList> {
     const selling = await this.runtime.store.selling();
     const cards = await this.runtime.store.cards();
@@ -252,12 +274,30 @@ export class Gateway {
    * the whole catalog so which cards actually came back is a fact rather than
    * something to infer.
    */
-  async setSelling(selling: MerchantSelling): Promise<MerchantCardList> {
+  async setSelling(selling: MerchantSelling): Promise<SellingChange> {
+    const now = await this.runtime.store.selling();
+    if (now === "departed") {
+      // A departure is not a heavier pause and this switch does not undo one.
+      // Leaving closed the orders that were open and left the merchant owing
+      // refunds on whatever was paid for and not delivered; setting the word
+      // back to "open" here would put a merchant who has left back in the
+      // catalog with none of that unwound, and the only sign of it would be
+      // sales arriving again. The contract's own documents argue that leaving
+      // cannot be reached by this switch; this is the same rule in the other
+      // direction, which is the half that was missing.
+      return { ok: false, why: "this merchant has left, and selling is not resumed by a switch" };
+    }
     await this.runtime.store.setSelling(selling);
-    return this.merchantCards();
+    return { ok: true, cards: await this.merchantCards() };
   }
 
-  /** Every receipt this merchant has. */
+  /**
+   * Every receipt this merchant has.
+   *
+   * Scoped the way `merchantCards()` is, for the same stage-one reason and with
+   * the same cost: the store holds one merchant's receipts because it holds one
+   * merchant's, not because anything here selects them.
+   */
   async receipts(): Promise<ReceiptList> {
     return { receipts: [...(await this.runtime.store.receipts())] };
   }

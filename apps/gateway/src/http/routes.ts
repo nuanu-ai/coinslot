@@ -75,13 +75,9 @@ export function handlersFor(gateway: Gateway): Partial<Record<RouteName, Mounted
 
     resume_card: { serve: (call) => cardPaused(gateway, call, false) },
 
-    pause_selling: {
-      serve: async () => ({ status: OK, document: await gateway.setSelling("paused") }),
-    },
+    pause_selling: { serve: ({ response }) => sellingSet(gateway, response, "paused") },
 
-    resume_selling: {
-      serve: async () => ({ status: OK, document: await gateway.setSelling("open") }),
-    },
+    resume_selling: { serve: ({ response }) => sellingSet(gateway, response, "open") },
 
     list_receipts: { serve: async () => ({ status: OK, document: await gateway.receipts() }) },
 
@@ -187,6 +183,27 @@ export function handlersFor(gateway: Gateway): Partial<Record<RouteName, Mounted
 
     purchase_item: { serve: (call) => purchase(gateway, edge, call) },
   };
+}
+
+/**
+ * All selling stopped or started again, answered with the whole catalog —
+ * because every card's word changed, and which cards actually came back is then
+ * a fact rather than something the caller has to infer.
+ *
+ * A merchant who has left is refused. Leaving closed their open orders and left
+ * refunds owed; putting the word back to "open" would return them to the
+ * catalog with none of that unwound.
+ */
+async function sellingSet(
+  gateway: Gateway,
+  response: RouteCall["response"],
+  selling: "open" | "paused",
+): Promise<RouteAnswer> {
+  const changed = await gateway.setSelling(selling);
+  if (!changed.ok) {
+    return written(response, CONFLICT, refusal("merchant_departed", changed.why));
+  }
+  return { status: OK, document: changed.cards };
 }
 
 /**

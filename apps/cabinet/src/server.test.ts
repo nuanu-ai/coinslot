@@ -20,6 +20,7 @@ import type { Card } from "@coinslot/contracts";
 import { buyOverHttp, type Harness, harness, type Served, serve } from "@coinslot/gateway/testing";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadConfig } from "./config.js";
+import type { Answer } from "./gateway.js";
 import { buildApp } from "./server.js";
 
 const KEY = "a-merchant-key-long-enough";
@@ -58,6 +59,10 @@ interface Browser {
   post(path: string, form?: Record<string, string>): Promise<Visit>;
   /** Signs in with a key and follows the redirect, the way a browser does. */
   signIn(key: string): Promise<Visit>;
+  /** The same browser sending one exact cookie header instead of its jar. */
+  withRawCookie(cookie: string): Browser;
+  /** The same browser claiming its page came from somewhere else. */
+  from(origin: string): Browser;
   close(): Promise<void>;
 }
 
@@ -109,20 +114,41 @@ async function visiting(gatewayUrl: string, basePath: string): Promise<Browser> 
   const server = app.listen(0);
   await new Promise<void>((resolve) => server.once("listening", resolve));
   const { port } = server.address() as AddressInfo;
-  const url = `http://127.0.0.1:${port}`;
+
+  const browser = await attachedTo(`http://127.0.0.1:${port}`, basePath);
+  return {
+    ...browser,
+    close: () =>
+      new Promise<void>((resolve, reject) => {
+        server.close((error) => (error === undefined ? resolve() : reject(error)));
+      }),
+  };
+}
+
+/**
+ * A browser pointed at a cabinet that is already listening, with a cookie jar
+ * of its own.
+ *
+ * Separate from `visiting` because two of the tests build their own cabinet —
+ * one whose gateway client answers as the test says — and everything about
+ * being a browser is the same for both.
+ */
+async function attachedTo(url: string, basePath: string): Promise<Browser> {
   const jar = new Map<string, string>();
 
   const call = async (
     method: string,
     path: string,
     form?: Record<string, string>,
+    sent: { readonly cookie?: string; readonly origin?: string } = {},
   ): Promise<Visit> => {
-    const cookie = [...jar].map(([name, value]) => `${name}=${value}`).join("; ");
+    const cookie = sent.cookie ?? [...jar].map(([name, value]) => `${name}=${value}`).join("; ");
     const answered = await fetch(`${url}${path}`, {
       method,
       redirect: "manual",
       headers: {
         ...(cookie === "" ? {} : { cookie }),
+        ...(sent.origin === undefined ? {} : { origin: sent.origin }),
         ...(form === undefined ? {} : { "content-type": "application/x-www-form-urlencoded" }),
       },
       ...(form === undefined ? {} : { body: new URLSearchParams(form).toString() }),
@@ -149,18 +175,27 @@ async function visiting(gatewayUrl: string, basePath: string): Promise<Browser> 
     };
   };
 
-  return {
+  const browser: Browser = {
     get: (path) => call("GET", path),
     post: (path, form) => call("POST", path, form ?? {}),
     async signIn(key) {
       const posted = await call("POST", `${basePath}/sign-in`, { key });
       return posted.to === null ? posted : call("GET", posted.to);
     },
-    close: () =>
-      new Promise<void>((resolve, reject) => {
-        server.close((error) => (error === undefined ? resolve() : reject(error)));
-      }),
+    withRawCookie: (raw) => ({
+      ...browser,
+      get: (path) => call("GET", path, undefined, { cookie: raw }),
+      post: (path, form) => call("POST", path, form ?? {}, { cookie: raw }),
+    }),
+    from: (origin) => ({
+      ...browser,
+      get: (path) => call("GET", path, undefined, { origin }),
+      post: (path, form) => call("POST", path, form ?? {}, { origin }),
+    }),
+    close: async () => undefined,
   };
+
+  return browser;
 }
 
 /**
@@ -269,17 +304,43 @@ describe("getting into the cabinet", () => {
     expect(page.html).toContain('href="/cabinet/coinslot.css"');
   });
 
-  it("serves one stylesheet that paints both themes", async () => {
+  it("serves one stylesheet whose two themes define the same tokens", async () => {
     // ADR-0005 §6: one visual language in tokens rather than repeated per page.
-    // Both themes are defined, because a page that painted only one of them is
-    // unreadable on half the machines it is opened on.
+    //
+    // The property that matters is not that a dark block exists — an empty one
+    // would satisfy that — but that no colour is defined *only* inside it. A
+    // token declared in the media query and nowhere else is a colour that has
+    // no value at all in the light theme, and the page renders with whatever
+    // the browser falls back to. So the two blocks are read out and compared.
+    const { browser } = await started();
+
+    const sheet = await browser.get("/coinslot.css");
+    const dark = /@media \(prefers-color-scheme: dark\)\s*\{\s*:root\s*\{([^}]*)\}/.exec(
+      sheet.html,
+    );
+    const light = /:root\s*\{([^}]*)\}/.exec(sheet.html);
+    const tokensIn = (block: string | undefined): string[] =>
+      [...(block ?? "").matchAll(/(--[a-z-]+)\s*:/g)].map((found) => found[1] ?? "").sort();
+
+    expect(sheet.headers.get("content-type")).toContain("text/css");
+    expect(dark?.[1], "no dark block").toBeTruthy();
+
+    const painted = tokensIn(dark?.[1]);
+    expect(painted.length).toBeGreaterThan(5);
+    // Every token the dark theme paints is painted by the light theme too.
+    expect(tokensIn(light?.[1])).toEqual(expect.arrayContaining(painted));
+  });
+
+  it("fetches nothing from anywhere while it does it", async () => {
+    // A merchant's private console must not tell a third party the origin of
+    // every visit, and the local stack is meant to come up with no network at
+    // all — a render-blocking font host would decide what it looks like.
     const { browser } = await started();
 
     const sheet = await browser.get("/coinslot.css");
 
-    expect(sheet.headers.get("content-type")).toContain("text/css");
-    expect(sheet.html).toContain("prefers-color-scheme: dark");
-    expect(sheet.html).toContain("--accent");
+    expect(sheet.html).not.toContain("@import");
+    expect(sheet.html).not.toMatch(/https?:\/\//);
   });
 });
 
@@ -519,10 +580,50 @@ describe("the receipts screen", () => {
     // Both moments, which is the whole reason a receipt carries two of them.
     expect(text).toContain("Bought");
     expect(text).toContain("Price true as of");
-    expect(text).toMatch(/\d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC/);
+    expect(text).toMatch(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC/);
+    // And the moment the money actually moved, which is not when the purchase
+    // happened and is the column a merchant matches wallet transfers against.
+    expect(text).toContain("Paid");
     // And the summary above the table, which counts what it can stand behind.
     expect(text).toContain("Delivered 1 of 1 paid");
-    expect(text).toContain("Refund due 0");
+  });
+
+  it("marks money that was never real as what it is", async () => {
+    // Stage one marks every order as a test, so today this is every row on the
+    // screen. A ledger of payments that never happened, laid out as a ledger of
+    // payments, is the worst thing this page could be.
+    const { browser, gateway, harnessed } = await started();
+    const itemId = await publish(gateway, roomCard);
+    await buyOverHttp(harnessed, gateway, itemId, {
+      onOrder: () => ({ delivered: { access_code: "SESAME" } }),
+    });
+    await browser.signIn(KEY);
+
+    const receipts = readable((await browser.get("/receipts")).html);
+    const orders = readable((await browser.get("/orders")).html);
+
+    expect(receipts).toContain("Every receipt here is a test purchase");
+    expect(receipts).toContain("no money moved");
+    expect(receipts).toContain("test");
+    expect(orders).toContain("Every order here is a test purchase");
+    // And it never calls the summary a record of takings.
+    expect(receipts).not.toContain("paid in USD");
+  });
+
+  it("does not offer a refund figure it could only ever report as nought", async () => {
+    // No receipt is ever written saying "refund due" — receipts are written
+    // when goods are released and an order owing a refund released none. A tile
+    // counting them would read "nothing owed back" while the orders screen of
+    // the same cabinet told the merchant to return money from their wallet.
+    const { browser, gateway } = await started();
+    await publish(gateway, roomCard);
+    await browser.signIn(KEY);
+
+    const text = readable((await browser.get("/receipts")).html);
+
+    expect(text).not.toContain("Refund due");
+    expect(text).toContain("appears on Orders");
+    expect(text).toContain("Awaiting fulfilment");
   });
 
   it("says nothing has been sold rather than showing a summary of nothing", async () => {
@@ -534,7 +635,7 @@ describe("the receipts screen", () => {
 
     expect(text).toContain("No receipts yet");
     expect(text).toContain("nothing sold yet");
-    expect(text).toContain("nothing owed back");
+    expect(text).toContain("nothing outstanding");
   });
 
   it("does not add money up", async () => {
@@ -551,7 +652,135 @@ describe("the receipts screen", () => {
     const text = readable((await browser.get("/receipts")).html);
 
     expect(text).not.toMatch(/total/i);
-    expect(text).toContain("paid in USD");
+    // The currencies present are a fact; a sum of them would be the one number
+    // on the screen that had been through a float. "Priced" rather than "paid",
+    // because in stage one none of it was paid with real money.
+    expect(text).toContain("priced in USD");
+  });
+});
+
+describe("when something goes wrong that the merchant has to get out of", () => {
+  /**
+   * A cabinet whose gateway answers however this test says.
+   *
+   * The three paths below cannot be reached through a real gateway: it cannot
+   * be made to turn away a key it has just accepted, and it cannot be made to
+   * answer in a shape its own contract refuses. `buildApp` takes the client as
+   * a parameter for exactly this, and what is asserted is the page the merchant
+   * lands on — the seam is scaffolding, not the subject.
+   */
+  const cabinetAnswering = async (
+    reply: () => Promise<Answer<never>>,
+  ): Promise<{ browser: Browser; close: () => Promise<void> }> => {
+    let calls = 0;
+    const app = buildApp(loadConfig({ GATEWAY_URL: "http://127.0.0.1:1" }), () => {
+      const answer = async () => {
+        calls += 1;
+        // The first call is the sign-in check, which has to succeed or there is
+        // no session to lose.
+        return calls === 1
+          ? ({ ok: true, document: { selling: "open", cards: [] } } as Answer<never>)
+          : await reply();
+      };
+      return {
+        cards: answer,
+        pauseCard: answer,
+        setSelling: answer,
+        orders: answer,
+        receipts: answer,
+      } as never;
+    });
+    const server = app.listen(0);
+    await new Promise<void>((resolve) => server.once("listening", resolve));
+    const { port } = server.address() as AddressInfo;
+    return {
+      browser: await attachedTo(`http://127.0.0.1:${port}`, ""),
+      close: () =>
+        new Promise<void>((resolve, reject) => {
+          server.close((error) => (error === undefined ? resolve() : reject(error)));
+        }),
+    };
+  };
+
+  it("sends a merchant back to sign in when their key stops being accepted", async () => {
+    // A key revoked while a tab was open. Without this the merchant clicks a
+    // cabinet that answers nothing and is never told why.
+    const { browser, close } = await cabinetAnswering(async () => ({
+      ok: false,
+      status: 401,
+      why: "this call is behind the merchant's key",
+    }));
+    try {
+      // The sign-in itself succeeds and then the very next page meets the 401,
+      // which is what a key revoked while a tab was open looks like.
+      const met = await browser.signIn(KEY);
+
+      expect(met.to).toBe("/sign-in");
+      // The dead cookie is cleared on the way, so the merchant lands on a
+      // sign-in they can use rather than being bounced straight back out.
+      expect(met.headers.getSetCookie().join(" ")).toContain("coinslot_key=;");
+      expect((await browser.get("/cards")).to).toBe("/sign-in");
+      expect(readable((await browser.get("/sign-in")).html)).toContain("Sign in");
+    } finally {
+      await close();
+    }
+  });
+
+  it("does not tell a merchant nothing was changed when it cannot know that", async () => {
+    // A call that reached the gateway, did what it was asked, and answered in a
+    // shape the contract does not recognise lands on the error page. The pause
+    // has already happened; a page saying otherwise would send the merchant to
+    // press it again.
+    const { browser, close } = await cabinetAnswering(async () => {
+      throw new Error("the answer was not a document this contract knows");
+    });
+    try {
+      await browser.signIn(KEY);
+
+      const answered = await browser.post("/selling/pause");
+
+      expect(answered.status).toBe(500);
+      const text = readable(answered.html);
+      expect(text).toContain("Something in the cabinet is broken");
+      expect(text).not.toContain("Nothing was changed");
+    } finally {
+      await close();
+    }
+  });
+
+  it("says there is no such page rather than answering an address with nothing", async () => {
+    const { browser } = await started();
+
+    const answered = await browser.get("/nowhere");
+
+    expect(answered.status).toBe(404);
+    expect(readable(answered.html)).toContain("There is no such page");
+  });
+
+  it("treats a cookie it cannot read as nobody being signed in", async () => {
+    // A cookie value that is not valid percent-encoding used to throw past
+    // every route onto the error page — whose only control leads to a page that
+    // throws again, with the cookie HttpOnly and no way to clear it from there.
+    const { browser } = await started();
+
+    const answered = await browser.withRawCookie("coinslot_key=%zz").get("/cards");
+
+    expect(answered.status).toBe(303);
+    expect(answered.to).toBe("/sign-in");
+  });
+
+  it("turns away a form post that came from another site", async () => {
+    // The session cookie is a live API key and this form stops all selling.
+    // SameSite=Strict is the main lock; this is the second, because SameSite is
+    // scoped to the registrable domain and a sibling subdomain is "same site".
+    const { browser, gateway } = await started();
+    const itemId = await publish(gateway, roomCard);
+    await browser.signIn(KEY);
+
+    const forged = await browser.from("https://evil.example.com").post("/selling/pause");
+
+    expect(forged.status).toBe(403);
+    expect(await purchasable(gateway, itemId)).toBe(true);
   });
 });
 

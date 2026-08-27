@@ -40,30 +40,43 @@ const framed = (frame: Frame): string =>
   });
 
 /**
- * The line under a card's title.
+ * The line under a card's title: everything about this card that the merchant's
+ * own operation has to be ready for.
  *
- * It says the one thing about this card that changes what the merchant's own
- * operation has to do, and it is drawn from the card rather than from a
- * separate field: a card whose price is asked for at the moment of purchase
- * needs somebody answering that question, and a card delivered later has a
- * window to deliver inside.
+ * Every fact that applies is listed, not the first one found. A card can both
+ * have its price asked at purchase and owe a delivery inside a window, and an
+ * earlier version of this showed only the price check — so a merchant read the
+ * row and never saw the deadline they are held to. Dropping a promise a
+ * merchant is answerable for, because another promise happened to be checked
+ * first, is the kind of truncation that has to be said or not done.
  */
 const cardAside = (entry: MerchantCard): string => {
+  const facts: string[] = [];
+
   if (entry.card.price_check !== undefined) {
-    return "Price asked at purchase";
+    facts.push("Price asked at purchase");
   }
+
   const seconds = entry.card.fulfill_deadline_seconds;
   if (seconds !== undefined) {
     const hours = seconds / 3600;
-    return hours >= 1 && Number.isInteger(hours)
-      ? `Delivery within ${hours} ${hours === 1 ? "hour" : "hours"}`
-      : `Delivery within ${seconds} seconds`;
+    facts.push(
+      hours >= 1 && Number.isInteger(hours)
+        ? `delivery within ${hours} ${hours === 1 ? "hour" : "hours"}`
+        : `delivery within ${seconds} seconds`,
+    );
   }
-  // No price check and no delivery window, so the one fact left is when the
-  // price on the card started being the price. It is `as_of`, and this is the
-  // only screen that shows it — a merchant working out why a sale went through
-  // at an old number has nowhere else to look.
-  return `Price on the card since ${moment(entry.as_of)}`;
+
+  if (facts.length === 0) {
+    // Neither a price check nor a delivery window, so the one fact left is when
+    // the price on the card started being the price. It is `as_of`, and this is
+    // the only screen that shows it — a merchant working out why a sale went
+    // through at an old number has nowhere else to look.
+    return `Price on the card since ${moment(entry.as_of)}`;
+  }
+
+  const line = facts.join(", ");
+  return `${line.charAt(0).toUpperCase()}${line.slice(1)}`;
 };
 
 /**
@@ -147,7 +160,7 @@ export const ordersScreen = (
     return `<tr class="${needsAttention(order.status) ? "needs-you" : ""}">
 <td class="ident">${escaped(order.id)}</td>
 <td><div>${escaped(titles.get(order.merchant_item_id) ?? order.merchant_item_id)}</div><div class="under mono">${escaped(order.merchant_item_id)}</div></td>
-<td class="amount">${escaped(money(order.price))}</td>
+<td class="amount">${escaped(money(order.price))}${sum(order.test)}</td>
 <td>${state(word)}</td>
 <td class="quiet">${escaped(moment(order.price.at))}</td>
 </tr>`;
@@ -158,6 +171,7 @@ export const ordersScreen = (
     <div>
       <h1>Orders</h1>
       <p>${escaped(ordersLede(orders, open))}</p>
+      ${testOrders(orders)}
     </div>
     <div class="filter">
       ${open ? '<span class="here">Open</span>' : `<a href="${escaped(base)}/orders?open=true">Open</a>`}
@@ -185,11 +199,19 @@ ${wanting
 /**
  * The sentence at the top of the orders screen.
  *
- * It counts what it can stand behind and nothing else. "Open" is the gateway's
- * own filter; "needs you" is the two endings that stay open with something
- * concrete owed. An order merely under way is open and is not counted as
- * needing anything, because this API cannot tell one the merchant has taken on
- * from one created a second ago.
+ * It counts what it can stand behind and says only that. "Open" is the
+ * gateway's own filter; "needs you" is `NEEDS_ATTENTION` — the two endings that
+ * stay open with something concrete owed — and the sentence is scoped to those
+ * two rather than to owing in general.
+ *
+ * Two earlier versions of this line said more than the code knew. "None of them
+ * is owed money or goods by you" was false for an order merely under way, which
+ * in the asynchronous mode is money already taken against goods not yet sent.
+ * And "the money was taken and the goods have not gone out" described only
+ * `refund_due`, while the count beside it also included `delivered_unpaid`,
+ * which is the exact inverse. Neither is here now: the count is scoped, and
+ * what each order actually needs is said per order in the callouts below,
+ * where it can be right.
  */
 const ordersLede = (orders: OrderList, open: boolean): string => {
   const wanting = orders.orders.filter((order) => needsAttention(order.status)).length;
@@ -197,9 +219,27 @@ const ordersLede = (orders: OrderList, open: boolean): string => {
   const listed = `${countOf(orders.orders.length, `${scope} order`.trim())} listed.`;
 
   if (wanting === 0) {
-    return `${listed} None of them is owed money or goods by you right now.`;
+    return `${listed} None of them owes a refund, and none was delivered against a payment that did not execute.`;
   }
-  return `${listed} ${countOf(wanting, "order")} ${wanting === 1 ? "needs" : "need"} you: the money was taken and the goods have not gone out.`;
+  return `${listed} ${countOf(wanting, "order")} ${wanting === 1 ? "needs" : "need"} you, and each one is set out below.`;
+};
+
+/**
+ * The same warning as on the receipts screen, for the same reason.
+ *
+ * An order carries the flag too, and the sums in this table are sums a merchant
+ * would otherwise take for money that moved.
+ */
+const testOrders = (orders: OrderList): string => {
+  const tests = orders.orders.filter((order) => order.test).length;
+  if (tests === 0) {
+    return "";
+  }
+  return `<p class="problem">${escaped(
+    tests === orders.orders.length
+      ? "Every order here is a test purchase: no real money moved."
+      : `${countOf(tests, "order")} here ${tests === 1 ? "is a test purchase" : "are test purchases"}: no real money moved for ${tests === 1 ? "it" : "those"}.`,
+  )}</p>`;
 };
 
 const whyItNeedsYou = (status: OrderList["orders"][number]["status"]): string =>
@@ -214,7 +254,7 @@ export const receiptsScreen = (
 ): string => {
   const titles = new Map(cards.cards.map((entry) => [entry.id, entry.card.title]));
   const delivered = receipts.receipts.filter((receipt) => receipt.outcome === "delivered").length;
-  const owed = receipts.receipts.filter((receipt) => receipt.outcome === "refund_due");
+  const running = receipts.receipts.filter((receipt) => receipt.outcome === "in_progress").length;
 
   const rows = receipts.receipts.map((receipt) => {
     const word = ORDER_WORDS[receipt.outcome];
@@ -222,8 +262,9 @@ export const receiptsScreen = (
 <td class="ident">${escaped(receipt.id)}</td>
 <td class="ident">${escaped(receipt.order_id)}</td>
 <td>${escaped(titles.get(receipt.item_id) ?? receipt.item_id)}</td>
-<td class="amount">${escaped(money(receipt.price))}</td>
+<td class="amount">${escaped(money(receipt.price))}${sum(receipt.test)}</td>
 <td>${state(word)}</td>
+<td class="quiet">${escaped(moment(receipt.paid_at))}</td>
 <td class="quiet">${escaped(moment(receipt.price.at))}</td>
 <td class="quiet">${escaped(moment(receipt.price.as_of))}</td>
 </tr>`;
@@ -233,7 +274,8 @@ export const receiptsScreen = (
   <div class="lede">
     <div>
       <h1>Receipts</h1>
-      <p>A receipt is the proof of a payment: the amount, the moment of purchase, and the instant the price behind it was true. A purchase that ended before any payment leaves no receipt, and none is written while it is unknown whether the buyer was charged.</p>
+      <p>A receipt is the proof of a payment: the amount, the moment the money moved, the moment of purchase, and the instant the price behind it was true. A purchase that ended before any payment leaves no receipt, and none is written while it is unknown whether the buyer was charged. A refund you owe is not here either — no receipt is written for one, and it appears on Orders.</p>
+      ${testWarning(receipts)}
     </div>
   </div>
   <div class="summary">
@@ -248,16 +290,20 @@ export const receiptsScreen = (
       <div class="aside">of ${receipts.receipts.length} paid</div>
     </div>
     <div class="tile">
-      <div class="label">Refund due</div>
-      <!-- A zero owed is good news, so it is not painted as a warning: a red
-           nought reads as a problem across a room, which is how a summary
-           starts lying before anybody has read a word of it. -->
-      <div class="figure${owed.length === 0 ? "" : " warn"}">${owed.length}</div>
-      <div class="aside">${escaped(owed.length === 0 ? "nothing owed back" : `${countOf(owed.length, "order")}, returned by you`)}</div>
+      <!-- Not "refund due". A receipt can carry that word and none ever does:
+           receipts are written when goods are released, and an order owing a
+           refund released none. A tile that could only ever read nought would
+           have sat here saying "nothing owed back" while the orders screen of
+           the same cabinet told the merchant to return money from their own
+           wallet. What is counted instead is reachable and is the number a
+           merchant actually watches: money taken, goods not yet out. -->
+      <div class="label">Awaiting fulfilment</div>
+      <div class="figure${running === 0 ? "" : " busy"}">${running}</div>
+      <div class="aside">${escaped(running === 0 ? "nothing outstanding" : "paid for, not yet delivered")}</div>
     </div>
   </div>
 ${table(
-  ["Receipt", "Order", "Product", "Amount", "Outcome", "Bought", "Price true as of"],
+  ["Receipt", "Order", "Product", "Amount", "Outcome", "Paid", "Bought", "Price true as of"],
   rows,
   "No receipts yet. One is written the moment a payment goes through.",
 )}
@@ -280,7 +326,38 @@ const sumsOf = (receipts: ReceiptList): string => {
   if (currencies.length === 0) {
     return "nothing sold yet";
   }
-  return `paid in ${currencies.sort().join(", ")}`;
+  return `priced in ${currencies.sort().join(", ")}`;
+};
+
+/**
+ * The mark beside a sum that was not real money.
+ *
+ * A receipt is proof of a payment, and the contract says in as many words that
+ * an unmarked receipt for a test purchase is proof of a payment that never
+ * happened. Stage one marks every order as a test, so today every row on both
+ * screens carries this — which is exactly the situation in which leaving it out
+ * would be worst: a merchant would be reading a ledger of payments that did not
+ * happen, laid out as a ledger of payments.
+ */
+const sum = (test: boolean): string => (test ? ' <span class="tag">test</span>' : "");
+
+/**
+ * The sentence that says the whole screen is test money, when it is.
+ *
+ * A mark per row is enough to tell two rows apart. It is not enough to stop a
+ * merchant reading a full page of them as their takings, so when every row is a
+ * test the page says so once, in a sentence, above the table.
+ */
+const testWarning = (receipts: ReceiptList): string => {
+  const tests = receipts.receipts.filter((receipt) => receipt.test).length;
+  if (tests === 0) {
+    return "";
+  }
+  return `<p class="problem">${escaped(
+    tests === receipts.receipts.length
+      ? "Every receipt here is a test purchase: no money moved, and none of these is proof that any did."
+      : `${countOf(tests, "receipt")} here ${tests === 1 ? "is a test purchase" : "are test purchases"}: no money moved for ${tests === 1 ? "it" : "those"}.`,
+  )}</p>`;
 };
 
 const countOf = (many: number, thing: string): string => `${many} ${thing}${many === 1 ? "" : "s"}`;

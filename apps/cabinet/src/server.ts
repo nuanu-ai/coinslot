@@ -55,13 +55,21 @@ export function buildApp(
   const base = config.basePath;
 
   app.disable("x-powered-by");
-  app.set("trust proxy", true);
+  // No `trust proxy` here on purpose: nothing in the cabinet reads the client's
+  // address or whether the connection was secure, so trusting a forwarding
+  // header would make a spoofable header authoritative for no benefit at all.
   // The forms are the only thing a browser posts here, and they are small.
   app.use(express.urlencoded({ extended: false, limit: "16kb" }));
+  app.use(sameOrigin);
 
-  app.get("/healthz", (_request, response) => {
-    response.json({ ok: true });
-  });
+  // Under one origin the cabinet is reached at BASE_PATH, so that is where a
+  // probe looks; at the bare root it is what a container health check asks for.
+  // Both, because a probe answering 404 reads as a dead process.
+  for (const path of new Set(["/healthz", `${base}/healthz`])) {
+    app.get(path, (_request, response) => {
+      response.json({ ok: true });
+    });
+  }
 
   app.get(`${base}/coinslot.css`, (_request, response) => {
     response.type("text/css").send(STYLESHEET);
@@ -199,15 +207,69 @@ export function buildApp(
       // A defect. The merchant is told that something here is broken and
       // nothing about what: an error text assembled out of an exception makes
       // claims about our internals to somebody who cannot act on them.
+      // What is not said here: whether anything was changed. A call that
+      // reached the gateway, did what it was asked and then answered in a shape
+      // the contract does not recognise lands in this handler, and the change
+      // has already happened — so "nothing was changed" would be a claim this
+      // handler has no way to check, made to somebody about their own catalog.
       console.error("[cabinet] a request failed", thrown);
       response
         .status(500)
         .type("html")
-        .send(problemPage(base, "Something in the cabinet is broken. Nothing was changed."));
+        .send(
+          problemPage(
+            base,
+            "Something in the cabinet is broken. Check the page you were on before deciding whether it went through.",
+          ),
+        );
     },
   );
 
   return app;
+}
+
+/**
+ * Turns away a form post that came from somewhere else.
+ *
+ * The session cookie is a live API key and the forms it authorises include
+ * "stop all selling", so a page on another site must not be able to make a
+ * merchant's browser submit one. SameSite=Strict on the cookie is the first
+ * answer and the main one; this is the second, and it exists because SameSite
+ * is scoped to the registrable domain rather than to the origin — the day
+ * anything at all is served from a sibling subdomain, that page is "same site"
+ * and can forge every switch here.
+ *
+ * A missing Origin is allowed through. Browsers send it on every cross-origin
+ * form post, which is the case being refused; what they historically omit it
+ * on is same-origin navigation, and refusing an absent header would turn away
+ * the merchant's own browser and every command-line client along with it. This
+ * is a cheap second lock, not the lock.
+ */
+function sameOrigin(request: Request, response: Response, next: () => void): void {
+  const origin = request.headers.origin;
+  if (request.method !== "POST" || origin === undefined) {
+    next();
+    return;
+  }
+
+  const asked = request.headers.host;
+  let host: string;
+  try {
+    host = new URL(origin).host;
+  } catch {
+    host = "";
+  }
+
+  if (asked !== undefined && host === asked) {
+    next();
+    return;
+  }
+  // Nothing about which origin would have worked: that is an answer to
+  // somebody who is guessing, and this refusal is only ever seen by them.
+  response
+    .status(403)
+    .type("html")
+    .send(problemPage("", "This form did not come from the cabinet."));
 }
 
 /**
@@ -284,7 +346,17 @@ function keyIn(request: Request): string | null {
     if (pair.slice(0, at).trim() !== SESSION) {
       continue;
     }
-    const value = decodeURIComponent(pair.slice(at + 1).trim());
+    // A cookie value that is not valid percent-encoding throws here, and an
+    // unreadable cookie is "not signed in" rather than a broken cabinet. Left
+    // to throw, it reached the error page — whose only control leads to a page
+    // that throws again, with the cookie HttpOnly and no way for a merchant to
+    // clear it from the page they are stuck on.
+    let value: string;
+    try {
+      value = decodeURIComponent(pair.slice(at + 1).trim());
+    } catch {
+      return null;
+    }
     return value === "" ? null : value;
   }
   return null;

@@ -41,7 +41,12 @@ const environmentSchema = z.object({
    */
   BASE_PATH: z
     .string()
-    .regex(/^(?:|\/[^\s?#]*[^\s?#/])$/, 'must be empty or a path such as "/cabinet"')
+    // The second slash is refused, not decoration: "//evil.com" is a path to
+    // this regex and a protocol-relative URL to a browser, so every redirect
+    // and every stylesheet link would leave for another host. It is operator
+    // configuration rather than anything a visitor sets, which is why it is a
+    // refusal at startup rather than a check per request.
+    .regex(/^(?:|\/(?!\/)[^\s?#]*[^\s?#/])$/, 'must be empty or a path such as "/cabinet"')
     .default(""),
 
   /**

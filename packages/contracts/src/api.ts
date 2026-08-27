@@ -522,7 +522,7 @@ export const API_ROUTES = Object.freeze({
     path: "/v0/cards",
     auth: "merchant_key",
     description:
-      "The cards this merchant has published, each whole and with the word it is selling under, together with whether the merchant is taking new orders at all. It is not the public catalog: that one is unscoped, carries our identifier in place of the merchant's key, and leaves out a card that is off sale — which is the one card a merchant goes looking for when they want it back on sale.",
+      "The cards published under the key this call was made with, each whole and with the word it is selling under, together with whether the merchant is taking new orders at all. It is not the public catalog: that one is unscoped, carries our identifier in place of the merchant's key, and leaves out a card that is off sale — which is the one card a merchant goes looking for when they want it back on sale. During the pilot there is one merchant and one key, so this is every card the gateway holds; when there is a second merchant, scoping it to the caller is a change to whoever serves this and not to the shape of the answer.",
     response: { document: MerchantCardListSchema },
   },
 
@@ -549,7 +549,7 @@ export const API_ROUTES = Object.freeze({
     path: "/v0/selling/pause",
     auth: "merchant_key",
     description:
-      "Stops all selling for this merchant. No new order is taken for any card, and the orders already accepted play out in the ordinary way — this is a pause and not a departure, so nothing open is closed and nothing is owed back. The answer is the whole catalog, because every card's word changed.",
+      "Stops all selling for this merchant. No new order is taken for any card, and the orders already accepted play out in the ordinary way — this is a pause and not a departure, so nothing open is closed and nothing is owed back. The answer is the whole catalog, because every card's word changed. A merchant who has already left is refused rather than paused: their orders are closed and their refunds owed, and a pause would describe none of that.",
     response: { document: MerchantCardListSchema },
   },
 
@@ -558,7 +558,7 @@ export const API_ROUTES = Object.freeze({
     path: "/v0/selling/resume",
     auth: "merchant_key",
     description:
-      "Starts selling again. Cards paused in their own right stay paused: stopping all selling did not forget which they were, and putting them all back on sale would sell products their merchant took off. The answer is the whole catalog, so which cards actually came back is a fact rather than an inference.",
+      "Starts selling again. Cards paused in their own right stay paused: stopping all selling did not forget which they were, and putting them all back on sale would sell products their merchant took off. The answer is the whole catalog, so which cards actually came back is a fact rather than an inference. A merchant who has left is refused: leaving closed the orders that were open and left refunds owed, and this switch unwinds none of it, so a departure is not undone here.",
     response: { document: MerchantCardListSchema },
   },
 
@@ -586,7 +586,7 @@ export const API_ROUTES = Object.freeze({
     path: "/v0/receipts",
     auth: "merchant_key",
     description:
-      "This merchant's receipts: what was paid, when the purchase happened, the moment the price behind it was true, and what became of the order. Two silences are the receipt's own and are the same here — a purchase that ended before any payment leaves no receipt, and none is written while it is unknown whether the buyer was charged.",
+      "The receipts belonging to the key this call was made with: what was paid, when the payment executed, when the purchase happened, the moment the price behind it was true, and what became of the order. Every receipt says whether the money behind it was real, and during the pilot none of it is. Two silences are the receipt's own and are the same here — a purchase that ended before any payment leaves no receipt, and none is written while it is unknown whether the buyer was charged. A third is this call's: a refund owed leaves no receipt either, because receipts are written when goods are released and an order owing a refund released none. During the pilot there is one merchant and one key, so this is every receipt the gateway holds.",
     response: { document: ReceiptListSchema },
   },
 

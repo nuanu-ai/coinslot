@@ -15,12 +15,16 @@
  * The type is IBM Plex — Sans for reading, Mono for anything a merchant might
  * copy or compare character by character: identifiers, keys and money. Money in
  * particular: a column of prices in a proportional face does not line up, and
- * lining up is most of what a column of prices is for. Both faces name a full
- * fallback stack, because a network that did not answer must not decide what
- * the cabinet looks like.
+ * lining up is most of what a column of prices is for.
+ *
+ * Nothing is fetched from anywhere. The faces are named and the fallback stacks
+ * behind them carry the page on their own, because the two things this file
+ * must not do are tell a third party the origin of every visit to a merchant's
+ * private console, and make the local stack — which is meant to come up with no
+ * network at all — depend on a font host answering. Self-hosted faces on the
+ * shared origin are what these names will find when they are put there; until
+ * then the fallbacks are what a merchant sees, and they are chosen for that.
  */
-
-@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap");
 
 :root {
   --bg: oklch(0.985 0.003 90);
@@ -307,8 +311,22 @@ td.quiet {
   background: var(--accent);
 }
 
-.state.done .dot {
-  background: var(--ok);
+/*
+ * The mark on a sum that was not real money. It sits beside the amount rather
+ * than in a column of its own so that it cannot be scrolled out of sight on a
+ * narrow screen while the number it qualifies stays visible.
+ */
+.tag {
+  font-family: var(--sans);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--warn);
+  border: 1px solid var(--warn);
+  border-radius: 2px;
+  padding: 1px 4px;
+  margin-left: 6px;
+  vertical-align: 1px;
 }
 
 /* --- controls ----------------------------------------------------------- */
@@ -400,6 +418,13 @@ td.control {
 
 .callout .what {
   font-weight: 500;
+  /*
+   * An order identifier is a long unbroken run of characters in a monospaced
+   * face, and this box has no scroller of its own the way the tables do. Left
+   * alone it is the one thing on the page that scrolls the whole document
+   * sideways on a phone.
+   */
+  overflow-wrap: anywhere;
 }
 
 .callout .why {
@@ -443,6 +468,10 @@ td.control {
 
 .tile .figure.warn {
   color: var(--warn);
+}
+
+.tile .figure.busy {
+  color: var(--accent);
 }
 
 .tile .aside {
