@@ -26,6 +26,11 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["apps/*/src/**/*.db-test.ts"],
+    // The same refusal the offline suite runs under. This suite is allowed a
+    // database and nothing else, and a database is not reached with `fetch`,
+    // so what this rules out here is what it rules out there: a call to
+    // somebody's live API arriving in a suite nobody expects one in.
+    setupFiles: ["./vitest.setup.ts"],
     passWithNoTests: false,
     // Verbose so that the sentence explaining a skip is actually printed. A run
     // that says "1 skipped" and nothing else reads like a suite that passed.

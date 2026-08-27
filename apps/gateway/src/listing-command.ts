@@ -165,9 +165,27 @@ export async function runListingCheck(
 
   const failures: string[] = [];
   const silences: string[] = [];
+  /** Products the catalog named that no address could be built for. */
+  const unbuildable: string[] = [];
 
   for (const itemId of items) {
-    const resource = `${base}${expandPath(API_ROUTES.purchase_item.path, { item_id: itemId })}`;
+    // A catalog is an answer from somewhere else, and an identifier in it may be
+    // something no address can be made of — a dot, say, which is a step through
+    // a path rather than a value in it. Thrown, that would come off the top of
+    // the command and take the products after it with it, which is the failure
+    // this whole way of reading a catalog exists to remove. It is one line, and
+    // the rest of the catalog is still checked.
+    let resource: string;
+    try {
+      resource = `${base}${expandPath(API_ROUTES.purchase_item.path, { item_id: itemId })}`;
+    } catch (thrown) {
+      say("");
+      say(`${JSON.stringify(itemId)}: no address could be built for it`);
+      say(`  ${messageOf(thrown)}`);
+      unbuildable.push(itemId);
+      continue;
+    }
+
     for (const method of PROBED_METHODS) {
       const answer = await reach.validate(resource, method);
       const verdict = verdictOf(answer);
@@ -186,7 +204,7 @@ export async function runListingCheck(
   }
 
   say("");
-  const probes = items.length * PROBED_METHODS.length;
+  const probes = (items.length - unbuildable.length) * PROBED_METHODS.length;
 
   // The three outcomes are kept apart in the summary as well, because "we asked
   // and it said no" and "we never got an answer" want different next moves and
@@ -203,8 +221,20 @@ export async function runListingCheck(
       say(`  ${failure}`);
     }
   }
-  if (silences.length === 0 && failures.length === 0) {
-    say(`All ${probes} probes over ${items.length} products were accepted.`);
+  if (unbuildable.length > 0) {
+    say(`${unbuildable.length} of ${items.length} products had no address to check:`);
+    for (const itemId of unbuildable) {
+      say(`  ${JSON.stringify(itemId)}`);
+    }
+  }
+  if (silences.length === 0 && failures.length === 0 && unbuildable.length === 0) {
+    // What was checked, and no claim about what was not. The catalog document
+    // says in its own words that the absence of a paging field is not a promise
+    // that there is nothing more, so this counts the products it was given
+    // rather than announcing the whole catalog is good.
+    say(
+      `All ${probes} probes over the ${items.length} products this catalog listed were accepted.`,
+    );
     return 0;
   }
   return 1;

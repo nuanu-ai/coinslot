@@ -9,7 +9,11 @@
  * as a green tick over a validation that never happened — which is exactly the
  * claim this command exists to make and therefore the one it must never fake.
  *
- * The live call is `pnpm smoke:listing`. Nothing here goes near it.
+ * The live call is `pnpm smoke:listing`. Nothing here goes near it: the
+ * validation endpoint is Coinbase's, and a case that reached it would take
+ * `pnpm test` off the network-free, deterministic footing `vitest.config.ts`
+ * puts it on. The cases at the bottom do open a socket, to this process, and
+ * stub the probe.
  */
 
 import { createServer, type Server } from "node:http";
@@ -79,7 +83,9 @@ describe("asking the catalog whether it would take our resources", () => {
       "GET https://coinslot.example/v0/items/itm_2/purchase",
       "POST https://coinslot.example/v0/items/itm_2/purchase",
     ]);
-    expect(run.text()).toContain("All 4 probes over 2 products were accepted.");
+    expect(run.text()).toContain(
+      "All 4 probes over the 2 products this catalog listed were accepted.",
+    );
   });
 
   it("asks about the products it was named rather than the whole catalog", async () => {
@@ -180,6 +186,26 @@ describe("asking the catalog whether it would take our resources", () => {
     expect(run.text()).toContain("1 of 2 probes were refused");
   });
 
+  it("reports an identifier it cannot build an address from, and keeps going", async () => {
+    // A catalog is an answer from somewhere else, and an identifier in it may
+    // be something no address can be made of — a dot, which is a step through a
+    // path rather than a value in it. That threw out of the loop and off the
+    // top of the command, which is the failure this whole way of reading was
+    // meant to remove. It is one line of the report now, and the products after
+    // it are still checked.
+    const run = aRun({
+      catalog: { items: [card("."), card("itm_2")] },
+      answers: () => accepted,
+    });
+
+    expect(await run.run("https://coinslot.example")).toBe(1);
+    expect(run.asked).toStrictEqual([
+      "GET https://coinslot.example/v0/items/itm_2/purchase",
+      "POST https://coinslot.example/v0/items/itm_2/purchase",
+    ]);
+    expect(run.text()).toContain("no address could be built");
+  });
+
   it("reports an empty catalog as nothing checked rather than as nothing wrong", async () => {
     // Zero resources checked is not zero failures. An empty catalog is exactly
     // the state where every card is paused or none was ever published, and the
@@ -251,9 +277,19 @@ describe("reading a running gateway's catalog, over a real socket", () => {
   /**
    * Everything above fakes the way out, which leaves the one part that talks to
    * a gateway untested: what it accepts, and what it prints when the answer is
-   * not a catalog. This serves the answers over a real socket instead. It is
-   * still offline — the server is this process — and the validation endpoint is
-   * never called, because every card here fails to be read before any probe.
+   * not a catalog. This serves the answers over a real socket instead — the
+   * server is this process, on a port the operating system picks, and it is
+   * closed after every case.
+   *
+   * The real way out is used for the catalog and never for the probe, and that
+   * split is the whole reason this reads the way it does. The probe goes to
+   * Coinbase's validation endpoint, and a suite that reached it would stop
+   * being free, deterministic and able to run without a network — which
+   * `vitest.config.ts` says in as many words is what `pnpm test` has to be.
+   * Written with the whole of the real way out, the two cases below that get
+   * as far as probing made four calls to that endpoint on every run of the
+   * suite, and went green either way, so nothing would ever have said so.
+   * `pnpm smoke:listing` is where that call belongs.
    */
   let server: Server | null = null;
 
@@ -292,10 +328,16 @@ describe("reading a running gateway's catalog, over a real socket", () => {
     fulfillment: "sync",
   });
 
-  /** The command with the real way out, and everything it said. */
+  /**
+   * The command reading a catalog for real, and answering its own probes.
+   *
+   * The catalog is the part under test here. The probe is stubbed with a fixed
+   * answer rather than left real, because the real one leaves this machine.
+   */
   const run = async (base: string) => {
     const said: string[] = [];
-    const code = await runListingCheck([base], overTheNetwork(), (line) => said.push(line));
+    const reach: Reach = { ...overTheNetwork(), validate: async () => accepted };
+    const code = await runListingCheck([base], reach, (line) => said.push(line));
     return { code, text: said.join("\n") };
   };
 
@@ -304,8 +346,8 @@ describe("reading a running gateway's catalog, over a real socket", () => {
 
     const { text } = await run(base);
 
-    // It got as far as probing, which is all this can show without the network:
-    // the identifier reached the address a probe is built from.
+    // The identifier came off the wire and reached the address a probe is
+    // built from, which is the whole of what this way out is for.
     expect(text).toContain(`${base}/v0/items/itm_1/purchase`);
     expect(text).not.toContain("could not be read");
   });
