@@ -144,10 +144,9 @@ is on [Orders and fulfillment modes](/orders).
 ## Asking the price and availability
 
 The check answers one question: what the product costs and whether it is there
-right now. We ask in two cases — at the moment of purchase, and on a scheduled
-poll between purchases. It has two transports, the fields of the question and
-of the answer are the same for both, and what differs is only where your code
-stands. The forms below are working ones and can change before the pilot.
+right now. We ask it at the moment of purchase. It has two transports, the
+fields of the question and of the answer are the same for both, and what
+differs is only where your code stands. The forms below are working ones and can change before the pilot.
 
 By default the question travels the same channel as the orders: you put a
 price handler beside the order handler, in the same process. Nothing of yours
@@ -185,16 +184,12 @@ POST https://api.example.com/quote
 }
 ```
 
-The field `purpose` says why we are asking. The value `"purchase"` means there
-is an agent behind the question buying right now; `"poll"` means we are
-refreshing the price and availability on a schedule and no purchase is behind
-it. An expensive stock lookup is worth doing on the first and worth skipping
-on the second.
-
-An answer of "there is none" on a scheduled poll takes the card out of the
-catalogue's listing until the next poll. We will not sell on the strength of a
-poll's answer, though: where there is money behind the question, we ask for
-the price and the availability again.
+The field `purpose` says why we are asking. Today it always reads
+`"purchase"`: there is an agent behind the question, buying right now. Its
+other value, `"poll"`, belongs to a scheduled refresh between purchases —
+nothing sends it yet, and a handler should accept it all the same. Where the
+two are told apart, an expensive stock lookup is worth spending on a purchase
+and worth skipping on a poll.
 
 The field `price_id` identifies this one price question, and it is good once —
 no more than one order goes through under a single `price_id`. The same
@@ -236,9 +231,8 @@ and no order appears on your side. The price from an answer lives until
 `expires_at`: how long a price holds is set by us and is the same across the
 system, and what happens once it has passed is in [Time ran out](/orders).
 
-We hold down the load on your side ourselves: we limit how often the questions
-go out, and the scheduled poll only walks the positions that show signs of
-running short.
+We hold down the load on your side ourselves, limiting how often the questions
+go out.
 
 Coinslot keeps no stock counts — how much of anything there is, only you know.
 Which is where the rule for deciding whether a product needs a check comes
@@ -299,6 +293,11 @@ open against it play out in the ordinary way.
   transport with.
 - Whether the vocabulary of recommended codes grows beyond three: we decide
   that from the refusals the pilot actually turns up.
+- The scheduled refresh of price and availability between purchases. It is
+  designed — a poll's answer would take a card out of a catalogue's listing
+  until the next poll, and no sale would go through on a poll's answer alone,
+  because a question with money behind it is asked again — and nothing runs it
+  yet.
 - The thresholds that limit how often price questions go out, and how long we
   wait for an answer.
 - How your side satisfies itself that a request to a price hook came from us:
