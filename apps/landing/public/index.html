@@ -1,0 +1,363 @@
+<!doctype html>
+<!--
+  The landing. Static HTML and CSS with no build step and no runtime behind it
+  (ADR-0005 §5); Caddy serves this directory at the root of the origin, and the
+  portal, the cabinet and the gateway sit beside it on that same origin
+  (ADR-0005 §1, deploy/Caddyfile).
+
+  Every claim on this page is traceable to a document in this repository. Where
+  a question is genuinely open, the page says so and leaves a bracketed slot —
+  a price or an address invented here would be exactly the claim beyond
+  evidence the charter forbids. The sources, section by section:
+
+    the hero and the flow    docs/vision.md, portal/index.md
+    the code sample          portal/quickstart.md §2, its own example with the
+                             optional fields dropped and the title in English
+    the money section        portal/money.md
+    what we need from you    portal/index.md, "О чём мы вас спросим", and
+                             "Своими руками или нашими"
+    what is not settled yet  portal/money.md and portal/index.md, both closing
+                             sections, portal/quickstart.md's closing list, and
+                             docs/research/00-open-questions.md
+
+  The documentation links are marked hreflang="ru": the portal is written in
+  Russian and this page is not, which is a question for Dmitry rather than a
+  thing to paper over. It is also the last item in the open list below.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Coinslot — sell to AI agents without rebuilding your shop</title>
+    <meta
+      name="description"
+      content="Coinslot puts an ordinary online business in front of AI agents and carries the stablecoin payment. The money goes from the buyer's wallet straight to yours."
+    />
+
+    <!-- The way this page reaches a merchant is somebody sending them the
+         link, so it has to unfurl into something legible in a chat window. -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Coinslot — sell to AI agents without rebuilding your shop" />
+    <meta
+      property="og:description"
+      content="Your goods in the catalogues where AI agents buy. The payment goes from the buyer's wallet straight to yours and never passes through our accounts. This is a pilot, and the page says what is not settled."
+    />
+    <meta name="twitter:card" content="summary" />
+
+    <!-- The wordmark's own square, inline so that the page stays a directory of
+         two stylesheets and one file. -->
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='3' fill='%23b15900'/%3E%3Crect x='9' y='14' width='14' height='4' rx='1' fill='%23fff'/%3E%3C/svg%3E"
+    />
+
+    <!-- The faces are served from this origin rather than fetched from a font
+         host: the local stack has to come up with no network, and a stylesheet
+         pulled from elsewhere tells that host the origin of every visit. -->
+    <link rel="stylesheet" href="/styles/fonts.css" />
+    <link rel="stylesheet" href="/styles/tokens.css" />
+    <link rel="stylesheet" href="/styles/landing.css" />
+  </head>
+  <body class="page">
+    <header class="masthead">
+      <div class="wordmark">
+        <span class="mono wordmark__name">coinslot</span>
+        <span class="wordmark__stage">pilot</span>
+      </div>
+      <nav class="masthead__nav" aria-label="Main">
+        <a href="/docs/" hreflang="ru">Documentation</a>
+        <a href="/docs/money" hreflang="ru">How the money moves</a>
+        <a class="button--small" href="/cabinet/">Cabinet</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="grid hero">
+        <div class="span-7">
+          <!-- No hard break in the headline: at a phone width a break put in for
+               a wide screen leaves one orphaned word. text-wrap: balance in
+               tokens.css does the splitting at whatever width it is read. -->
+          <h1 class="hero__title">Sell to AI agents without rebuilding your shop</h1>
+          <p class="hero__lede">
+            An agent is a program that was given a task and a budget. To finish the task it finds
+            the goods itself, pays for them itself and takes delivery itself. Coinslot puts your
+            catalogue where those agents buy and carries the payment. The money goes from the
+            buyer's wallet straight to yours — it never passes through our accounts.
+          </p>
+          <!-- The second button says where it goes. There is no contact address
+               yet, so a button labelled "Talk to us" would be an invitation to
+               a room that does not exist. -->
+          <div class="hero__actions">
+            <a class="button button--primary" href="/docs/" hreflang="ru">Read the documentation</a>
+            <a class="button button--quiet" href="#not-settled">What is not settled yet</a>
+          </div>
+        </div>
+        <div class="span-5 hero__aside">
+          <div class="panel">
+            <div class="panel__label mono">publishing a product</div>
+            <pre><code><span class="tok-key">await</span> coinslot.catalog.<span class="tok-call">publish</span>({
+  merchant_item_id: <span class="tok-str">'access-monthly'</span>,
+  title: <span class="tok-str">'One month of access to the service'</span>,
+  price: { amount: <span class="tok-str">'5.00'</span>, currency: <span class="tok-str">'USD'</span> },
+  fulfillment: <span class="tok-str">'sync'</span>,
+})</code></pre>
+          </div>
+          <p class="caption">
+            The example is the one in the
+            <a href="/docs/quickstart" hreflang="ru">first test sale</a>, with the optional fields
+            dropped. Of the machine names in it only <span class="mono">merchant_item_id</span> is
+            settled; the package name, the function names and the rest of the fields are working
+            names, because what is fixed so far is the integration model and not the signatures.
+          </p>
+        </div>
+      </section>
+
+      <section class="section" id="how">
+        <h2 class="eyebrow">How a sale runs</h2>
+        <div class="cells cells--three">
+          <div class="cell">
+            <div class="mono cell__step">01</div>
+            <h3 class="cell__title">We write the card, you approve it</h3>
+            <p class="cell__body">
+              A card is what the agent sees in the catalogue and buys: title, description, price and
+              the list of what has to be given at purchase. Send us a link to your site or your
+              documentation and we write the cards from it; you approve them, because a card sells
+              under your name and at your prices. If you would rather keep the card in your own
+              code, your engineer publishes it with the call above.
+            </p>
+          </div>
+          <div class="cell">
+            <div class="mono cell__step">02</div>
+            <h3 class="cell__title">The agent finds it and pays</h3>
+            <p class="cell__body">
+              The agent does not look at pictures and does not read reviews — it decides on the text
+              of the card. If your price is worked out on the fly, we ask your side for it at the
+              moment of purchase. The payment is checked, signature and funds both, before the order
+              reaches you.
+            </p>
+          </div>
+          <div class="cell">
+            <div class="mono cell__step">03</div>
+            <h3 class="cell__title">Your handler delivers</h3>
+            <p class="cell__body">
+              The order arrives in your code, the same way you already deliver to people. The same
+              order can arrive twice — a connection dropped, a reply never landed — so it carries a
+              key by which your side hands back the first result instead of delivering again. The
+              goods go to the agent, the money to you.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="grid section" id="money">
+        <div class="span-5">
+          <h2 class="section__title">The money never passes through us</h2>
+          <p class="section__body">
+            The payment travels from the buyer's wallet to yours. We check it and we execute it, but
+            we never hold it, so there is no payout schedule here and no balance to withdraw. Every
+            sale is its own incoming transfer: a hundred sales are a hundred transfers, and an
+            accounting department used to one line per period will see as many lines as there were
+            sales.
+          </p>
+          <p class="section__body">
+            The transfer is final. There is no mechanism in these payments for a buyer to reverse
+            one the way a card charge is reversed, so the familiar case where money is pulled back a
+            month after the sale and you argue that the goods went out does not happen. Whatever you
+            give back, you give back yourself and by your own decision.
+          </p>
+          <p class="section__body">
+            Finality does not mean nothing can go wrong for you, and the case where it does is worth
+            knowing before you start. For goods that are paid for after you deliver, we check the
+            payment, hand you the order, receive the goods from you and only then execute the
+            payment — and in the gap between the check and the execution the buyer's funds can leave
+            for something else. You would have delivered and not been paid. What it can cost you is the price of
+            that one sale, we tell you when it happens rather than leaving you to reconcile
+            transfers by hand, and you close the case for any given product by choosing to be paid
+            before you deliver instead. That choice is yours, product by product.
+          </p>
+          <p class="section__body">
+            We take no percentage of the payments, and there is nowhere for one to come from: the
+            money goes past us. We earn on the tools and on a subscription — on what you use, not on
+            what you sold.
+          </p>
+        </div>
+        <div class="span-7">
+          <div class="flow">
+            <div class="flow__end">
+              <div class="mono flow__wallet">agent wallet</div>
+              <div class="flow__party">Buyer</div>
+            </div>
+            <div class="flow__track" role="presentation">
+              <div class="mono flow__label">stablecoin, direct</div>
+              <div class="flow__head"></div>
+            </div>
+            <div class="flow__end">
+              <div class="mono flow__wallet">your wallet</div>
+              <div class="flow__party">You</div>
+            </div>
+          </div>
+          <div class="flow__note">
+            <span>Coinslot: verification, the order queue, receipts</span>
+          </div>
+          <p class="caption caption--spaced">
+            A stablecoin is money whose rate is pegged to the dollar, so the sum the buyer saw at
+            purchase and the sum that lands in your wallet do not differ by an exchange rate applied
+            in between. Which one we use and which transfer network carries it is not chosen yet; it
+            is in the list below.
+          </p>
+        </div>
+      </section>
+
+      <section class="grid section" id="what-we-need">
+        <div class="span-5">
+          <h2 class="section__title">What we need from you</h2>
+          <p class="section__body">
+            An engineer with access to your API. The tools they would use are written for Node
+            today, and if your side is not Node, the protocol underneath them is something we will
+            have documented by the pilot rather than something you can build against now. If you
+            have no engineer of your own, or they are busy with something else, we write the handler
+            and run it ourselves — then all we need is access to your API and your sign-off on the
+            cards.
+          </p>
+          <p class="section__body">
+            If you sell through an online shop instead of an API, your side has nothing to write at
+            all: paid orders show up in the shop as ordinary ones, and we set up and run that link
+            ourselves.
+          </p>
+        </div>
+        <div class="span-7">
+          <div class="cells cells--rows">
+            <div class="row">
+              <span class="mono row__step">01</span>
+              <div>
+                <div class="row__title">Goods that survive being delivered twice</div>
+                <div class="row__body">
+                  Access, a key, a link, a subscription go out a second time to the same buyer
+                  without loss; a unit off a shelf or a one-off code from a limited batch does not.
+                  Only the first kind during the pilot — this is our limit, not a property of your
+                  catalogue, and it comes off once there is a way to send money back.
+                </div>
+              </div>
+            </div>
+            <div class="row">
+              <span class="mono row__step">02</span>
+              <div>
+                <div class="row__title">A handler that fulfils an order</div>
+                <div class="row__body">
+                  A function beside your API. Your side opens the connection to us and pulls the
+                  orders down it, so neither a public address nor an open port is needed.
+                </div>
+              </div>
+            </div>
+            <div class="row">
+              <span class="mono row__step">03</span>
+              <div>
+                <div class="row__title">The wallet address the money goes to</div>
+                <div class="row__body">
+                  The one you already use, or a new one — whichever suits you. Buyers' payments
+                  arrive there, one transfer per sale, and nothing accumulates on our side. If you
+                  do not have a wallet yet, getting one and keeping its key is yours to do and stays
+                  yours: we never hold your money, which is the same thing as saying we cannot get
+                  it back for you.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="not-settled">
+        <div class="open grid">
+          <div class="span-5">
+            <h2 class="open__title">What we have not settled yet</h2>
+            <p class="open__lede">
+              This is a pilot. The list is what is open today, it shrinks as the answers arrive, and
+              a square bracket marks a value we do not have rather than one we are keeping back.
+            </p>
+          </div>
+          <ul class="open__list span-7" role="list">
+            <li>
+              <span
+                >Where to write to start the conversation. There is no address and no application
+                form yet: <span class="mono slot">[CONTACT]</span></span
+              >
+            </li>
+            <li>
+              <span
+                >What the subscription costs and what it covers:
+                <span class="mono slot">[PRICE]</span></span
+              >
+            </li>
+            <li>
+              <span
+                >How much is actually bought in this channel. It is new and thin, and how quickly
+                that changes is not something we can tell you.</span
+              >
+            </li>
+            <li>
+              <span
+                >Returning money on an order that was paid for and never delivered. That it comes
+                from your wallet is settled — the payment came to you and never touched us, so we
+                cannot give back what we never held. How it is done, and how we learn it was done,
+                is the largest open item in the money contract. During the pilot such orders are
+                rare but not impossible, and each is handled by hand.</span
+              >
+            </li>
+            <li>
+              <span
+                >Which digital dollar and which transfer network we use, who pays the network fee
+                and how it sits against the price of the goods.</span
+              >
+            </li>
+            <li>
+              <span
+                >Who we are on paper. The legal identity you hand an API key to, who counts as the
+                seller, what document your accountant receives and how a stablecoin payment is
+                reported.</span
+              >
+            </li>
+            <li>
+              <span
+                >What happens when a purchased period runs out. Renewing a subscription and buying
+                the same access again are not designed yet — worth knowing, because the example
+                above is a monthly one.</span
+              >
+            </li>
+            <li>
+              <span
+                >The point at which we stop your sales without being asked. We do stop them when
+                your side goes quiet or too often answers that the goods are gone; what counts as
+                either, and how selling resumes, is not fixed.</span
+              >
+            </li>
+            <li>
+              <span
+                >What we promise you when it is our side that goes quiet. Everything we have written
+                so far covers your side falling silent; the other direction is not written down
+                yet.</span
+              >
+            </li>
+            <li>
+              <span
+                >Which language we write in. The documentation behind the links on this page is in
+                Russian and this page is not.</span
+              >
+            </li>
+          </ul>
+        </div>
+      </section>
+    </main>
+
+    <!-- The footer is where a reader looks for an address, so the absence has
+         to be said in words there rather than left as a bracket that reads like
+         a template nobody filled in. -->
+    <footer class="colophon">
+      <span class="mono">coinslot</span>
+      <div class="colophon__links">
+        <a href="/docs/" hreflang="ru">Documentation</a>
+        <a href="/cabinet/">Cabinet</a>
+        <span>No address yet: <span class="mono slot">[CONTACT]</span></span>
+      </div>
+    </footer>
+  </body>
+</html>

@@ -198,7 +198,10 @@ export class PaymentEdge {
  * which is a replay guard an attacker defeats by holding down the shift key.
  * So every hex value is lowercased and required to carry its prefix, and every
  * amount is put through BigInt, where `1000000`, `"1000000"` and `"0xF4240"`
- * are one number rather than three strings.
+ * are one number rather than three strings — as far out as a JSON number is
+ * exact, and no further. Past 2^53 a number is left as it is, because a double
+ * that far out is no longer the integer it was written as; the cost is that
+ * such an amount and its own text are two fingerprints rather than one.
  *
  * Nothing else goes in, and two omissions are deliberate. The protocol version
  * is a JSON field the agent types and nothing checks; digested, it would let an

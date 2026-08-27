@@ -1,0 +1,34 @@
+# The one door: Caddy, with everything static it serves already inside it.
+#
+# ADR-0005 §1 puts the landing, the portal, the cabinet and the gateway on one
+# origin. Two of those four are files rather than processes, and this image is
+# where those files come from — so the image can be run on its own and the
+# compose file does not have to make a host build the documentation first.
+#
+# The portal is built here, and with the mount point passed in: built without
+# `--base /docs/` every page asks for /assets/... at the root of the origin,
+# where the landing answers and has nothing by that name. The flag is a build
+# argument and not an edit to portal/.vitepress/config.mjs on purpose — where
+# the documentation is mounted is this directory's business, and the portal
+# should not carry the answer in a file of its own (deploy/Caddyfile).
+
+FROM node:24-alpine AS portal
+# The version is pinned rather than left to corepack's default: portal's own
+# package.json carries no packageManager field, and an install run by whichever
+# pnpm the image happened to ship is an install nobody can reproduce.
+RUN corepack enable && corepack prepare pnpm@10.33.3 --activate
+WORKDIR /portal
+
+# The portal is its own project with its own lockfile, deliberately outside the
+# workspace (pnpm-workspace.yaml): the documentation releases on its own clock.
+COPY portal/package.json portal/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+
+COPY portal/ ./
+RUN pnpm exec vitepress build --base /docs/
+
+FROM caddy:2-alpine
+
+COPY deploy/Caddyfile /etc/caddy/Caddyfile
+COPY apps/landing/public /srv/landing
+COPY --from=portal /portal/.vitepress/dist /srv/docs

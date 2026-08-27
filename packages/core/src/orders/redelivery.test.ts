@@ -22,17 +22,18 @@ describe("deciding whether to deliver an order again", () => {
   });
 
   it("never backs off further than the policy's ceiling", () => {
-    const late = nextRedelivery({ attempts: 20, now: 0, deadlineAt: null, policy });
+    // Doubling from a thousand passes a minute at the eighth attempt: the
+    // seventh is still under it at thirty-two seconds, the eighth would be
+    // sixty-four. The wait is what an agent's buyer sits through, so the
+    // ceiling is the promise, and the growth is pinned on both sides of the
+    // attempt that crosses it and once well past.
+    const patient = { ...policy, maxAttempts: 100 };
+    const madeSoFar = (attempts: number) =>
+      nextRedelivery({ attempts, now: 0, deadlineAt: null, policy: patient });
 
-    expect(late.retry).toBe(false);
-    expect(
-      nextRedelivery({
-        attempts: 8,
-        now: 0,
-        deadlineAt: null,
-        policy: { ...policy, maxAttempts: 100 },
-      }),
-    ).toStrictEqual({ retry: true, attempt: 9, delayMs: policy.maxDelayMs });
+    expect(madeSoFar(6)).toStrictEqual({ retry: true, attempt: 7, delayMs: 32_000 });
+    expect(madeSoFar(7)).toStrictEqual({ retry: true, attempt: 8, delayMs: policy.maxDelayMs });
+    expect(madeSoFar(20)).toStrictEqual({ retry: true, attempt: 21, delayMs: policy.maxDelayMs });
   });
 
   it("gives up once the policy's attempts are spent", () => {
@@ -42,8 +43,10 @@ describe("deciding whether to deliver an order again", () => {
       deadlineAt: null,
       policy,
     });
+    const wellPast = nextRedelivery({ attempts: 20, now: 0, deadlineAt: null, policy });
 
     expect(spent).toStrictEqual({ retry: false, reason: "attempts_exhausted" });
+    expect(wellPast).toStrictEqual({ retry: false, reason: "attempts_exhausted" });
   });
 
   it("gives up when the next attempt would land past the mode's deadline", () => {
@@ -58,6 +61,19 @@ describe("deciding whether to deliver an order again", () => {
     const decision = nextRedelivery({ attempts: 1, now: 500, deadlineAt: 5_000, policy });
 
     expect(decision).toStrictEqual({ retry: true, attempt: 2, delayMs: 1_000 });
+  });
+
+  it("does not attempt a delivery that would land exactly on the deadline", () => {
+    // The instant of the deadline belongs to the expiry, not to the delivery:
+    // the machine treats an expiry claiming that same instant as due, so a
+    // handler started there is started on an order already out of time. One
+    // millisecond earlier the attempt is worth making, and that is the whole
+    // width of this decision.
+    const onTheDot = nextRedelivery({ attempts: 1, now: 0, deadlineAt: 1_000, policy });
+    const justInside = nextRedelivery({ attempts: 1, now: 0, deadlineAt: 1_001, policy });
+
+    expect(onTheDot).toStrictEqual({ retry: false, reason: "past_deadline" });
+    expect(justInside).toStrictEqual({ retry: true, attempt: 2, delayMs: 1_000 });
   });
 
   it("gives the same answer for the same question every time", () => {

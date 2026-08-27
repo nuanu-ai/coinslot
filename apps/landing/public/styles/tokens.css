@@ -1,0 +1,129 @@
+/*
+ * The visual language, shared by every surface on the origin.
+ *
+ * ADR-0005 §6 asks for one visual language across the landing, the portal and
+ * the cabinet, held in one stylesheet rather than repeated per page. Caddy
+ * serves this file at /styles/tokens.css on the same origin as all three
+ * (ADR-0005 §1), so the cabinet's server-rendered pages link it directly and
+ * the three cannot drift apart without somebody editing this file.
+ *
+ * What belongs here: colour, type, radius, the border weight, and the base
+ * element rules that follow from them. What does not: the layout of any one
+ * page. A rule that only the landing needs lives in landing.css, and a rule
+ * that only the cabinet needs lives with the cabinet.
+ *
+ * The palette is stated in oklch because the light and the dark set are the
+ * same hues at different lightness, and that relationship is legible in oklch
+ * and invisible in hex.
+ *
+ * Three of the light values are a step darker than the design was drawn with,
+ * and that is deliberate rather than drift. Measured against the light
+ * background, the drawn accent came to 3.96:1, the drawn --ok to 4.03:1 and the
+ * drawn --warn to 4.27:1 — under the 4.5:1 that ordinary text needs, in the
+ * theme most people read in. Dropping the lightness to the values below brings
+ * them to 4.68, 4.96 and 5.06 while leaving hue and chroma untouched, so the
+ * page still looks like the drawing. The dark set already passed and is
+ * unchanged.
+ */
+
+:root {
+  --bg: oklch(0.985 0.003 90);
+  --surface: oklch(1 0 0);
+  --raised: oklch(0.972 0.004 90);
+  --line: oklch(0.895 0.006 90);
+  --fg: oklch(0.24 0.012 260);
+  --muted: oklch(0.52 0.012 260);
+  --accent: oklch(0.56 0.14 55);
+  --ok: oklch(0.53 0.13 155);
+  --warn: oklch(0.54 0.16 25);
+
+  /* The hairline of the design carries 1.31:1 against the page, which is right
+     for a rule between two cells and not enough for the edge of something you
+     are meant to click — a control's boundary needs 3:1 before it reads as a
+     control at all. --line draws the first, --line-strong the second. */
+  --line-strong: oklch(0.65 0.008 90);
+
+  /* Text laid on --accent. Fixed rather than derived: the accent is dark in
+     the light theme and light in the dark one, so a single near-white would
+     fail the contrast it needs in one of them. */
+  --on-accent: oklch(0.99 0 0);
+
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --radius: 3px;
+  --hairline: 1px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: oklch(0.165 0.012 260);
+    --surface: oklch(0.205 0.013 260);
+    --raised: oklch(0.235 0.013 260);
+    --line: oklch(0.31 0.013 260);
+    --line-strong: oklch(0.52 0.013 260);
+    --fg: oklch(0.94 0.004 90);
+    --muted: oklch(0.67 0.011 260);
+    --accent: oklch(0.74 0.13 55);
+    --ok: oklch(0.72 0.12 155);
+    --warn: oklch(0.7 0.15 25);
+    --on-accent: oklch(0.19 0.012 260);
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  /* The dark theme's page background has to reach past the document box, or a
+     rubber-band scroll on a phone exposes a white strip under a dark page. */
+  background: var(--bg);
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+a:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius);
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+
+p {
+  margin: 0;
+  text-wrap: pretty;
+}

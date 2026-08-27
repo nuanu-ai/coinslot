@@ -1,0 +1,22 @@
+# What never belongs in a build context.
+#
+# node_modules first and for a reason: the install inside the image is done by
+# pnpm from the lockfile, and a host's node_modules copied in would be both the
+# largest thing in the context and the wrong platform's binaries.
+node_modules
+**/node_modules
+
+.git
+.github
+.claude
+
+# Build output, rebuilt inside the image.
+portal/.vitepress/dist
+portal/.vitepress/cache
+**/dist
+
+# A developer's own environment and editor leavings.
+.env
+.env.*
+**/*.log
+.DS_Store
