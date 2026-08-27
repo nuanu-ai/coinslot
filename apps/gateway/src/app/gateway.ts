@@ -591,9 +591,17 @@ export class Gateway {
   /**
    * One order, whoever it belongs to — the buying surface's read.
    *
-   * The route that uses it takes no key, because the payment presented against
-   * the order is what stands in for one. A merchant's own read of one order is
-   * {@link merchantOrder}, which is scoped.
+   * Two routes use it and neither takes a key, for two different reasons. On
+   * the purchase the payment presented against the order stands in for one; on
+   * the agent's own read of what became of that purchase the order's identifier
+   * does (ADR-0011). Both callers are the buyer's side, which has no merchant
+   * to be scoped to — an agent walking one catalogue is not shopping inside a
+   * tenant. What keeps the second from becoming a way of reading across the
+   * merchants is the shape of what it answers with, not this read.
+   *
+   * A merchant's own read of one order is {@link merchantOrder}, which is
+   * scoped, and a merchant asking about a stranger's order is told there is no
+   * such order.
    */
   async orderById(orderId: string): Promise<StoredOrder | null> {
     return this.runtime.store.orderById(orderId);

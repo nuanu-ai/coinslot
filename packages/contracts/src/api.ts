@@ -53,7 +53,7 @@ import { AcceptanceSchema, DeliverySchema, HandlerAnswerSchema, RefusalSchema } 
 import { OrderSchema } from "./order.js";
 import { OrderStatusSchema } from "./order-status.js";
 import { ParamNameSchema } from "./param-spec.js";
-import { IdentifierSchema } from "./primitives.js";
+import { IdentifierSchema, SalePriceSchema } from "./primitives.js";
 import { QuoteResponseSchema } from "./quote.js";
 import { ReceiptSchema } from "./receipt.js";
 import { OrderCallErrorSchema, OrderCallResultSchema, PublishResultSchema } from "./results.js";
@@ -339,27 +339,68 @@ export const PurchaseRequestSchema = z
 /**
  * What became of a purchase, told to the agent that made it.
  *
- * Thin on purpose, and what it leaves out is the part worth saying plainly,
- * because one of the omissions costs the agent something it is entitled to.
- * The status vocabulary folds several of the machine's endings into `rejected`
- * on the argument that the reason travels separately, in the refusal code. No
- * shape in this contract carries that reason to an agent, and this document
- * does not either — so for now an agent told `rejected` cannot tell a product
- * that is gone from a payment that failed its check from parameters that did
- * not fit, and those want three different next moves. Adding a field for the
- * reason would be inventing a channel; leaving the gap unnamed would be worse.
+ * Four fields, and the shape of the list is the decision rather than its
+ * length. This document is what the buyer is owed — where their order stands,
+ * what it cost them, and the goods once those exist — and it is deliberately
+ * smaller than the merchant's own view of the same order. It carries no
+ * merchant, no merchant's key for the product, none of the parameters the
+ * buyer sent and nothing about any other order, because whoever holds an
+ * order's identifier can read it (ADR-0011) and an answer assembled from the
+ * merchant's record would hand all of that to whoever guessed one.
  *
- * Where an agent collects the goods of an order delivered after the fact is
- * not designed anywhere either.
+ * The two nullable fields are required rather than optional, and that is the
+ * fifth gate written into a shape. `price` is null for an order nobody ever
+ * named a price for — a product that was gone, a price question that went
+ * unanswered — and `delivered` is null while there are no goods to hand over.
+ * Left out instead, either would be a silence a reader cannot tell from an
+ * oversight; present and null, it is a fact.
+ *
+ * What it leaves out is the part worth saying plainly, because the omission
+ * costs the agent something it is entitled to. The status vocabulary folds
+ * several of the machine's endings into `rejected` on the argument that the
+ * reason travels separately, in the refusal code. No shape in this contract
+ * carries that reason to an agent, and this document does not either — so for
+ * now an agent told `rejected` cannot tell a product that is gone from a
+ * payment that failed its check from parameters that did not fit, and those
+ * want three different next moves. Adding a field for the reason would be
+ * inventing a channel; leaving the gap unnamed would be worse.
  */
 export const AgentOrderStatusSchema = z
   .strictObject({
     order_id: IdentifierSchema,
     status: OrderStatusSchema,
+
+    /**
+     * The price this order was priced at, or null where nobody ever named one
+     * for it. It is the order's own price and not the card's number: a card
+     * with a price check is priced at what the check answered.
+     *
+     * "Priced at" and not "sold for", and the difference is worth the extra
+     * word. An order that was priced and then ended without a sale — the
+     * product was gone, a deadline ran out, the merchant left — still carries
+     * the number it was priced at, because that is what the buyer was asked
+     * for. Whether any money moved is the status's business and not this
+     * field's, and a reader taking this for an amount charged would be
+     * reconciling against sales that never happened.
+     */
+    price: SalePriceSchema.nullable(),
+
+    /**
+     * The goods, once they are the buyer's — the delivery as the merchant
+     * wrote it, and null until then.
+     *
+     * "Once they are the buyer's" is narrower than "once the merchant handed
+     * them over", and the gap between the two is a real one. A synchronous
+     * delivery whose charge did not go through leaves goods sitting on an
+     * order nothing was paid for; the purchase itself refuses to hand those
+     * over and waits for a repeat that carries the payment, and this document
+     * says null for exactly as long as that is true.
+     */
+    delivered: DeliverySchema.nullable(),
   })
   .meta({
     description:
-      'What became of one purchase, in the words an agent and a merchant both read. It carries the status and nothing more, and one omission is worth knowing about: "rejected" covers a product that was gone, a payment that failed its check and parameters that did not fit, and nothing in this contract yet carries that reason to an agent. Where the goods of an order delivered after the fact are collected is not designed either.',
+      "What became of one purchase, in the words an agent and a merchant both read: where the order stands, what it was priced at, and the goods once they are the buyer's. It is smaller than the merchant's own view of the same order on purpose — no merchant, no merchant's own key for the product, none of the purchase parameters and nothing about any other order. The price is what the buyer was asked for and not proof that anything was charged: an order that was priced and then ended without a sale still carries it, and the status is what says which happened. A null price means nobody ever named one for this order, and a null delivery means there are no goods here to hand over; both fields are always present, because an absent field is a silence a reader cannot tell from an oversight. Two omissions are worth knowing about. \"rejected\" covers a product that was gone, a payment that failed its check and parameters that did not fit, and nothing in this contract yet carries that reason to an agent. And a null delivery is not a promise that no goods were ever made: a purchase whose charge failed or went unanswered can leave goods the buyer has not paid for, and this document withholds them rather than describing them.",
   });
 
 /**
@@ -394,14 +435,31 @@ export type HttpMethod = (typeof HTTP_METHODS)[number];
  * call anybody may make — the catalog an agent browses, and the purchase,
  * where the payment is what stands in for authorisation.
  *
- * `undecided` is not a third scheme. It is the honest word for a route whose
+ * `order_id` is the agent's own door and there is exactly one route behind it:
+ * knowing an order's identifier is what stands in for a key (ADR-0011). What
+ * that leans on is the identifier being generated from a random source and long
+ * enough not to be guessed — not on it being secret, which it is not. It
+ * travels in the payment challenge, on the merchant's stream and in the
+ * merchant's receipts, so the merchant who sold an order holds every identifier
+ * they would need to read one of these documents. That is why ownership of an
+ * order is settled by the verified payer and not by the identifier, and why the
+ * document behind this door carries only what the buyer is owed.
+ *
+ * It is a separate word from `none` because the two are not the same call: a
+ * route marked `none` answers everybody the same thing, and this one answers
+ * about the order the caller named and about no other. Whoever mounts it reads
+ * that difference off the word rather than out of a sentence. The weakness is
+ * stated in the decision rather than hidden: anyone who obtains an identifier
+ * can read that order, and the first real payment is the trigger to narrow it.
+ *
+ * `undecided` is not a scheme at all. It is the honest word for a route whose
  * door nobody has chosen yet, and it exists because "I do not know" and "I
  * know there is no door" cannot be the same value. A gateway must refuse to
  * mount a route marked this way until somebody decides, which is exactly the
  * behaviour wanted: the alternative is a route quietly serving everybody
  * because `none` was the closest word to hand.
  */
-export const AUTH_MODES = Object.freeze(["merchant_key", "none", "undecided"] as const);
+export const AUTH_MODES = Object.freeze(["merchant_key", "none", "order_id", "undecided"] as const);
 
 export type AuthMode = (typeof AUTH_MODES)[number];
 
@@ -677,9 +735,9 @@ export const API_ROUTES = Object.freeze({
   get_order_status: {
     method: "GET",
     path: "/v0/orders/:order_id/status",
-    auth: "undecided",
+    auth: "order_id",
     description:
-      "What became of a purchase, for the agent that made it. Who may ask is an open question: nothing in this contract or in any decision says how an agent proves that an order is theirs. The door is therefore recorded as undecided rather than as none — left open, this route would let anyone read anyone's purchase, and a scheme invented here would be a decision nobody took. Two things follow for whoever mounts it. It is the only route under /v0/orders that is not the merchant's, so a check attached to that prefix would put the merchant's door on the agent's route without anybody noticing; and until the question is answered it is not in the list of routes a gateway may serve.",
+      "What became of a purchase, for the agent that made it: where the order stands, what it sold for, and the goods once they are the buyer's. It is the route an agent that bought a product whose goods come later collects them on, and without it half a catalogue takes money and hands back an order nobody can act on. Knowing the order's identifier is the proof (ADR-0011), so this call takes no key: an agent has no account and no registration, and the identifier is handed to exactly one party. Two things follow for whoever mounts it. It is the only route under /v0/orders that is not the merchant's, so a key check attached to that prefix would shut the agent out of the one route that is its own, and nothing about this table would look wrong. And an identifier that names no order must be answered exactly as any other unknown one is, or the refusal becomes a way of counting the orders behind it.",
     response: { document: AgentOrderStatusSchema },
   },
 }) satisfies Readonly<Record<string, RouteDefinition>>;
@@ -754,14 +812,18 @@ export const expandPath = (path: string, values: Readonly<Record<string, string>
 };
 
 /**
- * The routes a gateway may serve.
+ * The routes a gateway may serve: every route whose door somebody has chosen.
  *
- * Every route whose door has been decided, which is every route except the one
- * marked `undecided`. It exists because the natural way to mount a table is to
- * ask whether a route needs the merchant key and to treat everything else as
- * open — and that reading serves the one route nobody has chosen a door for to
- * the whole world. Mounting from this list instead makes the safe reading the
- * easy one, and a route reappears here the day its door is decided.
+ * It exists because the natural way to mount a table is to ask whether a route
+ * needs the merchant key and to treat everything else as open — and that
+ * reading serves a route nobody has chosen a door for to the whole world.
+ * Mounting from this list instead makes the safe reading the easy one, and a
+ * route appears here the day its door is decided.
+ *
+ * Every route in the table has a door today, so this list is the whole of it.
+ * That is a fact about the table and not a reason to mount from `API_ROUTES`
+ * directly: the next route to be written down before it is designed is exactly
+ * the one this filter is for.
  */
 export const mountableRoutes = (): [RouteName, RouteDefinition][] =>
   (Object.entries(API_ROUTES) as [RouteName, RouteDefinition][]).filter(
