@@ -7,9 +7,9 @@ will go wrong with it. Refusals and failures are part of ordinary work for us,
 and every case below is laid out the same way: first how it ends for the buyer
 and for you, then why it is built that way and what to do about it.
 
-There is one thing that decides every case below. Faced with not knowing, we
-either carry the sale on or stop it, and what settles that is not the severity
-of the failure but where the money is at that moment: while your answer comes
+We work through every case below by one question. Faced with not knowing, we
+either carry the sale on or stop it, and what decides is not the severity of
+the failure but where the money is at that moment: while your answer comes
 before the money, your silence costs the buyer nothing; where the money moves
 at once, your silence stops the sale. The moments of charging in each mode are
 in a table on [Orders and fulfillment modes](/orders).
@@ -62,7 +62,7 @@ A refusal in itself is an ordinary answer from a handler: there is none, the
 parameters do not fit, the delivery is impossible. The buyer gets a clear
 answer, and you are not left with an order to sort out by hand later.
 
-From which the choice of mode follows: if refusals at delivery happen to you
+This is also how the mode gets chosen: if refusals at delivery happen to you
 regularly, catch them earlier, in the answer to the question about price and
 availability, before the money. What happens to the money on orders that need
 a refund is in [If the buyer did not get the goods](/money).
@@ -74,8 +74,8 @@ back: an exception inside the handler, a process that fell over, a connection
 that broke — for us all of these mean the order never reached you, and we
 repeat the delivery, after a delay, until the mode's deadline runs out.
 
-From which a practical rule follows: a temporary failure is expressed by
-throwing rather than by refusing. We read a refusal as a final "this cannot be
+So the practical rule is to express a temporary failure by throwing and not by
+refusing. We read a refusal as a final "this cannot be
 delivered" and close the order on it, so a supplier that did not answer within
 five seconds is not worth a refusal — a repeat a minute later might well have
 gone through.
@@ -152,8 +152,8 @@ availability, or by refusing at delivery; the first is cheaper, because it
 lands before the money in every mode.
 
 We keep no stock counts and do not work them out for you: the only source of
-truth about availability is your side. Which is exactly why goods that can run
-out are worth listing with a price check.
+truth about availability is your side. So goods that can run out are worth
+listing with a price check.
 
 The share of purchases that run into missing goods is what we mean to measure
 and hold below a limit, because to an agent a purchase like that looks like a

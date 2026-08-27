@@ -64,8 +64,8 @@ after the pilot. Before any money moves you are asked whether you will deliver;
 until you answer yes nothing is charged, and after your yes the money arrives
 at once, with the delivery still ahead of it.
 
-From that comes the general rule. While your answer comes before the money,
-your silence costs the buyer nothing. After the charge, that same silence
+One rule covers all three. While your answer comes before the money, your
+silence costs the buyer nothing. After the charge, that same silence
 leaves them without the goods — what that looks like in each separate failure
 is on [What can go wrong](/failures). The exact moments of charging are
 collected in a table for your engineer on

@@ -18,11 +18,12 @@ needs, pays for them and takes delivery, all by itself.
 For you that is one more place to sell. Your range does not have to change,
 the prices stay yours, and your shop goes on working the way it works now. One
 thing is different: on the other side of the sale, in place of a person who
-opened your site and pressed the buttons, there is a program. It looks at no
-pictures and reads no reviews. Whether to buy is decided from the card — the
-text that describes one of your products in the catalogue — and how precisely
-that text says what the buyer gets is what decides how many sales you end up
-sorting out by hand.
+opened your site and pressed the buttons, there is a program. It does not look
+at
+pictures and does not read reviews. It decides whether to buy from the card,
+the text that describes one of your products in a catalogue, and how precisely
+that text says what the buyer gets settles how many sales you end up sorting
+out by hand.
 
 The money goes from the buyer's wallet straight to yours, one transfer per
 sale. It never passes through our accounts, and we take no percentage of it.
@@ -67,8 +68,8 @@ have answered them we have no more questions for you.
 ## Your hands or ours
 
 You only have to write code on the first path. Your own engineer can write the
-handler against your API: the tools are ready, and the whole path from an
-empty project to a test sale is on [The first test sale](/quickstart). If you
+handler against your API, and the whole path from an empty project to a test
+sale is on [The first test sale](/quickstart). If you
 have no engineer of your own, or they are busy with something else, we write
 the handler and run it ourselves — then what we need from you is access to
 your API and your approval of the cards. Either way the sales themselves work
@@ -92,9 +93,9 @@ formats we exchange in change, we move everyone at once and your side is not
 touched.
 
 You can stop the sales yourself at any moment. The cabinet is a page on our
-side that you sign in to with your own address and password, and it shows your
-cards, your orders and the receipts for the sales that went through. It carries
-a pause on each card and one button that stops selling altogether. Paused, a card stops
+side that you sign in to, and it shows your cards, your orders and the
+receipts for the sales that went through. It carries a pause on each card and
+one button that stops selling altogether. Paused, a card stops
 selling and disappears from the catalogues, while the orders already taken on
 play out in the ordinary way; to be left with no open orders at all you have
 to leave entirely.

@@ -94,7 +94,7 @@ cannot be delivered", and we close the order on it. So a supplier that did not
 answer within five seconds is a reason to throw rather than to refuse.
 
 Silence does not count as an answer: every wait has a deadline, and an order
-that runs past its own closes without you.
+that runs past its deadline closes without you.
 
 ### The confirmation mode
 

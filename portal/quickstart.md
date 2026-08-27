@@ -97,7 +97,7 @@ if ('errors' in published) {
 }
 ```
 
-An invalid card throws nothing. In place of `ok` the call answers with
+An invalid card raises no exception. In place of `ok` the call answers with
 `errors`: a list of the fields at fault, each with an explanation of what is
 wrong with it, and never an empty list. Where there is an `ok`, the card was
 accepted, and our catalogue identifier is inside it.
@@ -123,9 +123,9 @@ check answers, the sale goes through at the price it named. When it is silent,
 what happens depends on the mode: a synchronous product sells at the price in
 the card, and an asynchronous one does not sell at all, because its buyer is
 charged at the moment of purchase and we will not take money for stock nobody
-has confirmed. You will answer that question in code on the next step. The fields of the question
-and of the answer are in the [card reference](/cards), and what silence leads
-to is on [What can go wrong](/failures).
+has confirmed. You will answer that question in code on the next step; the
+fields of the question and of the answer are in the [card reference](/cards),
+and what silence leads to is on [What can go wrong](/failures).
 
 The field `fulfillment` declares the mode. With `'sync'` the goods go to the
 agent in the answer to the purchase; with `'async'` they go later. There is a
@@ -200,8 +200,9 @@ An `accepted` can name the time you expect the delivery to take, where you
 know it; an empty `accepted` is a complete answer too. Until `deliver` is
 called the order counts as accepted, and the delivery deadline named in your
 card is running on it — it started when the buyer was charged, at the moment
-of purchase, before the order reached you. A synchronous card carries no such field: how long to
-wait for a synchronous answer is set by us, as one number for everybody.
+of purchase, before the order reached you. A synchronous card carries no such
+field: how long to wait for a synchronous answer is set by us, as one number
+for everybody.
 
 If your process has restarted in the meantime, the object you kept is gone.
 The open orders are then read back from us, and the delivery is made on those
@@ -286,7 +287,8 @@ coinslot.on('quote', async (q) => {
 })
 ```
 
-The answer that there is none carries no price: we begin no purchase on it.
+The answer that there is none carries no price, and we do not begin a purchase
+on it.
 
 Both calls take `as_of` as their last argument — the moment the answer is true
 for. It separates "went and looked" from "handed over what was in the cache",
@@ -304,8 +306,8 @@ on your side, for a business whose price is worked out by a separate pricing
 service. The fields of the question and of the answer are the same for both,
 and they are described in the [card reference](/cards).
 
-The sign of success here is a modest one: the process starts, holds the
-connection and does not fall over. The first order reaches it on step 5.
+Success here is modest: the process starts, holds the connection and does not
+fall over. The first order reaches it on step 5.
 
 ## 4. Check the card
 

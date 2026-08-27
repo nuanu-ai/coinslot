@@ -242,10 +242,9 @@ system, and what happens once it has passed is in [Time ran out](/orders).
 We hold down the load on your side ourselves, limiting how often the questions
 go out.
 
-Coinslot keeps no stock counts — how much of anything there is, only you know.
-Which is where the rule for deciding whether a product needs a check comes
-from: a product that can run out is worth listing with one, because without it
-we sell at the card's price and hear that it has run out only from your
+Coinslot keeps no stock counts: only you know how much of anything there is.
+So a product that can run out is worth listing with a check, because without
+one we sell at the card's price and hear that it has run out only from your
 refusal at delivery.
 
 ## Refusal codes
