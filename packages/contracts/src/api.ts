@@ -47,7 +47,7 @@
  */
 
 import { z } from "zod";
-import { CardSchema, PublicCardSchema } from "./card.js";
+import { CardSchema, MerchantCardSchema, PublicCardSchema } from "./card.js";
 import { WorkerEnvelopeSchema } from "./envelope.js";
 import { AcceptanceSchema, DeliverySchema, HandlerAnswerSchema, RefusalSchema } from "./handler.js";
 import { OrderSchema } from "./order.js";
@@ -55,7 +55,9 @@ import { OrderStatusSchema } from "./order-status.js";
 import { ParamNameSchema } from "./param-spec.js";
 import { IdentifierSchema } from "./primitives.js";
 import { QuoteResponseSchema } from "./quote.js";
+import { ReceiptSchema } from "./receipt.js";
 import { OrderCallErrorSchema, OrderCallResultSchema, PublishResultSchema } from "./results.js";
+import { SellingStateSchema } from "./selling.js";
 
 /**
  * An order together with the word for where it stands.
@@ -84,6 +86,52 @@ export const OrderWithStatusSchema = OrderSchema.extend({
 export const OrderListSchema = z.strictObject({
   orders: z.array(OrderWithStatusSchema),
 });
+
+/**
+ * A merchant's own catalog: their cards, and whether they are selling at all.
+ *
+ * The merchant's own word sits beside the cards rather than being left to be
+ * inferred from them, because the two answer different questions and a screen
+ * needs both. Every card of a merchant who has stopped all selling reads
+ * paused, and nothing in the cards themselves says whether that is five
+ * separate decisions or one — which is exactly the difference between resuming
+ * a card and resuming the catalog.
+ *
+ * An object rather than a bare array for the reason the order list gives, and
+ * one more: a bare array has nowhere to put the merchant's own word at all.
+ */
+export const MerchantCardListSchema = z
+  .strictObject({
+    /** Whether this merchant is taking new orders at all. */
+    selling: SellingStateSchema,
+
+    cards: z.array(MerchantCardSchema),
+  })
+  .meta({
+    description:
+      "A merchant's own catalog: every card they have published, and whether they are taking new orders at all. The merchant's own selling word is here as well as on each card because the two are different facts — when a merchant stops all selling every card reads paused, and only this field says why. This document does not say whether it is the whole catalog: paging is not designed, and when it is, this object grows the field that answers it.",
+  });
+
+/**
+ * Every receipt this merchant has.
+ *
+ * A receipt exists from the moment the money moves, so this is the list a
+ * merchant reconciles their wallet against. What it cannot show is worth
+ * knowing before it is reconciled from: a purchase that ended before any
+ * payment leaves no receipt at all, and no receipt is written while it is
+ * unknown whether the buyer was charged — `ReceiptSchema` works both through.
+ *
+ * An object rather than a bare array, so the day it needs paging it grows the
+ * field that says so instead of changing shape under every reader.
+ */
+export const ReceiptListSchema = z
+  .strictObject({
+    receipts: z.array(ReceiptSchema),
+  })
+  .meta({
+    description:
+      "The receipts of one merchant. A receipt is written when the money moves, so a purchase that ended before any payment is not here, and neither is one whose payment outcome is still unknown — that receipt is written if and when the answer arrives. This document does not say whether it is the whole list: paging is not designed, and the absence of a field about it is not a promise that there is no more.",
+  });
 
 /**
  * The question a merchant puts in the query string when listing orders.
@@ -469,6 +517,51 @@ export const API_ROUTES = Object.freeze({
     response: { document: PublishResultSchema },
   },
 
+  list_merchant_cards: {
+    method: "GET",
+    path: "/v0/cards",
+    auth: "merchant_key",
+    description:
+      "The cards published under the key this call was made with, each whole and with the word it is selling under, together with whether the merchant is taking new orders at all. It is not the public catalog: that one is unscoped, carries our identifier in place of the merchant's key, and leaves out a card that is off sale — which is the one card a merchant goes looking for when they want it back on sale. During the pilot there is one merchant and one key, so this is every card the gateway holds; when there is a second merchant, scoping it to the caller is a change to whoever serves this and not to the shape of the answer.",
+    response: { document: MerchantCardListSchema },
+  },
+
+  pause_card: {
+    method: "POST",
+    path: "/v0/cards/:item_id/pause",
+    auth: "merchant_key",
+    description:
+      "Takes one card off sale. No new order is taken for it, and the orders already accepted for it play out in the ordinary way — a pause closes nothing. Calling it on a card that is already paused changes nothing and answers the same way, so a retry after a dropped connection is safe. Republishing a paused card changes the card and leaves it paused: a merchant editing a price is not asking for it to go back on sale.",
+    response: { document: MerchantCardSchema },
+  },
+
+  resume_card: {
+    method: "POST",
+    path: "/v0/cards/:item_id/resume",
+    auth: "merchant_key",
+    description:
+      "Puts one card back on sale. Where the merchant has stopped all selling this lifts only this card's own pause, and the card goes on refusing new orders until selling is resumed — the answer says so in both of its words, and that is the case a merchant is most likely to misread.",
+    response: { document: MerchantCardSchema },
+  },
+
+  pause_selling: {
+    method: "POST",
+    path: "/v0/selling/pause",
+    auth: "merchant_key",
+    description:
+      "Stops all selling for this merchant. No new order is taken for any card, and the orders already accepted play out in the ordinary way — this is a pause and not a departure, so nothing open is closed and this call creates no debt. The answer is the whole catalog, because every card's word changed. A merchant who has already left is refused rather than paused: their orders are closed and their refunds owed, and a pause would describe none of that.",
+    response: { document: MerchantCardListSchema },
+  },
+
+  resume_selling: {
+    method: "POST",
+    path: "/v0/selling/resume",
+    auth: "merchant_key",
+    description:
+      "Starts selling again. Cards paused in their own right stay paused: stopping all selling did not forget which they were, and putting them all back on sale would sell products their merchant took off. The answer is the whole catalog, so which cards actually came back is a fact rather than an inference. A merchant who has left is refused: leaving closed the orders that were open and left refunds owed, and this switch unwinds none of it, so a departure is not undone here.",
+    response: { document: MerchantCardListSchema },
+  },
+
   get_order: {
     method: "GET",
     path: "/v0/orders/:order_id",
@@ -486,6 +579,15 @@ export const API_ROUTES = Object.freeze({
       "Orders and the states they are in. With open=true, only the ones still owed something — which includes the two that stay open after the purchase itself is over, an order owing a refund and one delivered but never paid for.",
     query: OrderListQuerySchema,
     response: { document: OrderListSchema },
+  },
+
+  list_receipts: {
+    method: "GET",
+    path: "/v0/receipts",
+    auth: "merchant_key",
+    description:
+      "The receipts belonging to the key this call was made with: what was paid, when the payment executed, when the purchase happened, the moment the price behind it was true, and what became of the order. Every receipt says whether the money behind it was real, and a reader reconciling against a wallet has to read that field rather than assume. Two silences are the receipt's own — a purchase that ended before any payment leaves no receipt, and none is written while it is unknown whether the buyer was charged. A third belongs to whoever serves this and is not a property of the shape: a gateway decides when it writes a receipt, and one that writes them only as goods are released has none for a payment that executed at the purchase and has not been delivered yet. That is money taken with nothing here to show it, so this list is not by itself an account of what was received. During the pilot there is one merchant and one key, so this is every receipt the gateway holds.",
+    response: { document: ReceiptListSchema },
   },
 
   poll_worker: {
@@ -667,6 +769,8 @@ export const mountableRoutes = (): [RouteName, RouteDefinition][] =>
 
 export type OrderWithStatus = z.infer<typeof OrderWithStatusSchema>;
 export type OrderList = z.infer<typeof OrderListSchema>;
+export type MerchantCardList = z.infer<typeof MerchantCardListSchema>;
+export type ReceiptList = z.infer<typeof ReceiptListSchema>;
 export type OrderListQuery = z.infer<typeof OrderListQuerySchema>;
 export type WorkerPollRequest = z.infer<typeof WorkerPollRequestSchema>;
 export type WorkerPollResponse = z.infer<typeof WorkerPollResponseSchema>;

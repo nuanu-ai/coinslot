@@ -21,6 +21,31 @@ importers:
         specifier: ^4.1.11
         version: 4.1.11(@types/node@26.3.0)(vite@8.2.2(@types/node@26.3.0)(esbuild@0.28.2)(tsx@4.23.12))
 
+  apps/cabinet:
+    dependencies:
+      '@coinslot/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      express:
+        specifier: 5.2.1
+        version: 5.2.1
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@coinslot/gateway':
+        specifier: workspace:*
+        version: link:../gateway
+      '@types/express':
+        specifier: ^5.0.6
+        version: 5.0.6
+      tsx:
+        specifier: ^4.23.12
+        version: 4.23.12
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@types/node@26.3.0)(vite@8.2.2(@types/node@26.3.0)(esbuild@0.28.2)(tsx@4.23.12))
+
   apps/gateway:
     dependencies:
       '@coinslot/contracts':
@@ -126,7 +151,7 @@ importers:
         version: 4.23.12
       viem:
         specifier: 2.47.0
-        version: 2.47.0(typescript@7.0.2)(zod@3.25.76)
+        version: 2.47.0(typescript@7.0.2)(zod@4.4.3)
       vitest:
         specifier: ^4.1.11
         version: 4.1.11(@types/node@26.3.0)(vite@8.2.2(@types/node@26.3.0)(esbuild@0.28.2)(tsx@4.23.12))
@@ -2331,6 +2356,11 @@ snapshots:
       typescript: 7.0.2
       zod: 3.25.76
 
+  abitype@1.2.3(typescript@7.0.2)(zod@4.4.3):
+    optionalDependencies:
+      typescript: 7.0.2
+      zod: 4.4.3
+
   accepts@2.0.0:
     dependencies:
       mime-types: 3.0.2
@@ -2721,7 +2751,7 @@ snapshots:
     dependencies:
       wrappy: 1.0.2
 
-  ox@0.14.0(typescript@7.0.2)(zod@3.25.76):
+  ox@0.14.0(typescript@7.0.2)(zod@4.4.3):
     dependencies:
       '@adraffy/ens-normalize': 1.11.1
       '@noble/ciphers': 1.3.0
@@ -2729,7 +2759,7 @@ snapshots:
       '@noble/hashes': 1.8.0
       '@scure/bip32': 1.7.0
       '@scure/bip39': 1.6.0
-      abitype: 1.2.3(typescript@7.0.2)(zod@3.25.76)
+      abitype: 1.2.3(typescript@7.0.2)(zod@4.4.3)
       eventemitter3: 5.0.1
     optionalDependencies:
       typescript: 7.0.2
@@ -3013,15 +3043,15 @@ snapshots:
 
   vary@1.1.2: {}
 
-  viem@2.47.0(typescript@7.0.2)(zod@3.25.76):
+  viem@2.47.0(typescript@7.0.2)(zod@4.4.3):
     dependencies:
       '@noble/curves': 1.9.1
       '@noble/hashes': 1.8.0
       '@scure/bip32': 1.7.0
       '@scure/bip39': 1.6.0
-      abitype: 1.2.3(typescript@7.0.2)(zod@3.25.76)
+      abitype: 1.2.3(typescript@7.0.2)(zod@4.4.3)
       isows: 1.0.7(ws@8.18.3)
-      ox: 0.14.0(typescript@7.0.2)(zod@3.25.76)
+      ox: 0.14.0(typescript@7.0.2)(zod@4.4.3)
       ws: 8.18.3
     optionalDependencies:
       typescript: 7.0.2

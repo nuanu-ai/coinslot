@@ -1,0 +1,25 @@
+{
+  "name": "@coinslot/cabinet",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Coinslot merchant cabinet — cards, orders and receipts, server-rendered",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "start": "tsx src/main.ts"
+  },
+  "dependencies": {
+    "@coinslot/contracts": "workspace:*",
+    "express": "5.2.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@coinslot/gateway": "workspace:*",
+    "@types/express": "^5.0.6",
+    "tsx": "^4.23.12",
+    "vitest": "^4.1.11"
+  }
+}

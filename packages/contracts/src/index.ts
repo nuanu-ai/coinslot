@@ -26,6 +26,7 @@ import { z } from "zod";
 import {
   AgentOrderStatusSchema,
   CatalogPageSchema,
+  MerchantCardListSchema,
   OrderAcceptResponseSchema,
   OrderCallResponseSchema,
   OrderListQuerySchema,
@@ -33,10 +34,17 @@ import {
   OrderWithStatusSchema,
   PurchaseRequestSchema,
   QuoteAnswerAckSchema,
+  ReceiptListSchema,
   WorkerPollRequestSchema,
   WorkerPollResponseSchema,
 } from "./api.js";
-import { CardSchema, FulfillmentSchema, PriceCheckSchema, PublicCardSchema } from "./card.js";
+import {
+  CardSchema,
+  FulfillmentSchema,
+  MerchantCardSchema,
+  PriceCheckSchema,
+  PublicCardSchema,
+} from "./card.js";
 import { WorkerEnvelopeSchema } from "./envelope.js";
 import { OrderEventSchema, RefundDueReasonSchema } from "./events.js";
 import {
@@ -70,12 +78,14 @@ import {
   PublishErrorSchema,
   PublishResultSchema,
 } from "./results.js";
+import { SellingStateSchema } from "./selling.js";
 
 export type {
   AgentOrderStatus,
   AuthMode,
   CatalogPage,
   HttpMethod,
+  MerchantCardList,
   OrderAcceptResponse,
   OrderCallResponse,
   OrderList,
@@ -83,6 +93,7 @@ export type {
   OrderWithStatus,
   PurchaseRequest,
   QuoteAnswerAck,
+  ReceiptList,
   RouteDefinition,
   RouteName,
   RouteResponse,
@@ -97,6 +108,7 @@ export {
   expandPath,
   HTTP_METHODS,
   MERCHANT_KEY_HEADER,
+  MerchantCardListSchema,
   merchantKeyFrom,
   merchantKeyHeaderValue,
   mountableRoutes,
@@ -108,14 +120,16 @@ export {
   PurchaseRequestSchema,
   pathParamsOf,
   QuoteAnswerAckSchema,
+  ReceiptListSchema,
   WorkerPollRequestSchema,
   WorkerPollResponseSchema,
 } from "./api.js";
-export type { Card, Fulfillment, PriceCheck, PublicCard } from "./card.js";
+export type { Card, Fulfillment, MerchantCard, PriceCheck, PublicCard } from "./card.js";
 export {
   CardSchema,
   deliveryCheckFor,
   FulfillmentSchema,
+  MerchantCardSchema,
   PriceCheckSchema,
   PublicCardSchema,
   publicCardOf,
@@ -185,6 +199,8 @@ export {
   PublishErrorSchema,
   PublishResultSchema,
 } from "./results.js";
+export type { SellingState } from "./selling.js";
+export { SELLING_STATES, SellingStateSchema } from "./selling.js";
 
 /**
  * The version of the public contract. It grows when the meaning of the fields
@@ -218,6 +234,8 @@ export const schemas = Object.freeze({
   fulfillment: FulfillmentSchema,
   handler_answer: HandlerAnswerSchema,
   identifier: IdentifierSchema,
+  merchant_card: MerchantCardSchema,
+  merchant_card_list: MerchantCardListSchema,
   money: MoneySchema,
   order: OrderSchema,
   order_accept_response: OrderAcceptResponseSchema,
@@ -242,11 +260,13 @@ export const schemas = Object.freeze({
   quote_request: QuoteRequestSchema,
   quote_response: QuoteResponseSchema,
   receipt: ReceiptSchema,
+  receipt_list: ReceiptListSchema,
   receipt_outcome: ReceiptOutcomeSchema,
   refund_due_reason: RefundDueReasonSchema,
   refusal: RefusalSchema,
   refusal_code: RefusalCodeSchema,
   sale_price: SalePriceSchema,
+  selling_state: SellingStateSchema,
   timestamp: TimestampSchema,
   worker_envelope: WorkerEnvelopeSchema,
   worker_poll_request: WorkerPollRequestSchema,

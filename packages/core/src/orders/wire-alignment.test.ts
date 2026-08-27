@@ -23,10 +23,12 @@ import {
   ORDER_CALL_RESULTS,
   ORDER_EVENT_TYPES,
   ORDER_STATUSES,
+  SELLING_STATES,
   RECOMMENDED_REFUSAL_CODES as WIRE_REFUSAL_CODES,
 } from "@coinslot/contracts";
 import { describe, expect, it } from "vitest";
 
+import { MERCHANT_SELLING } from "./create.js";
 import {
   FULFILLMENT_MODES,
   MERCHANT_ANSWER_ERRORS,
@@ -63,5 +65,13 @@ describe("the wire vocabulary and the machine speak one language", () => {
     expect(asSet(RECOMMENDED_REFUSAL_CODES)).toStrictEqual(
       asSet(Object.values(WIRE_REFUSAL_CODES)),
     );
+  });
+
+  it("the words for whether a merchant is selling match, exactly", () => {
+    // The pause switch a merchant presses ends up as this input to
+    // `createOrder`, and the cabinet shows the same word back. Two lists would
+    // mean a screen that says one thing and a machine that does another, with
+    // the gateway translating in between and neither package failing.
+    expect(asSet(MERCHANT_SELLING)).toStrictEqual(asSet(SELLING_STATES));
   });
 });

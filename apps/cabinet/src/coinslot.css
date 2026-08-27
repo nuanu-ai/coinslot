@@ -1,0 +1,481 @@
+/*
+ * What the cabinet needs on top of the shared visual language.
+ *
+ * ADR-0005 §6 asks for one visual language across the landing, the portal and
+ * the cabinet, held in one stylesheet rather than repeated per page. That file
+ * is `apps/landing/public/styles/tokens.css`, and it is the one this branch
+ * used to carry a second copy of — with the pre-contrast-fix values, which is
+ * exactly how "one visual language" becomes two that look almost alike. The
+ * copy is gone: the cabinet serves the shared file itself, ahead of this one,
+ * so there is a single set of tokens on disk and no way for the two surfaces to
+ * drift without somebody editing the shared file.
+ *
+ * So nothing here declares a colour, a family, a radius or a base element rule.
+ * What is here is the cabinet's own layout — its frame, its tables, its state
+ * dots and its controls — which is what tokens.css means by "a rule that only
+ * the cabinet needs lives with the cabinet".
+ */
+
+/*
+ * The one thing the cabinet takes back from the shared base, and why.
+ *
+ * tokens.css sets 16px/1.6, which is right for a landing somebody reads. This
+ * is a console with six-column tables that a merchant scans rather than reads,
+ * and at that size a row of them does not fit a laptop without scrolling
+ * sideways. The design was drawn at 14px for that reason.
+ */
+body {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* The page heading, at the size the console was drawn at. Declared before
+   `.gate h1` below, so that the more specific rule is the one that wins. */
+h1 {
+  font-size: 22px;
+}
+
+/* --- the frame ---------------------------------------------------------- */
+
+.page {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 0 32px;
+  border-bottom: var(--hairline) solid var(--line);
+  background: var(--surface);
+  flex-wrap: wrap;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 36px;
+  flex-wrap: wrap;
+}
+
+.wordmark {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.tabs a,
+.tabs span {
+  padding: 18px 14px;
+  color: var(--muted);
+}
+
+.tabs .here {
+  color: var(--fg);
+  font-weight: 500;
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.whoami {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  font-size: 13px;
+}
+
+.lede {
+  padding: 32px 32px 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.lede p {
+  margin-top: 6px;
+  color: var(--muted);
+  max-width: 68ch;
+}
+
+.actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+/* --- tables ------------------------------------------------------------- */
+
+/*
+ * A real table, so a merchant's browser can read the columns out and their
+ * find-in-page still works. The scroller around it is what keeps a wide row
+ * from pushing the whole page sideways on a narrow screen.
+ */
+.scroller {
+  margin: 24px 32px 32px;
+  border: var(--hairline) solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  min-width: 720px;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+thead th {
+  background: var(--raised);
+  font-size: 11px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 500;
+  padding: 12px 24px;
+  border-bottom: var(--hairline) solid var(--line);
+  white-space: nowrap;
+}
+
+tbody td {
+  padding: 15px 24px;
+  border-bottom: var(--hairline) solid var(--line);
+  vertical-align: middle;
+}
+
+/*
+ * The first column carries the name of the thing and needs room for it. Left to
+ * share the table's minimum evenly it collapses on a narrow screen and a title
+ * wraps one word per line, which is unreadable long before the row is.
+ */
+tbody td:first-child,
+thead th:first-child {
+  min-width: 220px;
+}
+
+tbody tr:last-child td {
+  border-bottom: none;
+}
+
+tbody tr.off td {
+  background: var(--raised);
+}
+
+tbody tr.needs-you td {
+  background: color-mix(in oklab, var(--warn) 7%, transparent);
+}
+
+td.amount,
+td.key,
+td.ident {
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+
+td.key,
+td.ident {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.title {
+  font-weight: 500;
+}
+
+.under {
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 3px;
+}
+
+.under.mono {
+  font-size: 12.5px;
+}
+
+td.quiet {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* --- the state dot ------------------------------------------------------ */
+
+.state {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--muted);
+}
+
+.state.ok {
+  color: var(--ok);
+}
+.state.ok .dot {
+  background: var(--ok);
+}
+
+.state.warn {
+  color: var(--warn);
+}
+.state.warn .dot {
+  background: var(--warn);
+}
+
+.state.busy {
+  color: var(--accent);
+}
+.state.busy .dot {
+  background: var(--accent);
+}
+
+/*
+ * The mark on a sum that was not real money. It sits beside the amount rather
+ * than in a column of its own so that it cannot be scrolled out of sight on a
+ * narrow screen while the number it qualifies stays visible.
+ */
+.tag {
+  font-family: var(--font-sans);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--warn);
+  border: var(--hairline) solid var(--warn);
+  border-radius: 2px;
+  padding: 1px 4px;
+  margin-left: 6px;
+  vertical-align: 1px;
+}
+
+/* --- controls ----------------------------------------------------------- */
+
+button {
+  font: inherit;
+  cursor: pointer;
+  border-radius: var(--radius);
+  padding: 6px 12px;
+  font-size: 13px;
+  /* --line-strong and not --line: a hairline is right for a rule between two
+     cells and too faint for the edge of something you are meant to click. */
+  border: var(--hairline) solid var(--line-strong);
+  background: var(--surface);
+  color: var(--fg);
+}
+
+button:hover {
+  border-color: var(--fg);
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+
+button.wide {
+  padding: 9px 16px;
+  font-size: 13.5px;
+}
+
+form.inline {
+  display: inline;
+}
+
+td.control {
+  text-align: right;
+}
+
+.filter {
+  display: flex;
+  gap: 6px;
+  border: var(--hairline) solid var(--line);
+  border-radius: var(--radius);
+  padding: 3px;
+}
+
+.filter a,
+.filter span {
+  padding: 6px 14px;
+  font-size: 13px;
+  border-radius: 2px;
+  color: var(--muted);
+}
+
+.filter .here {
+  background: var(--raised);
+  color: var(--fg);
+  font-weight: 500;
+}
+
+/* --- notes and summaries ------------------------------------------------ */
+
+.note {
+  margin: 0 32px 32px;
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  border: var(--hairline) dashed var(--line-strong);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  color: var(--muted);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+.note .mark {
+  color: var(--accent);
+}
+
+.callout {
+  margin: 0 32px 32px;
+  border: var(--hairline) solid var(--line);
+  border-left: 2px solid var(--warn);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  background: var(--surface);
+  line-height: 1.55;
+}
+
+.callout .what {
+  font-weight: 500;
+  /*
+   * An order identifier is a long unbroken run of characters in a monospaced
+   * face, and this box has no scroller of its own the way the tables do. Left
+   * alone it is the one thing on the page that scrolls the whole document
+   * sideways on a phone.
+   */
+  overflow-wrap: anywhere;
+}
+
+.callout .why {
+  color: var(--muted);
+  margin-top: 4px;
+  font-size: 13.5px;
+}
+
+.summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+  margin: 24px 32px 0;
+}
+
+.tile {
+  border: var(--hairline) solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 20px 24px;
+}
+
+.tile .label {
+  font-size: 11px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.tile .figure {
+  font-family: var(--font-mono);
+  font-size: 26px;
+  margin-top: 10px;
+  letter-spacing: -0.02em;
+}
+
+.tile .figure.ok {
+  color: var(--ok);
+}
+
+.tile .figure.busy {
+  color: var(--accent);
+}
+
+.tile .aside {
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 4px;
+}
+
+.empty {
+  padding: 40px 24px;
+  text-align: center;
+  color: var(--muted);
+}
+
+/* --- signing in --------------------------------------------------------- */
+
+.gate {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+}
+
+.gate form {
+  width: 100%;
+  max-width: 420px;
+  border: var(--hairline) solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 28px;
+}
+
+.gate h1 {
+  font-size: 18px;
+}
+
+.gate p {
+  color: var(--muted);
+  margin-top: 8px;
+}
+
+.gate label {
+  display: block;
+  margin-top: 20px;
+  font-size: 11px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.gate input {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  width: 100%;
+  margin-top: 8px;
+  padding: 9px 12px;
+  border: var(--hairline) solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.gate button {
+  margin-top: 20px;
+  width: 100%;
+  padding: 10px;
+  font-size: 14px;
+}
+
+.problem {
+  margin-top: 16px;
+  color: var(--warn);
+  font-size: 13.5px;
+}
