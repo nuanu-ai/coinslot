@@ -26,6 +26,21 @@ import { hashPassword, newPassword } from "./credentials.js";
  */
 const LOOKS_LIKE_AN_ADDRESS = /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/;
 
+/**
+ * One line with nothing left in it that a terminal will act on.
+ *
+ * Shown rather than removed, so that a row with something odd in it looks odd:
+ * an address nobody can read is still better information than an address that
+ * silently painted over the one above it. Anything already printable is left
+ * exactly as it is, so an address with a letter outside ASCII in it reads as
+ * itself.
+ */
+const printable = (line: string): string =>
+  line.replaceAll(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, (found) => {
+    const at = found.codePointAt(0) ?? 0;
+    return at <= 0xff ? `\\x${at.toString(16).padStart(2, "0")}` : `\\u{${at.toString(16)}}`;
+  });
+
 const USAGE = [
   "Usage: pnpm --filter @coinslot/cabinet account <command>",
   "",
@@ -42,8 +57,18 @@ const USAGE = [
 export async function runAccount(
   argv: readonly string[],
   accounts: Accounts,
-  say: (line: string) => void,
+  print: (line: string) => void,
 ): Promise<number> {
+  // Everything this command prints goes through one rendering, rather than the
+  // half-dozen places that print an address, because forgetting one of those is
+  // the whole failure. What it takes out is the characters a terminal obeys
+  // instead of showing: an escape that clears the line it is on, a carriage
+  // return that writes over the row above, an override that reverses the
+  // direction text reads in. An address carrying one arrives either from
+  // somebody's shell or from a row written by hand, and a list of accounts
+  // where one row can hide another cannot answer "who can sign into this
+  // cabinet", which is the only question it is for.
+  const say = (line: string): void => print(printable(line));
   const [verb, address] = argv;
 
   if (verb === "list") {
@@ -138,8 +163,12 @@ async function listAccounts(accounts: Accounts, say: (line: string) => void): Pr
     return 0;
   }
 
-  const widest = Math.max(...listed.map((row) => row.email.length));
-  for (const row of listed) {
+  // Rendered before it is measured, not after: the column is as wide as what a
+  // person will see, and an address that grew when it was rendered would
+  // otherwise push its own row out of line.
+  const rows = listed.map((row) => ({ ...row, email: printable(row.email) }));
+  const widest = Math.max(...rows.map((row) => row.email.length));
+  for (const row of rows) {
     const open = row.sessions === 1 ? "1 session open" : `${row.sessions} sessions open`;
     say(`${row.email.padEnd(widest)}  made ${row.createdAt.toISOString().slice(0, 10)}  ${open}`);
   }

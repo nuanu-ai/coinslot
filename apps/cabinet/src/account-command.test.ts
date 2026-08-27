@@ -190,6 +190,56 @@ describe("listing what accounts there are", () => {
   });
 });
 
+describe("an address carrying characters a terminal acts on", () => {
+  /**
+   * Turn the colours over, then go back to the start of the line.
+   *
+   * The carriage return is the half that matters: whatever is printed after it
+   * lands on top of what the terminal has already shown.
+   */
+  const ERASES_A_ROW = "\u001b[7m\r";
+
+  it("is shown rather than obeyed, wherever it is printed", async () => {
+    // The shape check catches a missing half and a space in the middle, which
+    // are the mistakes people make at a terminal; it says nothing about an
+    // escape sequence, and a row can also arrive from a hand-written insert or
+    // a restored dump that never went through it at all. So the rendering is
+    // where the printing happens rather than where the input arrives, and it
+    // covers every line this command writes.
+    //
+    // What is at stake is small and specific: `account list` is the only answer
+    // to "who can sign into this cabinet", and a row that can erase the row
+    // above it is an answer with somebody quietly missing from it.
+    const accounts = memoryAccounts();
+    const at = new Date("2026-08-27T09:00:00.000Z");
+    await accounts.add(`a${ERASES_A_ROW}b@example.com`, "hash", at);
+    await accounts.add("dmitry@example.com", "hash", at);
+
+    const listed = await run(accounts, "list");
+
+    expect(listed.code).toBe(0);
+    expect(listed.said).not.toContain("\u001b");
+    expect(listed.said).not.toContain("\r");
+    expect(listed.said).toContain("a\\x1b[7m\\x0db@example.com");
+    // Both people are still there, and neither row is short of a column.
+    expect(listed.said).toContain("dmitry@example.com");
+    const columns = listed.said.split("\n").map((line) => line.indexOf("made"));
+    expect(new Set(columns).size).toBe(1);
+  });
+
+  it("is shown rather than obeyed in a refusal as well", async () => {
+    // The rejection echoes what was typed, which is a path into the terminal
+    // that needs no account and no database at all.
+    const accounts = memoryAccounts();
+
+    const refused = await run(accounts, "add", `${ERASES_A_ROW}not an address`);
+
+    expect(refused.code).not.toBe(0);
+    expect(refused.said).not.toContain("\u001b");
+    expect(refused.said).toContain("\\x1b");
+  });
+});
+
 describe("a command nobody meant to run", () => {
   it("names the ones there are rather than doing something close to it", async () => {
     const accounts = memoryAccounts();
