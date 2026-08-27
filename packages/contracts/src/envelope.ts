@@ -34,9 +34,11 @@
  *
  * What the envelope does not carry is a handle for acking, because the
  * acknowledgement of each kind is something that already exists: an order is
- * acked by its outcome call against the order's own identifier, a price question
- * by the reply against `price_id`, and an event by nothing at all. A handle here
- * would be a fourth way to name a message that three surfaces already name.
+ * acked by whatever its handler answers — the goods, a refusal, or taking the
+ * order on, each against the order's own identifier, and the last of those
+ * acknowledges without closing anything — a price question by the reply against
+ * `price_id`, and an event by nothing at all. A handle here would be a fourth
+ * way to name a message that three surfaces already name.
  *
  * That third one is a gap and not a design, and it decides how far each kind
  * travels. Nothing takes a drawn envelope back after a visibility window: an
@@ -85,11 +87,15 @@ export const WORKER_ENVELOPE_KINDS = Object.freeze(
  *
  * `id` names this message and `sent_at` names when it went out. What the pair is
  * not is a way to recognise a repeat, and reading it as one costs a merchant
- * goods: the gateway builds a fresh envelope, with a fresh `id`, around the same
- * order every time it decides on another attempt. What holds still across a
- * repeat is the order's own identifier inside the payload, which is what its
- * handler answers from and what the portal tells a merchant to key on. An event
- * needs neither, having no repeat to recognise.
+ * goods: an order the gateway decides to send again is wrapped in a fresh
+ * envelope with a fresh `id`, so two attempts at one order share no field but
+ * the payload. The gateway does put an envelope back on the stream with its `id`
+ * untouched, but only on the paths where it drew that envelope and then handed
+ * it to nobody — so an identifier a worker has actually seen never comes round a
+ * second time. What holds still across a repeat is the order's own identifier
+ * inside the payload, which is what its handler answers from and what the portal
+ * tells a merchant to key on. An event needs neither, having no repeat to
+ * recognise.
  */
 const envelopeOf = <Kind extends WorkerEnvelopeKind, Payload extends z.ZodType>(
   kind: Kind,
