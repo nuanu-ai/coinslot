@@ -747,12 +747,11 @@ export class Gateway {
    * answered with "delivered" because the machine went quiet would be a receipt
    * for goods that do not exist.
    *
-   * The quiet cases are the ones worth naming. A synchronous handler's own
-   * answer is one: the goods go to the agent, or the order is closed on the
-   * refusal, and either way what the merchant is owed is the news that it
-   * landed. An acceptance of an order that has already moved on — delivered, or
-   * owed a refund — is the other: it changes nothing, and "your acceptance
-   * landed" is the whole of what there is to say about it.
+   * The machine is quiet wherever it settles the order itself and has nothing
+   * left to add — a handler's own delivery or refusal is the common case, and
+   * an acceptance of an order already owed a refund is another. What the
+   * merchant is owed then is the news that his answer landed, in his own word
+   * for it.
    */
   #answerFor(
     applied: Awaited<ReturnType<OrderRunner["apply"]>>,

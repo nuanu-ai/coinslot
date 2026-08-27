@@ -175,8 +175,10 @@ describe("one eSIM, bought and provisioned, with the provisioner down at first",
     expect(outcomeFor(delivered.order)).toBe("delivered");
     expect(deadlines(delivered.order)).toStrictEqual([]);
 
-    // The queue delivers at least once, so the same order turns up again. The
-    // handler answers with the state it is in and nothing else happens.
+    // The queue delivers at least once, so the same order turns up again and
+    // the handler takes it on a second time. Nothing else happens to the order,
+    // and he is told the state it is in rather than that the work is his: there
+    // is no second profile to issue.
     const duplicate = step(delivered.order, { kind: "order_dispatched", at: NOON + 21 * MINUTE });
     const answeredAgain = step(duplicate.order, {
       kind: "handler_accepted",
@@ -185,7 +187,9 @@ describe("one eSIM, bought and provisioned, with the provisioner down at first",
 
     expect(answeredAgain.order.state).toBe("delivered");
     expect(duplicate.effects).toStrictEqual([]);
-    expect(answeredAgain.effects).toStrictEqual([]);
+    expect(answeredAgain.effects).toStrictEqual([
+      { kind: "answer_merchant", answer: { ok: true, result: "already_delivered" } },
+    ]);
 
     // And the merchant's own retry of the deliver call after a broken
     // connection gets the same success back, with no second profile issued.

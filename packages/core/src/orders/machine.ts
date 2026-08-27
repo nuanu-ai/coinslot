@@ -547,10 +547,13 @@ function fromAwaitingConfirmation(order: Order, event: StateEvent): TransitionRe
           state: "confirmed",
           timestamps: { ...order.timestamps, confirmedAt: event.at },
         },
-        // The agent is invited to pay, and the merchant is told his "I will"
-        // landed. His refusal below is answered too, by the same word the
-        // asynchronous mode uses: what the answer names is which of the three
-        // things he said, not what the machine did about it.
+        // The agent is invited to pay, and the answer says his "I will"
+        // landed — the same word the asynchronous mode uses, because what an
+        // answer names is which of the three things he said, not what the
+        // machine did about it. Nobody reads it yet: the confirmation mode has
+        // no shape on the wire, and the gateway throws on `invite_payment`
+        // rather than invent one. The machine still says it, because the day
+        // that mode is wired up the merchant's answer is already answered.
         [{ kind: "invite_payment" }, ACCEPTANCE_LANDED],
       );
     case "handler_refused":
@@ -900,9 +903,15 @@ function fromDelivered(order: Order, event: StateEvent): TransitionResult {
       // fulfillment and no second charge.
       return answer(order, { ok: true, result: "already_delivered" });
     case "handler_accepted":
+      // A worker taking on an order that is already delivered. Deliveries are
+      // at least once, so this is ordinary rather than a fault, and the answer
+      // is the state he is in: told his acceptance landed he would write the
+      // order down as under way — which is what that word means here — and go
+      // looking for goods he has already handed over.
+      return answer(order, { ok: true, result: "already_delivered" });
     case "order_dispatched":
-      // The order came round again off the queue. The merchant answers with
-      // the state he is in, and what must not appear is a second fulfillment.
+      // The order came round again off the queue. Nothing is owed on it and
+      // what must not appear is a second fulfillment.
       return ok(order);
     case "refuse_called":
       return closedToMerchant(order);

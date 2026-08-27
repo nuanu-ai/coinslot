@@ -651,7 +651,11 @@ describe("the same order delivered to the handler twice", () => {
 
     expect(accepted.order.state).toBe("delivered");
     expect(kinds(redispatched.effects)).toStrictEqual([]);
-    expect(kinds(accepted.effects)).toStrictEqual([]);
+    // The answer is the current state, and it is the only thing that happens:
+    // no goods released, no receipt written, no second charge.
+    expect(accepted.effects).toStrictEqual([
+      { kind: "answer_merchant", answer: { ok: true, result: "already_delivered" } },
+    ]);
   });
 
   it("counts the deliveries so the backoff has something to count from", () => {
