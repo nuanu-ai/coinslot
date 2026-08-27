@@ -32,7 +32,7 @@ import {
 import express, { type Express, type Request, type Response } from "express";
 import type { ZodType } from "zod";
 import type { Gateway } from "../app/gateway.js";
-import { bearerIn, keyMatches } from "./auth.js";
+import { bearerIn } from "./auth.js";
 import { handlersFor } from "./routes.js";
 
 /** What a handler answers with: a document and its status, or its own writing. */
@@ -46,6 +46,16 @@ export interface RouteCall {
   /** The body, already held to the schema the table names for this route. */
   readonly body: unknown;
   readonly query: unknown;
+  /**
+   * Whose key opened this call, where the route is behind one.
+   *
+   * It is resolved before any handler runs, and a route behind the merchant's
+   * key whose key resolves to nobody never reaches a handler at all — so on
+   * those routes this is a merchant that exists. Null is what an open route
+   * carries: the catalog and the purchase take no key, because an agent has
+   * none.
+   */
+  readonly merchantId: string | null;
   readonly request: Request;
   readonly response: Response;
 }
@@ -186,9 +196,11 @@ async function answer(
   gateway: Gateway,
   carriesBody: boolean,
 ): Promise<void> {
-  if (!allowedThrough(route.auth, request, gateway)) {
-    // Which key would have worked is not said, and neither is whether one was
-    // sent at all: both are answers to somebody who is guessing.
+  const merchantId = await merchantBehind(route.auth, request, gateway);
+  if (merchantId === REFUSED) {
+    // Which key would have worked is not said, whether one was sent at all is
+    // not said, and a key that was issued and then revoked is refused in
+    // exactly these words — all three are answers to somebody who is guessing.
     response.status(401).json(refusal("not_authorised", "this call is behind the merchant's key"));
     return;
   }
@@ -217,6 +229,7 @@ async function answer(
     params: request.params as Record<string, string>,
     body,
     query,
+    merchantId,
     request,
     response,
   });
@@ -236,12 +249,39 @@ async function answer(
   response.status(answered.status).json(answered.document);
 }
 
-function allowedThrough(auth: AuthMode, request: Request, gateway: Gateway): boolean {
+/** The door said no. A value rather than null, which is what an open route has. */
+const REFUSED = Symbol("the key on this call opens nothing");
+
+/**
+ * Which merchant is behind this call: one of them, nobody at all on an open
+ * route, or the refusal.
+ *
+ * There is no comparison here and there is nothing to compare against — the key
+ * presented is hashed and the digest looked up, and a key nobody was issued and
+ * a key that has been disabled come back the same way. That sameness is the
+ * point: a door that answered them differently would confirm which guesses had
+ * once been real keys, which is exactly what revoking one has to stop.
+ *
+ * What it costs is a database round trip on every call behind this door, where
+ * the single key it replaced cost nothing. It is one probe of a unique index
+ * and it does not grow with the number of merchants or of keys, so the trigger
+ * for caching it is a measurement rather than a feeling — and a cache would
+ * have to answer for how long a revoked key goes on working, which is the one
+ * thing revoking a key is for.
+ */
+async function merchantBehind(
+  auth: AuthMode,
+  request: Request,
+  gateway: Gateway,
+): Promise<string | null | typeof REFUSED> {
   if (auth !== "merchant_key") {
-    return true;
+    return null;
   }
   const presented = bearerIn(request.header(MERCHANT_KEY_HEADER) ?? undefined);
-  return presented !== null && keyMatches(presented, gateway.runtime.config.merchantApiKey);
+  if (presented === null) {
+    return REFUSED;
+  }
+  return (await gateway.merchantForKey(presented)) ?? REFUSED;
 }
 
 type Held = { ok: true; value: unknown } | { ok: false; problems: readonly unknown[] };

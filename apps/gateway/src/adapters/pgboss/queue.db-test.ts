@@ -29,7 +29,7 @@ import { type Queue as LibraryQueueOptions, PgBoss } from "pg-boss";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Reminder } from "../../ports/queue.js";
 import { readyDatabase, testDatabaseUrl } from "../../testing/database.js";
-import { A_NAME_PG_BOSS_ACCEPTS, ENVELOPES, PgBossQueue, REMINDERS } from "./queue.js";
+import { A_NAME_PG_BOSS_ACCEPTS, ENVELOPES, PgBossQueue, REMINDERS, streamOf } from "./queue.js";
 
 // This suite's own database, made if it is not there. The sentence explaining
 // that there is no server at all is printed once, by the adapters suite.
@@ -37,6 +37,11 @@ const databaseUrl = await readyDatabase(testDatabaseUrl());
 
 /** Real time, because a queue that lives in a database keeps its own. */
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** The merchant whose stream this suite publishes to and draws from. */
+const A = "mch_a";
+/** That merchant's stream, which is a pg-boss queue of its own (ADR-0010). */
+const STREAM = streamOf(A);
 
 /**
  * A pg-boss installation nobody else is using.
@@ -137,7 +142,7 @@ if (databaseUrl === null) {
       // reading rather than out of the library had been standing as a fact.
       const { boss } = await labQueue("pgboss_queue_names");
 
-      const taken = [ENVELOPES, REMINDERS, "coinslot.envelopes", "coinslot-envelopes"];
+      const taken = [ENVELOPES, REMINDERS, STREAM, "coinslot.envelopes", "coinslot-envelopes"];
       for (const name of taken) {
         expect(name, name).toMatch(A_NAME_PG_BOSS_ACCEPTS);
         await expect(boss.createQueue(name)).resolves.toBeUndefined();
@@ -148,6 +153,12 @@ if (databaseUrl === null) {
         expect(name, name).not.toMatch(A_NAME_PG_BOSS_ACCEPTS);
         await expect(boss.createQueue(name)).rejects.toThrow();
       }
+
+      // A merchant's stream is named after the merchant now, so a merchant
+      // whose identifier pg-boss will not take is not a start-up error somebody
+      // sees — it is one merchant whose orders reach nobody, found at the first
+      // sale. It is refused where the name is built instead.
+      expect(() => streamOf("a merchant")).toThrow(/cannot name a queue/);
     }, 30_000);
 
     it("delivers a reminder, and delivers it again when the handler throws", async () => {
@@ -323,7 +334,7 @@ if (databaseUrl === null) {
       // inside a string the compiler cannot check.
       const schema = "pgboss_envelope_expiry" satisfies (typeof SCHEMAS)[number];
       const { boss, queue } = await labQueue(schema, {
-        [ENVELOPES]: { expireInSeconds: 1 },
+        [STREAM]: { expireInSeconds: 1 },
       });
       const envelope: WorkerEnvelope = {
         kind: "order_event",
@@ -336,12 +347,12 @@ if (databaseUrl === null) {
         },
       };
 
-      await queue.publish(envelope);
-      const drawn = await queue.draw(10, 5_000);
+      await queue.publish(A, envelope);
+      const drawn = await queue.draw(A, 10, 5_000);
       expect(drawn.map((delivery) => delivery.envelope.id)).toStrictEqual(["env_expiry_1"]);
 
       // Out with one worker, so not handed to a second.
-      expect(await queue.draw(10, 200)).toStrictEqual([]);
+      expect(await queue.draw(A, 10, 200)).toStrictEqual([]);
 
       await sleep(1_500);
       await boss.supervise();
@@ -349,13 +360,13 @@ if (databaseUrl === null) {
       // And still not, once the window has run out. This is the promise the
       // port makes and the thing a reader would otherwise have to take on
       // trust.
-      expect(await queue.draw(10, 1_000)).toStrictEqual([]);
+      expect(await queue.draw(A, 10, 1_000)).toStrictEqual([]);
 
       // Where it went, so that "lost" is a place somebody can look rather than
       // a silence: the delivery is recorded as failed, not quietly dropped.
       const { rows } = await pool.query<{ state: string }>(
         `select state from ${schema}.job where name = $1`,
-        [ENVELOPES],
+        [STREAM],
       );
       expect(rows.map((row) => row.state)).toStrictEqual(["failed"]);
     }, 60_000);
@@ -376,8 +387,12 @@ if (databaseUrl === null) {
       const { boss, queue } = await labQueue("pgboss_queue_settings");
       queue.onReminder(async () => undefined);
       await queue.start();
+      // A merchant's stream is made the first time anything reaches for it,
+      // because the merchants are rows and this process holds no list of them
+      // at start-up. So it is reached for, and then asked about.
+      await queue.draw(A, 1, 0);
 
-      for (const name of [ENVELOPES, REMINDERS]) {
+      for (const name of [STREAM, REMINDERS]) {
         const made = await boss.getQueue(name);
         expect(made?.expireInSeconds, name).toBe(900);
       }
@@ -403,7 +418,7 @@ if (databaseUrl === null) {
       // The queue is made once, the way `start()` makes it, and the second
       // instance finds it already there, which is what a second gateway
       // starting against a running system does.
-      const publisher = await labQueue("pgboss_envelope_delay", { [ENVELOPES]: {} });
+      const publisher = await labQueue("pgboss_envelope_delay", { [STREAM]: {} });
       const drawer = await labQueue("pgboss_envelope_delay");
       const envelopeAt = (id: string): WorkerEnvelope => ({
         kind: "order_event",
@@ -416,22 +431,22 @@ if (databaseUrl === null) {
         },
       });
 
-      await publisher.queue.publish(envelopeAt("env_delayed_1"), 4_000);
+      await publisher.queue.publish(A, envelopeAt("env_delayed_1"), 4_000);
 
       // Not yet, and long enough after publishing for a draw that ignored the
       // wait to have found it.
-      expect(await drawer.queue.draw(10, 2_500)).toStrictEqual([]);
+      expect(await drawer.queue.draw(A, 10, 2_500)).toStrictEqual([]);
 
-      const drawn = await drawer.queue.draw(10, 20_000);
+      const drawn = await drawer.queue.draw(A, 10, 20_000);
       expect(drawn.map((delivery) => delivery.envelope.id)).toStrictEqual(["env_delayed_1"]);
-      await drawer.queue.finish(drawn[0]?.handle ?? "");
+      await drawer.queue.finish(A, drawn[0]?.handle ?? "");
 
       // And now one with no wait on it, which wakes the publisher's own parked
       // polls and none of the drawer's. It arrives all the same.
-      await publisher.queue.publish(envelopeAt("env_immediate_1"));
-      const carried = await drawer.queue.draw(10, 20_000);
+      await publisher.queue.publish(A, envelopeAt("env_immediate_1"));
+      const carried = await drawer.queue.draw(A, 10, 20_000);
       expect(carried.map((delivery) => delivery.envelope.id)).toStrictEqual(["env_immediate_1"]);
-      await drawer.queue.finish(carried[0]?.handle ?? "");
+      await drawer.queue.finish(A, carried[0]?.handle ?? "");
     }, 60_000);
 
     it("takes on work to run every day, runs it, and does not stack up schedules", async () => {

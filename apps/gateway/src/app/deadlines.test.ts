@@ -53,7 +53,7 @@ afterEach(async () => {
 });
 
 const bought = async (harnessed: Harness, card: Card): Promise<string> => {
-  const published = await harnessed.gateway.publishCard(card);
+  const published = await harnessed.gateway.publishCard(harnessed.merchant.id, card);
   if (!("ok" in published)) throw new Error("the card would not publish");
   const offered = await harnessed.gateway.beginPurchase(published.ok.id, {});
   if (offered.step !== "pay") throw new Error("no price was offered");
@@ -108,7 +108,7 @@ describe("when the time runs out", () => {
       deadline: "async_fulfillment",
     });
 
-    const told = await harnessed.gateway.poll(10, 0);
+    const told = await harnessed.gateway.poll(harnessed.merchant.id, 10, 0);
     const events = told.envelopes.flatMap((e) => (e.kind === "order_event" ? [e.payload] : []));
     expect(events.map((e) => e.type)).toContain("order.refund_due");
   });
@@ -222,7 +222,7 @@ describe("a timer that fires at the wrong moment", () => {
     const harnessed = await started();
     const orderId = await bought(harnessed, asyncCard);
     await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
-    await harnessed.gateway.deliverOrder(orderId, { activation_code: "A" });
+    await harnessed.gateway.deliverOrder(harnessed.merchant.id, orderId, { activation_code: "A" });
 
     const refused = await harnessed.gateway.runner.apply(orderId, {
       kind: "deadline_expired",

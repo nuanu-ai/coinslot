@@ -19,6 +19,7 @@ import { ScriptedFacilitator } from "../adapters/memory/facilitator.js";
 import { MemoryQueue } from "../adapters/memory/queue.js";
 import { MemoryStore } from "../adapters/memory/store.js";
 import { Gateway } from "../app/gateway.js";
+import { issueKey, keyDigest, makeMerchant } from "../app/merchants.js";
 import type { Runtime } from "../app/runtime.js";
 import { type GatewayConfig, loadConfig } from "../config.js";
 import { buildApp } from "../http/server.js";
@@ -38,9 +39,18 @@ export const countedIds = (): Ids => {
 export const testConfig = (overrides: Record<string, string> = {}): GatewayConfig =>
   loadConfig({
     DATABASE_URL: "postgres://coinslot@localhost:5432/coinslot",
-    MERCHANT_API_KEY: "a-merchant-key-long-enough",
     ...overrides,
   });
+
+/** A merchant the harness made, with one key of theirs, readable once here. */
+export interface SeededMerchant {
+  readonly id: string;
+  readonly name: string;
+  /** The secret itself. Only a test ever holds one of these. */
+  readonly key: string;
+  /** The row the key is, so a test can disable it. */
+  readonly keyId: string;
+}
 
 export interface Harness {
   readonly gateway: Gateway;
@@ -51,8 +61,33 @@ export interface Harness {
   readonly now: () => number;
   /** Moves the clock the flows read. Nothing fires from this on its own. */
   readonly advance: (ms: number) => void;
+  /**
+   * A merchant with one key, made the way the command-line verb makes one.
+   *
+   * Every test that is about scoping seeds two of these, because one proves
+   * nothing: an unscoped gateway passes every assertion a single merchant can
+   * make about their own cards.
+   */
+  readonly addMerchant: (name?: string) => Promise<SeededMerchant>;
+  /** A second key for a merchant who already has one. The secret, once. */
+  readonly addKey: (merchantId: string, label?: string) => Promise<string>;
+  /** Stops one key working, touching no other. */
+  readonly disableKey: (keyId: string) => Promise<void>;
+  /**
+   * The merchant a test gets without asking for one.
+   *
+   * Almost every test here is about something else — a deadline, a refusal, the
+   * shape of a receipt — and has a merchant only because a sale needs one. So
+   * the harness seeds one, and those tests read the way they did before
+   * merchants existed. The tests that are about tenancy ignore this one and
+   * seed two of their own.
+   */
+  readonly merchant: SeededMerchant;
   stop(): Promise<void>;
 }
+
+/** The key the merchant every ordinary test sells as opens the door with. */
+export const THE_MERCHANT_KEY = "a-merchant-key-long-enough";
 
 export async function harness(overrides: Record<string, string> = {}): Promise<Harness> {
   // A clock that starts at a readable instant and only moves when a test says
@@ -86,19 +121,81 @@ export async function harness(overrides: Record<string, string> = {}): Promise<H
   const gateway = new Gateway(runtime);
   await gateway.start();
 
+  // Made through the same two functions the command-line verb and the sandbox
+  // seed use, so a key that works here is a key that works there: a second way
+  // of turning a secret into a digest would be a key that opens one door and
+  // not the other, and the failure would look like a wrong key rather than like
+  // two hashes.
+  const seed = async (name: string, secret?: string): Promise<SeededMerchant> => {
+    const made = await makeMerchant(store, ids, name, now);
+    if (made === null) {
+      throw new Error(`the harness could not make the merchant ${name}`);
+    }
+    const issued =
+      secret === undefined
+        ? await issueKey(store, ids, made.id, "the harness", now)
+        : await addKnownKey(store, ids, made.id, secret, now);
+    return { id: made.id, name: made.name, key: issued.secret, keyId: issued.key.id };
+  };
+
+  const merchant = await seed("The merchant", THE_MERCHANT_KEY);
+
   return {
     gateway,
     runtime,
     store,
     queue,
     facilitator,
+    merchant,
     now: () => now,
     advance: (ms) => {
       now += ms;
     },
+    addMerchant: (name = `Merchant ${countedName()}`) => seed(name),
+    addKey: async (merchantId, label = "another of the harness's") =>
+      (await issueKey(store, ids, merchantId, label, now)).secret,
+    disableKey: async (keyId) => {
+      const disabled = await store.disableKey(keyId, now);
+      if (disabled === null) {
+        throw new Error(`the harness was asked to disable ${keyId}, and there is no such key`);
+      }
+    },
     stop: () => gateway.stop(),
   };
 }
+
+/**
+ * A key whose secret the caller chose, which is the one thing `issueKey` will
+ * not do.
+ *
+ * It has one caller, and it is here rather than in `merchants.ts` for that
+ * reason: the harness's own merchant, whose key a test writes into a header by
+ * hand. Everywhere a merchant is real the secret is generated, because a key
+ * somebody chooses is a key somebody reuses; the sandbox's key is the other
+ * chosen one, and `seedSandboxKey` writes that one itself.
+ */
+async function addKnownKey(
+  store: MemoryStore,
+  ids: Ids,
+  merchantId: string,
+  secret: string,
+  at: number,
+): Promise<{ key: { id: string }; secret: string }> {
+  const key = await store.addKey(
+    { id: ids("mk"), merchantId, label: "the harness's known key", digest: keyDigest(secret) },
+    at,
+  );
+  return { key, secret };
+}
+
+/** A, B, C… so two merchants in one test are told apart at a glance. */
+const countedName = (() => {
+  let issued = 0;
+  return () => {
+    issued += 1;
+    return String.fromCharCode(65 + ((issued - 1) % 26));
+  };
+})();
 
 /** What a merchant's handler does with one order. */
 export type OrderHandler = (order: Order) => HandlerAnswer | Promise<HandlerAnswer>;
@@ -111,30 +208,46 @@ export type PriceHandler = (question: {
 export interface WorkerBehaviour {
   readonly onOrder?: OrderHandler;
   readonly onQuote?: PriceHandler;
+  /**
+   * Whose worker this is. Left out, it is the harness's own merchant, which is
+   * what every test that is about something other than tenancy wants; a test
+   * with two merchants says which one each worker belongs to, because that is
+   * the whole thing being checked.
+   */
+  readonly merchantId?: string;
 }
+
+/** A gateway to work against, and the merchant a worker belongs to by default. */
+export type Worked = Harness | { readonly gateway: Gateway; readonly merchant: SeededMerchant };
 
 /**
  * One turn of a merchant's worker: draw the stream, answer what came, come
  * back. It is written the way ADR-0004 says the SDK's loop is — the handler's
  * return value is posted to the answer route in every mode — so that a test
  * exercises the same path a merchant's code will.
+ *
+ * Every call it makes names the merchant, exactly as the routes behind them do
+ * once a key has been resolved: a worker draws its own merchant's stream and
+ * answers its own merchant's orders, and neither is a filter over somebody
+ * else's.
  */
 export async function workOnce(
-  worked: Harness | { readonly gateway: Gateway },
+  worked: Worked,
   behaviour: WorkerBehaviour,
   waitMs = 1_000,
 ): Promise<number> {
   const { gateway } = worked;
-  const { envelopes } = await gateway.poll(10, waitMs);
+  const merchantId = behaviour.merchantId ?? worked.merchant.id;
+  const { envelopes } = await gateway.poll(merchantId, 10, waitMs);
 
   for (const envelope of envelopes) {
     if (envelope.kind === "order" && behaviour.onOrder !== undefined) {
       const answer = await behaviour.onOrder(envelope.payload);
-      await gateway.answerOrder(envelope.payload.id, answer);
+      await gateway.answerOrder(merchantId, envelope.payload.id, answer);
     }
     if (envelope.kind === "quote_request" && behaviour.onQuote !== undefined) {
       const answer = await behaviour.onQuote(envelope.payload);
-      await gateway.answerQuote(envelope.payload.price_id, answer);
+      await gateway.answerQuote(merchantId, envelope.payload.price_id, answer);
     }
   }
 
@@ -142,10 +255,7 @@ export async function workOnce(
 }
 
 /** Keeps a worker turning until `stop` is called, the way a subscription does. */
-export function workUntilStopped(
-  worked: Harness | { readonly gateway: Gateway },
-  behaviour: WorkerBehaviour,
-) {
+export function workUntilStopped(worked: Worked, behaviour: WorkerBehaviour) {
   let running = true;
   const loop = (async () => {
     while (running) {
@@ -173,32 +283,38 @@ export function workUntilStopped(
  * Everything it does is what an agent's client does — ask for the price, sign
  * against the challenge, present it — with a worker turning alongside so the
  * merchant's side answers.
+ *
+ * The worker is started before the first call and not between the two, because
+ * the first call is where a card with a price check asks its merchant what the
+ * product costs. Started afterwards, that question would go to nobody and the
+ * purchase would sit out the gateway's whole patience before pricing itself
+ * from the card.
  */
 export async function buyOverHttp(
-  worked: Harness,
+  worked: Worked,
   served: Served,
   itemId: string,
   behaviour: WorkerBehaviour,
 ): Promise<Call> {
-  const priced = await served.call("POST", `/v0/items/${itemId}/purchase`, {
-    body: { params: {} },
-  });
-  const requirements = decodePaymentRequiredHeader(
-    priced.headers.get(PAYMENT_REQUIRED_HEADER) ?? "",
-  ).accepts[0];
-  if (requirements === undefined) {
-    throw new Error(`no payment option was offered for ${itemId}`);
-  }
-
   const worker = workUntilStopped(worked, behaviour);
   try {
+    const priced = await served.call("POST", `/v0/items/${itemId}/purchase`, {
+      body: { params: {} },
+    });
+    const requirements = decodePaymentRequiredHeader(
+      priced.headers.get(PAYMENT_REQUIRED_HEADER) ?? "",
+    ).accepts[0];
+    if (requirements === undefined) {
+      throw new Error(`no payment option was offered for ${itemId}`);
+    }
+
     return await served.call("POST", `/v0/items/${itemId}/purchase`, {
       body: { params: {} },
       headers: {
         [PAYMENT_SIGNATURE_HEADER]: encodePaymentSignatureHeader({
           x402Version: 2,
           accepted: requirements,
-          payload: { signature: "0xsigned" },
+          payload: { signature: aFreshSignature() },
         }),
       },
     });
@@ -206,6 +322,24 @@ export async function buyOverHttp(
     await worker.stop();
   }
 }
+
+/**
+ * A signature no other purchase has presented.
+ *
+ * One authorisation buys one order, and the gateway means it: the fingerprint
+ * of what was signed is claimed by the first order to present it, and the same
+ * string presented for a second order is refused before anything is verified.
+ * Two purchases in one test are two buyers, so they sign two different things —
+ * a shared constant here would have the second sale refused as a replay, which
+ * is the gateway being right and the fixture being wrong.
+ */
+const aFreshSignature = (() => {
+  let signed = 0;
+  return () => {
+    signed += 1;
+    return `0xsigned${signed}`;
+  };
+})();
 
 /** One call against a gateway actually listening on a port. */
 export interface Call {
@@ -231,7 +365,7 @@ export interface Served {
  * body checks, the door and the payment exchange all run. A test that went
  * through a fake request object would be testing the fake.
  */
-export async function serve(harnessed: Harness): Promise<Served> {
+export async function serve(harnessed: { readonly gateway: Gateway }): Promise<Served> {
   const app = buildApp(harnessed.gateway);
   const server = app.listen(0);
   await new Promise<void>((resolve) => server.once("listening", resolve));

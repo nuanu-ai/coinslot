@@ -28,10 +28,18 @@ import {
   MemoryStore,
   type Runtime,
   randomIds,
+  seedSandboxKey,
   systemClock,
 } from "@coinslot/gateway";
 
-/** The merchant key the harness starts the gateway with; the merchant sends it. */
+/**
+ * The key the merchant in this harness opens the door with.
+ *
+ * It is seeded into the store as a row, the way the sandbox's key is seeded
+ * from `compose.yaml` (ADR-0010) and through the same function — so what this
+ * gate exercises is the door a deployment actually has, a digest looked up in a
+ * table, and not a comparison written for tests.
+ */
 export const SLICE_MERCHANT_KEY = "slice-merchant-key-please";
 
 /**
@@ -53,12 +61,13 @@ export interface Booted {
 /**
  * The environment the gateway is booted with. The two the harness always sets
  * are the database URL (never connected to — the store is in memory) and the
- * merchant key; a caller adds the payment settings the smoke needs.
+ * key to seed the merchant with; a caller adds the payment settings the smoke
+ * needs.
  */
 export function sliceEnv(overrides: Record<string, string> = {}): Record<string, string> {
   return {
     DATABASE_URL: "postgres://coinslot@localhost:5432/coinslot",
-    MERCHANT_API_KEY: SLICE_MERCHANT_KEY,
+    SANDBOX_MERCHANT_KEY: SLICE_MERCHANT_KEY,
     PAY_TO_ADDRESS: SLICE_PAY_TO,
     // Short enough that an idle poll parks briefly rather than for the
     // production window, so the merchant's loop picks up work promptly and the
@@ -107,6 +116,12 @@ export async function bootGateway(
 
   const gateway = new Gateway(runtime);
   await gateway.start();
+
+  // The merchant and its key, seeded exactly as `main.ts` seeds the sandbox's:
+  // one function, so a key that works here is a key that works there.
+  if (config.sandboxMerchantKey !== null) {
+    await seedSandboxKey(store, randomIds, config.sandboxMerchantKey, systemClock());
+  }
 
   const server: Server = buildApp(gateway).listen(0);
   await new Promise<void>((resolve) => server.once("listening", resolve));

@@ -6,7 +6,7 @@
  * The short of it: `scrypt` is the component, it ships with the runtime, and
  * what is written by hand is the encoding of a salt and the comparison of two
  * buffers. An authentication framework would bring a user model, a session
- * model and an adapter layer for a cabinet with one merchant in it.
+ * model and an adapter layer, for two tables and a sign-in form.
  *
  * Three properties are the whole point of this file, and every one of them is
  * invisible from a screen:

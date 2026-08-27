@@ -43,7 +43,7 @@ afterEach(async () => {
 });
 
 const published = async (harnessed: Harness, card: Card): Promise<string> => {
-  const result = await harnessed.gateway.publishCard(card);
+  const result = await harnessed.gateway.publishCard(harnessed.merchant.id, card);
   expect(PublishResultSchema.safeParse(result).success).toBe(true);
   if (!("ok" in result)) throw new Error(`publishing failed: ${JSON.stringify(result.errors)}`);
   return result.ok.id;
@@ -53,9 +53,12 @@ describe("the catalog", () => {
   it("answers a card that will not do with everything wrong with it at once", async () => {
     // A merchant fixing one field per round trip is the experience the plural
     // errors exist to prevent.
-    const { gateway } = await started();
+    const harnessed = await started();
 
-    const result = await gateway.publishCard({ merchant_item_id: "", title: "" });
+    const result = await harnessed.gateway.publishCard(harnessed.merchant.id, {
+      merchant_item_id: "",
+      title: "",
+    });
 
     expect(PublishResultSchema.safeParse(result).success).toBe(true);
     if (!("errors" in result)) throw new Error("a broken card was published");
@@ -193,7 +196,7 @@ describe("a synchronous purchase", () => {
     if (bought.step !== "settled") throw new Error("the purchase did not settle");
     expect(bought.order.order.state).toBe("delivered_unpaid");
 
-    const told = await harnessed.gateway.poll(10, 0);
+    const told = await harnessed.gateway.poll(harnessed.merchant.id, 10, 0);
     expect(told.envelopes.map((e) => e.kind === "order_event" && e.payload.type)).toContain(
       "order.payment_failed_after_delivery",
     );
@@ -260,9 +263,13 @@ describe("an asynchronous purchase", () => {
     });
     expect(worked).toBe(1);
 
-    const answered = await harnessed.gateway.deliverOrder(offered.order.order.id, {
-      activation_code: "LPA:1$X",
-    });
+    const answered = await harnessed.gateway.deliverOrder(
+      harnessed.merchant.id,
+      offered.order.order.id,
+      {
+        activation_code: "LPA:1$X",
+      },
+    );
     expect(answered).toStrictEqual({ ok: true, result: "delivered" });
 
     const closed = await harnessed.store.orderById(offered.order.order.id);
@@ -287,7 +294,7 @@ describe("an asynchronous purchase", () => {
     const whenTheMoneyMoved = harnessed.now();
 
     harnessed.advance(6 * 60 * 60 * 1_000);
-    await harnessed.gateway.deliverOrder(orderId, { activation_code: "A" });
+    await harnessed.gateway.deliverOrder(harnessed.merchant.id, orderId, { activation_code: "A" });
 
     const receipt = await harnessed.store.receiptForOrder(orderId);
     expect(receipt?.paid_at).toBe(new Date(whenTheMoneyMoved).toISOString());
@@ -458,12 +465,20 @@ describe("an asynchronous purchase", () => {
     if (offered.step !== "pay") throw new Error("no price was offered");
     await harnessed.gateway.payPurchase(offered.order.order.id, "PAYMENT", "PAYMENT");
 
-    const first = await harnessed.gateway.deliverOrder(offered.order.order.id, {
-      activation_code: "A",
-    });
-    const again = await harnessed.gateway.deliverOrder(offered.order.order.id, {
-      activation_code: "A",
-    });
+    const first = await harnessed.gateway.deliverOrder(
+      harnessed.merchant.id,
+      offered.order.order.id,
+      {
+        activation_code: "A",
+      },
+    );
+    const again = await harnessed.gateway.deliverOrder(
+      harnessed.merchant.id,
+      offered.order.order.id,
+      {
+        activation_code: "A",
+      },
+    );
 
     expect(first).toStrictEqual({ ok: true, result: "delivered" });
     expect(again).toStrictEqual({ ok: true, result: "already_delivered" });
@@ -478,10 +493,14 @@ describe("an asynchronous purchase", () => {
     await harnessed.gateway.payPurchase(offered.order.order.id, "PAYMENT", "PAYMENT");
     await workOnce(harnessed, { onOrder: () => ({ accepted: {} }) });
 
-    const answered = await harnessed.gateway.refuseOrder(offered.order.order.id, {
-      code: "out_of_stock",
-      message: "the supplier has none",
-    });
+    const answered = await harnessed.gateway.refuseOrder(
+      harnessed.merchant.id,
+      offered.order.order.id,
+      {
+        code: "out_of_stock",
+        message: "the supplier has none",
+      },
+    );
 
     expect(answered).toStrictEqual({ ok: true, result: "refused" });
     const owing = await harnessed.store.orderById(offered.order.order.id);
@@ -493,7 +512,7 @@ describe("an asynchronous purchase", () => {
     // never released any has none to carry that word.
     expect(await harnessed.store.receiptForOrder(offered.order.order.id)).toBeNull();
 
-    const told = await harnessed.gateway.poll(10, 0);
+    const told = await harnessed.gateway.poll(harnessed.merchant.id, 10, 0);
     const events = told.envelopes.flatMap((e) => (e.kind === "order_event" ? [e.payload] : []));
     expect(events.map((e) => e.type)).toContain("order.refund_due");
   });
@@ -505,13 +524,18 @@ describe("an asynchronous purchase", () => {
     if (offered.step !== "pay") throw new Error("no price was offered");
     const orderId = offered.order.order.id;
     await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
-    await harnessed.gateway.refuseOrder(orderId, { code: "out_of_stock", message: "none" });
+    await harnessed.gateway.refuseOrder(harnessed.merchant.id, orderId, {
+      code: "out_of_stock",
+      message: "none",
+    });
     await harnessed.gateway.runner.apply(orderId, {
       kind: "refund_settled",
       at: harnessed.now(),
     });
 
-    const late = await harnessed.gateway.deliverOrder(orderId, { activation_code: "A" });
+    const late = await harnessed.gateway.deliverOrder(harnessed.merchant.id, orderId, {
+      activation_code: "A",
+    });
 
     expect(late).toStrictEqual({
       ok: false,
@@ -533,9 +557,14 @@ describe("an asynchronous purchase", () => {
     if (offered.step !== "pay") throw new Error("no price was offered");
     const orderId = offered.order.order.id;
     await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
-    await harnessed.gateway.refuseOrder(orderId, { code: "cannot_fulfill", message: "late" });
+    await harnessed.gateway.refuseOrder(harnessed.merchant.id, orderId, {
+      code: "cannot_fulfill",
+      message: "late",
+    });
 
-    const late = await harnessed.gateway.deliverOrder(orderId, { activation_code: "A" });
+    const late = await harnessed.gateway.deliverOrder(harnessed.merchant.id, orderId, {
+      activation_code: "A",
+    });
 
     expect(late).toStrictEqual({ ok: true, result: "debt_closed_by_delivery" });
     const closed = await harnessed.store.orderById(orderId);
@@ -760,7 +789,7 @@ describe("the price question", () => {
     await worker.stop();
 
     if (asked === null) throw new Error("nobody was asked the price");
-    const late = await harnessed.gateway.answerQuote(asked, {
+    const late = await harnessed.gateway.answerQuote(harnessed.merchant.id, asked, {
       available: true,
       price: { amount: "10.00", currency: "USD" },
       as_of: "2026-08-26T12:00:00.000Z",
@@ -802,15 +831,19 @@ describe("the price question", () => {
 
     // The question is still on the stream. The merchant draws it and answers,
     // too late to have priced anything.
-    const drawn = await harnessed.gateway.poll(10, 0);
+    const drawn = await harnessed.gateway.poll(harnessed.merchant.id, 10, 0);
     const question = drawn.envelopes.find((envelope) => envelope.kind === "quote_request");
     if (question?.kind !== "quote_request") throw new Error("nobody was asked the price");
 
-    const acknowledged = await harnessed.gateway.answerQuote(question.payload.price_id, {
-      available: true,
-      price: { amount: "95.00", currency: "USD" },
-      as_of: "2026-08-26T12:00:00.000Z",
-    });
+    const acknowledged = await harnessed.gateway.answerQuote(
+      harnessed.merchant.id,
+      question.payload.price_id,
+      {
+        available: true,
+        price: { amount: "95.00", currency: "USD" },
+        as_of: "2026-08-26T12:00:00.000Z",
+      },
+    );
 
     expect(acknowledged).toStrictEqual({ used: false });
     // And the sale really did go through at the other price.
@@ -834,7 +867,7 @@ describe("the price question", () => {
     const itemId = await published(harnessed, livePriced(asyncCard));
 
     const buying = harnessed.gateway.beginPurchase(itemId, {});
-    const drawn = await harnessed.gateway.poll(10, 200);
+    const drawn = await harnessed.gateway.poll(harnessed.merchant.id, 10, 200);
     const question = drawn.envelopes.find((envelope) => envelope.kind === "quote_request");
     if (question?.kind !== "quote_request") throw new Error("nobody was asked the price");
 
@@ -847,7 +880,7 @@ describe("the price question", () => {
     // release stock we are still selling against.
     expect(promised).toBe(500 + 60_000);
 
-    await harnessed.gateway.answerQuote(question.payload.price_id, {
+    await harnessed.gateway.answerQuote(harnessed.merchant.id, question.payload.price_id, {
       available: true,
       price: { amount: "95.00", currency: "USD" },
       as_of: new Date(askedAt).toISOString(),
@@ -864,23 +897,27 @@ describe("the price question", () => {
     const itemId = await published(harnessed, livePriced(asyncCard));
 
     const buying = harnessed.gateway.beginPurchase(itemId, {});
-    const drawn = await harnessed.gateway.poll(10, 200);
+    const drawn = await harnessed.gateway.poll(harnessed.merchant.id, 10, 200);
     const question = drawn.envelopes.find((envelope) => envelope.kind === "quote_request");
     if (question?.kind !== "quote_request") throw new Error("nobody was asked the price");
 
     // The clock on our own patience gets there first and closes the order.
-    const orders = await harnessed.store.orders();
+    const orders = await harnessed.store.orders(harnessed.merchant.id);
     const orderId = orders[0]?.order.id ?? "";
     await harnessed.gateway.runner.apply(orderId, {
       kind: "quote_silent",
       at: harnessed.now(),
     });
 
-    const acknowledged = await harnessed.gateway.answerQuote(question.payload.price_id, {
-      available: true,
-      price: { amount: "9.00", currency: "USD" },
-      as_of: "2026-08-26T12:00:00.000Z",
-    });
+    const acknowledged = await harnessed.gateway.answerQuote(
+      harnessed.merchant.id,
+      question.payload.price_id,
+      {
+        available: true,
+        price: { amount: "9.00", currency: "USD" },
+        as_of: "2026-08-26T12:00:00.000Z",
+      },
+    );
 
     expect(acknowledged).toStrictEqual({ used: false });
     expect((await harnessed.store.orderById(orderId))?.order.state).toBe("rejected");
@@ -1017,7 +1054,7 @@ describe("the worker's stream", () => {
     // which is the difference between failing at startup and failing on
     // somebody's first order.
     const harnessed = await started();
-    const answered = await harnessed.gateway.poll(10, 0);
+    const answered = await harnessed.gateway.poll(harnessed.merchant.id, 10, 0);
 
     expect(WorkerPollResponseSchema.safeParse(answered).success).toBe(true);
     expect(answered.envelopes).toStrictEqual([]);
@@ -1030,7 +1067,7 @@ describe("the worker's stream", () => {
     if (offered.step !== "pay") throw new Error("no price was offered");
     await harnessed.gateway.payPurchase(offered.order.order.id, "PAYMENT", "PAYMENT");
 
-    const drawn = await harnessed.gateway.poll(10, 0);
+    const drawn = await harnessed.gateway.poll(harnessed.merchant.id, 10, 0);
 
     expect(drawn.envelopes).toHaveLength(1);
     const record = await harnessed.store.orderById(offered.order.order.id);
@@ -1047,10 +1084,13 @@ describe("the worker's stream", () => {
     if (offered.step !== "pay") throw new Error("no price was offered");
     const orderId = offered.order.order.id;
     await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
-    await harnessed.gateway.refuseOrder(orderId, { code: "out_of_stock", message: "none" });
+    await harnessed.gateway.refuseOrder(harnessed.merchant.id, orderId, {
+      code: "out_of_stock",
+      message: "none",
+    });
     await harnessed.gateway.runner.apply(orderId, { kind: "refund_settled", at: harnessed.now() });
 
-    const drawn = await harnessed.gateway.poll(10, 0);
+    const drawn = await harnessed.gateway.poll(harnessed.merchant.id, 10, 0);
 
     expect(drawn.envelopes.filter((e) => e.kind === "order")).toStrictEqual([]);
   });
@@ -1058,7 +1098,7 @@ describe("the worker's stream", () => {
   it("holds a poll open until something arrives", async () => {
     const harnessed = await started();
     const itemId = await published(harnessed, asyncCard);
-    const parked = harnessed.gateway.poll(10, 1_000);
+    const parked = harnessed.gateway.poll(harnessed.merchant.id, 10, 1_000);
 
     const offered = await harnessed.gateway.beginPurchase(itemId, {});
     if (offered.step !== "pay") throw new Error("no price was offered");
@@ -1084,7 +1124,9 @@ describe("the worker's stream", () => {
       expect(bought.step).toBe("under_way");
     }
 
-    expect((await harnessed.gateway.poll(1_000, 0)).envelopes).toHaveLength(1);
+    expect((await harnessed.gateway.poll(harnessed.merchant.id, 1_000, 0)).envelopes).toHaveLength(
+      1,
+    );
   });
 });
 
@@ -1099,16 +1141,22 @@ describe("the merchant's calls", () => {
     // The purchase is left open on purpose: the separate call only means
     // anything while the order is still with the merchant.
     const buying = harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
-    expect((await harnessed.gateway.poll(10, 200)).envelopes).toHaveLength(1);
+    expect((await harnessed.gateway.poll(harnessed.merchant.id, 10, 200)).envelopes).toHaveLength(
+      1,
+    );
 
-    const refused = await harnessed.gateway.deliverOrder(orderId, { access_code: "X" });
+    const refused = await harnessed.gateway.deliverOrder(harnessed.merchant.id, orderId, {
+      access_code: "X",
+    });
     expect(refused?.ok).toBe(false);
     if (refused?.ok !== false) throw new Error("the call was taken");
     expect(refused.error.code).toBe("not_applicable_in_mode");
     expect(refused.error.retryable).toBe(false);
 
     // The handler's own answer is the delivery here, and it closes the purchase.
-    await harnessed.gateway.answerOrder(orderId, { delivered: { access_code: "X" } });
+    await harnessed.gateway.answerOrder(harnessed.merchant.id, orderId, {
+      delivered: { access_code: "X" },
+    });
     expect((await buying).step).toBe("settled");
   });
 
@@ -1122,9 +1170,13 @@ describe("the merchant's calls", () => {
     const offered = await harnessed.gateway.beginPurchase(itemId, {});
     if (offered.step !== "pay") throw new Error("no price was offered");
 
-    const refused = await harnessed.gateway.deliverOrder(offered.order.order.id, {
-      activation_code: "A",
-    });
+    const refused = await harnessed.gateway.deliverOrder(
+      harnessed.merchant.id,
+      offered.order.order.id,
+      {
+        activation_code: "A",
+      },
+    );
 
     expect(refused?.ok).toBe(false);
     if (refused?.ok !== false) throw new Error("the call was taken");
@@ -1134,19 +1186,27 @@ describe("the merchant's calls", () => {
     // And an order that really is closed still says so, under the code the
     // contract promises means exactly that.
     await harnessed.gateway.payPurchase(offered.order.order.id, "PAYMENT", "PAYMENT");
-    await harnessed.gateway.deliverOrder(offered.order.order.id, { activation_code: "A" });
-    const closed = await harnessed.gateway.refuseOrder(offered.order.order.id, {
-      code: "out_of_stock",
-      message: "too late",
+    await harnessed.gateway.deliverOrder(harnessed.merchant.id, offered.order.order.id, {
+      activation_code: "A",
     });
+    const closed = await harnessed.gateway.refuseOrder(
+      harnessed.merchant.id,
+      offered.order.order.id,
+      {
+        code: "out_of_stock",
+        message: "too late",
+      },
+    );
     if (closed?.ok !== false) throw new Error("a closed order took the call");
     expect(closed.error.code).toBe("order_already_closed");
   });
 
   it("has nothing to answer about an order that does not exist", async () => {
     const harnessed = await started();
-    expect(await harnessed.gateway.deliverOrder("ord_nope", { a: "b" })).toBeNull();
-    expect(await harnessed.gateway.acceptOrder("ord_nope", {})).toBeNull();
+    expect(
+      await harnessed.gateway.deliverOrder(harnessed.merchant.id, "ord_nope", { a: "b" }),
+    ).toBeNull();
+    expect(await harnessed.gateway.acceptOrder(harnessed.merchant.id, "ord_nope", {})).toBeNull();
   });
 
   it("answers an acceptance on the answer route with the word for a successful one", async () => {
@@ -1161,9 +1221,9 @@ describe("the merchant's calls", () => {
     if (offered.step !== "pay") throw new Error("no price was offered");
     const orderId = offered.order.order.id;
     await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
-    await harnessed.gateway.poll(10, 0);
+    await harnessed.gateway.poll(harnessed.merchant.id, 10, 0);
 
-    const answered = await harnessed.gateway.answerOrder(orderId, {
+    const answered = await harnessed.gateway.answerOrder(harnessed.merchant.id, orderId, {
       accepted: { eta_seconds: 30 },
     });
 
@@ -1173,7 +1233,9 @@ describe("the merchant's calls", () => {
 
     // The call written for acceptances keeps its wordless success: it can only
     // ever mean the one thing, so there is nothing for a word to tell apart.
-    expect(await harnessed.gateway.acceptOrder(orderId, {})).toStrictEqual({ ok: true });
+    expect(await harnessed.gateway.acceptOrder(harnessed.merchant.id, orderId, {})).toStrictEqual({
+      ok: true,
+    });
   });
 
   it("answers an acceptance of a delivered order with the state it is in", async () => {
@@ -1188,12 +1250,14 @@ describe("the merchant's calls", () => {
     if (offered.step !== "pay") throw new Error("no price was offered");
     const orderId = offered.order.order.id;
     await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
-    await harnessed.gateway.poll(10, 0);
-    await harnessed.gateway.answerOrder(orderId, { accepted: {} });
-    await harnessed.gateway.deliverOrder(orderId, { activation_code: "A" });
+    await harnessed.gateway.poll(harnessed.merchant.id, 10, 0);
+    await harnessed.gateway.answerOrder(harnessed.merchant.id, orderId, { accepted: {} });
+    await harnessed.gateway.deliverOrder(harnessed.merchant.id, orderId, { activation_code: "A" });
     expect((await harnessed.store.orderById(orderId))?.order.state).toBe("delivered");
 
-    expect(await harnessed.gateway.answerOrder(orderId, { accepted: {} })).toStrictEqual({
+    expect(
+      await harnessed.gateway.answerOrder(harnessed.merchant.id, orderId, { accepted: {} }),
+    ).toStrictEqual({
       ok: true,
       result: "already_delivered",
     });
@@ -1216,10 +1280,15 @@ describe("the merchant's calls", () => {
     const orderId = offered.order.order.id;
     await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
     await workOnce(harnessed, { onOrder: () => ({ accepted: {} }) });
-    await harnessed.gateway.refuseOrder(orderId, { code: "out_of_stock", message: "none" });
+    await harnessed.gateway.refuseOrder(harnessed.merchant.id, orderId, {
+      code: "out_of_stock",
+      message: "none",
+    });
     expect((await harnessed.store.orderById(orderId))?.order.state).toBe("refund_due");
 
-    expect(await harnessed.gateway.answerOrder(orderId, { accepted: {} })).toStrictEqual({
+    expect(
+      await harnessed.gateway.answerOrder(harnessed.merchant.id, orderId, { accepted: {} }),
+    ).toStrictEqual({
       ok: true,
       result: "accepted",
     });
@@ -1301,7 +1370,7 @@ describe("an order sent out again", () => {
     const stale = "2020-01-01T00:00:00.000Z";
     const record = await harnessed.store.orderById(orderId);
     if (record === null) throw new Error("the order went missing");
-    await harnessed.queue.publish({
+    await harnessed.queue.publish(harnessed.merchant.id, {
       kind: "order",
       id: "env_the_same_message",
       sent_at: stale,
@@ -1310,10 +1379,12 @@ describe("an order sent out again", () => {
 
     // The poll hands it to nobody — the machine will not take the hand-over
     // yet — and puts it back on the stream instead of dropping it.
-    expect((await harnessed.gateway.poll(10, 0)).envelopes).toStrictEqual([]);
+    expect((await harnessed.gateway.poll(harnessed.merchant.id, 10, 0)).envelopes).toStrictEqual(
+      [],
+    );
 
     harnessed.advance(60_000);
-    const back = await harnessed.queue.draw(10, 500);
+    const back = await harnessed.queue.draw(harnessed.merchant.id, 10, 500);
 
     expect(back).toHaveLength(1);
     expect(back[0]?.envelope.id).toBe("env_the_same_message");
@@ -1332,12 +1403,14 @@ describe("the merchant's list of orders", () => {
     if (first.step !== "pay" || second.step !== "pay") throw new Error("no price was offered");
 
     await harnessed.gateway.payPurchase(first.order.order.id, "PAYMENT", "PAYMENT");
-    await harnessed.gateway.deliverOrder(first.order.order.id, { activation_code: "A" });
+    await harnessed.gateway.deliverOrder(harnessed.merchant.id, first.order.order.id, {
+      activation_code: "A",
+    });
     await harnessed.gateway.payPurchase(second.order.order.id, "PAYMENT", "PAYMENT");
 
-    expect(await harnessed.gateway.orders(undefined)).toHaveLength(2);
-    expect((await harnessed.gateway.orders(true)).map((o) => o.order.id)).toStrictEqual([
-      second.order.order.id,
-    ]);
+    expect(await harnessed.gateway.orders(harnessed.merchant.id, undefined)).toHaveLength(2);
+    expect(
+      (await harnessed.gateway.orders(harnessed.merchant.id, true)).map((o) => o.order.id),
+    ).toStrictEqual([second.order.order.id]);
   });
 });

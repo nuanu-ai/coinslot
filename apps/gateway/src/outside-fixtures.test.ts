@@ -22,6 +22,7 @@ import { ScriptedFacilitator } from "./adapters/memory/facilitator.js";
 import { MemoryQueue } from "./adapters/memory/queue.js";
 import { MemoryStore } from "./adapters/memory/store.js";
 import { Gateway } from "./app/gateway.js";
+import { keyDigest } from "./app/merchants.js";
 import { loadConfig } from "./config.js";
 import { buildApp } from "./http/server.js";
 
@@ -35,10 +36,25 @@ async function aGatewayOnAPort() {
   const queue = new MemoryQueue();
   const facilitator = new ScriptedFacilitator();
 
+  // A merchant and a key, written the way anything that makes one writes one:
+  // a row for the merchant, and a row holding the digest of the key rather than
+  // the key. Nothing else in this file knows the merchant's identifier — the
+  // key is the only thing the calls below carry, and the door is what turns one
+  // into the other.
+  await store.addMerchant({ id: "mch_the_walk", name: "The merchant of this walk" }, Date.now());
+  await store.addKey(
+    {
+      id: "mk_the_walk",
+      merchantId: "mch_the_walk",
+      label: "the key this walk carries",
+      digest: keyDigest(MERCHANT_KEY),
+    },
+    Date.now(),
+  );
+
   const gateway = new Gateway({
     config: loadConfig({
       DATABASE_URL: "postgres://coinslot@localhost:5432/coinslot",
-      MERCHANT_API_KEY: MERCHANT_KEY,
       PAY_TO_ADDRESS: PAY_TO,
     }),
     store,

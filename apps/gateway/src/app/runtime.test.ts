@@ -25,7 +25,13 @@ const card: Card = {
   fulfillment: "sync",
 };
 
-const stored = (paused: boolean): StoredCard => ({ id: "itm_1", card, asOf: 0, paused });
+const stored = (paused: boolean): StoredCard => ({
+  id: "itm_1",
+  merchantId: "mch_1",
+  card,
+  asOf: 0,
+  paused,
+});
 
 describe("what the order machine is told about one card", () => {
   it("sells only when the merchant is selling and the card is not paused", () => {

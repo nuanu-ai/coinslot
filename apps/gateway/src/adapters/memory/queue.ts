@@ -7,6 +7,11 @@
  * is ADR-0004 §4, and the reason the latency-critical case is a parked request
  * rather than a poll interval.
  *
+ * A stream belongs to one merchant. There is one of them per merchant rather
+ * than one queue everybody draws from, because a worker that had to draw an
+ * envelope in order to see whose it was would already have taken it out of the
+ * reach of the worker it was meant for.
+ *
  * And a drawn envelope goes invisible rather than back on the stream. Nothing
  * in here decides that an unanswered delivery should be repeated: that fact
  * reaches the order machine as a reminder, the machine works out whether
@@ -24,11 +29,26 @@ import type { DrawnEnvelope, Queue, Reminder, ReminderPatience } from "../../por
 
 type Waiter = () => void;
 
+/** One merchant's stream: what is waiting on it and who is waiting for it. */
+interface Stream {
+  readonly ready: WorkerEnvelope[];
+  readonly waiters: Set<Waiter>;
+}
+
 export class MemoryQueue implements Queue {
-  readonly #ready: WorkerEnvelope[] = [];
+  /**
+   * One stream per merchant, which is what makes a worker unable to reach
+   * anybody else's envelopes at all.
+   *
+   * It is separate streams rather than one stream that is filtered on the way
+   * out, and the difference matters: a filter would have to draw a stranger's
+   * envelope in order to look at it, and a drawn envelope is one nobody else is
+   * offered until it is finished. Merchant A polling would quietly swallow
+   * merchant B's orders.
+   */
+  readonly #streams = new Map<string, Stream>();
   /** Deliveries drawn and not yet answered, by the handle that answers them. */
-  readonly #inFlight = new Map<string, WorkerEnvelope>();
-  readonly #waiters = new Set<Waiter>();
+  readonly #inFlight = new Map<string, { merchantId: string; envelope: WorkerEnvelope }>();
   readonly #timers = new Set<ReturnType<typeof setTimeout>>();
   #fire: ((reminder: Reminder) => Promise<void>) | null = null;
   #running = false;
@@ -41,29 +61,32 @@ export class MemoryQueue implements Queue {
     this.#patience = patience;
   }
 
-  async publish(envelope: WorkerEnvelope, afterMs?: number): Promise<void> {
+  async publish(merchantId: string, envelope: WorkerEnvelope, afterMs?: number): Promise<void> {
     if (afterMs === undefined || afterMs <= 0) {
-      this.#arrive(envelope);
+      this.#arrive(merchantId, envelope);
       return;
     }
-    this.#later(() => this.#arrive(envelope), afterMs);
+    this.#later(() => this.#arrive(merchantId, envelope), afterMs);
   }
 
-  async draw(max: number, waitMs: number): Promise<readonly DrawnEnvelope[]> {
-    const first = this.#take(max);
+  async draw(merchantId: string, max: number, waitMs: number): Promise<readonly DrawnEnvelope[]> {
+    const first = this.#take(merchantId, max);
     if (first.length > 0 || waitMs <= 0) {
       return first;
     }
 
-    await this.#park(waitMs);
-    return this.#take(max);
+    await this.#park(merchantId, waitMs);
+    return this.#take(merchantId, max);
   }
 
-  async finish(handle: string): Promise<void> {
+  async finish(merchantId: string, handle: string): Promise<void> {
     // A handle that is not there is not an error: it is the second answer to a
     // delivery that was already answered, and the portal promises a merchant
-    // that repeating a call is safe.
-    this.#inFlight.delete(handle);
+    // that repeating a call is safe. A handle another merchant holds is left
+    // exactly where it is, so one worker cannot finish another's delivery.
+    if (this.#inFlight.get(handle)?.merchantId === merchantId) {
+      this.#inFlight.delete(handle);
+    }
   }
 
   async remind(reminder: Reminder, afterMs: number): Promise<void> {
@@ -123,41 +146,58 @@ export class MemoryQueue implements Queue {
       clearTimeout(timer);
     }
     this.#timers.clear();
-    for (const wake of this.#waiters) {
-      wake();
+    for (const stream of this.#streams.values()) {
+      for (const wake of stream.waiters) {
+        wake();
+      }
+      stream.waiters.clear();
     }
-    this.#waiters.clear();
   }
 
-  #arrive(envelope: WorkerEnvelope): void {
-    this.#ready.push(envelope);
-    for (const wake of this.#waiters) {
-      wake();
+  #streamOf(merchantId: string): Stream {
+    const found = this.#streams.get(merchantId);
+    if (found !== undefined) {
+      return found;
     }
-    this.#waiters.clear();
+    const made: Stream = { ready: [], waiters: new Set() };
+    this.#streams.set(merchantId, made);
+    return made;
   }
 
-  #take(max: number): DrawnEnvelope[] {
-    const drawn = this.#ready.splice(0, Math.max(max, 0));
+  #arrive(merchantId: string, envelope: WorkerEnvelope): void {
+    const stream = this.#streamOf(merchantId);
+    stream.ready.push(envelope);
+    // Only this merchant's parked workers are woken. Waking everybody would
+    // send every other poll back to an empty stream for nothing.
+    for (const wake of stream.waiters) {
+      wake();
+    }
+    stream.waiters.clear();
+  }
+
+  #take(merchantId: string, max: number): DrawnEnvelope[] {
+    const stream = this.#streamOf(merchantId);
+    const drawn = stream.ready.splice(0, Math.max(max, 0));
     return drawn.map((envelope) => {
       this.#handles += 1;
       const handle = `h${this.#handles}`;
-      this.#inFlight.set(handle, envelope);
+      this.#inFlight.set(handle, { merchantId, envelope });
       return { envelope, handle };
     });
   }
 
-  #park(waitMs: number): Promise<void> {
+  #park(merchantId: string, waitMs: number): Promise<void> {
+    const stream = this.#streamOf(merchantId);
     return new Promise((resolve) => {
       const wake: Waiter = () => {
         clearTimeout(timer);
         this.#timers.delete(timer);
-        this.#waiters.delete(wake);
+        stream.waiters.delete(wake);
         resolve();
       };
       const timer = setTimeout(wake, waitMs);
       this.#timers.add(timer);
-      this.#waiters.add(wake);
+      stream.waiters.add(wake);
     });
   }
 
