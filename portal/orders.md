@@ -23,10 +23,11 @@ working names and can still change before the pilot.
 | Asynchronous | `'async'` | later, by a separate call | at the moment of purchase, before your delivery | the money is with you and the buyer has no goods: the order is marked as needing a refund |
 | With confirmation | `'confirm'` | later, by a separate call | right after your confirmation | before the confirmation nothing is charged; after it, as in the asynchronous mode |
 
-The mode is declared in the card, and the agent knows it before it pays. It is
-decided by the product, and the channel only narrows the choice: a connected
-API delivers both synchronously and asynchronously, while an order that came
-as a message is never synchronous. What the moment of charging means for the
+The mode is declared in the card, and the agent knows it before it pays. The
+product decides which mode it is, and the channel only narrows the choice: a
+connected
+API delivers both synchronously and asynchronously, while an order that
+arrived as a message is never synchronous. What the moment of charging means for the
 owner of the business is on [Money](/money).
 
 The third mode is not open during the pilot. A card cannot be published with
@@ -89,23 +90,22 @@ Those three are the whole set, and that matters for how you report a temporary
 failure. An exception in the handler, a process that fell over, a connection
 that broke — for us each of these means the order never reached you: the
 answer did not arrive, so we send the order again, after a delay, until the
-mode's deadline runs out. A refusal we read the other way, as a final "this
-cannot be delivered", and we close the order on it. Which is why a supplier
-that did not answer within five seconds is a reason to throw rather than to
-refuse.
+mode's deadline runs out. We read a refusal the other way, as a final "this
+cannot be delivered", and we close the order on it. So a supplier that did not
+answer within five seconds is a reason to throw rather than to refuse.
 
 Silence does not count as an answer: every wait has a deadline, and an order
-that outlives its own closes without you.
+that runs past its own closes without you.
 
 ### The confirmation mode
 
 In this mode one more step comes before the order. The request to confirm
 arrives on the same subscription the orders do and is marked as a request to
 confirm: the purchase parameters and the price are already in it, and no money
-has moved for it yet. The handler answers with the same three answers it gives
-an order: taking it on means "I will deliver", a refusal means "I will not".
-Delivering the goods straight into the answer is not allowed, because the
-money for them has not been charged.
+has moved for it yet. Your handler answers it the way it answers an order, with
+whichever of the two answers hands nothing over — taking it on means "I will
+deliver", a refusal means "I will not". The goods cannot go out in that answer,
+because they have not been paid for.
 
 Answer that you will deliver, and the agent's clock for paying starts; after
 the payment the same order reaches you in the ordinary way. Answer that you
@@ -145,9 +145,9 @@ against.
 Errors from `deliver` and `refuse` are returned rather than thrown, and they
 carry a flag saying whether repeating is worth anything. The network let you
 down, or our side was slow to answer — repeat with the same call, which is
-idempotent. The error is marked final, as in the case of the refund already
-paid out — then repeating changes nothing, and instead of a retry loop the
-case is worth writing down on your side.
+idempotent. Where the error is marked final — the refund already paid out, for
+one — repeating changes nothing, and the case is worth writing down on your
+side instead of looping.
 
 ## Refusing after you have taken the order on
 
@@ -236,7 +236,7 @@ first and execute it as the last step, after your delivery; between the check
 and the execution the funds can leave the buyer's wallet for something else.
 Then you have produced the goods and there is no money for them.
 
-The order is marked in this case as delivered and unpaid, and an event reaches
+In this case the order is marked delivered and unpaid, and an event reaches
 you — there is no need to go looking for such cases by reconciling transfers.
 For the agent the purchase did not happen: we hand the goods over after the
 payment executes, so it received neither the goods nor a charge. The order
@@ -272,8 +272,8 @@ A pause closes no orders: cards stop selling, and the orders already taken on
 play out in the ordinary way. Only leaving closes the ones that are open.
 
 A status says exactly what the system knows. Where there is no answer from you
-yet, that is what the status says, and the agent does not take not knowing for
-a refusal.
+yet, that is what the status says, and the agent does not read not knowing as a
+refusal.
 
 ## Time ran out
 
@@ -333,8 +333,7 @@ ordinary behaviour, and it is what the handler's idempotency by the order's
 identifier is for.
 
 Within one instance the orders are worked through one at a time. A parameter
-for taking several at once is among the things
-[not settled](/quickstart).
+for taking several at once is among the things [not settled](/quickstart).
 
 ## Test orders
 
@@ -361,9 +360,9 @@ that second the agent has already had a refusal and spent nothing, but the
 access you gave out has not gone anywhere.
 
 Work already done is not lost: a repeat purchase under the same order key
-collects the delivery that was made, this time with the payment. Which is why
-answering with the earlier result under the key is worth doing after the
-deadline has passed as well.
+collects the delivery that was made, this time with the payment. So answering
+with the earlier result under the key is worth doing after the deadline has
+passed too.
 
 Being late is not an error and does not come back as an exception: for a late
 answer our tools hand your code the result "the purchase is already closed".
