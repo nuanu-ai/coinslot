@@ -98,8 +98,8 @@ if ('errors' in published) {
 ```
 
 An invalid card throws nothing. In place of `ok` the call answers with
-`errors`, a list — never an empty one — of the fields at fault with an
-explanation of what is wrong in each. Where there is an `ok`, the card was
+`errors`: a list of the fields at fault, each with an explanation of what is
+wrong with it, and never an empty list. Where there is an `ok`, the card was
 accepted, and our catalogue identifier is inside it.
 
 The field `merchant_item_id` is your own identifier for the product, the same
@@ -130,10 +130,10 @@ agent in the answer to the purchase; with `'async'` they go later. There is a
 third mode, `'confirm'`, where you say first that you will deliver and the
 buyer is charged only after that — a card cannot be published in it during the
 pilot, because the request that asks you has no shape on the wire yet and your
-handler could not tell one from a paid order. Which mode a product takes is
-decided by the product. The channel only narrows the choice: an API delivers
-both synchronously and asynchronously — issuing an eSIM, for one, is paid for
-at once while the profile arrives later — and an order that came as a message
+handler could not tell one from a paid order. The product decides which mode it
+takes, and the channel only narrows the choice: an API delivers both
+synchronously and asynchronously — issuing an eSIM, for one, is paid for at
+once while the profile arrives later — and an order that arrived as a message
 is never synchronous.
 
 The step is done when the call has returned a catalogue `id`. The card is not
