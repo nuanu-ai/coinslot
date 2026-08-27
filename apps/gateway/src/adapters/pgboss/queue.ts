@@ -33,17 +33,28 @@ import type { DrawnEnvelope, Queue, Reminder, ReminderPatience } from "../../por
 /**
  * The two queues, named the way pg-boss will accept.
  *
- * A queue name becomes a database object name, and pg-boss refuses one that is
- * not a bare identifier: letters, digits and underscores, not starting with a
- * digit. The obvious `coinslot.envelopes` is refused at the first call, which
- * would be at start-up in production and nowhere at all in a test — nothing
- * offline touches this file. The shape is held to in a test instead.
+ * pg-boss holds a queue name to alphanumerics, underscores, hyphens, periods
+ * and forward slashes, and refuses anything else at the first call — which is
+ * start-up in production and nowhere at all offline, since nothing without a
+ * database touches this file. So the shape is held to in a test, and the test
+ * that matters is the one against the library: this rule was written down here
+ * from a reading of the documentation as "a bare identifier, no periods", the
+ * first run against a real pg-boss accepted `coinslot.envelopes` without
+ * complaint, and a rule nobody had ever asked the library about had been
+ * standing in a comment as a fact.
  */
 export const ENVELOPES = "coinslot_envelopes";
 export const REMINDERS = "coinslot_reminders";
 
-/** What pg-boss will take as a queue name, and therefore what these must be. */
-export const A_NAME_PG_BOSS_ACCEPTS = /^[A-Za-z_]\w*$/;
+/**
+ * What pg-boss will take as a queue name, and therefore what these must be.
+ *
+ * It is the library's own rule, copied: a space or a colon is refused, a period
+ * and a hyphen are not — pg-boss's own internal queue is called
+ * `__pgboss__send-it`. `pgboss/queue.db-test.ts` asks the real library whether
+ * this still agrees with it.
+ */
+export const A_NAME_PG_BOSS_ACCEPTS = /^[\w.\-/]+$/;
 
 export interface PgBossQueueOptions {
   /**
