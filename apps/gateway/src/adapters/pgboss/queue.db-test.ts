@@ -89,7 +89,7 @@ if (databaseUrl === undefined || databaseUrl === "") {
       // and the next file's first act is to drop the schema underneath it.
       await Promise.all(running.map((queue) => queue.stop().catch(() => undefined)));
       // Taken away again, so that a developer opening this database finds the
-      // tables the gateway uses and not six pg-boss installations belonging to
+      // tables the gateway uses and not a row of pg-boss installations belonging to
       // a test run. The drop in beforeAll is what makes the suite repeatable
       // and stays there: a run that dies in the middle leaves its schemas
       // behind, and the next run must not care.
@@ -189,7 +189,10 @@ if (databaseUrl === undefined || databaseUrl === "") {
       // throws is what asks whether the bound is real: with the attempts below
       // set to three, the third failure has to be the last word.
       const seen: Reminder[] = [];
-      const { boss, queue } = await labQueue("pgboss_reminder_bound");
+      // Held in one place rather than written twice, because the second use is
+      // inside a string the compiler cannot check.
+      const schema = "pgboss_reminder_bound" satisfies (typeof SCHEMAS)[number];
+      const { boss, queue } = await labQueue(schema);
       queue.onReminder(async (reminder) => {
         seen.push(reminder);
         throw new Error("this handler is never going to work");
@@ -206,7 +209,7 @@ if (databaseUrl === undefined || databaseUrl === "") {
       await vi.waitFor(
         async () => {
           const { rows } = await pool.query<{ state: string }>(
-            "select state from pgboss_reminder_bound.job where name = $1",
+            `select state from ${schema}.job where name = $1`,
             [REMINDERS],
           );
           expect(rows.map((row) => row.state)).toStrictEqual(["failed"]);
@@ -313,7 +316,10 @@ if (databaseUrl === undefined || databaseUrl === "") {
       // over the top of it. An order event has no such machine behind it and is
       // simply gone — that is the gap, and it needs an acknowledgement the
       // contract does not have.
-      const { boss, queue } = await labQueue("pgboss_envelope_expiry", {
+      // Held in one place rather than written twice, because the second use is
+      // inside a string the compiler cannot check.
+      const schema = "pgboss_envelope_expiry" satisfies (typeof SCHEMAS)[number];
+      const { boss, queue } = await labQueue(schema, {
         [ENVELOPES]: { expireInSeconds: 1 },
       });
       const envelope: WorkerEnvelope = {
@@ -345,13 +351,13 @@ if (databaseUrl === undefined || databaseUrl === "") {
       // Where it went, so that "lost" is a place somebody can look rather than
       // a silence: the delivery is recorded as failed, not quietly dropped.
       const { rows } = await pool.query<{ state: string }>(
-        "select state from pgboss_envelope_expiry.job where name = $1",
+        `select state from ${schema}.job where name = $1`,
         [ENVELOPES],
       );
       expect(rows.map((row) => row.state)).toStrictEqual(["failed"]);
     }, 60_000);
 
-    it("makes both queues on the library's own settings, and the window is fifteen minutes", async () => {
+    it("makes both queues with the fifteen-minute window a lost delivery waits out", async () => {
       // Every other test here that cares about the visibility window makes the
       // queue itself with a window of one second, so none of them ever sees the
       // window production runs with. This is that number, read back off a queue
@@ -375,36 +381,39 @@ if (databaseUrl === undefined || databaseUrl === "") {
     }, 30_000);
 
     it("holds a delayed envelope back, and reaches a poll in another process when it lands", async () => {
-      // Two promises that only a second process can show, and both are made in
-      // production. The gateway publishes an envelope with a wait on it when a
-      // delivery is to be tried again and when a charge is still in flight, and
-      // that is the branch of publish which deliberately does not wake the
-      // parked polls — a delayed envelope has nothing to wake anybody for yet.
+      // Two promises, and they need different setups to be worth anything.
       //
-      // And a poll parked in one process has to be reached by work published in
-      // another. Everywhere else in this suite the publisher and the drawer are
-      // the same object, so what is exercised is the in-process signal, and the
-      // library's polling underneath it — the thing that would carry a second
-      // gateway the day there is one — is never touched. Here the two are
-      // separate pg-boss instances on one schema, so the signal cannot be what
-      // does it.
+      // The first is the wait itself. The gateway publishes an envelope with
+      // one when a delivery is to be tried again and when a charge is still in
+      // flight, and that is the branch of publish which deliberately wakes
+      // nobody — a delayed envelope has nothing to wake anybody for yet.
+      //
+      // The second is that a draw in one process is reached by a publish in
+      // another. That needs an envelope published with no wait, because only
+      // those signal the parked polls at all: the delayed one above would be
+      // carried by a single instance's own `draw` loop just as well, so it
+      // proves nothing about a second one. This is what would carry a second
+      // gateway process the day there is one, and it is `draw` asking `fetch`
+      // again rather than anything pg-boss does on its own — the library's
+      // polling lives in `work()`, which envelopes never go through.
+      //
       // The queue is made once, the way `start()` makes it, and the second
-      // instance finds it already there — which is what a second gateway
-      // process starting against a running system does.
+      // instance finds it already there, which is what a second gateway
+      // starting against a running system does.
       const publisher = await labQueue("pgboss_envelope_delay", { [ENVELOPES]: {} });
       const drawer = await labQueue("pgboss_envelope_delay");
-      const envelope: WorkerEnvelope = {
+      const envelopeAt = (id: string): WorkerEnvelope => ({
         kind: "order_event",
-        id: "env_delayed_1",
+        id,
         sent_at: "2026-08-26T12:00:00.000Z",
         payload: {
           type: "order.unpaid_after_confirmation",
           order_id: "ord_delayed_env",
           at: "2026-08-26T12:00:00.000Z",
         },
-      };
+      });
 
-      await publisher.queue.publish(envelope, 4_000);
+      await publisher.queue.publish(envelopeAt("env_delayed_1"), 4_000);
 
       // Not yet, and long enough after publishing for a draw that ignored the
       // wait to have found it.
@@ -413,6 +422,13 @@ if (databaseUrl === undefined || databaseUrl === "") {
       const drawn = await drawer.queue.draw(10, 20_000);
       expect(drawn.map((delivery) => delivery.envelope.id)).toStrictEqual(["env_delayed_1"]);
       await drawer.queue.finish(drawn[0]?.handle ?? "");
+
+      // And now one with no wait on it, which wakes the publisher's own parked
+      // polls and none of the drawer's. It arrives all the same.
+      await publisher.queue.publish(envelopeAt("env_immediate_1"));
+      const carried = await drawer.queue.draw(10, 20_000);
+      expect(carried.map((delivery) => delivery.envelope.id)).toStrictEqual(["env_immediate_1"]);
+      await drawer.queue.finish(carried[0]?.handle ?? "");
     }, 60_000);
 
     it("takes on work to run every day, runs it, and does not stack up schedules", async () => {

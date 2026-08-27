@@ -9,7 +9,7 @@ import { defineConfig } from "vitest/config";
  * absent, so running the command without a database is a clear message rather
  * than a wall of connection errors.
  *
- *   docker compose up -d
+ *   docker compose up -d --wait postgres
  *   DATABASE_URL=postgres://coinslot:coinslot@localhost:5432/coinslot pnpm test:db
  */
 export default defineConfig({

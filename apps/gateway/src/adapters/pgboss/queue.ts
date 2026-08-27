@@ -9,13 +9,19 @@
  *
  * Two things this adapter does add, and both are worth reading.
  *
- * A poll is woken in-process the moment something is published. pg-boss finds
- * work by its own polling, which is a second or two; ADR-0004 §4 asks for no
+ * A poll is woken in-process the moment something is published. Drawing on its
+ * own is a poll of the database every `pollIntervalMs`; ADR-0004 §4 asks for no
  * polling lag at all on the one path where an agent is waiting. Since the
  * process that publishes an order is the same process a worker is parked
- * against, a signal between them costs nothing and closes that gap. The
- * library's polling stays underneath as the backstop, which is what would carry
- * a second gateway process the day there is one.
+ * against, a signal between them costs nothing and closes that gap.
+ *
+ * The polling underneath it is this adapter's own and not the library's, and
+ * the distinction matters to anybody reading `draw`. pg-boss polls inside
+ * `work()`, which is how reminders are delivered; `draw` uses `fetch()`, which
+ * asks once and answers. So what carries an envelope to a poll in another
+ * process — and what would carry one to a second gateway the day there is one —
+ * is the loop in `draw` calling `fetch` again, not anything the library is
+ * doing on its own behalf.
  *
  * And a job is completed as soon as it is handed over rather than held open
  * until the merchant answers. Whether an unanswered delivery is repeated is the
