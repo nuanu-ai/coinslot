@@ -469,13 +469,14 @@ async function answerPurchase(
       if (price === null) {
         throw new Error(`the order ${attempt.order.order.id} was offered for sale with no price`);
       }
-      // The product this order is for, read from the order rather than from the
-      // address the call came in on. The two are the same today: this step is
-      // only reached for an order this call just opened against the product in
-      // the address. Reading it off the order anyway costs nothing and settles
-      // the question for whoever later lets a payment name an order made
-      // elsewhere — the resource an agent is invited to pay for and the
-      // resource a catalog lists are one string, and it belongs to the order.
+      // The product this order is for, read from the order and not from the
+      // address the call came in on. Two calls reach this line: one that just
+      // opened an order against the product in the address, where the two are
+      // the same, and one that presented a payment naming an order — and an
+      // order's identifier travels, so nothing says that order was made
+      // against this address. The resource an agent is invited to pay for and
+      // the resource a catalog lists are one string, and it belongs to the
+      // order rather than to whoever typed the URL.
       const offered = await gateway.paidResource(attempt.order.itemId);
       if (offered === null) {
         throw new Error(
