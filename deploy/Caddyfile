@@ -33,6 +33,27 @@
 # itself on because the address stops being a bare port — which is the reason
 # this file does not disable it.
 
+# Deployment, and the one thing about it that is not obvious.
+#
+# `coinslot.nuanu.ai` is already routed (nuanu-ai/infra, decision
+# 2026-08-25-coinslot-spike-public-route): an unproxied A record to the Comino
+# ingress, which answers port 80 itself with a redirect and passes port 443
+# through by SNI to the backend. TLS terminates here.
+#
+# So HTTP-01 cannot ever succeed for this name — port 80 never reaches this
+# process, the ingress having answered it — and Caddy would spend attempts on
+# it before falling back. TLS-ALPN arrives as an ordinary TLS handshake on 443
+# and passes straight through, which is why it is the only issuer named. On a
+# bare port this block is inert: no ACME runs at all.
+{
+	# Only the challenge that can arrive here. Overridable, because a deployment
+	# behind a different edge may reach port 80 after all.
+	acme_ca {$COINSLOT_ACME_CA:https://acme-v02.api.letsencrypt.org/directory}
+	cert_issuer acme {
+		disable_http_challenge
+	}
+}
+
 {$COINSLOT_SITE_ADDRESS::8080} {
 	encode zstd gzip
 
