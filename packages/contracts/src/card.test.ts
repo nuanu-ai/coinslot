@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  bazaarDeclarationOf,
   CardSchema,
   deliveryCheckFor,
   FulfillmentSchema,
@@ -8,6 +9,7 @@ import {
   PublicCardSchema,
   publicCardOf,
   purchaseCheckFor,
+  ServiceNameSchema,
 } from "./card.js";
 import { toJsonSchemas } from "./index.js";
 import { errorOf, expectMissingFieldRejected } from "./testing/expect-schema.js";
@@ -598,5 +600,176 @@ describe("a card as its own merchant reads it", () => {
 
     expect(description).toContain("paused");
     expect(description).toContain("resume");
+  });
+});
+
+describe("the tags a merchant puts on a card", () => {
+  // The promise: what a merchant writes here is what a discovery channel
+  // shows, or the card is refused. The channel this pilot lists in drops a tag
+  // it cannot render and keeps the first five, silently, and a merchant whose
+  // tag disappeared would have no way of learning that it had.
+  it("takes the words a merchant chose", () => {
+    const parsed = CardSchema.parse({ ...syncCard, tags: ["access", "subscription"] });
+
+    expect(parsed.tags).toStrictEqual(["access", "subscription"]);
+  });
+
+  it("is absent on a card that names none", () => {
+    expect(CardSchema.parse(syncCard).tags).toBeUndefined();
+  });
+
+  it("refuses a sixth tag rather than dropping it", () => {
+    const six = ["a", "b", "c", "d", "e", "f"];
+
+    expect(errorOf(CardSchema, { ...syncCard, tags: six })).toContain("tags");
+    expect(CardSchema.safeParse({ ...syncCard, tags: six.slice(0, 5) }).success).toBe(true);
+  });
+
+  it("refuses a tag longer than the channel carries rather than cutting it short", () => {
+    expect(CardSchema.safeParse({ ...syncCard, tags: ["x".repeat(32)] }).success).toBe(true);
+    expect(errorOf(CardSchema, { ...syncCard, tags: ["x".repeat(33)] })).toContain("32");
+  });
+
+  it("refuses a tag the channel cannot render, rather than letting it vanish", () => {
+    // The measured behaviour: a tag outside printable ASCII is dropped by the
+    // facilitator without a word. A merchant writing in their own alphabet
+    // has to find that out here, at the publish, and not from an empty listing.
+    const cyrillic = errorOf(CardSchema, { ...syncCard, tags: ["доступ"] });
+
+    expect(cyrillic).toContain("tags");
+    expect(cyrillic).toMatch(/ASCII/i);
+  });
+
+  it("refuses an empty tag and a blank one", () => {
+    expect(CardSchema.safeParse({ ...syncCard, tags: [""] }).success).toBe(false);
+    expect(CardSchema.safeParse({ ...syncCard, tags: ["  "] }).success).toBe(false);
+  });
+});
+
+describe("the name a seller is listed under", () => {
+  // The promise: the same rule as the tags, on the field that names the seller
+  // rather than the product. A truncated name in a public catalog is somebody
+  // else's business trading under a word they did not choose.
+  it("takes a name the channel carries whole", () => {
+    expect(ServiceNameSchema.parse("Freeland")).toBe("Freeland");
+    expect(ServiceNameSchema.parse("x".repeat(32))).toBe("x".repeat(32));
+  });
+
+  it("refuses a name longer than the channel carries", () => {
+    expect(errorOf(ServiceNameSchema, "x".repeat(33))).toContain("32");
+  });
+
+  it("refuses a name the channel cannot render", () => {
+    expect(errorOf(ServiceNameSchema, "Кафе")).toMatch(/ASCII/i);
+  });
+
+  it("refuses an empty name and a blank one", () => {
+    expect(ServiceNameSchema.safeParse("").success).toBe(false);
+    expect(ServiceNameSchema.safeParse("   ").success).toBe(false);
+  });
+});
+
+describe("a card as a discovery channel reads it", () => {
+  // The promise: an agent that has never seen our catalog finds this product
+  // in a channel it already walks, and what it reads there is the same product
+  // it can then buy. Everything below is drawn from the card; the two things
+  // that are not — the address the resource answers at and the name of the
+  // seller — are passed in, because a card cannot know either.
+  const declared = (card: unknown, at: Parameters<typeof bazaarDeclarationOf>[1]) =>
+    bazaarDeclarationOf(CardSchema.parse(card), at);
+
+  const at = {
+    url: "https://coinslot.example/v0/items/itm_4d21bb/purchase",
+    serviceName: "The pilot merchant",
+  };
+
+  it("names the resource at the address it was given, not one it worked out", () => {
+    expect(declared(syncCard, at).resource.url).toBe(at.url);
+  });
+
+  it("carries the merchant's description and the seller's name", () => {
+    const { resource } = declared({ ...syncCard, tags: ["access"] }, at);
+
+    expect(resource.description).toBe(syncCard.description);
+    expect(resource.mimeType).toBe("application/json");
+    expect(resource.serviceName).toBe("The pilot merchant");
+    expect(resource.tags).toStrictEqual(["access"]);
+  });
+
+  it("leaves out a seller's name and a card's tags where there are none", () => {
+    // Absent rather than empty. An empty string and an empty list are values a
+    // channel renders; the absence of the field is the only way to say that
+    // nobody named one.
+    const { resource } = declared(syncCard, { url: at.url, serviceName: null });
+
+    expect("serviceName" in resource).toBe(false);
+    expect("tags" in resource).toBe(false);
+  });
+
+  it("describes the purchase body an agent would actually send", () => {
+    const { input, inputSchema } = declared(syncCard, at);
+
+    // The shape of a purchase on this gateway: the parameters under `params`.
+    expect(input).toStrictEqual({ params: { email: "" } });
+    expect(inputSchema.type).toBe("object");
+    const properties = inputSchema.properties as Record<string, Record<string, unknown>>;
+    const params = properties.params ?? {};
+    expect(params.required).toStrictEqual(["email"]);
+    expect((params.properties as Record<string, unknown>).email).toStrictEqual({ type: "string" });
+  });
+
+  it("publishes an example the gateway's own check would accept", () => {
+    // The one claim this example makes: send a body of this shape and it gets
+    // past the door. An example our own validator refuses is an invitation to
+    // a refusal, published to strangers.
+    for (const card of [
+      syncCard,
+      { ...syncCard, params: undefined },
+      {
+        ...syncCard,
+        params: {
+          email: { type: "string", required: true },
+          seats: { type: "integer" },
+          trial: { type: "boolean", required: true },
+          weight: { type: "number" },
+        },
+      },
+    ]) {
+      const parsed = CardSchema.parse(card);
+      const { input } = bazaarDeclarationOf(parsed, at);
+      const verdict = purchaseCheckFor(parsed).safeParse(
+        (input as { params: Record<string, unknown> }).params,
+      );
+
+      expect(verdict.success ? "" : JSON.stringify(verdict.error?.issues)).toBe("");
+    }
+  });
+
+  it("publishes a delivery example the card's own promise would accept", () => {
+    const parsed = CardSchema.parse({
+      ...syncCard,
+      result: {
+        access_url: { type: "string" },
+        seats: { type: "integer" },
+        active: { type: "boolean" },
+        credit: { type: "number", required: false },
+      },
+    });
+    const { output } = bazaarDeclarationOf(parsed, at);
+
+    expect(output.example).toStrictEqual({
+      access_url: "",
+      seats: 0,
+      active: false,
+      credit: 0,
+    });
+    expect(deliveryCheckFor(parsed).safeParse(output.example).success).toBe(true);
+  });
+
+  it("gives the same declaration for the same card twice", () => {
+    // The resource identity is what a listing is keyed on. Two challenges for
+    // one product that disagreed about it would be two listings, or one that
+    // flickers.
+    expect(declared(syncCard, at)).toStrictEqual(declared(syncCard, at));
   });
 });
