@@ -83,6 +83,28 @@ const honest = (overrides: Partial<PaymentRequirements> = {}): string =>
     payload: { signature: "0xsigned" },
   });
 
+/**
+ * A payment made against a different order of ours, correct in every other
+ * respect: same price, same asset, same chain, same address.
+ */
+const forOrder = (orderId: string): string =>
+  encodePaymentSignatureHeader({
+    x402Version: 2,
+    accepted: edge.requirementsFor({ amount: "80.00", currency: "USD" }, orderId),
+    payload: { signature: "0xsigned" },
+  });
+
+/**
+ * A payment naming no offer at all. The decoder is a base64 JSON parse with no
+ * schema behind it, so a header shaped like this really does arrive; the cast
+ * is what it takes to write down a value the type forbids and the wire allows.
+ */
+const namesNoOffer = (): string =>
+  encodePaymentSignatureHeader({
+    x402Version: 2,
+    payload: { signature: "0xsigned" },
+  } as unknown as PaymentPayload);
+
 describe("verifying a payment", () => {
   it("checks it against the price this gateway issued, not the one the payment names", async () => {
     // The requirements handed to the facilitator are rebuilt from our own
@@ -107,7 +129,67 @@ describe("verifying a payment", () => {
       charge(honest({ payTo: "0x00000000000000000000000000000000000000ff" })),
     );
 
-    expect(answered).toMatchObject({ verified: false, reason: "price_stale" });
+    // All five of these refusals carry the same coarse reason, because the
+    // machine has three of them and none is a better fit. The message is the
+    // only place that says which offer was wrong, so it is what the test reads.
+    expect(answered).toStrictEqual({
+      verified: false,
+      reason: "price_stale",
+      message: "the payment was made out to a different address from the one asked for",
+    });
+    expect(client.asked).toStrictEqual([]);
+  });
+
+  it("refuses a payment made in another asset or on another chain", async () => {
+    // The price matches to the digit and the money still goes somewhere else:
+    // the same number of a token nobody agreed on, or the right token on a
+    // chain we do not settle on.
+    const wrongAsset = new Answering();
+    const wrongChain = new Answering();
+    const message =
+      "the payment was made in a different asset or on a different chain from the one asked for";
+
+    expect(
+      await new X402Facilitator(wrongAsset, edge).verify(
+        charge(honest({ asset: "0x00000000000000000000000000000000000000aa" })),
+      ),
+    ).toStrictEqual({ verified: false, reason: "price_stale", message });
+
+    expect(
+      await new X402Facilitator(wrongChain, edge).verify(charge(honest({ network: "eip155:1" }))),
+    ).toStrictEqual({ verified: false, reason: "price_stale", message });
+
+    expect(wrongAsset.asked).toStrictEqual([]);
+    expect(wrongChain.asked).toStrictEqual([]);
+  });
+
+  it("refuses a payment signed for one order and presented on another", async () => {
+    // Two orders of ours at the same price make one offer indistinguishable
+    // from the other everywhere except in the order it names. What stops one
+    // signed authorisation from buying both is the claim taken on the payment
+    // before any of this runs, not this branch; what this branch stops is a
+    // payment for somebody else's order being carried to the facilitator as
+    // though it were for this one.
+    const client = new Answering();
+    const answered = await new X402Facilitator(client, edge).verify(charge(forOrder("ord_2")));
+
+    expect(answered).toStrictEqual({
+      verified: false,
+      reason: "price_stale",
+      message: "the payment was made against a different order from the one it was presented for",
+    });
+    expect(client.asked).toStrictEqual([]);
+  });
+
+  it("refuses a payment that names no offer to check against", async () => {
+    const client = new Answering();
+    const answered = await new X402Facilitator(client, edge).verify(charge(namesNoOffer()));
+
+    expect(answered).toStrictEqual({
+      verified: false,
+      reason: "price_stale",
+      message: "the payment names no offer, so there is nothing to check it against",
+    });
     expect(client.asked).toStrictEqual([]);
   });
 
