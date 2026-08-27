@@ -26,9 +26,15 @@ importers:
       '@coinslot/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      drizzle-orm:
+        specifier: 0.45.2
+        version: 0.45.2(@types/pg@8.23.1)(pg@8.23.0)
       express:
         specifier: 5.2.1
         version: 5.2.1
+      pg:
+        specifier: 8.23.0
+        version: 8.23.0
       zod:
         specifier: ^4.4.3
         version: 4.4.3
@@ -39,6 +45,12 @@ importers:
       '@types/express':
         specifier: ^5.0.6
         version: 5.0.6
+      '@types/pg':
+        specifier: ^8.23.1
+        version: 8.23.1
+      drizzle-kit:
+        specifier: 0.31.10
+        version: 0.31.10
       tsx:
         specifier: ^4.23.12
         version: 4.23.12

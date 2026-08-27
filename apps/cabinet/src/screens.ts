@@ -22,8 +22,23 @@ import {
   SELLING_WORDS,
 } from "./words.js";
 
-interface Frame {
+/**
+ * Who is looking at a page, and where the cabinet is mounted.
+ *
+ * The person is here rather than at the edge because every page says who is
+ * signed in. That is not decoration: until ADR-0009 there was no person in the
+ * system at all — there was a merchant key — and a screen that cannot name who
+ * is looking at it is a screen nobody can be held to.
+ */
+export interface Viewer {
+  /** Where the cabinet is mounted, "" when it is at the root of its origin. */
   readonly base: string;
+  /** The address of the person signed in. */
+  readonly who: string;
+}
+
+interface Frame {
+  readonly viewer: Viewer;
   readonly tab: Tab;
   readonly title: string;
   readonly selling: MerchantCardList["selling"];
@@ -32,7 +47,8 @@ interface Frame {
 
 const framed = (frame: Frame): string =>
   page({
-    base: frame.base,
+    base: frame.viewer.base,
+    who: frame.viewer.who,
     tab: frame.tab,
     title: frame.title,
     selling: SELLING_WORDS[frame.selling],
@@ -99,7 +115,8 @@ const cardControl = (base: string, entry: MerchantCard): string => {
 <button type="submit">Pause</button></form>`;
 };
 
-export const cardsScreen = (base: string, cards: MerchantCardList): string => {
+export const cardsScreen = (viewer: Viewer, cards: MerchantCardList): string => {
+  const { base } = viewer;
   const paused = cards.cards.filter((entry) => entry.paused).length;
   // Three words and not two. Folding "departed" into "stopped" would offer a
   // merchant who has left a button that puts them back on sale and a note
@@ -147,7 +164,7 @@ ${table(
   <div class="note"><span class="mark">&#8627;</span><span>${escaped(sellingNote(cards.selling))}</span></div>
 `;
 
-  return framed({ base, tab: "cards", title: "Product cards", selling: cards.selling, body });
+  return framed({ viewer, tab: "cards", title: "Product cards", selling: cards.selling, body });
 };
 
 /**
@@ -171,11 +188,12 @@ const sellingNote = (selling: MerchantCardList["selling"]): string => {
 };
 
 export const ordersScreen = (
-  base: string,
+  viewer: Viewer,
   cards: MerchantCardList,
   orders: OrderList,
   open: boolean,
 ): string => {
+  const { base } = viewer;
   const titles = new Map(
     cards.cards.map((entry) => [entry.card.merchant_item_id, entry.card.title]),
   );
@@ -222,7 +240,7 @@ ${wanting
   )
   .join("")}`;
 
-  return framed({ base, tab: "orders", title: "Orders", selling: cards.selling, body });
+  return framed({ viewer, tab: "orders", title: "Orders", selling: cards.selling, body });
 };
 
 /**
@@ -277,7 +295,7 @@ const whyItNeedsYou = (status: OrderList["orders"][number]["status"]): string =>
     : "You delivered the goods and the payment did not execute. The order stays open, and a repeat purchase by the same buyer carries the payment through.";
 
 export const receiptsScreen = (
-  base: string,
+  viewer: Viewer,
   cards: MerchantCardList,
   receipts: ReceiptList,
 ): string => {
@@ -332,7 +350,7 @@ ${table(
 )}
 `;
 
-  return framed({ base, tab: "receipts", title: "Receipts", selling: cards.selling, body });
+  return framed({ viewer, tab: "receipts", title: "Receipts", selling: cards.selling, body });
 };
 
 /**

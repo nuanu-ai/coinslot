@@ -1,6 +1,6 @@
 /**
- * The cabinet's own HTTP surface: three screens, a sign-in, and the four
- * switches that stop and start selling.
+ * The cabinet's own HTTP surface: three screens, a sign-in, a password, and the
+ * four switches that stop and start selling.
  *
  * It is server-rendered with no client framework and no build step, which is
  * ADR-0005 §4. Every page is one GET and every change is one form post
@@ -11,28 +11,56 @@
  * handler is a translation between one request and one or two calls on the
  * gateway's public API, and the pages are drawn from what those calls answered
  * (ADR-0005 §3). A screen that cannot be drawn is API the merchant does not
- * have either — which is the whole point of the cabinet holding no database.
+ * have either.
+ *
+ * Who is allowed in is one middleware and not a check per handler, and that is
+ * ADR-0009 §5. The gate sits above every route below it, so a page added later
+ * is guarded because it is a page rather than because somebody remembered — and
+ * a visitor with no session is answered identically at every address, including
+ * the ones that do not exist, so the cabinet's inventory of pages is not
+ * something a stranger can read off it.
  */
 
 import { readFileSync } from "node:fs";
 import express, { type Express, type Request, type Response } from "express";
+import type { Account, Accounts } from "./accounts.js";
 import type { CabinetConfig } from "./config.js";
+import {
+  fingerprintOf,
+  hashPassword,
+  looksLikeSessionToken,
+  MINIMUM_PASSWORD_LENGTH,
+  newSessionToken,
+  passwordMatches,
+} from "./credentials.js";
 import { type Answer, type GatewayClient, gatewayFor } from "./gateway.js";
 import { bare, escaped } from "./html.js";
-import { cardsScreen, ordersScreen, receiptsScreen } from "./screens.js";
-import { signInScreen } from "./sign-in.js";
+import { cardsScreen, ordersScreen, receiptsScreen, type Viewer } from "./screens.js";
+import { passwordScreen, signInScreen } from "./sign-in.js";
 
 /** The name the session cookie travels under. */
-const SESSION = "coinslot_key";
+const SESSION = "coinslot_session";
 
 /**
- * How long a merchant stays signed in.
+ * The cookie the cabinet used to keep a live merchant key in.
  *
- * A working day and a bit, so a merchant who signed in at nine is still signed
- * in at six and one who left a browser open over a weekend is not. It is a
- * number in one place rather than a constant beside the cookie, and it is here
- * rather than in the configuration because nothing about a deployment changes
- * what it should be.
+ * Nothing reads it any more. It is cleared at the sign-in because everybody who
+ * ever signed into the old cabinet still has one in their browser, and what it
+ * holds is exactly the credential ADR-0009 exists to get out of browsers.
+ */
+const RETIRED_SESSION = "coinslot_key";
+
+/**
+ * How long a person stays signed in, from the moment they sign in.
+ *
+ * A working day and a bit, so somebody who signed in at nine is still signed in
+ * at six and somebody who left a browser open over a weekend is not. It is
+ * never extended: a sliding window would mean a session that never ends as long
+ * as a tab stays in front of somebody, which is the case it exists to catch.
+ *
+ * It is a number here rather than in the configuration because nothing about a
+ * deployment changes what it should be, and ADR-0009 §6 names what would: a
+ * merchant working from a machine other people use.
  */
 const SESSION_HOURS = 12;
 
@@ -77,26 +105,51 @@ function readTokens(): string {
 }
 const STYLESHEET = `${TOKENS}\n${readFileSync(new URL("./coinslot.css", import.meta.url), "utf8")}`;
 
+/** What the cabinet is built out of, beyond its configuration. */
+export interface CabinetParts {
+  /** Where the people who sign in, and their sessions, are kept. */
+  readonly accounts: Accounts;
+  /**
+   * How the gateway is reached, with the real client as the default.
+   *
+   * One client for the life of the process, because there is one key and it is
+   * the cabinet's own configuration now rather than a visitor's cookie. Only a
+   * test ever passes anything else, and what a deployment runs is the client
+   * that speaks the contract's route table.
+   */
+  readonly gateway?: GatewayClient;
+}
+
 /**
- * The whole cabinet on an express app.
+ * Whose session a request arrived on.
  *
- * `connect` is a parameter with the real client as its default so that a test
- * can drive the pages without a gateway on a socket. Nothing but a test ever
- * passes anything else, and what a deployment runs is the client that speaks
- * the contract's route table.
+ * A map keyed by the request rather than a field written onto it: express hands
+ * every middleware the same object and a property added to it is a property no
+ * type knows about, so the next reader of this file would have to take the
+ * cabinet's word for who is signed in.
  */
-export function buildApp(
-  config: CabinetConfig,
-  connect: (key: string) => GatewayClient = (key) => gatewayFor(config.gatewayUrl, key),
-): Express {
+const people = new WeakMap<Request, Account>();
+
+/** The whole cabinet on an express app. */
+export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
   const app = express();
   const base = config.basePath;
+  const accounts = parts.accounts;
+  const gateway = parts.gateway ?? gatewayFor(config.gatewayUrl, config.merchantApiKey);
+  const cookiePath = base === "" ? "/" : base;
+
+  const forget = (response: Response): void => {
+    response.clearCookie(SESSION, { path: cookiePath });
+  };
 
   app.disable("x-powered-by");
-  // No `trust proxy` here on purpose: nothing in the cabinet reads the client's
-  // address or whether the connection was secure, so trusting a forwarding
-  // header would make a spoofable header authoritative for no benefit at all.
-  // The forms are the only thing a browser posts here, and they are small.
+  // No `trust proxy` here: nothing in the cabinet reads the client's address,
+  // and express's own handling of the forwarding headers would put a spoofable
+  // value behind `request.ip` and `request.secure` where nobody reading a
+  // handler would think to doubt it. One forwarding header is read, in exactly
+  // one place, and that place says what it trusts and why — see
+  // `sameOriginUnder`. The forms are the only thing a browser posts here, and
+  // they are small.
   app.use(express.urlencoded({ extended: false, limit: "16kb" }));
   app.use(sameOriginUnder(base));
 
@@ -113,12 +166,12 @@ export function buildApp(
     response.type("text/css").send(STYLESHEET);
   });
 
-  app.get(`${base}/`, (request, response) => {
-    response.redirect(303, keyIn(request) === null ? `${base}/sign-in` : `${base}/cards`);
-  });
+  app.get(`${base}/sign-in`, async (request, response) => {
+    // Cleared here rather than anywhere else, because this is the one page
+    // everybody who used the old cabinet lands on next.
+    response.clearCookie(RETIRED_SESSION, { path: cookiePath });
 
-  app.get(`${base}/sign-in`, (request, response) => {
-    if (keyIn(request) !== null) {
+    if ((await whoseSession(request, accounts)) !== null) {
       response.redirect(303, `${base}/cards`);
       return;
     }
@@ -126,112 +179,228 @@ export function buildApp(
   });
 
   app.post(`${base}/sign-in`, async (request, response) => {
-    const key = String((request.body as { key?: unknown })?.key ?? "");
-    if (key === "") {
-      response.status(400).type("html").send(signInScreen(base, "Enter your merchant key."));
+    // `?? {}` and not a cast alone: express leaves `body` undefined when the
+    // content type is not the one the form parser handles, and reading a field
+    // off that throws — so a request that is merely malformed would land on the
+    // page that says something in the cabinet is broken, with a stack trace in
+    // the log for every scanner that ever posts JSON at this address.
+    const form = (request.body ?? {}) as { email?: unknown; password?: unknown };
+    const email = typeof form.email === "string" ? form.email : "";
+    const password = typeof form.password === "string" ? form.password : "";
+    if (email.trim() === "" || password === "") {
+      response
+        .status(400)
+        .type("html")
+        .send(signInScreen(base, "Enter your address and your password."));
       return;
     }
 
-    // The key is tried against the API before it is kept. A cabinet that
-    // accepted anything typed into the box would sign a merchant in and then
-    // show them three screens of nothing, which reads as "you have no cards".
-    const tried = await connect(key).cards();
-    if (!tried.ok) {
+    const person = await accounts.byEmail(email);
+    // The comparison happens whether or not there is an account, and that is
+    // the point of passing it a null: an answer that came back at once for an
+    // address nobody has would make this form a list of who has an account.
+    const right = await passwordMatches(password, person?.passwordHash ?? null);
+    if (person === null || !right) {
+      // The address is named only when we have an account for it. The email box
+      // is where a password lands when somebody types into the wrong field, and
+      // a refusal that echoed whatever was typed would put that password in the
+      // log; an address we do know is a real account being attacked and is
+      // worth saying.
+      console.log(
+        person === null
+          ? "[cabinet] a sign-in was refused: no account at the address given"
+          : `[cabinet] a sign-in for ${person.email} was refused: wrong password`,
+      );
       response
-        .status(tried.status === 401 ? 401 : 502)
+        .status(401)
+        .type("html")
+        .send(signInScreen(base, "That address and password do not match an account."));
+      return;
+    }
+
+    // A fresh identifier every time. Nothing here can adopt an identifier the
+    // visitor arrived holding, which is what makes a session handed to somebody
+    // in a link impossible rather than merely unlikely.
+    const token = newSessionToken();
+    const now = new Date();
+    await accounts.open(
+      fingerprintOf(token),
+      person.id,
+      now,
+      new Date(+now + SESSION_HOURS * 60 * 60 * 1_000),
+    );
+    response.cookie(SESSION, token, {
+      httpOnly: true,
+      sameSite: "strict",
+      secure: config.cookieSecure,
+      path: cookiePath,
+      maxAge: SESSION_HOURS * 60 * 60 * 1_000,
+    });
+    console.log(`[cabinet] ${person.email} signed in`);
+    response.redirect(303, `${base}/cards`);
+  });
+
+  /**
+   * The gate. Everything below this line needs a session; everything above it
+   * is the sign-in, the stylesheet and the health probe.
+   *
+   * A visitor without one is answered the same way at every address, which is
+   * why this is a middleware and not a check inside each handler: a page added
+   * below is guarded by being below, and a stranger cannot tell which addresses
+   * this cabinet serves from which it does not.
+   */
+  app.use((request, response, next) => {
+    void (async () => {
+      try {
+        const person = await whoseSession(request, accounts);
+        if (person === null) {
+          // The cookie is cleared on the way out, so somebody whose session was
+          // ended lands on a sign-in they can use rather than being bounced
+          // through this gate again on every click.
+          forget(response);
+          response.redirect(303, `${base}/sign-in`);
+          return;
+        }
+        people.set(request, person);
+        next();
+      } catch (thrown) {
+        next(thrown);
+      }
+    })();
+  });
+
+  app.get(`${base}/`, (_request, response) => {
+    response.redirect(303, `${base}/cards`);
+  });
+
+  app.post(`${base}/sign-out`, async (request, response) => {
+    // The row goes, not merely the cookie. Clearing a cookie asks the browser
+    // to forget something; anybody who copied the value still holds a session.
+    //
+    // Every identifier the request carried, not one of them: the gate has
+    // already established that exactly one of them is a live session, and
+    // ending the others is ending nothing.
+    const person = whoIs(request);
+    for (const token of tokensIn(request)) {
+      await accounts.end(fingerprintOf(token));
+    }
+    console.log(`[cabinet] ${person.email} signed out`);
+    forget(response);
+    response.redirect(303, `${base}/sign-in`);
+  });
+
+  app.get(`${base}/password`, (request, response) => {
+    response.type("html").send(passwordScreen(base, whoIs(request).email, MINIMUM_PASSWORD_LENGTH));
+  });
+
+  app.post(`${base}/password`, async (request, response) => {
+    const person = whoIs(request);
+    const form = (request.body ?? {}) as { current?: unknown; fresh?: unknown };
+    const current = typeof form.current === "string" ? form.current : "";
+    const fresh = typeof form.fresh === "string" ? form.fresh : "";
+
+    // The current password first, so that somebody who sat down at an
+    // unattended tab learns nothing at all — not even what this cabinet asks of
+    // a password — without knowing the one that is already set.
+    if (!(await passwordMatches(current, person.passwordHash))) {
+      response
+        .status(401)
         .type("html")
         .send(
-          signInScreen(
+          passwordScreen(
             base,
-            tried.status === 401
-              ? "That key was not accepted. It is the key your gateway is configured with."
-              : tried.status === 0
-                ? `The gateway did not answer: ${tried.why}`
-                : tried.why,
+            person.email,
+            MINIMUM_PASSWORD_LENGTH,
+            "That is not your current password.",
+          ),
+        );
+      return;
+    }
+    if (fresh.length < MINIMUM_PASSWORD_LENGTH) {
+      response
+        .status(400)
+        .type("html")
+        .send(
+          passwordScreen(
+            base,
+            person.email,
+            MINIMUM_PASSWORD_LENGTH,
+            `A new password has to be at least ${MINIMUM_PASSWORD_LENGTH} characters.`,
           ),
         );
       return;
     }
 
-    response.cookie(SESSION, key, {
-      httpOnly: true,
-      sameSite: "strict",
-      secure: config.cookieSecure,
-      path: base === "" ? "/" : base,
-      maxAge: SESSION_HOURS * 60 * 60 * 1_000,
-    });
-    response.redirect(303, `${base}/cards`);
-  });
-
-  app.post(`${base}/sign-out`, (_request, response) => {
-    response.clearCookie(SESSION, { path: base === "" ? "/" : base });
+    // Every session that person had goes with it, including this one. A
+    // password is changed because the old one is not trusted, and a session
+    // opened with it is exactly what must not outlive it.
+    await accounts.setPassword(person.email, await hashPassword(fresh));
+    console.log(`[cabinet] ${person.email} changed their password; every session of theirs ended`);
+    forget(response);
     response.redirect(303, `${base}/sign-in`);
   });
 
-  app.get(`${base}/cards`, (request, response) =>
-    signedIn(request, response, base, connect, async (gateway) => {
-      const cards = await gateway.cards();
-      if (!cards.ok) {
-        return trouble(response, base, cards);
-      }
-      response.type("html").send(cardsScreen(base, cards.document));
-    }),
-  );
+  app.get(`${base}/cards`, async (request, response) => {
+    const cards = await gateway.cards();
+    if (!cards.ok) {
+      return trouble(response, base, cards);
+    }
+    response.type("html").send(cardsScreen(viewing(request, base), cards.document));
+  });
 
-  app.get(`${base}/orders`, (request, response) =>
-    signedIn(request, response, base, connect, async (gateway) => {
-      // Only the exact word narrows the list, which is what the contract says
-      // and what a merchant reconciling their books relies on.
-      const open = request.query.open === "true";
-      const [cards, orders] = await Promise.all([gateway.cards(), gateway.orders(open)]);
-      if (!cards.ok) {
-        return trouble(response, base, cards);
-      }
-      if (!orders.ok) {
-        return trouble(response, base, orders);
-      }
-      response.type("html").send(ordersScreen(base, cards.document, orders.document, open));
-    }),
-  );
+  app.get(`${base}/orders`, async (request, response) => {
+    // Only the exact word narrows the list, which is what the contract says
+    // and what a merchant reconciling their books relies on.
+    const open = request.query.open === "true";
+    const [cards, orders] = await Promise.all([gateway.cards(), gateway.orders(open)]);
+    if (!cards.ok) {
+      return trouble(response, base, cards);
+    }
+    if (!orders.ok) {
+      return trouble(response, base, orders);
+    }
+    response
+      .type("html")
+      .send(ordersScreen(viewing(request, base), cards.document, orders.document, open));
+  });
 
-  app.get(`${base}/receipts`, (request, response) =>
-    signedIn(request, response, base, connect, async (gateway) => {
-      const [cards, receipts] = await Promise.all([gateway.cards(), gateway.receipts()]);
-      if (!cards.ok) {
-        return trouble(response, base, cards);
-      }
-      if (!receipts.ok) {
-        return trouble(response, base, receipts);
-      }
-      response.type("html").send(receiptsScreen(base, cards.document, receipts.document));
-    }),
-  );
+  app.get(`${base}/receipts`, async (request, response) => {
+    const [cards, receipts] = await Promise.all([gateway.cards(), gateway.receipts()]);
+    if (!cards.ok) {
+      return trouble(response, base, cards);
+    }
+    if (!receipts.ok) {
+      return trouble(response, base, receipts);
+    }
+    response
+      .type("html")
+      .send(receiptsScreen(viewing(request, base), cards.document, receipts.document));
+  });
 
   for (const [verb, paused] of [
     ["pause", true],
     ["resume", false],
   ] as const) {
-    app.post(`${base}/cards/:item_id/${verb}`, (request, response) =>
-      signedIn(request, response, base, connect, async (gateway) => {
-        const switched = await gateway.pauseCard(request.params.item_id ?? "", paused);
-        if (!switched.ok) {
-          return trouble(response, base, switched);
-        }
-        // Back to the list rather than answering the post with a page: a
-        // merchant who then reloads must not press the switch again.
-        response.redirect(303, `${base}/cards`);
-      }),
-    );
+    app.post(`${base}/cards/:item_id/${verb}`, async (request, response) => {
+      const itemId = request.params.item_id ?? "";
+      const switched = await gateway.pauseCard(itemId, paused);
+      if (!switched.ok) {
+        return trouble(response, base, switched);
+      }
+      noted(whoIs(request), `${paused ? "paused" : "resumed"} the card ${itemId}`);
+      // Back to the list rather than answering the post with a page: a
+      // merchant who then reloads must not press the switch again.
+      response.redirect(303, `${base}/cards`);
+    });
 
-    app.post(`${base}/selling/${verb}`, (request, response) =>
-      signedIn(request, response, base, connect, async (gateway) => {
-        const switched = await gateway.setSelling(!paused);
-        if (!switched.ok) {
-          return trouble(response, base, switched);
-        }
-        response.redirect(303, `${base}/cards`);
-      }),
-    );
+    app.post(`${base}/selling/${verb}`, async (request, response) => {
+      const switched = await gateway.setSelling(!paused);
+      if (!switched.ok) {
+        return trouble(response, base, switched);
+      }
+      noted(whoIs(request), paused ? "stopped all selling" : "started selling again");
+      response.redirect(303, `${base}/cards`);
+    });
   }
 
   app.use((_request, response) => {
@@ -242,6 +411,19 @@ export function buildApp(
     (thrown: unknown, _request: Request, response: Response, next: (error?: unknown) => void) => {
       if (response.headersSent) {
         next(thrown);
+        return;
+      }
+      // A body larger than any of these forms. It arrives from a visitor and
+      // not from a defect, so it is answered as what it is rather than as a
+      // broken cabinet — and without a stack, because a stranger who can post
+      // at this address must not be able to fill the log with them. The body
+      // parser runs above the gate, which is why a visitor with no session
+      // reaches this at all.
+      if (tooLarge(thrown)) {
+        response
+          .status(413)
+          .type("html")
+          .send(problemPage(base, "That was larger than any form on this page sends."));
         return;
       }
       // A defect. The merchant is told that something here is broken and
@@ -271,13 +453,15 @@ export function buildApp(
 /**
  * Turns away a form post that came from somewhere else.
  *
- * The session cookie is a live API key and the forms it authorises include
- * "stop all selling", so a page on another site must not be able to make a
- * merchant's browser submit one. SameSite=Strict on the cookie is the first
- * answer and the main one; this is the second, and it exists because SameSite
- * is scoped to the registrable domain rather than to the origin — the day
- * anything at all is served from a sibling subdomain, that page is "same site"
- * and can forge every switch here.
+ * The forms this protects include "stop all selling" and the sign-in itself, so
+ * a page on another site must not be able to make a browser submit one — not
+ * the switches, because that is a merchant's selling, and not the sign-in,
+ * because signing somebody into an account of the attacker's choosing is a way
+ * of getting them to do their work in a session somebody else can read.
+ * SameSite=Strict on the cookie is the first answer and the main one; this is
+ * the second, and it exists because SameSite is scoped to the registrable
+ * domain rather than to the origin — the day anything at all is served from a
+ * sibling subdomain, that page is "same site" and can forge every switch here.
  *
  * A missing Origin is allowed through. Browsers send it on every cross-origin
  * form post, which is the case being refused; what they historically omit it
@@ -299,8 +483,31 @@ function sameOriginUnder(base: string) {
     // exists to make, since SameSite does not make it either. The scheme comes
     // from the forwarded header where a terminator set one, because behind
     // Caddy this process speaks http and the browser does not.
+    //
+    // The first value in the header and not the last, which is worth arguing
+    // because the reverse looks safer. What this is compared against is the
+    // `Origin` a browser sent, and that names the scheme the browser used at
+    // the edge of the chain — which is the leftmost value, by what the header
+    // means. The last value is the scheme between the final two hops, and
+    // preferring it would answer "this form did not come from the cabinet" to
+    // an honest merchant behind a chain that terminates TLS early.
+    //
+    // The usual argument for the last value is that a chain which appends
+    // rather than replaces leaves a client's own claim leftmost. It does not
+    // reach this check: the only attacker this refusal is for is a page in a
+    // browser, a page cannot put a header on a form post at all, and a `fetch`
+    // that sets one is held for a preflight this cabinet answers with a
+    // redirect and no CORS headers, which browsers refuse. A client that can
+    // set `X-Forwarded-Proto` can also leave `Origin` off, and this middleware
+    // waves that through by design.
+    //
+    // What the fallback costs when the header is absent is worth knowing
+    // before it happens: over https with a terminator that sets nothing, the
+    // scheme reads "http", every origin then mismatches, and every form post
+    // on the site — the sign-in included — is refused.
     const forwarded = request.headers["x-forwarded-proto"];
-    const scheme = (Array.isArray(forwarded) ? forwarded[0] : forwarded)?.split(",")[0]?.trim();
+    const said = Array.isArray(forwarded) ? forwarded[0] : forwarded;
+    const scheme = said?.split(",")[0]?.trim();
     const asked = request.headers.host;
 
     if (asked !== undefined && origin === `${scheme ?? "http"}://${asked}`) {
@@ -317,28 +524,83 @@ function sameOriginUnder(base: string) {
 }
 
 /**
- * Runs `draw` with a client bound to this merchant's key, or sends them to
- * sign in.
+ * Whose session this request arrived on, having asked the store.
  *
- * A key that the gateway turns away lands here as a 401 from whichever call
- * was made, and the merchant is sent back to the sign-in with the cookie
- * cleared — a key that was revoked while a tab was open would otherwise leave
- * them clicking a cabinet that answers nothing.
+ * Null covers every way of not being signed in and does not distinguish them:
+ * no cookie, a cookie that is not readable, an identifier nothing was ever
+ * opened under, a session that has been ended, and one whose twelve hours are
+ * up. They are one answer to the visitor, and there is nothing any of them
+ * should be told beyond the sign-in page.
  */
-async function signedIn(
-  request: Request,
-  response: Response,
-  base: string,
-  connect: (key: string) => GatewayClient,
-  draw: (gateway: GatewayClient) => Promise<void>,
-): Promise<void> {
-  const key = keyIn(request);
-  if (key === null) {
-    response.redirect(303, `${base}/sign-in`);
-    return;
+async function whoseSession(request: Request, accounts: Accounts): Promise<Account | null> {
+  const now = new Date();
+  const live: Account[] = [];
+  for (const token of tokensIn(request)) {
+    const person = await accounts.whose(fingerprintOf(token), now);
+    if (person !== null) {
+      live.push(person);
+    }
   }
-  await draw(connect(key));
+
+  // Exactly one live session, or nobody. The case this is shaped around is a
+  // page on a sibling subdomain setting a cookie of this name on a broader
+  // path, so that the browser sends two; the `Path` this cookie is scoped to
+  // rules out the `__Host-` prefix that would refuse such a plant outright.
+  //
+  // A planted value that is not a session is ignored rather than refused, and
+  // that is the whole of the reasoning. Refusing on the mere presence of a
+  // second cookie reads as the safer rule and is worse: the cabinet can only
+  // clear the cookie on its own path, so the planted one survives every
+  // redirect and every fresh sign-in, and a merchant is locked out for good of
+  // the control that stops their selling. Anybody able to set a cookie could
+  // then take the cabinet away permanently, which is a heavier loss than the
+  // one being prevented.
+  //
+  // Two live sessions at once is the case where the ambiguity matters, and that
+  // is refused: working inside a session somebody else opened would put the
+  // wrong person on the record of who stopped the selling.
+  return live.length === 1 ? (live[0] ?? null) : null;
 }
+
+/**
+ * The person this request belongs to.
+ *
+ * Only ever called below the gate, which is what makes the absence a defect
+ * rather than a case: a handler running without a person behind it would be a
+ * page reachable by nobody in particular, and it should stop rather than draw
+ * something.
+ */
+function whoIs(request: Request): Account {
+  const person = people.get(request);
+  if (person === undefined) {
+    throw new Error(
+      "a handler below the gate ran with no session behind it, which means the gate was" +
+        " bypassed — this is a defect in how the routes are ordered, not a visitor's problem",
+    );
+  }
+  return person;
+}
+
+/** Who is looking at this page, and where the cabinet is mounted. */
+const viewing = (request: Request, base: string): Viewer => ({
+  base,
+  who: whoIs(request).email,
+});
+
+/**
+ * One line saying who changed something.
+ *
+ * ADR-0009 §7 is honest about what this is: a process log, not an audit trail.
+ * It rotates, it goes with the container, and it is written by the same process
+ * it is a record of. What it answers is "who stopped the selling", which before
+ * there was a person in the system could not be answered at all.
+ *
+ * What never goes in: a password, a session identifier, the merchant key. A log
+ * goes places the environment does not.
+ */
+const noted = (person: Account, did: string): void => {
+  console.log(`[cabinet] ${person.email} ${did}`);
+};
 
 /** What a merchant is shown when the gateway would not answer. */
 function trouble(response: Response, base: string, answer: Answer<unknown>): void {
@@ -346,8 +608,21 @@ function trouble(response: Response, base: string, answer: Answer<unknown>): voi
     return;
   }
   if (answer.status === 401) {
-    response.clearCookie(SESSION, { path: base === "" ? "/" : base });
-    response.redirect(303, `${base}/sign-in`);
+    // The key is the cabinet's own configuration now (ADR-0009 §4), so this is
+    // a broken cabinet rather than a person who should sign in again. Signing
+    // them out here would send them to type a password that cannot fix it and
+    // land them straight back on this page, with nothing said about the fault.
+    response
+      .status(502)
+      .type("html")
+      .send(
+        problemPage(
+          base,
+          "The gateway did not accept this cabinet's merchant key. Nothing you do here" +
+            " changes that: the key the cabinet is configured with has to be one the gateway" +
+            " knows. Your sign-in is unaffected.",
+        ),
+      );
     return;
   }
   if (answer.status === 0) {
@@ -366,6 +641,22 @@ function trouble(response: Response, base: string, answer: Answer<unknown>): voi
   response.status(answer.status).type("html").send(problemPage(base, answer.why));
 }
 
+/**
+ * Whether this is the body parser refusing a body, rather than a defect.
+ *
+ * `body-parser` marks its own refusals with a `type`, which is what this reads;
+ * the status it carries is not enough on its own, because an exception from
+ * anywhere else can have one too.
+ */
+function tooLarge(thrown: unknown): boolean {
+  return (
+    typeof thrown === "object" &&
+    thrown !== null &&
+    "type" in thrown &&
+    (thrown as { type: unknown }).type === "entity.too.large"
+  );
+}
+
 function problemPage(base: string, said: string): string {
   return bare(
     base,
@@ -379,17 +670,23 @@ function problemPage(base: string, said: string): string {
 }
 
 /**
- * The merchant's key out of the session cookie, or null.
+ * The session identifier out of the cookie, or null.
  *
  * The cookie header is parsed here rather than by a middleware, because one
  * cookie read in one place is smaller than a dependency and this is the only
- * cookie the cabinet has.
+ * cookie the cabinet reads.
+ *
+ * What comes out is 32 random bytes and nothing else — no address, no account,
+ * nothing that could be edited into somebody else's identity. Whose session it
+ * is is a question for the store.
  */
-function keyIn(request: Request): string | null {
+function tokensIn(request: Request): readonly string[] {
   const header = request.headers.cookie;
   if (header === undefined) {
-    return null;
+    return [];
   }
+
+  const found = new Set<string>();
   for (const pair of header.split(";")) {
     const at = pair.indexOf("=");
     if (at === -1) {
@@ -407,9 +704,21 @@ function keyIn(request: Request): string | null {
     try {
       value = decodeURIComponent(pair.slice(at + 1).trim());
     } catch {
-      return null;
+      continue;
     }
-    return value === "" ? null : value;
+    // Only values shaped like an identifier we would have issued, which costs
+    // nothing and means a pile of planted junk under this name is a pile of
+    // strings rather than a pile of queries.
+    //
+    // There is deliberately no cap on how many are considered. Any cap is a way
+    // in: a browser sends cookies with the longest path first and, among equal
+    // paths, the oldest first, so somebody able to plant cookies could push the
+    // merchant's own past the cap and lock them out of the control that stops
+    // their selling. What is left is bounded by the size of a header, and each
+    // one is a lookup by primary key on a small table.
+    if (looksLikeSessionToken(value)) {
+      found.add(value);
+    }
   }
-  return null;
+  return [...found];
 }

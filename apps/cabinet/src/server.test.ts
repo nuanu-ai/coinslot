@@ -13,6 +13,11 @@
  * card, a control that pauses it, a purchase that is refused afterwards. They
  * are deliberately not about markup: a page that changed its class names has
  * not broken a promise to anybody.
+ *
+ * The one thing that is not real here is the account store: it is the in-memory
+ * one, because `pnpm test` works without a database. It keeps the same promises
+ * the Postgres one does, and `accounts.db-test.ts` runs the same conformance
+ * suite against a real database to say so.
  */
 
 import { readFileSync } from "node:fs";
@@ -20,13 +25,35 @@ import type { AddressInfo } from "node:net";
 import type { Card } from "@coinslot/contracts";
 import { buyOverHttp, type Harness, harness, type Served, serve } from "@coinslot/gateway/testing";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { type Accounts, memoryAccounts } from "./accounts.js";
 import { loadConfig } from "./config.js";
+import { fingerprintOf, hashPassword } from "./credentials.js";
 import type { Answer } from "./gateway.js";
 import { buildApp } from "./server.js";
 
 const KEY = "a-merchant-key-long-enough";
 const asMerchant = { authorization: `Bearer ${KEY}` };
 const PAY_TO = "0x0000000000000000000000000000000000000001";
+
+/** The name the session cookie travels under. */
+const COOKIE = "coinslot_session";
+
+/** The person whose account every test in this file signs in as. */
+const PERSON = "dmitry@example.com";
+const PASSWORD = "a-password-nobody-guesses";
+/**
+ * Derived once for the whole file. A scrypt derivation is a tenth of a second
+ * by design, and every test here makes an account; done per test it would be
+ * the slowest thing in the suite for no extra promise kept.
+ */
+const PASSWORD_HASH = await hashPassword(PASSWORD);
+
+/** The store a cabinet under test signs people in against, with one account. */
+const withOneAccount = async (): Promise<Accounts> => {
+  const accounts = memoryAccounts();
+  await accounts.add(PERSON, PASSWORD_HASH, new Date());
+  return accounts;
+};
 
 const roomCard: Card = {
   merchant_item_id: "SKU 100/1",
@@ -59,8 +86,15 @@ interface Visit {
 interface Browser {
   get(path: string): Promise<Visit>;
   post(path: string, form?: Record<string, string>): Promise<Visit>;
-  /** Signs in with a key and follows the redirect, the way a browser does. */
-  signIn(key: string): Promise<Visit>;
+  /** A post of a body this cabinet's forms never send, as a scanner would. */
+  postRaw(path: string, contentType: string, body: string): Promise<Visit>;
+  /**
+   * Signs in as a person and follows the redirect, the way a browser does.
+   * The account every test in this file starts with is the default.
+   */
+  signIn(email?: string, password?: string): Promise<Visit>;
+  /** The identifier in this browser's session cookie, or null. */
+  sessionToken(): string | null;
   /** The same browser sending one exact cookie header instead of its jar. */
   withRawCookie(cookie: string): Browser;
   /** The same browser claiming its page came from somewhere else. */
@@ -72,6 +106,10 @@ interface Running {
   readonly harnessed: Harness;
   readonly gateway: Served;
   readonly browser: Browser;
+  /** The store the cabinet under test signs people in against. */
+  readonly accounts: Accounts;
+  /** A second browser on the same cabinet, for two people or two devices. */
+  another(): Promise<Browser>;
   /** Takes the gateway away, once. One test does this on purpose. */
   stopGateway(): Promise<void>;
 }
@@ -79,17 +117,25 @@ interface Running {
 let open: Running | null = null;
 
 const started = async (
-  options: { readonly base?: string; readonly gateway?: Record<string, string> } = {},
+  options: {
+    readonly base?: string;
+    readonly gateway?: Record<string, string>;
+    readonly cabinet?: Record<string, string>;
+  } = {},
 ): Promise<Running> => {
   const harnessed = await harness({ PAY_TO_ADDRESS: PAY_TO, ...options.gateway });
   const gateway = await serve(harnessed);
-  const browser = await visiting(gateway.url, options.base ?? "");
+  const accounts = await withOneAccount();
+  const basePath = options.base ?? "";
+  const { browser, url } = await visiting(gateway.url, basePath, accounts, options.cabinet);
   let stopped = false;
 
   open = {
     harnessed,
     gateway,
     browser,
+    accounts,
+    another: async () => await attachedTo(url, basePath),
     async stopGateway() {
       if (stopped) {
         return;
@@ -104,26 +150,43 @@ const started = async (
 
 afterEach(async () => {
   await open?.browser.close();
+  await open?.accounts.close();
   await open?.stopGateway();
   open = null;
 });
 
 /** The cabinet on a port, and a cookie jar of one. */
-async function visiting(gatewayUrl: string, basePath: string): Promise<Browser> {
+async function visiting(
+  gatewayUrl: string,
+  basePath: string,
+  accounts: Accounts,
+  environment: Record<string, string> = {},
+): Promise<{ browser: Browser; url: string }> {
   const app = buildApp(
-    loadConfig({ GATEWAY_URL: gatewayUrl, ...(basePath === "" ? {} : { BASE_PATH: basePath }) }),
+    loadConfig({
+      GATEWAY_URL: gatewayUrl,
+      DATABASE_URL: "postgres://nobody@nowhere:5432/unused",
+      MERCHANT_API_KEY: KEY,
+      ...(basePath === "" ? {} : { BASE_PATH: basePath }),
+      ...environment,
+    }),
+    { accounts },
   );
   const server = app.listen(0);
   await new Promise<void>((resolve) => server.once("listening", resolve));
   const { port } = server.address() as AddressInfo;
 
-  const browser = await attachedTo(`http://127.0.0.1:${port}`, basePath);
+  const url = `http://127.0.0.1:${port}`;
+  const browser = await attachedTo(url, basePath);
   return {
-    ...browser,
-    close: () =>
-      new Promise<void>((resolve, reject) => {
-        server.close((error) => (error === undefined ? resolve() : reject(error)));
-      }),
+    url,
+    browser: {
+      ...browser,
+      close: () =>
+        new Promise<void>((resolve, reject) => {
+          server.close((error) => (error === undefined ? resolve() : reject(error)));
+        }),
+    },
   };
 }
 
@@ -142,7 +205,11 @@ async function attachedTo(url: string, basePath: string): Promise<Browser> {
     method: string,
     path: string,
     form?: Record<string, string>,
-    sent: { readonly cookie?: string; readonly origin?: string } = {},
+    sent: {
+      readonly cookie?: string;
+      readonly origin?: string;
+      readonly raw?: { readonly contentType: string; readonly body: string };
+    } = {},
   ): Promise<Visit> => {
     const cookie = sent.cookie ?? [...jar].map(([name, value]) => `${name}=${value}`).join("; ");
     const answered = await fetch(`${url}${path}`, {
@@ -152,8 +219,10 @@ async function attachedTo(url: string, basePath: string): Promise<Browser> {
         ...(cookie === "" ? {} : { cookie }),
         ...(sent.origin === undefined ? {} : { origin: sent.origin }),
         ...(form === undefined ? {} : { "content-type": "application/x-www-form-urlencoded" }),
+        ...(sent.raw === undefined ? {} : { "content-type": sent.raw.contentType }),
       },
       ...(form === undefined ? {} : { body: new URLSearchParams(form).toString() }),
+      ...(sent.raw === undefined ? {} : { body: sent.raw.body }),
     });
 
     for (const line of answered.headers.getSetCookie()) {
@@ -180,10 +249,13 @@ async function attachedTo(url: string, basePath: string): Promise<Browser> {
   const browser: Browser = {
     get: (path) => call("GET", path),
     post: (path, form) => call("POST", path, form ?? {}),
-    async signIn(key) {
-      const posted = await call("POST", `${basePath}/sign-in`, { key });
+    postRaw: (path, contentType, body) =>
+      call("POST", path, undefined, { raw: { contentType, body } }),
+    async signIn(email = PERSON, password = PASSWORD) {
+      const posted = await call("POST", `${basePath}/sign-in`, { email, password });
       return posted.to === null ? posted : call("GET", posted.to);
     },
+    sessionToken: () => jar.get(COOKIE) ?? null,
     withRawCookie: (raw) => ({
       ...browser,
       get: (path) => call("GET", path, undefined, { cookie: raw }),
@@ -233,62 +305,256 @@ const purchasable = async (gateway: Served, itemId: string): Promise<boolean> =>
   402;
 
 describe("getting into the cabinet", () => {
-  it("sends a merchant who has not signed in to the sign-in and nowhere else", async () => {
-    const { browser } = await started();
+  it("shows a visitor with no session the sign-in and nothing else at all", async () => {
+    // ADR-0009 §5: the gate denies by default, and every address answers the
+    // same way whether or not there is a page behind it. A 404 for an address
+    // the cabinet does not serve would let a stranger read off which ones it
+    // does, and a route added later would have to remember to be guarded.
+    const { browser, gateway } = await started();
+    const itemId = await publish(gateway, roomCard);
 
-    const cards = await browser.get("/cards");
-    const root = await browser.get("/");
+    for (const path of ["/", "/cards", "/orders", "/receipts", "/password", "/nowhere"]) {
+      const answered = await browser.get(path);
+      expect(answered.status, path).toBe(303);
+      expect(answered.to, path).toBe("/sign-in");
+    }
 
-    expect(cards.status).toBe(303);
-    expect(cards.to).toBe("/sign-in");
-    expect(root.to).toBe("/sign-in");
+    // And nothing a form could ask for happens either. The negative control is
+    // the fact, not the answer: selling is still open afterwards.
+    const forged = await browser.post("/selling/pause");
+    expect(forged.status).toBe(303);
+    expect(forged.to).toBe("/sign-in");
+    expect(await purchasable(gateway, itemId)).toBe(true);
+
     expect(readable((await browser.get("/sign-in")).html)).toContain("Sign in");
   });
 
-  it("takes the merchant key and shows the cards", async () => {
+  it("takes an address and a password and shows the cards", async () => {
     const { browser, gateway } = await started();
     await publish(gateway, roomCard);
 
-    const cards = await browser.signIn(KEY);
+    const cards = await browser.signIn();
 
     expect(cards.status).toBe(200);
     expect(readable(cards.html)).toContain("A room for the night");
+    // And the page says who is looking at it, which is the whole point of there
+    // being a person in the system rather than a key.
+    expect(readable(cards.html)).toContain(PERSON);
   });
 
-  it("turns away a key the gateway does not accept, and keeps nobody signed in", async () => {
-    // A cabinet that accepted anything typed into the box would sign a merchant
-    // in and then show three empty screens, which reads as "you have no cards"
-    // rather than as "that key is wrong".
+  it("answers a wrong password and an address nobody has in exactly the same way", async () => {
+    // Different answers would make this form a list of who has an account here.
     const { browser } = await started();
 
-    const refused = await browser.post("/sign-in", { key: "not-the-merchants-key" });
+    const wrongPassword = await browser.post("/sign-in", {
+      email: PERSON,
+      password: "not-the-password",
+    });
+    const noSuchPerson = await browser.post("/sign-in", {
+      email: "stranger@example.com",
+      password: PASSWORD,
+    });
 
-    expect(refused.status).toBe(401);
-    expect(readable(refused.html)).toContain("That key was not accepted");
+    expect(wrongPassword.status).toBe(401);
+    expect(noSuchPerson.status).toBe(401);
+    expect(readable(wrongPassword.html)).toBe(readable(noSuchPerson.html));
+    expect(readable(wrongPassword.html)).toMatch(/do not match/i);
+    // Neither of them signed anybody in.
+    expect(wrongPassword.headers.getSetCookie()).toStrictEqual([]);
     expect((await browser.get("/cards")).to).toBe("/sign-in");
   });
 
-  it("keeps the key out of reach of a script and of another site", async () => {
-    // The session cookie is a working API key. HttpOnly keeps a script on the
-    // page from reading it; SameSite=Strict keeps another site from making the
-    // browser press "stop all selling" with it.
+  it("refuses a sign-in with a field missing rather than treating it as empty", async () => {
     const { browser } = await started();
 
-    const signedIn = await browser.post("/sign-in", { key: KEY });
+    for (const form of [{ email: PERSON }, { password: PASSWORD }, {}]) {
+      const refused = await browser.post("/sign-in", form as Record<string, string>);
+      expect(refused.status).toBe(400);
+      expect(refused.headers.getSetCookie()).toStrictEqual([]);
+    }
+  });
+
+  it("refuses a sign-in that is not a form rather than saying the cabinet is broken", async () => {
+    // Express leaves `body` undefined when the content type is not the one the
+    // form parser handles, so reading a field off it throws — and a request
+    // that is merely malformed lands on the page that says something here is
+    // broken, with a stack trace in the log for every scanner that ever posts
+    // JSON at this address.
+    const { browser } = await started();
+    // Signed in, or the password page is answered by the gate and this would
+    // never reach the handler it is about. It did not, at first: the mutation
+    // that undoes the fix survived, because a 303 from the gate is not a 500.
+    await browser.signIn();
+
+    for (const at of ["/sign-in", "/password"]) {
+      const answered = await browser.postRaw(at, "application/json", '{"email":"x"}');
+      expect(answered.status, at).not.toBe(500);
+      expect(answered.to, at).toBeNull();
+      expect(readable(answered.html), at).not.toContain("broken");
+    }
+  });
+
+  it("refuses a body larger than any of its forms without calling itself broken", async () => {
+    // The body parser runs above the gate, so a visitor with no session reaches
+    // it — and a refusal that lands on the internal-error page is both a wrong
+    // message and a way for a stranger to put a stack trace in the log on every
+    // request. Answered as what it is instead.
+    const { browser } = await started();
+
+    const answered = await browser.postRaw(
+      "/sign-in",
+      "application/x-www-form-urlencoded",
+      `email=${"x".repeat(30_000)}`,
+    );
+
+    expect(answered.status).toBe(413);
+    const text = readable(answered.html);
+    expect(text).not.toContain("broken");
+    expect(text).toMatch(/larger/i);
+  });
+
+  it("puts no key and no password into the cookie, and none on any page", async () => {
+    // The whole reason this decision exists: a merchant's API key used to be
+    // typed into a form and kept in a browser. Nothing here may carry one.
+    const { browser, gateway } = await started();
+    await publish(gateway, roomCard);
+
+    const signedIn = await browser.signIn();
+    const token = browser.sessionToken() ?? "";
+
+    expect(token).not.toBe("");
+    expect(token).not.toContain(KEY);
+    expect(token).not.toContain(PASSWORD);
+    for (const page of [signedIn, await browser.get("/orders"), await browser.get("/receipts")]) {
+      expect(page.html).not.toContain(KEY);
+      expect(page.html).not.toContain(PASSWORD);
+    }
+  });
+
+  it("keeps the session out of reach of a script and of another site", async () => {
+    const { browser } = await started();
+
+    const signedIn = await browser.post("/sign-in", { email: PERSON, password: PASSWORD });
     const cookie = signedIn.headers.getSetCookie().join(" ");
 
     expect(cookie).toContain("HttpOnly");
     expect(cookie).toMatch(/SameSite=Strict/i);
   });
 
-  it("signs a merchant out again", async () => {
-    const { browser, gateway } = await started();
+  it("marks the cookie Secure where the cabinet is served over https, and only there", async () => {
+    // The one line a deployment has to change, and the one most likely to be
+    // forgotten: without it a merchant's session travels in the clear. It is
+    // off by default because the cabinet is developed over plain http, where a
+    // Secure cookie is never sent back and nobody can sign in at all.
+    const overHttps = await started({ cabinet: { COOKIE_SECURE: "true" } });
+    const marked = await overHttps.browser.post("/sign-in", {
+      email: PERSON,
+      password: PASSWORD,
+    });
+
+    expect(marked.headers.getSetCookie().join(" ")).toMatch(/;\s*Secure/i);
+    await overHttps.browser.close();
+    await overHttps.accounts.close();
+    await overHttps.stopGateway();
+
+    const overHttp = await started();
+    const plain = await overHttp.browser.post("/sign-in", { email: PERSON, password: PASSWORD });
+
+    expect(plain.headers.getSetCookie().join(" ")).not.toMatch(/;\s*Secure/i);
+  });
+
+  it("gives a session twelve hours and not a day, an hour or a year", async () => {
+    // ADR-0009 §6. The store honours whatever it is handed and the contract
+    // suite says so; this is the only place the number itself is written down,
+    // and a typo in it is a session that lasts a year.
+    const { browser, accounts } = await started();
+    const signedIn = await browser.post("/sign-in", { email: PERSON, password: PASSWORD });
+    const at = Date.now();
+    const held = fingerprintOf(browser.sessionToken() ?? "");
+    const twelveHours = 12 * 60 * 60 * 1_000;
+
+    // What the browser is told to keep the cookie for.
+    const maxAge = /Max-Age=(\d+)/i.exec(signedIn.headers.getSetCookie().join(" "))?.[1];
+    expect(Number(maxAge)).toBe(twelveHours / 1_000);
+
+    // And what the store will answer, which is the one that decides. A minute
+    // of slack on each side, because the session opened a moment before `at`.
+    await expect(accounts.whose(held, new Date(at + twelveHours - 60_000))).resolves.not.toBeNull();
+    await expect(accounts.whose(held, new Date(at + twelveHours + 60_000))).resolves.toBeNull();
+  });
+
+  it("keeps a person signed in when the merchant key is rotated under them", async () => {
+    // The promise this whole decision was written for. Before it, the key in
+    // the cabinet was the person's password: rotating it signed the human out
+    // and broke the merchant's own code in the same instant, and neither could
+    // be done alone. Here the key changes and the session does not notice.
+    const { browser, accounts, gateway } = await started();
     await publish(gateway, roomCard);
-    await browser.signIn(KEY);
+    await browser.signIn();
+    const held = browser.sessionToken() ?? "";
+
+    // The same cabinet, restarted with a different key — and the same store,
+    // because the sessions are rows and not something the process holds.
+    const rotated = await visiting(gateway.url, "", accounts, {
+      MERCHANT_API_KEY: "a-different-merchant-key",
+    });
+    try {
+      const after = await rotated.browser.withRawCookie(`${COOKIE}=${held}`).get("/cards");
+
+      // Still signed in: the session survived a key it never held.
+      expect(after.status).not.toBe(303);
+      expect(after.to).toBeNull();
+      // The gateway does not know the new key, so the cabinet says its own key
+      // is not accepted — and says nothing about the person's sign-in.
+      expect(after.status).toBe(502);
+      expect(readable(after.html)).toMatch(/key/i);
+      expect(after.headers.getSetCookie().join(" ")).not.toContain(`${COOKIE}=;`);
+    } finally {
+      await rotated.browser.close();
+    }
+  });
+
+  it("clears the old cookie that used to hold a live merchant key", async () => {
+    // Everybody who ever signed into the previous cabinet has one of these in
+    // their browser, and it is a working API key. Nothing reads it any more, so
+    // leaving it would merely be untidy — except that what it holds is the
+    // credential this whole decision exists to get out of browsers.
+    const { browser } = await started();
+
+    const gate = await browser.get("/sign-in");
+
+    expect(gate.headers.getSetCookie().join(" ")).toContain("coinslot_key=;");
+  });
+
+  it("turns away a sign-in posted from another site", async () => {
+    // Signing somebody into an account of the attacker's choosing is a way of
+    // getting a merchant to do their work in a session somebody else can read.
+    const { browser } = await started();
+
+    const forged = await browser
+      .from("https://evil.example.com")
+      .post("/sign-in", { email: PERSON, password: PASSWORD });
+
+    expect(forged.status).toBe(403);
+    expect(forged.headers.getSetCookie()).toStrictEqual([]);
+  });
+
+  it("signs a merchant out, and the session they left with is dead", async () => {
+    // Clearing the cookie is not signing out. Anybody who copied the cookie —
+    // out of a shared machine, out of a proxy log, out of a browser somebody
+    // else has since sat down at — would still be signed in with it.
+    const { browser, gateway, accounts } = await started();
+    await publish(gateway, roomCard);
+    await browser.signIn();
+    const token = browser.sessionToken() ?? "";
 
     await browser.post("/sign-out");
 
     expect((await browser.get("/cards")).to).toBe("/sign-in");
+    // The row is gone, and replaying the exact cookie gets nowhere.
+    await expect(accounts.whose(fingerprintOf(token), new Date())).resolves.toBeNull();
+    const replayed = await browser.withRawCookie(`${COOKIE}=${token}`).get("/cards");
+    expect(replayed.to).toBe("/sign-in");
   });
 
   it("hangs every link and form off the path it is mounted at", async () => {
@@ -298,12 +564,25 @@ describe("getting into the cabinet", () => {
     const { browser, gateway } = await started({ base: "/cabinet" });
     await publish(gateway, roomCard);
 
-    const page = await browser.signIn(KEY);
+    const page = await browser.signIn();
 
     expect((await browser.get("/cabinet/")).to).toBe("/cabinet/cards");
+    // And without the trailing slash, which is what a person types and what
+    // Caddy passes through as its own exact path.
+    expect((await browser.get("/cabinet")).to).toBe("/cabinet/cards");
     expect(page.html).toContain('href="/cabinet/orders"');
     expect(page.html).toContain('action="/cabinet/selling/pause"');
     expect(page.html).toContain('href="/cabinet/coinslot.css"');
+  });
+
+  it("sends a stranger at the bare mount point to the sign-in, not to a page", async () => {
+    // The address a person types first. Above the gate this used to read the
+    // cookie itself; below it, it is guarded by being below it — and this is
+    // the assertion that says so for the one address most likely to be typed.
+    const { browser } = await started({ base: "/cabinet" });
+
+    expect((await browser.get("/cabinet")).to).toBe("/cabinet/sign-in");
+    expect((await browser.get("/cabinet/")).to).toBe("/cabinet/sign-in");
   });
 
   it("serves one stylesheet whose two themes define the same tokens", async () => {
@@ -388,7 +667,7 @@ describe("the cards screen", () => {
     await publish(gateway, roomCard);
     await publish(gateway, esimCard);
 
-    const text = readable((await browser.signIn(KEY)).html);
+    const text = readable((await browser.signIn()).html);
 
     expect(text).toContain("A room for the night");
     expect(text).toContain("SKU 100/1");
@@ -413,7 +692,7 @@ describe("the cards screen", () => {
       fulfill_deadline_seconds: 3_600,
     });
 
-    const text = readable((await browser.signIn(KEY)).html);
+    const text = readable((await browser.signIn()).html);
 
     expect(text).toContain("Price asked at purchase");
     expect(text).toContain("delivery within 1 hour");
@@ -422,7 +701,7 @@ describe("the cards screen", () => {
   it("says so plainly when a merchant has published nothing", async () => {
     const { browser } = await started();
 
-    const text = readable((await browser.signIn(KEY)).html);
+    const text = readable((await browser.signIn()).html);
 
     expect(text).toContain("not published a card yet");
   });
@@ -440,7 +719,7 @@ describe("the cards screen", () => {
       title: 'Tom & Jerry <the "box set">',
     });
 
-    const page = (await browser.signIn(KEY)).html;
+    const page = (await browser.signIn()).html;
 
     // Not one character of the title reaches the page as markup...
     expect(page).not.toContain("Jerry <");
@@ -457,7 +736,7 @@ describe("the cards screen", () => {
     const { browser, gateway } = await started();
     const room = await publish(gateway, roomCard);
     const esim = await publish(gateway, esimCard);
-    await browser.signIn(KEY);
+    await browser.signIn();
 
     const paused = await browser.post(`/cards/${encodeURIComponent(room)}/pause`);
     const text = readable((await browser.get("/cards")).html);
@@ -477,7 +756,7 @@ describe("the cards screen", () => {
   it("puts a paused card back on sale", async () => {
     const { browser, gateway } = await started();
     const itemId = await publish(gateway, roomCard);
-    await browser.signIn(KEY);
+    await browser.signIn();
     await browser.post(`/cards/${encodeURIComponent(itemId)}/pause`);
 
     await browser.post(`/cards/${encodeURIComponent(itemId)}/resume`);
@@ -489,7 +768,7 @@ describe("the cards screen", () => {
   it("stops all selling from one control, and starts it again", async () => {
     const { browser, gateway } = await started();
     const itemId = await publish(gateway, roomCard);
-    await browser.signIn(KEY);
+    await browser.signIn();
 
     await browser.post("/selling/pause");
     const stopped = readable((await browser.get("/cards")).html);
@@ -511,7 +790,7 @@ describe("the cards screen", () => {
     // offering a control that does nothing.
     const { browser, gateway } = await started();
     await publish(gateway, roomCard);
-    await browser.signIn(KEY);
+    await browser.signIn();
 
     await browser.post("/selling/pause");
     const html = (await browser.get("/cards")).html;
@@ -525,7 +804,7 @@ describe("the cards screen", () => {
     // to go back on it.
     const { browser, gateway } = await started();
     const itemId = await publish(gateway, roomCard);
-    await browser.signIn(KEY);
+    await browser.signIn();
     await browser.post(`/cards/${encodeURIComponent(itemId)}/pause`);
 
     await publish(gateway, { ...roomCard, price: { amount: "90.00", currency: "USD" } });
@@ -545,7 +824,7 @@ describe("a merchant who has left", () => {
   it("is not offered a button that puts them back on sale", async () => {
     const { browser, gateway, harnessed } = await started();
     await publish(gateway, roomCard);
-    await browser.signIn(KEY);
+    await browser.signIn();
     await harnessed.store.setSelling("departed");
 
     const page = (await browser.get("/cards")).html;
@@ -570,7 +849,7 @@ describe("a merchant who has left", () => {
     // answer", a merchant goes and checks a service that is running.
     const { browser, gateway, harnessed } = await started();
     await publish(gateway, roomCard);
-    await browser.signIn(KEY);
+    await browser.signIn();
     await harnessed.store.setSelling("departed");
 
     const refused = await browser.post("/selling/resume");
@@ -589,7 +868,7 @@ describe("the orders screen", () => {
     await buyOverHttp(harnessed, gateway, itemId, {
       onOrder: () => ({ delivered: { access_code: "SESAME" } }),
     });
-    await browser.signIn(KEY);
+    await browser.signIn();
 
     const text = readable((await browser.get("/orders")).html);
 
@@ -607,7 +886,7 @@ describe("the orders screen", () => {
     await buyOverHttp(harnessed, gateway, itemId, {
       onOrder: () => ({ delivered: { access_code: "SESAME" } }),
     });
-    await browser.signIn(KEY);
+    await browser.signIn();
 
     const all = readable((await browser.get("/orders")).html);
     const openOnly = readable((await browser.get("/orders?open=true")).html);
@@ -628,7 +907,7 @@ describe("the orders screen", () => {
     const { browser, gateway, harnessed } = await started();
     const itemId = await publish(gateway, esimCard);
     await buyOverHttp(harnessed, gateway, itemId, { onOrder: () => ({ accepted: {} }) });
-    await browser.signIn(KEY);
+    await browser.signIn();
 
     const text = readable((await browser.get("/orders?open=true")).html);
 
@@ -644,7 +923,7 @@ describe("the orders screen", () => {
     // fifth gate asks about.
     const { browser, gateway } = await started();
     await publish(gateway, roomCard);
-    await browser.signIn(KEY);
+    await browser.signIn();
 
     const text = readable((await browser.get("/orders")).html);
 
@@ -655,7 +934,7 @@ describe("the orders screen", () => {
   it("says there are no orders rather than showing an empty table", async () => {
     const { browser, gateway } = await started();
     await publish(gateway, roomCard);
-    await browser.signIn(KEY);
+    await browser.signIn();
 
     expect(readable((await browser.get("/orders")).html)).toContain("No orders yet");
   });
@@ -685,7 +964,7 @@ describe("the orders screen", () => {
       { timeout: 2_000, interval: 5 },
     );
 
-    await browser.signIn(KEY);
+    await browser.signIn();
     const text = readable((await browser.get("/orders?open=true")).html);
 
     expect(text).toContain("refund due");
@@ -704,7 +983,7 @@ describe("the receipts screen", () => {
     await buyOverHttp(harnessed, gateway, itemId, {
       onOrder: () => ({ delivered: { access_code: "SESAME" } }),
     });
-    await browser.signIn(KEY);
+    await browser.signIn();
 
     const text = readable((await browser.get("/receipts")).html);
 
@@ -736,7 +1015,7 @@ describe("the receipts screen", () => {
     await buyOverHttp(harnessed, gateway, itemId, {
       onOrder: () => ({ delivered: { access_code: "SESAME" } }),
     });
-    await browser.signIn(KEY);
+    await browser.signIn();
 
     const receipts = readable((await browser.get("/receipts")).html);
     const orders = readable((await browser.get("/orders")).html);
@@ -762,7 +1041,7 @@ describe("the receipts screen", () => {
     // owed. The page says so in words and names where those orders are.
     const { browser, gateway } = await started();
     await publish(gateway, roomCard);
-    await browser.signIn(KEY);
+    await browser.signIn();
 
     const text = readable((await browser.get("/receipts")).html);
 
@@ -785,7 +1064,7 @@ describe("the receipts screen", () => {
     const { browser, gateway, harnessed } = await started();
     const itemId = await publish(gateway, esimCard);
     await buyOverHttp(harnessed, gateway, itemId, { onOrder: () => ({ accepted: {} }) });
-    await browser.signIn(KEY);
+    await browser.signIn();
 
     const text = readable((await browser.get("/receipts")).html);
 
@@ -805,7 +1084,7 @@ describe("the receipts screen", () => {
   it("says nothing has been sold rather than showing a summary of nothing", async () => {
     const { browser, gateway } = await started();
     await publish(gateway, roomCard);
-    await browser.signIn(KEY);
+    await browser.signIn();
 
     const text = readable((await browser.get("/receipts")).html);
 
@@ -822,7 +1101,7 @@ describe("the receipts screen", () => {
     await buyOverHttp(harnessed, gateway, itemId, {
       onOrder: () => ({ delivered: { access_code: "SESAME" } }),
     });
-    await browser.signIn(KEY);
+    await browser.signIn();
 
     const text = readable((await browser.get("/receipts")).html);
 
@@ -847,55 +1126,59 @@ describe("when something goes wrong that the merchant has to get out of", () => 
   const cabinetAnswering = async (
     reply: () => Promise<Answer<never>>,
   ): Promise<{ browser: Browser; close: () => Promise<void> }> => {
-    let calls = 0;
-    const app = buildApp(loadConfig({ GATEWAY_URL: "http://127.0.0.1:1" }), () => {
-      const answer = async () => {
-        calls += 1;
-        // The first call is the sign-in check, which has to succeed or there is
-        // no session to lose.
-        return calls === 1
-          ? ({ ok: true, document: { selling: "open", cards: [] } } as Answer<never>)
-          : await reply();
-      };
-      return {
-        cards: answer,
-        pauseCard: answer,
-        setSelling: answer,
-        orders: answer,
-        receipts: answer,
-      } as never;
-    });
+    const answer = async () => await reply();
+    const accounts = await withOneAccount();
+    const app = buildApp(
+      loadConfig({
+        GATEWAY_URL: "http://127.0.0.1:1",
+        DATABASE_URL: "postgres://nobody@nowhere:5432/unused",
+        MERCHANT_API_KEY: KEY,
+      }),
+      {
+        accounts,
+        gateway: {
+          cards: answer,
+          pauseCard: answer,
+          setSelling: answer,
+          orders: answer,
+          receipts: answer,
+        } as never,
+      },
+    );
     const server = app.listen(0);
     await new Promise<void>((resolve) => server.once("listening", resolve));
     const { port } = server.address() as AddressInfo;
     return {
       browser: await attachedTo(`http://127.0.0.1:${port}`, ""),
-      close: () =>
-        new Promise<void>((resolve, reject) => {
+      close: async () => {
+        await accounts.close();
+        await new Promise<void>((resolve, reject) => {
           server.close((error) => (error === undefined ? resolve() : reject(error)));
-        }),
+        });
+      },
     };
   };
 
-  it("sends a merchant back to sign in when their key stops being accepted", async () => {
-    // A key revoked while a tab was open. Without this the merchant clicks a
-    // cabinet that answers nothing and is never told why.
+  it("does not sign a person out when it is the cabinet's own key the gateway refuses", async () => {
+    // The key is the cabinet's configuration now, not the person's password
+    // (ADR-0009 §4). Signing them out over a 401 would send them to type a
+    // password that cannot fix it, and they would land straight back here — a
+    // loop with no way out and nothing said about the actual fault.
     const { browser, close } = await cabinetAnswering(async () => ({
       ok: false,
       status: 401,
       why: "this call is behind the merchant's key",
     }));
     try {
-      // The sign-in itself succeeds and then the very next page meets the 401,
-      // which is what a key revoked while a tab was open looks like.
-      const met = await browser.signIn(KEY);
+      const met = await browser.signIn();
 
-      expect(met.to).toBe("/sign-in");
-      // The dead cookie is cleared on the way, so the merchant lands on a
-      // sign-in they can use rather than being bounced straight back out.
-      expect(met.headers.getSetCookie().join(" ")).toContain("coinslot_key=;");
-      expect((await browser.get("/cards")).to).toBe("/sign-in");
-      expect(readable((await browser.get("/sign-in")).html)).toContain("Sign in");
+      expect(met.status).toBe(502);
+      const text = readable(met.html);
+      expect(text).toMatch(/key/i);
+      expect(text).not.toContain("Sign in");
+      // Still signed in: the person is fine, the cabinet is not.
+      expect(browser.sessionToken()).not.toBeNull();
+      expect(met.headers.getSetCookie().join(" ")).not.toContain(`${COOKIE}=;`);
     } finally {
       await close();
     }
@@ -910,7 +1193,7 @@ describe("when something goes wrong that the merchant has to get out of", () => 
       throw new Error("the answer was not a document this contract knows");
     });
     try {
-      await browser.signIn(KEY);
+      await browser.signIn();
 
       const answered = await browser.post("/selling/pause");
 
@@ -924,7 +1207,10 @@ describe("when something goes wrong that the merchant has to get out of", () => 
   });
 
   it("says there is no such page rather than answering an address with nothing", async () => {
+    // Only to somebody who is signed in. A stranger is told nothing about which
+    // addresses exist here (ADR-0009 §5), which is the test above this one.
     const { browser } = await started();
+    await browser.signIn();
 
     const answered = await browser.get("/nowhere");
 
@@ -938,19 +1224,102 @@ describe("when something goes wrong that the merchant has to get out of", () => 
     // throws again, with the cookie HttpOnly and no way to clear it from there.
     const { browser } = await started();
 
-    const answered = await browser.withRawCookie("coinslot_key=%zz").get("/cards");
+    for (const raw of [
+      `${COOKIE}=%zz`,
+      `${COOKIE}=`,
+      "=nonsense",
+      `${COOKIE}=made-up-identifier`,
+    ]) {
+      const answered = await browser.withRawCookie(raw).get("/cards");
+      expect(answered.status, raw).toBe(303);
+      expect(answered.to, raw).toBe("/sign-in");
+    }
+  });
+
+  it("cannot be signed out by a second cookie somebody planted", async () => {
+    // A page on a sibling subdomain can set a cookie of this name on a broader
+    // path, and the browser then sends two of them. The cabinet can only clear
+    // the one on its own path, so a rule that refused on the mere presence of a
+    // second would lock the merchant out for good — every redirect and every
+    // fresh sign-in would meet the planted cookie again, and anybody able to
+    // set a cookie could take away the control that stops their selling.
+    const { browser } = await started();
+    await browser.signIn();
+    const mine = browser.sessionToken() ?? "";
+    expect(mine).not.toBe("");
+
+    for (const raw of [
+      `${COOKIE}=${mine}; ${COOKIE}=somebody-elses`,
+      `${COOKIE}=somebody-elses; ${COOKIE}=${mine}`,
+      `${COOKIE}=a; ${COOKIE}=b; ${COOKIE}=${mine}`,
+    ]) {
+      const answered = await browser.withRawCookie(raw).get("/cards");
+      expect(answered.status, raw).toBe(200);
+      expect(readable(answered.html), raw).toContain(PERSON);
+    }
+  });
+
+  it("asks the store nothing about a cookie that is not shaped like a session", async () => {
+    // A browser carrying a pile of junk under this name must be a pile of
+    // strings and not a pile of queries. There is no cap on how many are
+    // considered — a cap is a way to push the merchant's own cookie out of
+    // sight and lock them out — so the shape is what does the work, and it
+    // costs nothing.
+    const { browser, accounts } = await started();
+    await browser.signIn();
+    const mine = browser.sessionToken() ?? "";
+    let asked = 0;
+    const counting = {
+      ...accounts,
+      whose: (...given: Parameters<Accounts["whose"]>) => {
+        asked += 1;
+        return accounts.whose(...given);
+      },
+    };
+    // The counting store is what the cabinet under test is built on, so what is
+    // measured is the cabinet's own behaviour and not the test's arithmetic.
+    const own = await visiting("http://127.0.0.1:1", "", counting as Accounts);
+    try {
+      const junk = Array.from({ length: 50 }, (_, at) => `${COOKIE}=planted-${at}`).join("; ");
+      await own.browser.withRawCookie(`${junk}; ${COOKIE}=${mine}`).get("/cards");
+
+      expect(asked).toBe(1);
+    } finally {
+      await own.browser.close();
+    }
+  });
+
+  it("refuses to choose when two of the cookies are live sessions", async () => {
+    // The case where the ambiguity actually matters: working inside a session
+    // somebody else opened would put the wrong person on the one record of who
+    // stopped the selling. Two live ones is nobody.
+    const { browser, another } = await started();
+    await browser.signIn();
+    const mine = browser.sessionToken() ?? "";
+    const telephone = await another();
+    await telephone.signIn();
+    const theirs = telephone.sessionToken() ?? "";
+
+    expect(mine).not.toBe(theirs);
+    const answered = await browser
+      .withRawCookie(`${COOKIE}=${mine}; ${COOKIE}=${theirs}`)
+      .get("/cards");
 
     expect(answered.status).toBe(303);
     expect(answered.to).toBe("/sign-in");
+    // And either one on its own is still a session: this refuses the choice,
+    // not the sessions.
+    expect((await browser.withRawCookie(`${COOKIE}=${mine}`).get("/cards")).status).toBe(200);
+    expect((await browser.withRawCookie(`${COOKIE}=${theirs}`).get("/cards")).status).toBe(200);
   });
 
   it("turns away a form post that came from another site", async () => {
-    // The session cookie is a live API key and this form stops all selling.
-    // SameSite=Strict is the main lock; this is the second, because SameSite is
-    // scoped to the registrable domain and a sibling subdomain is "same site".
+    // The session this form rides on can stop all selling. SameSite=Strict is
+    // the main lock; this is the second, because SameSite is scoped to the
+    // registrable domain and a sibling subdomain is "same site".
     const { browser, gateway } = await started();
     const itemId = await publish(gateway, roomCard);
-    await browser.signIn(KEY);
+    await browser.signIn();
 
     const forged = await browser.from("https://evil.example.com").post("/selling/pause");
 
@@ -965,12 +1334,249 @@ describe("when the gateway will not answer", () => {
     // one of them means the merchant should do something.
     const { browser, gateway, stopGateway } = await started();
     await publish(gateway, roomCard);
-    await browser.signIn(KEY);
+    await browser.signIn();
     await stopGateway();
 
     const answered = await browser.get("/cards");
 
     expect(answered.status).toBe(502);
     expect(readable(answered.html)).toContain("The gateway did not answer");
+  });
+});
+
+describe("a session that is ended while somebody is looking at a page", () => {
+  it("stops the open tab from doing anything, and does not do what it asked", async () => {
+    // The reason a session is a row at all (ADR-0009 §3). Before this, ending
+    // one meant rotating the merchant's key — which also stops the merchant's
+    // own code, in the same instant.
+    const { browser, gateway, accounts } = await started();
+    const itemId = await publish(gateway, roomCard);
+    await browser.signIn();
+    expect((await browser.get("/cards")).status).toBe(200);
+
+    await accounts.endEveryFor(PERSON);
+
+    const refused = await browser.post("/selling/pause");
+    expect(refused.status).toBe(303);
+    expect(refused.to).toBe("/sign-in");
+    // The negative control is the fact rather than the answer: the switch the
+    // tab pressed did not move.
+    expect(await purchasable(gateway, itemId)).toBe(true);
+    expect((await browser.get("/cards")).to).toBe("/sign-in");
+  });
+
+  it("leaves the person's other session alone", async () => {
+    // One session at a time is the promise. Ending every one of them at once is
+    // what the merchant key already did, and it is what this replaces.
+    const { browser, gateway, another, accounts } = await started();
+    await publish(gateway, roomCard);
+    await browser.signIn();
+    const telephone = await another();
+    await telephone.signIn();
+
+    await accounts.end(fingerprintOf(browser.sessionToken() ?? ""));
+
+    expect((await browser.get("/cards")).to).toBe("/sign-in");
+    expect((await telephone.get("/cards")).status).toBe(200);
+  });
+
+  it("refuses a session whose time is up, without anybody ending it", async () => {
+    // Twelve hours from the moment it opens, never extended (ADR-0009 §6). The
+    // row is written by the cabinet, so this is the cabinet's own clock being
+    // read rather than a test's idea of one: the session is opened directly
+    // with a moment in the past and the browser is handed its identifier.
+    const { browser, accounts } = await started();
+    const person = await accounts.byEmail(PERSON);
+    const long_ago = new Date(Date.now() - 24 * 60 * 60 * 1_000);
+    await accounts.open(
+      fingerprintOf("a-stale-identifier"),
+      person?.id ?? "",
+      long_ago,
+      new Date(+long_ago + 12 * 60 * 60 * 1_000),
+    );
+
+    const answered = await browser.withRawCookie(`${COOKIE}=a-stale-identifier`).get("/cards");
+
+    expect(answered.status).toBe(303);
+    expect(answered.to).toBe("/sign-in");
+  });
+
+  it("is a fresh session every time, so signing in twice does not reuse one identifier", async () => {
+    const { browser, another } = await started();
+    await browser.signIn();
+    const first = browser.sessionToken();
+    const telephone = await another();
+    await telephone.signIn();
+
+    expect(first).not.toBeNull();
+    expect(telephone.sessionToken()).not.toBe(first);
+  });
+});
+
+describe("changing a password from inside the cabinet", () => {
+  it("takes the new one, and the old one stops working", async () => {
+    // The password a person starts with is one we generated and handed over
+    // through some channel or other. Without this page it stays that password
+    // for as long as the account exists.
+    const { browser } = await started();
+    await browser.signIn();
+
+    const changed = await browser.post("/password", {
+      current: PASSWORD,
+      fresh: "a-password-of-their-own",
+    });
+
+    expect(changed.status).toBe(303);
+    expect((await browser.signIn(PERSON, PASSWORD)).status, "the old password").toBe(401);
+    expect((await browser.signIn(PERSON, "a-password-of-their-own")).status).toBe(200);
+  });
+
+  it("ends every session that person had, including the one that changed it", async () => {
+    // A password is changed because the old one is not trusted. Every session
+    // opened with it has to go, and the person is asked for the new one.
+    const { browser, another } = await started();
+    await browser.signIn();
+    const telephone = await another();
+    await telephone.signIn();
+
+    await browser.post("/password", { current: PASSWORD, fresh: "a-password-of-their-own" });
+
+    expect((await telephone.get("/cards")).to).toBe("/sign-in");
+    expect((await browser.get("/cards")).to).toBe("/sign-in");
+    // And the new one works.
+    expect((await browser.signIn(PERSON, "a-password-of-their-own")).status).toBe(200);
+  });
+
+  it("refuses to change it without the current one", async () => {
+    // Otherwise an unattended tab is a way to take the account, not merely to
+    // use it while it is open.
+    const { browser } = await started();
+    await browser.signIn();
+
+    const refused = await browser.post("/password", {
+      current: "not-the-password",
+      fresh: "a-password-of-their-own",
+    });
+
+    expect(refused.status).toBe(401);
+    expect(readable(refused.html)).toMatch(/current password/i);
+    // Still the old one, and still signed in.
+    expect((await browser.get("/cards")).status).toBe(200);
+  });
+
+  it("refuses a new password too short to be worth having", async () => {
+    // There is no rate limit on the sign-in form by choice (ADR-0009), and a
+    // floor on the password is the other half of that argument.
+    const { browser } = await started();
+    await browser.signIn();
+
+    const refused = await browser.post("/password", { current: PASSWORD, fresh: "short" });
+
+    expect(refused.status).toBe(400);
+    expect(readable(refused.html)).toMatch(/12 characters/);
+    expect((await browser.get("/cards")).status).toBe(200);
+  });
+
+  it("never puts either password on the page it answers with", async () => {
+    const { browser } = await started();
+    await browser.signIn();
+
+    const refused = await browser.post("/password", { current: PASSWORD, fresh: "short" });
+
+    expect(refused.html).not.toContain(PASSWORD);
+    expect(refused.html).not.toContain("short");
+  });
+});
+
+describe("what the cabinet writes down about what people do", () => {
+  /** Everything the process said while `during` ran. */
+  const logged = async (during: () => Promise<void>): Promise<string> => {
+    const lines: string[] = [];
+    const collect = (...parts: unknown[]) => lines.push(parts.map(String).join(" "));
+    const log = vi.spyOn(console, "log").mockImplementation(collect);
+    const error = vi.spyOn(console, "error").mockImplementation(collect);
+    try {
+      await during();
+    } finally {
+      log.mockRestore();
+      error.mockRestore();
+    }
+    return lines.join("\n");
+  };
+
+  it("names the person who changed something, not just that something changed", async () => {
+    // ADR-0009 §7. This is not an audit trail and the decision says so — but a
+    // merchant asking who stopped their selling has to be answerable at all,
+    // and with one key and no person there was nothing to answer with.
+    const { browser, gateway } = await started();
+    const itemId = await publish(gateway, roomCard);
+    await browser.signIn();
+
+    const said = await logged(async () => {
+      await browser.post("/selling/pause");
+      await browser.post(`/cards/${encodeURIComponent(itemId)}/pause`);
+      await browser.post(`/cards/${encodeURIComponent(itemId)}/resume`);
+      await browser.post("/selling/resume");
+    });
+
+    // All four switches, not one of them: the ADR says every action that
+    // changes something names the person, and a merchant asking who put their
+    // selling back on is asking the same question as who stopped it.
+    expect(said).toMatch(/stopped all selling/i);
+    expect(said).toMatch(/started selling again/i);
+    expect(said).toMatch(/paused the card/i);
+    expect(said).toMatch(/resumed the card/i);
+    for (const line of said.split("\n").filter((one) => /selling|card/.test(one))) {
+      expect(line, line).toContain(PERSON);
+    }
+    expect(said).toContain(itemId);
+  });
+
+  it("writes down neither a password, nor a session identifier, nor the merchant key", async () => {
+    // A log goes places the environment does not: a terminal, a file, whatever
+    // collects it. Any of these three in there is the credential loose again.
+    const { browser, gateway } = await started();
+    const itemId = await publish(gateway, roomCard);
+
+    // Read out inside the journey and not after it. Taken afterwards it is
+    // null, because the last two steps end the session — and an assertion
+    // guarded by "if we have one" is an assertion that never runs. That is how
+    // this test passed while the cabinet logged the identifier on every
+    // sign-in, and it is the reason for the plain `expect` below.
+    let token = "";
+
+    const said = await logged(async () => {
+      await browser.post("/sign-in", { email: PERSON, password: "not-the-password" });
+      await browser.signIn();
+      token = browser.sessionToken() ?? "";
+      await browser.post("/selling/pause");
+      await browser.post(`/cards/${encodeURIComponent(itemId)}/pause`);
+      await browser.post("/password", { current: PASSWORD, fresh: "a-password-of-their-own" });
+      await browser.post("/sign-out");
+    });
+
+    expect(token).not.toBe("");
+    expect(said).not.toContain(token);
+    expect(said).not.toContain(PASSWORD);
+    expect(said).not.toContain("a-password-of-their-own");
+    expect(said).not.toContain("not-the-password");
+    expect(said).not.toContain(KEY);
+    expect(said).not.toContain(PASSWORD_HASH);
+  });
+
+  it("does not write down an address somebody merely typed at the sign-in", async () => {
+    // The email box is where a password lands when somebody types into the
+    // wrong field, and a refused sign-in that echoed it would put that password
+    // in the log. An address we do have an account for is named, because that
+    // is a real account being attacked.
+    const { browser } = await started();
+
+    const said = await logged(async () => {
+      await browser.post("/sign-in", { email: "hunter2-typed-in-the-wrong-box", password: "x" });
+      await browser.post("/sign-in", { email: PERSON, password: "not-the-password" });
+    });
+
+    expect(said).not.toContain("hunter2-typed-in-the-wrong-box");
+    expect(said).toContain(PERSON);
   });
 });

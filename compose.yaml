@@ -33,6 +33,18 @@
 # tables they empty and the schemas they drop, so each pulls the ground out from
 # under the other. One run at a time, per database.
 #
+# Nobody can sign into the cabinet until somebody makes an account. There is no
+# sign-up page and no reset by mail (ADR-0009): one merchant, and we make the
+# account by hand. One command, against the stack that is already up, which
+# prints a generated password once:
+#
+#   docker compose exec cabinet \
+#     pnpm --filter @coinslot/cabinet account add you@example.com
+#
+# Then http://localhost:8080/cabinet takes that address and that password. The
+# same command has three more verbs — `list`, `password`, `revoke` — and running
+# it with none of them prints them.
+#
 # Nothing is bought by itself. The merchant publishes its catalogue and waits;
 # a purchase is an explicit command, so a sale in the cabinet is one somebody
 # made:
@@ -44,6 +56,18 @@
 # stack holds a developer's own test orders and talks to a test network, and a
 # secret that has to be found somewhere else to bring up a sandbox is a secret
 # people paste into chat. Nothing here is a value any deployment reuses.
+
+# One image behind four of the services below. They are four entry points into
+# one workspace and share every dependency below their own file, so which one a
+# container is is decided at `command` — and naming the image explicitly is what
+# makes that true in practice as well as on paper. Without it compose builds the
+# same Dockerfile once per service and tags the result four times, which is
+# 2.7 GB of identical layers where 678 MB would do.
+x-app: &app
+  build:
+    context: .
+    dockerfile: deploy/Dockerfile.app
+  image: coinslot-app
 
 services:
   postgres:
@@ -72,14 +96,17 @@ services:
       timeout: 3s
       retries: 15
 
-  # Its own service rather than a line in the gateway's startup: a migration
+  # Its own service rather than a line in either process's startup: a migration
   # that runs inside the process it is migrating for runs once per replica and
-  # races itself. Here it runs to completion, and the gateway waits for it.
+  # races itself. Here it runs to completion, and both processes wait for it.
+  #
+  # Two sets of migrations run here, the gateway's tables and the cabinet's two.
+  # They are separate because they belong to separate processes and keep
+  # separate histories (ADR-0009 §8); they are one service because they are one
+  # database and one thing to wait for.
   migrate:
-    build:
-      context: .
-      dockerfile: deploy/Dockerfile.app
-    command: ["pnpm", "--filter", "@coinslot/gateway", "db:migrate"]
+    <<: *app
+    command: ["pnpm", "db:migrate"]
     environment:
       DATABASE_URL: postgres://coinslot:coinslot@postgres:5432/coinslot
     depends_on:
@@ -88,9 +115,7 @@ services:
     restart: "no"
 
   gateway:
-    build:
-      context: .
-      dockerfile: deploy/Dockerfile.app
+    <<: *app
     command: ["pnpm", "--filter", "@coinslot/gateway", "start"]
     environment:
       DATABASE_URL: postgres://coinslot:coinslot@postgres:5432/coinslot
@@ -129,12 +154,27 @@ services:
       retries: 20
 
   cabinet:
-    build:
-      context: .
-      dockerfile: deploy/Dockerfile.app
+    <<: *app
     command: ["pnpm", "--filter", "@coinslot/cabinet", "start"]
     environment:
       PORT: "3001"
+      # The cabinet's own two tables: the people who sign in and their sessions
+      # (ADR-0009). The same server and the same database as the gateway's, and
+      # nothing about a merchant's data — every card, order and receipt on every
+      # screen still comes from the API.
+      DATABASE_URL: postgres://coinslot:coinslot@postgres:5432/coinslot
+      # The key the cabinet reaches the gateway with. It is the gateway's own
+      # key and it is here rather than typed into a form by whoever is signing
+      # in: machine to machine, out of configuration. Rotating it is now a
+      # separate act from signing anybody out.
+      MERCHANT_API_KEY: local-sandbox-merchant-key
+      # Off, and named rather than left to the default, because this is the one
+      # line a deployment has to change. This stack is plain http on localhost,
+      # where a Secure cookie is never sent back and nobody can sign in at all;
+      # anywhere the cabinet is reached over https this is "true", and a server
+      # that leaves it off is handing a merchant's session to anybody on the
+      # path.
+      COOKIE_SECURE: "false"
       # Its own process, reaching the gateway over the same public API a
       # merchant's own code uses (ADR-0005 §2) — this is the service name on the
       # internal network, not the origin a browser types.
@@ -144,8 +184,27 @@ services:
       # (deploy/Caddyfile).
       BASE_PATH: /cabinet
     depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       gateway:
         condition: service_started
+    healthcheck:
+      # The cabinet answers a probe at the bare root as well as under its mount
+      # point, and this is the thing that was supposed to be asking. Without it
+      # the code carried a route for a caller that did not exist, and Caddy went
+      # up in front of a process that had not finished starting.
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3001/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 3s
+      timeout: 3s
+      retries: 20
 
   # A merchant on the other side, so the surface has something to show. It is
   # the mock merchant of the offline gate — the same two cards, the same price
@@ -153,9 +212,7 @@ services:
   # its own process, which makes it the code a merchant's engineer would write
   # rather than a demonstration written to look like it.
   merchant:
-    build:
-      context: .
-      dockerfile: deploy/Dockerfile.app
+    <<: *app
     command: ["pnpm", "--filter", "@coinslot/slice", "serve"]
     environment:
       GATEWAY_URL: http://gateway:3000
@@ -180,7 +237,7 @@ services:
       gateway:
         condition: service_started
       cabinet:
-        condition: service_started
+        condition: service_healthy
 
 volumes:
   coinslot-postgres:
