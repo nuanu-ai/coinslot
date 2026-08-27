@@ -226,7 +226,12 @@ services:
       context: .
       dockerfile: deploy/Dockerfile.web
     ports:
-      - "8080:8080"
+      # The host side is a variable because a laptop is not ours alone: an ssh
+      # tunnel or another project can already hold 8080, and a tunnel bound to
+      # 127.0.0.1 wins over Docker's wildcard for anything typed as localhost —
+      # so the stack looks broken while being perfectly healthy. Set
+      # COINSLOT_HOST_PORT to move it; the inside of the network never changes.
+      - "${COINSLOT_HOST_PORT:-8080}:8080"
     volumes:
       # The landing and the routing are mounted over the copies baked into the
       # image so that editing either shows up on reload. The documentation is
