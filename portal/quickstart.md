@@ -148,9 +148,18 @@ subscription. You do not have to accept incoming connections: your side opens
 the subscription, so neither a public address nor an open port is needed.
 
 You declare what your process answers with `on`, once for each kind of
-message, and then open the subscription with `start`. One kind carries orders,
-another price questions, a third events about orders; they all travel down one
-connection, so one subscription is all you need.
+message, and then open the subscription with `start`. Three kinds travel down
+that one connection — orders, price questions, and events about orders — so
+one subscription is all you need.
+
+There is a fourth registration, and nothing on the wire carries it.
+`coinslot.on('problem', ...)` is where the tools tell you what did not get
+through: a poll that failed, a handler that threw, an answer we would not
+take, a message that arrived with no handler registered for it. Register it.
+Without it those go to the console and nowhere else, and one of them matters
+more than the rest — when our side speaks a version of the contract your tools
+do not, the subscription stops. Your process stays up and stops selling, and
+this is the only thing that says so.
 
 In the synchronous mode the handler returns the result straight away, either
 the delivery or a refusal. Both answers are built on the order itself:
@@ -239,7 +248,8 @@ carry a flag saying whether repeating the call is worth anything
 We read a refusal as a final "this cannot be delivered", so express a
 temporary failure on your side by throwing rather than by refusing. The order
 then counts as never having reached you and comes again, after a delay
-([The handler crashed without answering](/failures)).
+([The handler crashed without answering](/failures)). What you threw goes to
+your problem handler and no further — the agent never sees it.
 
 Besides the purchase parameters, the order carries the sale price — the
 amount, the currency, the moment of purchase and the `as_of` of the price it
@@ -309,8 +319,8 @@ pilot the price handler is the price check that works. The fields of the
 question and of the answer are the same for both and are described in the
 [card reference](/cards).
 
-Success here is modest: the process starts, holds the connection and does not
-fall over. The first order reaches it on step 5.
+Success here is modest: the process starts, holds the connection, and your
+problem handler stays quiet. The first order reaches it on step 5.
 
 ## 4. Check the card
 

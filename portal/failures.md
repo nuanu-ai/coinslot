@@ -75,6 +75,11 @@ back: an exception inside the handler, a process that fell over, a connection
 that broke — for us all of these mean the order never reached you, and we
 repeat the delivery, after a delay, until the mode's deadline runs out.
 
+What your handler threw does not travel to us or to the agent. It goes to the
+handler you registered for problems, which is also where a failed poll, a
+refused answer and a message nobody claimed arrive
+([registering one](/quickstart)).
+
 So the practical rule is to express a temporary failure by throwing and not by
 refusing. We read a refusal as a final "this cannot be
 delivered" and close the order on it, so a supplier that did not answer within
