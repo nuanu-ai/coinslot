@@ -192,12 +192,17 @@ describe("listing what accounts there are", () => {
 
 describe("an address carrying characters a terminal acts on", () => {
   /**
-   * Turn the colours over, then go back to the start of the line.
+   * Three ways of writing something other than what is on the page.
    *
-   * The carriage return is the half that matters: whatever is printed after it
-   * lands on top of what the terminal has already shown.
+   * The carriage return goes back to the start of the line, so whatever is
+   * printed after it lands on top of what the terminal has already shown. The
+   * escape turns the colours over. The last one is a right-to-left override: it
+   * reverses the direction the rest of the line reads in, reordering an address
+   * without changing a byte of it — and it is a format character rather than a
+   * control one, so a rendering that knew only about control characters would
+   * let it straight through.
    */
-  const ERASES_A_ROW = "\u001b[7m\r";
+  const ERASES_A_ROW = "\u001b[7m\r\u202e";
 
   it("is shown rather than obeyed, wherever it is printed", async () => {
     // The shape check catches a missing half and a space in the middle, which
@@ -220,7 +225,8 @@ describe("an address carrying characters a terminal acts on", () => {
     expect(listed.code).toBe(0);
     expect(listed.said).not.toContain("\u001b");
     expect(listed.said).not.toContain("\r");
-    expect(listed.said).toContain("a\\x1b[7m\\x0db@example.com");
+    expect(listed.said).not.toContain("\u202e");
+    expect(listed.said).toContain("a\\x1b[7m\\x0d\\u{202e}b@example.com");
     // Both people are still there, and neither row is short of a column.
     expect(listed.said).toContain("dmitry@example.com");
     const columns = listed.said.split("\n").map((line) => line.indexOf("made"));

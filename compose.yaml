@@ -151,11 +151,14 @@ services:
         ]
       interval: 3s
       timeout: 3s
-      retries: 20
-      # A process starting through tsx refuses connections for the first few
-      # seconds, and those refusals are not news. Without this they are counted
-      # against the retries, so the budget that is meant to cover a slow start
-      # is partly spent on the start itself.
+      # Fifteen and not twenty, because of the line below it. A process starting
+      # through tsx refuses connections for the first few seconds and those
+      # refusals are not news, so `start_period` stops them being counted — but
+      # it also postpones the verdict by its own length, and the verdict is what
+      # `web` waits for before it comes up without this service. Fifteen retries
+      # after a fifteen-second grace is the same minute a dependency had to
+      # become healthy in before either line was here.
+      retries: 15
       start_period: 15s
 
   cabinet:
@@ -209,9 +212,9 @@ services:
         ]
       interval: 3s
       timeout: 3s
-      retries: 20
-      # As above: the refusals while the process is still starting are expected
-      # and should not be spending the retry budget.
+      # As above, and for the same arithmetic: fifteen seconds of grace and
+      # fifteen retries after it is the minute a dependency had before.
+      retries: 15
       start_period: 15s
 
   # A merchant on the other side, so the surface has something to show. It is

@@ -207,6 +207,11 @@ export function memoryAccounts(): Accounts {
         if (session === undefined || session.expiresAt <= now) {
           continue;
         }
+        // A session always has an account behind it: `open` refuses an
+        // identifier for an account that is not here, and nothing removes an
+        // account at all. This is the map's type being narrowed rather than a
+        // case, which is why no test reaches the other side of it — in the
+        // database the same thing is a foreign key that cascades.
         const account = byId.get(session.accountId);
         if (account !== undefined) {
           live.push({ fingerprint, account });

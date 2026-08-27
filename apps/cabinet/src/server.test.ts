@@ -22,6 +22,7 @@
 
 import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
+import { connect } from "node:net";
 import type { Card } from "@coinslot/contracts";
 import { buyOverHttp, type Harness, harness, type Served, serve } from "@coinslot/gateway/testing";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -305,6 +306,41 @@ async function attachedTo(url: string, basePath: string): Promise<Browser> {
 
   return browser;
 }
+
+/**
+ * One request written straight onto a socket, with nothing added to it.
+ *
+ * `fetch` sends headers of its own — an accept, a user agent, an encoding — and
+ * they count against the 16 KB of headers the runtime will read. A test about
+ * how many cookies one request can carry cannot be written with it, because
+ * what it would be measuring is those headers. This sends a request line, a
+ * Host, the cookies, and nothing else.
+ */
+const overASocket = (
+  url: string,
+  path: string,
+  cookie: string,
+): Promise<{ status: number; body: string }> =>
+  new Promise((resolve, reject) => {
+    const { hostname, port } = new URL(url);
+    const socket = connect(Number(port), hostname, () => {
+      socket.write(
+        `GET ${path} HTTP/1.1\r\nHost: ${hostname}:${port}\r\n` +
+          `Cookie: ${cookie}\r\nConnection: close\r\n\r\n`,
+      );
+    });
+    let said = "";
+    socket.on("data", (chunk: Buffer) => {
+      said += chunk.toString();
+    });
+    socket.on("error", reject);
+    socket.on("close", () => {
+      resolve({
+        status: Number(said.split(" ")[1] ?? 0),
+        body: readable(said.split("\r\n\r\n").slice(1).join("\r\n\r\n")),
+      });
+    });
+  });
 
 /**
  * A store that keeps a note of what the cabinet asked it about sessions.
@@ -1377,33 +1413,51 @@ describe("when something goes wrong that the merchant has to get out of", () => 
     }
   });
 
-  it("asks about every identifier a request carried in one question", async () => {
-    // The most a request can carry is a fact about the runtime: Node stops
-    // reading headers at 16 KB and one cookie of this name and shape is 62
-    // bytes with its separator, so 263 of them arrive over a bare socket and
-    // the 264th is answered 431 before the cabinet sees anything. Asked one at
-    // a time that was 263 round trips to the database on a route a stranger can
-    // reach, and ten such requests fill a pool of ten; asked together it is one
-    // question whatever arrives.
+  it("asks about every identifier a request carried, in one question and with no cap", async () => {
+    // Two promises at once, and the second is why this is written over a socket
+    // rather than through `fetch`.
     //
-    // Two hundred here rather than the runtime's own ceiling, because `fetch`
-    // sends headers of its own and a request built to the last byte would be
-    // measuring those instead. What the promise is about is that the number
-    // does not appear in the answer at all.
-    const { browser, accounts } = await started();
+    // The first: however many identifiers arrive, they are one question to the
+    // database. Asked one at a time this was that many sequential round trips
+    // on a route a stranger can reach, and ten such requests occupy a pool of
+    // ten connections where ten ordinary requests occupy ten.
+    //
+    // The second: there is no cap on how many are considered. A cap is a way
+    // in, because a browser sends cookies of one name longest-path first and
+    // then oldest first, so somebody able to plant cookies could push the
+    // merchant's own past it and lock them out of the control that stops their
+    // selling. A cap anywhere below what a request can actually carry would
+    // pass a test built to a smaller number, so this one is built to the
+    // runtime's own ceiling: Node stops reading a request's headers at 16 KB,
+    // one cookie of this name and shape is 60 bytes and the separator adds two,
+    // and a request carrying nothing else buys 263 of them. `fetch` sends
+    // headers of its own and buys 262, which is why the request here is written
+    // onto the socket by hand.
+    const { browser, accounts, gateway } = await started();
     await browser.signIn();
     const mine = browser.sessionToken() ?? "";
     const { asked, cabinet } = counting(accounts);
-    const own = await visiting("http://127.0.0.1:1", "", cabinet);
+    const own = await visiting(gateway.url, "", cabinet);
+    const carrying = (count: number): string =>
+      [...Array.from({ length: count - 1 }, (_, at) => `${`${at}`.padStart(43, "a")}`), mine]
+        .map((value) => `${COOKIE}=${value}`)
+        .join("; ");
     try {
-      const planted = Array.from(
-        { length: 200 },
-        (_, at) => `${COOKIE}=${`${at}`.padStart(43, "a")}`,
-      );
-      await own.browser.withRawCookie(`${planted.join("; ")}; ${COOKIE}=${mine}`).get("/cards");
+      const most = await overASocket(own.url, "/cards", carrying(263));
 
+      // The merchant is still the person asking, with 262 planted cookies in
+      // front of their own, and it cost one question.
+      expect(most.status).toBe(200);
+      expect(most.body).toContain(PERSON);
       expect(asked.length).toBe(1);
-      expect(asked[0]?.length).toBe(201);
+      expect(asked[0]?.length).toBe(263);
+
+      // And one more than that is not the cabinet's problem: the runtime
+      // refuses to read the headers at all, so nothing here ever sees it.
+      const tooMany = await overASocket(own.url, "/cards", carrying(264));
+
+      expect(tooMany.status).toBe(431);
+      expect(asked.length).toBe(1);
     } finally {
       await own.browser.close();
     }
@@ -1507,6 +1561,17 @@ describe("when something goes wrong that the merchant has to get out of", () => 
       .post("/sign-in", credentials);
     expect(behindTls.status).toBe(303);
     expect(behindTls.to).toBe("/cards");
+
+    // With no terminator in front at all, the scheme falls back to http, which
+    // is what the cabinet is actually speaking when it is run on its own —
+    // which is how it is developed and how every test here drives it. A
+    // fallback of https instead would refuse every form post on that setup,
+    // the sign-in included, and there would be no way in.
+    const onItsOwn = await browser
+      .sending({ origin: `http://${new URL(url).host}` })
+      .post("/sign-in", credentials);
+    expect(onItsOwn.status).toBe(303);
+    expect(onItsOwn.to).toBe("/cards");
 
     // The leftmost value, not the last. What this is compared against is the
     // scheme the browser used at the edge of the chain, and that is the first

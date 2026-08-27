@@ -304,9 +304,18 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
     // The row goes, not merely the cookie. Clearing a cookie asks the browser
     // to forget something; anybody who copied the value still holds a session.
     //
-    // Every identifier the request carried, not one of them: the gate has
-    // already established that exactly one of them is a live session, and
-    // ending the others is ending nothing.
+    // Every identifier the request carried, not one of them. A browser sends
+    // cookies of one name longest-path first and then oldest first, so the one
+    // this person is signed in on is not necessarily the first — ending only
+    // that would be a sign-out that said it had worked and left the session
+    // alive. What the gate has established is that every live session here
+    // belongs to one person, so this ends that person's sessions on this
+    // browser and nothing else; the rest are identifiers nothing answers to.
+    //
+    // This is the one place a request's identifiers are still one call each,
+    // and it is deliberate: it is below the gate, so a stranger cannot reach
+    // it, and a person signing themselves out of their own browser is not
+    // somebody to buy a batch delete for.
     const person = whoIs(request);
     for (const token of tokensIn(request)) {
       await accounts.end(fingerprintOf(token));
@@ -778,8 +787,10 @@ function tokensIn(request: Request): readonly string[] {
     // question to the database: ten such requests bought two and a half
     // thousand round trips through a pool of ten connections, where ten
     // ordinary requests buy ten. `whose` now takes every identifier at once, so
-    // a request carrying the most a runtime will read is one query, and the
+    // reading who a request belongs to is one query whatever arrives, and the
     // bound is a fact about the runtime rather than something being relied on.
+    // The one place a count still costs anything is the sign-out, which ends
+    // each identifier it was given; that route is below the gate.
     if (looksLikeSessionToken(value)) {
       found.add(value);
     }
