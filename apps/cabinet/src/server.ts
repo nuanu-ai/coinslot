@@ -38,7 +38,34 @@ import { bare, escaped } from "./html.js";
 import { cardsScreen, ordersScreen, receiptsScreen, type Viewer } from "./screens.js";
 import { passwordScreen, signInScreen } from "./sign-in.js";
 
-/** The name the session cookie travels under. */
+/**
+ * The name the session cookie travels under.
+ *
+ * Not `__Host-coinslot_session`, and that is a decision rather than an
+ * oversight. A browser refuses to store a cookie under that prefix if it
+ * carries a `Domain` or if its `Path` is anything but `/`, which is exactly
+ * what would stop a page elsewhere on the registrable domain planting a cookie
+ * of this name that the browser then sends here.
+ *
+ * The `Path` half is what rules it out. Behind Caddy the cabinet is mounted at
+ * `/cabinet` on an origin it shares with the landing, the documentation and the
+ * gateway's own `/v0` (deploy/Caddyfile), so taking the prefix means widening
+ * this cookie to the whole origin — which puts a person's session on the money
+ * path, the one thing ADR-0005 §2 exists to keep it off. At an empty BASE_PATH
+ * the path is already `/` and the prefix would be available, but only where the
+ * cookie is also `Secure`: the name would then depend on two configuration
+ * values, and no deployment described in this repository sets both of them that
+ * way, so it would be a branch that exists only in its own test.
+ *
+ * `__Secure-` is available and buys nothing here. It stops a page served over
+ * http from setting the cookie, and the page this is about is served over https
+ * from a neighbour of ours.
+ *
+ * What is left open by not taking the prefix is written down in ADR-0009 rather
+ * than left to be discovered: a page that can set a cookie for this domain can
+ * put a session of its own in front of a visitor who has none, and the cabinet
+ * will believe it and write that name in the log.
+ */
 const SESSION = "coinslot_session";
 
 /**
@@ -277,9 +304,18 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
     // The row goes, not merely the cookie. Clearing a cookie asks the browser
     // to forget something; anybody who copied the value still holds a session.
     //
-    // Every identifier the request carried, not one of them: the gate has
-    // already established that exactly one of them is a live session, and
-    // ending the others is ending nothing.
+    // Every identifier the request carried, not one of them. A browser sends
+    // cookies of one name longest-path first and then oldest first, so the one
+    // this person is signed in on is not necessarily the first — ending only
+    // that would be a sign-out that said it had worked and left the session
+    // alive. What the gate has established is that every live session here
+    // belongs to one person, so this ends that person's sessions on this
+    // browser and nothing else; the rest are identifiers nothing answers to.
+    //
+    // This is the one place a request's identifiers are still one call each,
+    // and it is deliberate: it is below the gate, so a stranger cannot reach
+    // it, and a person signing themselves out of their own browser is not
+    // somebody to buy a batch delete for.
     const person = whoIs(request);
     for (const token of tokensIn(request)) {
       await accounts.end(fingerprintOf(token));
@@ -524,42 +560,65 @@ function sameOriginUnder(base: string) {
 }
 
 /**
- * Whose session this request arrived on, having asked the store.
+ * Whose session this request arrived on, having asked the store — and, where it
+ * cannot be answered, the one act that keeps the question from coming back.
  *
  * Null covers every way of not being signed in and does not distinguish them:
  * no cookie, a cookie that is not readable, an identifier nothing was ever
  * opened under, a session that has been ended, and one whose twelve hours are
  * up. They are one answer to the visitor, and there is nothing any of them
  * should be told beyond the sign-in page.
+ *
+ * A browser can send several cookies of one name, and that is the case the rest
+ * of this is shaped around. A page anywhere on the registrable domain can set a
+ * `coinslot_session` at a broader domain or a broader path, and the browser
+ * then sends it here beside the merchant's own. The cabinet cannot take it
+ * back: `forget` clears the name on the path and the host this process serves,
+ * and nothing it can send removes a cookie somebody else scoped more widely.
+ *
+ * So a value that is not a live session is ignored rather than refused. A rule
+ * that turned the mere presence of a second cookie into a refusal would meet
+ * the planted one again on every redirect and every fresh sign-in, and the
+ * merchant would be locked out of the control that stops their selling for as
+ * long as that cookie lived — which is for good.
+ *
+ * Live sessions that all belong to one person are that person. Two of somebody's
+ * own cookies is what a change of mount point leaves behind in a browser, and
+ * there is no ambiguity in it to refuse.
+ *
+ * Live sessions belonging to more than one person is the case where the cabinet
+ * genuinely cannot tell who is asking, and answering it wrongly would put the
+ * wrong name on the one record of who stopped the selling (ADR-0009 §7). Nobody
+ * is signed in — and every one of those sessions is ended, which is the half
+ * that matters. The cabinet cannot take the cookie out of the browser, but it
+ * can stop it being a session: the next request carries a value nothing answers
+ * to, the merchant signs in again, and the plant is spent. Refusing without
+ * ending would be the lockout above wearing the clothes of caution, and it is
+ * what this code used to do.
  */
 async function whoseSession(request: Request, accounts: Accounts): Promise<Account | null> {
-  const now = new Date();
-  const live: Account[] = [];
-  for (const token of tokensIn(request)) {
-    const person = await accounts.whose(fingerprintOf(token), now);
-    if (person !== null) {
-      live.push(person);
-    }
+  const live = await accounts.whose(tokensIn(request).map(fingerprintOf), new Date());
+  if (live.length === 0) {
+    return null;
   }
 
-  // Exactly one live session, or nobody. The case this is shaped around is a
-  // page on a sibling subdomain setting a cookie of this name on a broader
-  // path, so that the browser sends two; the `Path` this cookie is scoped to
-  // rules out the `__Host-` prefix that would refuse such a plant outright.
-  //
-  // A planted value that is not a session is ignored rather than refused, and
-  // that is the whole of the reasoning. Refusing on the mere presence of a
-  // second cookie reads as the safer rule and is worse: the cabinet can only
-  // clear the cookie on its own path, so the planted one survives every
-  // redirect and every fresh sign-in, and a merchant is locked out for good of
-  // the control that stops their selling. Anybody able to set a cookie could
-  // then take the cabinet away permanently, which is a heavier loss than the
-  // one being prevented.
-  //
-  // Two live sessions at once is the case where the ambiguity matters, and that
-  // is refused: working inside a session somebody else opened would put the
-  // wrong person on the record of who stopped the selling.
-  return live.length === 1 ? (live[0] ?? null) : null;
+  const owners = new Set(live.map((session) => session.account.id));
+  if (owners.size === 1) {
+    return live[0]?.account ?? null;
+  }
+
+  for (const session of live) {
+    await accounts.end(session.fingerprint);
+  }
+  // Named, because this is not a thing that happens by accident: somebody put a
+  // second person's live session in front of this browser, and whoever reads
+  // the log afterwards should be able to see when.
+  console.log(
+    `[cabinet] a request carried live sessions of ${owners.size} different people` +
+      ` (${[...new Set(live.map((session) => session.account.email))].sort().join(", ")});` +
+      " every one of them was ended and nobody was signed in",
+  );
+  return null;
 }
 
 /**
@@ -716,12 +775,22 @@ function tokensIn(request: Request): readonly string[] {
     // merchant's own past the cap and lock them out of the control that stops
     // their selling.
     //
-    // What is left is bounded, and the bound was measured rather than assumed:
-    // Node stops reading request headers at 16 KB, one cookie of this name and
-    // shape is 62 bytes of that, so the worst a request can ask for is 264
-    // lookups by primary key on a small table. Somebody willing to send that
-    // could send 264 requests instead, so there is no amplification here worth
-    // buying a lockout to prevent.
+    // What is left is bounded by the runtime rather than by us, and the bound
+    // was measured rather than assumed. Node stops reading a request's headers
+    // at 16 KB; one cookie of this name and shape is 60 bytes and the separator
+    // adds two; over a raw socket carrying nothing but a request line and a
+    // Host header, 263 of them are read and 264 is answered 431 and never
+    // reaches this code. A client that sends the headers a browser sends buys
+    // fewer — through `fetch`, 262.
+    //
+    // That number used to matter, because each identifier was a separate
+    // question to the database: ten such requests bought two and a half
+    // thousand round trips through a pool of ten connections, where ten
+    // ordinary requests buy ten. `whose` now takes every identifier at once, so
+    // reading who a request belongs to is one query whatever arrives, and the
+    // bound is a fact about the runtime rather than something being relied on.
+    // The one place a count still costs anything is the sign-out, which ends
+    // each identifier it was given; that route is below the gate.
     if (looksLikeSessionToken(value)) {
       found.add(value);
     }

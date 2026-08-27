@@ -21,9 +21,6 @@
 import { runAccount } from "./account-command.js";
 import { connect, postgresAccounts } from "./accounts-postgres.js";
 
-/** Postgres's own answer for "there is no table by that name". */
-const NO_SUCH_TABLE = "42P01";
-
 const databaseUrl = process.env.DATABASE_URL;
 if (databaseUrl === undefined || databaseUrl === "") {
   console.error(
@@ -40,21 +37,12 @@ try {
     console.log(line);
   });
 } catch (thrown) {
-  // The tables are not there. Said as its own thing, because the database's own
-  // sentence names a table nobody has heard of and does not say what to run.
-  if (
-    typeof thrown === "object" &&
-    thrown !== null &&
-    "code" in thrown &&
-    String((thrown as { code: unknown }).code) === NO_SUCH_TABLE
-  ) {
-    console.error(
-      "The cabinet's tables are not in this database yet." +
-        " Run: pnpm --filter @coinslot/cabinet db:migrate",
-    );
-  } else {
-    console.error(thrown);
-  }
+  // Whatever the command did not have a better sentence for. The one failure
+  // that has a better sentence — a database the migrations have never been run
+  // against — is answered inside `runAccount`, where it is tested; putting the
+  // recognition here is what made it unreachable, because the store's own error
+  // and the driver's are not the same object.
+  console.error(thrown);
 } finally {
   await accounts.close();
 }

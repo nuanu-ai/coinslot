@@ -159,7 +159,15 @@ services:
         ]
       interval: 3s
       timeout: 3s
-      retries: 20
+      # Fifteen and not twenty, because of the line below it. A process starting
+      # through tsx refuses connections for the first few seconds and those
+      # refusals are not news, so `start_period` stops them being counted — but
+      # it also postpones the verdict by its own length, and the verdict is what
+      # `web` waits for before it comes up without this service. Fifteen retries
+      # after a fifteen-second grace is the same minute a dependency had to
+      # become healthy in before either line was here.
+      retries: 15
+      start_period: 15s
 
   cabinet:
     <<: *app
@@ -213,7 +221,10 @@ services:
         ]
       interval: 3s
       timeout: 3s
-      retries: 20
+      # As above, and for the same arithmetic: fifteen seconds of grace and
+      # fifteen retries after it is the minute a dependency had before.
+      retries: 15
+      start_period: 15s
 
   # A merchant on the other side, so the surface has something to show. It is
   # the mock merchant of the offline gate — the same two cards, the same price
@@ -247,11 +258,25 @@ services:
       # not: it is a build, and it comes from the image.
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./apps/landing/public:/srv/landing:ro
+    # Waited for, but not required. Caddy in front of a process that has not
+    # finished starting answers 502 to the first person who looks, so waiting
+    # for a health check rather than for a container is right — and a service
+    # that never becomes healthy must not take this one down with it. Without
+    # `required: false`, `docker compose up` aborts the whole command with
+    # "dependency failed to start", and the landing and the documentation, which
+    # need nothing from either of these, do not come up at all. They are the two
+    # pages somebody reads while working out why the third is broken.
+    #
+    # What that costs when a dependency really is down: /cabinet and /v0 answer
+    # 502 until it is up, and then they work, because Caddy resolves the service
+    # name per request rather than at startup.
     depends_on:
       gateway:
-        condition: service_started
+        condition: service_healthy
+        required: false
       cabinet:
         condition: service_healthy
+        required: false
 
 volumes:
   coinslot-postgres:

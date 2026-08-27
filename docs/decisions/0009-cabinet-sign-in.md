@@ -56,9 +56,13 @@ address with an old row answers visibly faster than an address with no account
 at all — which turns the sign-in form into a list of who has an account here.
 Raising it means re-deriving the stored rows in the same change. With accounts
 we create by hand and count on one hand, that is the command that sets a new
-password, run once per person. A test holds the two costs together, so a decoy
-that drifts from the rows fails rather than being noticed by somebody timing a
-form.
+password, run once per person. The suite pins the cost the stored rows carry as
+a number of its own and holds a freshly written row against that number, so
+raising the constant fails the tests until somebody moves it — and moving it is
+the same change in which the rows are re-derived. The timing comparison is made
+against a row built at that number rather than by the code being tested, because
+a test that builds its row with the current constant compares the constant
+against itself and says nothing at all about the risk.
 
 This is the one place the charter's rule about not hand-building infrastructure
 (ADR-0003 §9) is worth arguing rather than obeying. The rule is about
@@ -77,6 +81,28 @@ terminal history — does not hand over live sessions. The cookie is HttpOnly,
 scoped to the path the cabinet is mounted at. Nothing in it can be edited into
 a different identity, because it is not an identity: it is a lookup key for a
 row that says whose session this is.
+
+Scoping the cookie to the mount point costs the `__Host-` prefix, and that is a
+trade rather than an oversight. The prefix is the only thing that stops a page
+elsewhere on the registrable domain setting a cookie of this name that the
+browser then sends here: a browser refuses to store a `__Host-` cookie carrying
+a `Domain`, and refuses one whose `Path` is anything but `/`. Taking it means
+widening this cookie to the whole origin — and the cabinet shares an origin with
+the landing, the documentation and the gateway's own `/v0`, so the price is a
+person's session travelling on the money path, which is what ADR-0005 §2 exists
+to prevent. The prefix is not taken, and what that leaves open is named in the
+list of things this does not protect against.
+
+A browser can therefore send several cookies of this name, and the cabinet
+decides between them by a rule that cannot be used to lock a merchant out. A
+value that is not a live session is ignored. Live sessions that all belong to
+one person are that person, which is what two of somebody's own cookies are
+after a change of mount point. Live sessions belonging to more than one person
+are refused *and ended* — the cabinet cannot take a cookie out of a browser, but
+it can stop it being a session, so the planted value is spent and the next
+sign-in works. Refusing without ending would mean meeting the planted cookie
+again on every redirect and every fresh sign-in, and a merchant who never
+reaches the control that stops their selling again.
 
 Being a row is what buys the thing the key could not do. One session can be
 ended without touching any other, and without touching the merchant's
@@ -184,6 +210,18 @@ What this does **not** protect against, said plainly:
   person who is already signed in. That is a mechanism rather than a
   measurement — nobody has run it — and it is written down because the honest
   reading of "no rate limit" includes this and not only guessing.
+- **A cookie planted by a page on the same domain.** A page anywhere on the
+  registrable domain can set a `coinslot_session` at a broader domain or a
+  broader path, and the browser sends it here. Where the visitor has a session of
+  their own, §3 says what happens: two people's live sessions are refused and
+  ended, and the merchant signs in again. Where the visitor has none, the
+  cabinet reads the planted session as a sign-in and writes that person's name
+  in the log beside whatever is then done — including stopping the selling,
+  which is the one question §7 says the log answers. Nothing is disclosed by it:
+  the cabinet reaches the gateway with its own key, so every screen shows the
+  same merchant whoever is signed in, and the password form asks for the current
+  password before it will change anything. The `__Host-` prefix closes it, at
+  the price named in §3.
 - **Somebody who is already on the machine.** A session left open on an unlocked
   laptop is usable for the rest of its twelve hours. There is no idle timeout,
   by the choice above.

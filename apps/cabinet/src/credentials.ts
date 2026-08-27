@@ -43,7 +43,10 @@ import { createHash, randomBytes, randomInt, scrypt, timingSafeEqual } from "nod
  * anybody who asks which addresses have accounts. Raising it means re-deriving
  * the stored rows in the same change, which for accounts we create by hand is
  * the command that sets a new password, run once per person. ADR-0009 §2 says
- * so, and a test holds the decoy's cost against a freshly written row's.
+ * so, and the suite holds this number against a literal of its own rather than
+ * against a row it has just written with it — a test that builds its row here
+ * compares this constant against itself and passes whatever it says. So a run
+ * that fails on the cost is asking whether the rows were re-derived.
  */
 const COST = { N: 32_768, r: 8, p: 1 } as const;
 const KEY_LENGTH = 32;

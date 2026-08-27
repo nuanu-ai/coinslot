@@ -25,7 +25,7 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { noDatabaseHere, readyDatabase, testDatabaseUrl } from "@coinslot/gateway/testing/database";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import type { Accounts } from "./accounts.js";
 import { connect, migrateAccounts, postgresAccounts } from "./accounts-postgres.js";
 import { describeAccounts } from "./testing/accounts-contract.js";
@@ -95,7 +95,7 @@ if (databaseUrl === null) {
 
       const said = await Promise.all(
         [
-          () => store.whose(fingerprint, new Date()),
+          () => store.whose([fingerprint], new Date()),
           () => store.setPassword("dmitry@example.com", stored),
           () => store.add("dmitry@example.com", stored, new Date()),
           () => store.open(fingerprint, "acc_1", new Date(), new Date()),
@@ -125,6 +125,112 @@ if (databaseUrl === null) {
       }
       // What it does say is what somebody reading a log can act on.
       expect(said[0]).toContain("session");
+    });
+
+    it("carries the database's own code, so a caller can say something better", async () => {
+      // The account command has a better sentence for exactly one failure — a
+      // database the migrations have never been run against — and the only
+      // thing it can tell that failure apart by is the code. Kept inside the
+      // message alone, the recognition above stopped matching without anything
+      // noticing, and an operator's first run printed the name of a table they
+      // had never heard of and a stack into this file.
+      //
+      // A foreign key violation is what is provoked here because it is a real
+      // failure this store can be asked for on demand. What is held is that a
+      // code travels at all, not which code it is.
+      const failed: unknown = await store
+        .open("a-fingerprint", "acc_nobody-has-this", new Date(), new Date(Date.now() + 1_000))
+        .then(
+          () => null,
+          (thrown: unknown) => thrown,
+        );
+
+      expect(failed).toBeInstanceOf(Error);
+      expect((failed as { code?: unknown }).code).toBe("23503");
+      // And still nothing of the query with it: a code is five characters of
+      // the database's own vocabulary and carries no parameter along.
+      expect(asLogged(failed)).not.toContain("params:");
+      expect(asLogged(failed)).not.toContain("a-fingerprint");
+    });
+  });
+
+  describe("a request that carried no session identifier at all", () => {
+    it("does not become a query", async () => {
+      // Every visitor's first request is this one, and so is every request to
+      // the sign-in page. Left to drizzle an empty list becomes `where false`,
+      // which is a correct answer bought with a round trip to the database on
+      // the commonest request the cabinet answers.
+      //
+      // Counted at the pool, because that is where a round trip either happens
+      // or does not; the store above it cannot tell a caller how much it cost.
+      const counted = connect(databaseUrl);
+      const asked = counted.query.bind(counted);
+      let queries = 0;
+      counted.query = ((...given: Parameters<typeof asked>) => {
+        queries += 1;
+        return asked(...given);
+      }) as typeof counted.query;
+      const store = postgresAccounts(counted);
+
+      await expect(store.whose([], new Date())).resolves.toStrictEqual([]);
+      expect(queries).toBe(0);
+
+      // The negative control: one identifier is one query, so what is being
+      // measured is the emptiness and not a counter that never moves.
+      await store.whose(["never-issued"], new Date());
+      expect(queries).toBe(1);
+
+      await store.close();
+    });
+  });
+
+  describe("when a connection is dropped while nobody is using it", () => {
+    it("is logged, and the pool goes on rather than the process ending", async () => {
+      // A database restart, a failover, an idle reaper or `docker compose
+      // restart postgres` closes a connection the pool is holding and nobody is
+      // waiting on. `pg` reports that as an `error` event on the pool itself,
+      // and an `error` event with no listener is an uncaught exception in Node
+      // — the cabinet exits, and the merchant cannot reach the control that
+      // stops their selling until somebody starts it again. Every other kind of
+      // database trouble surfaces on the next query, where somebody is waiting
+      // for an answer; this one does not.
+      //
+      // The drop is real rather than simulated: the backend behind this pool's
+      // own idle connection is terminated from a second connection, which is
+      // what a restart of the server does to every connection at once.
+      const said: string[] = [];
+      const printed = vi.spyOn(console, "error").mockImplementation((...line) => {
+        said.push(line.map(String).join(" "));
+      });
+
+      const its = connect(databaseUrl);
+      const { rows } = await its.query<{ pid: number }>("select pg_backend_pid() as pid");
+      const backend = rows[0]?.pid ?? 0;
+      expect(backend).toBeGreaterThan(0);
+
+      const other = connect(databaseUrl);
+      await other.query("select pg_terminate_backend($1)", [backend]);
+      await other.end();
+
+      // Waited for rather than slept through, and bounded: the connection is
+      // gone once the pool has let go of it, which on a local server is a few
+      // milliseconds and on a slow one is not.
+      for (let waited = 0; waited < 100 && its.totalCount > 0; waited += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      expect(its.totalCount).toBe(0);
+
+      // Still here, and still able to answer. Without a listener on the pool
+      // this line is never reached, because the process is gone by now — which
+      // is why the failure shows up as an unhandled error on the run rather
+      // than as a failed assertion in this test.
+      await expect(its.query("select 1 as ok")).resolves.toMatchObject({ rowCount: 1 });
+      await its.end();
+
+      // And somebody reading the log is told, because a connection that went
+      // away silently is a restart nobody can correlate anything with.
+      printed.mockRestore();
+      expect(said.join("\n")).toContain("[cabinet] an idle database connection failed");
     });
   });
 
