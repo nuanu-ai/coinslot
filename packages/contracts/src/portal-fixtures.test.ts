@@ -366,7 +366,7 @@ const fixtures: Fixture[] = [
     what: "a refusal sent after the order was taken on",
     fence: { file: "portal/orders.md", language: "ts", index: 1 },
     schema: RefusalSchema,
-    value: { code: "out_of_stock", message: "Поставщик не подтвердил номер" },
+    value: { code: "out_of_stock", message: "The supplier did not confirm the number" },
   },
   {
     kind: "transcribed",

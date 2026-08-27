@@ -1,167 +1,180 @@
-# Заказы и режимы выдачи
+# Orders and fulfillment modes
 
-*Предварительная версия контракта — до пилота формулировки могут уточняться.*
+*A preliminary contract: the wording can still change before the pilot.*
 
-Вы пишете обработчик, который принимает оплаченные заказы и отдаёт по ним
-товар. Здесь собрано всё, на что он опирается: какие бывают режимы выдачи,
-что приходит в обработчик, чем заказ может закончиться и что происходит,
-когда время выходит. Рабочие слова — карточка, обработчик, ключ
-идемпотентности — определены на странице
-[«Первая тестовая продажа»](/quickstart);
-отдельные сбои собраны на странице
-[«Что может пойти не так»](/failures).
+You are writing the handler that takes paid orders and gives out the goods for
+them. Everything it rests on is collected here: what the fulfillment modes
+are, what arrives in the handler, how an order can end, and what happens when
+time runs out. The working words — card, handler, idempotency key — are
+defined on [The first test sale](/quickstart), and the individual failures are
+collected on [What can go wrong](/failures).
 
-::: warning Имена вызовов и полей предварительные
-Зафиксирована модель, а не сигнатуры. Из машинных имён окончательны `id`,
-`merchant_item_id` и `as_of`; остальные имена на этой странице — рабочие и до
-пилота могут измениться.
+::: warning The names of the calls and the fields are preliminary
+What is fixed is the model and not the signatures. Of the machine names `id`,
+`merchant_item_id` and `as_of` are final; the other names on this page are
+working names and can still change before the pilot.
 :::
 
-## Три режима выдачи
+## Three fulfillment modes
 
-| Режим | `fulfillment` | Товар приходит агенту | Когда списываются деньги | Если вы отказали или промолчали |
+| Mode | `fulfillment` | The goods reach the agent | When the buyer is charged | If you refused or stayed silent |
 | --- | --- | --- | --- | --- |
-| Синхронный | `'sync'` | в ответ на покупку | после вашей выдачи, последним шагом | покупка не состоялась, покупатель не потратил ничего |
-| Асинхронный | `'async'` | позже, отдельным вызовом | в момент покупки, до вашей выдачи | деньги у вас, товара у покупателя нет: заказ помечается требующим возврата |
-| С подтверждением | `'confirm'` | позже, отдельным вызовом | сразу после вашего подтверждения | до подтверждения не списано ничего, после подтверждения — как в асинхронном |
+| Synchronous | `'sync'` | in the answer to the purchase | after your delivery, as the last step | the purchase did not happen and the buyer spent nothing |
+| Asynchronous | `'async'` | later, by a separate call | at the moment of purchase, before your delivery | the money is with you and the buyer has no goods: the order is marked as needing a refund |
+| With confirmation | `'confirm'` | later, by a separate call | right after your confirmation | before the confirmation nothing is charged; after it, as in the asynchronous mode |
 
-Режим объявлен в карточке, и агент знает его до оплаты. Определяется он
-товаром, а канал лишь сужает выбор: через подключённый API выдают и
-синхронно, и асинхронно; заказ, пришедший сообщением, синхронным не бывает.
-Что момент списания значит для решений владельца бизнеса, сказано на странице
-[«Деньги»](/money).
+The mode is declared in the card, and the agent knows it before it pays. It is
+decided by the product, and the channel only narrows the choice: a connected
+API delivers both synchronously and asynchronously, while an order that came
+as a message is never synchronous. What the moment of charging means for the
+owner of the business is on [Money](/money).
 
-Асинхронный режим и режим с подтверждением со стороны агента выглядят почти
-одинаково: заказ и способ следить за его состоянием те же самые. Разница в
-моменте списания и в одном следствии подтверждения — у подтверждённого заказа
-появляется срок, в который его нужно оплатить.
+The third mode is not open during the pilot. A card cannot be published with
+`fulfillment: 'confirm'`, because the request that asks you to confirm has no
+shape on the wire yet and your handler could not tell one from a paid order.
+The rest of this page describes the mode as it is designed.
 
-## Откуда берётся заказ
+From the agent's side the asynchronous mode and the confirmation mode look
+almost the same: the order and the way of watching where it stands are
+identical. What differs is the moment of charging, and one consequence of
+confirming — a confirmed order acquires a deadline for the agent to pay it in.
 
-Покупка начинается на нашей стороне: агент находит карточку, мы определяем
-цену — по карточке или ответом вашей проверки цены — и проверяем платёж.
-Только после этого заказ появляется у вас. Невалидные покупки, устаревшие цены
-и платежи, не прошедшие проверку, до вашего обработчика не доходят.
+## Where an order comes from
 
-### Из чего состоит заказ
+A purchase starts on our side. The agent finds the card, we work out the price
+— from the card, or from your price check's answer — and we check the payment.
+Only after that does the order appear on yours. Invalid purchases, stale
+prices and payments that failed their check never reach your handler.
 
-| Что | Зачем оно вам |
+### What an order is made of
+
+| What | What it is for |
 | --- | --- |
-| `id` | идентификатор заказа, он же ключ идемпотентности: одинаков при всех повторах |
-| `merchant_item_id` | ваш собственный ключ товара, тот же, что у вас в базе |
-| `params` | параметры покупки, уже проверенные схемой карточки |
-| `price` | цена продажи: сумма, валюта, момент покупки и `as_of` цены, по которой она посчитана |
-| `price_id` | идентификатор вопроса о цене — тот же, что приходил в проверку цены |
-| `test` | признак тестового заказа |
+| `id` | the order's identifier, and its idempotency key: the same across every repeat |
+| `merchant_item_id` | your own key for the product, the one it has in your database |
+| `params` | the purchase parameters, already checked against the card's declaration |
+| `price` | the sale price: the amount, the currency, the moment of purchase, and the `as_of` of the price it was worked out from |
+| `price_id` | the identifier of the price question — the same one that arrived at the price check |
+| `test` | the mark of a test order |
 
-Скажем, агент покупает месячный доступ. В обработчик приходит ваш собственный
-`access-monthly`, адрес почты, который агент указал при покупке,
-идентификатор заказа вида `ord_7c1e05` — по нему вы узнаете этот же заказ,
-если он придёт повторно, — и сумма, за которую доступ продан.
+Say an agent buys a month of access. What reaches your handler is your own
+`access-monthly`, the email address the agent gave at purchase, an order
+identifier of the form `ord_7c1e05` — by which you recognise this same order
+if it arrives again — and the sum the access was sold for.
 
-Цену мы кладём в заказ потому, что продать могли не по цене из карточки: если
-у товара есть проверка цены, продажа шла по её ответу. Вы получаете итоговую
-сумму, её валюту, момент покупки и `as_of` того ответа, по которому она
-посчитана, — этого хватает, чтобы записать продажу у себя, не поднимая
-карточку. Сверять
-сумму со своим прайсом и отказываться при расхождении не нужно: расхождение мы
-ловим до того, как заказ уйдёт вам.
+The price is in the order because the sale may not have gone at the card's
+price: where a product has a price check, the sale went at the check's answer.
+You get the final sum, its currency, the moment of purchase and the `as_of` of
+the answer it was worked out from, which is enough to record the sale on your
+side without looking the card up. There is no need to compare that sum against
+your own price list and refuse on a mismatch — we catch a mismatch before the
+order leaves for you.
 
-По `price_id` вы связываете заказ со своим ответом о цене: если под названную
-цену вы отложили остаток, здесь его пора списать. Идентификатор одноразовый —
-второго заказа под ним не будет.
+The field `price_id` ties the order to your own answer about the price: if you
+set stock aside against the price you named, this is the moment to write it
+off. The identifier is good once, and no second order arrives under it.
 
-### Ответы обработчика
+### What a handler can answer
 
-Ответов у обработчика три:
+A handler has three answers:
 
-- выдача — JSON по схеме результата из карточки, заказ закрывается успехом;
-- отказ — короткий код и человекочитаемая причина, коды собраны в
-  [словаре кодов отказа](/cards);
-- приём заказа к исполнению — там, где товар уходит позже: саму выдачу вы
-  подтверждаете отдельным вызовом.
+- a delivery — JSON to the result declared in the card; the order closes as a
+  success;
+- a refusal — a short code and a reason a person can read, with the codes
+  collected in the [vocabulary of refusal codes](/cards);
+- taking the order on, where the goods leave later: you confirm the delivery
+  itself with a separate call.
 
-Этими тремя набор исчерпан, и это важно для того, как вы сообщаете о временной
-неудаче. Исключение в обработчике, упавший процесс, оборванная связь — всё это
-недоставленный заказ: ответ до нас не дошёл, и мы пришлём заказ снова, с
-задержкой, пока не выйдет срок режима. Отказ, наоборот, мы понимаем как
-окончательное «выдать нельзя» и закрываем на нём заказ. Поэтому поставщик, не
-ответивший за пять секунд, — повод бросить исключение, а не отказать.
+Those three are the whole set, and that matters for how you report a temporary
+failure. An exception in the handler, a process that fell over, a connection
+that broke — for us each of these means the order never reached you: the
+answer did not arrive, so we send the order again, after a delay, until the
+mode's deadline runs out. A refusal we read the other way, as a final "this
+cannot be delivered", and we close the order on it. Which is why a supplier
+that did not answer within five seconds is a reason to throw rather than to
+refuse.
 
-Молчание ответом не считается: у каждого ожидания есть срок, и просроченный
-заказ закрывается без вас.
+Silence does not count as an answer: every wait has a deadline, and an order
+that outlives its own closes without you.
 
-### Режим с подтверждением
+### The confirmation mode
 
-В этом режиме заказу предшествует ещё один шаг. Запрос подтверждения приходит
-той же подпиской, что и заказы, и помечен как запрос подтверждения: параметры
-покупки и цена в нём уже есть, а денег по нему ещё не двигалось. Отвечает
-обработчик теми же ответами, что и на заказ: приём заказа к исполнению
-означает «выдам», отказ — «не выдам». Выдать товар прямо в ответ на такой
-запрос нельзя, потому что деньги за него ещё не списаны.
+In this mode one more step comes before the order. The request to confirm
+arrives on the same subscription the orders do and is marked as a request to
+confirm: the purchase parameters and the price are already in it, and no money
+has moved for it yet. The handler answers with the same three answers it gives
+an order: taking it on means "I will deliver", a refusal means "I will not".
+Delivering the goods straight into the answer is not allowed, because the
+money for them has not been charged.
 
-Ответили «выдам» — у агента начинается срок на оплату, а после оплаты тот же
-заказ приходит к вам обычным порядком. Ответили «не выдам» или промолчали
-дольше своего срока — заказ закрывается, и покупатель не потратил ничего.
-Форма этого обмена рабочая, до пилота она может измениться.
+Answer that you will deliver, and the agent's clock for paying starts; after
+the payment the same order reaches you in the ordinary way. Answer that you
+will not, or stay silent past your deadline, and the order closes with the
+buyer having spent nothing.
 
-## Подтвердить выдачу отдельным вызовом
+## Confirming a delivery with a separate call
 
-Заказ, принятый к исполнению, вы закрываете вызовом `deliver`, когда выдача
-закончилась. Вызов делается на самом заказе — на том объекте, который пришёл в
-обработчик или который вы перечитали у нас, — а аргумент у него один: результат
-по схеме из карточки, и агенту он уходит как есть.
+You close an order you took on with `deliver`, once the delivery is finished.
+The call is made on the order itself — the object that arrived in your
+handler, or the one you read back from us — and it takes one argument: the
+result, to the shape declared in the card, which goes to the agent as it is.
 
 ```ts
 await order.deliver({ access_url: url, expires_at: until })
 ```
 
-В выдаче есть каждое поле, которое схема результата в карточке обещает
-агенту, — выдача с недостающим полем не проходит
-([«Результат выдачи»](/cards#delivery-result)).
+A delivery carries every field the card's result promises the agent, and a
+delivery missing one does not go through
+([Delivery result](/cards#delivery-result)).
 
-Вызов идемпотентен по идентификатору заказа. Позвали второй раз с тем же
-`order.id` — получили успех с пометкой «уже выдано»: это положительный
-ответ, не ошибка, и второй выдачи и второго списания не произошло. Ветвить
-код по слову внутри успеха не нужно — признак успеха один на оба случая. Поэтому повторять вызов после обрыва связи безопасно, и хранить у
-себя отметку «уже отправил» ради этого не нужно.
+The call is idempotent by the order's identifier. Call it a second time with
+the same `order.id` and you get a success marked as already delivered: a
+positive answer rather than an error, with no second delivery and no second
+charge. There is nothing to branch on inside that success — the flag for
+success is the same one in both cases. Repeating the call after a dropped
+connection is therefore safe, and you do not have to keep a note of what you
+have already sent.
 
-Опоздавший вызов мы принимаем. Если ваш срок выдачи вышел, заказ уже помечен
-требующим возврата, но возврат ещё не исполнен, `deliver` закрывает долг
-выдачей: деньги за товар уплачены, и покупателю поздний товар лучше возврата.
-Если возврат к этому моменту исполнен, вызов вернёт ошибку — выдавать по
-такому заказу уже нечего.
+A late call is accepted. If your delivery deadline has passed, the order is
+already marked as needing a refund and the refund has not yet gone out,
+`deliver` closes the debt with the goods: the money for them has been paid,
+and late goods are better for the buyer than a refund. If the refund has gone
+out by then, the call returns an error — there is nothing left to deliver
+against.
 
-Ошибки `deliver` и `refuse` возвращаются, а не бросаются, и несут признак,
-имеет ли смысл повторять. Сеть подвела или наша сторона ответила не сразу —
-повторяйте тем же вызовом, он идемпотентен. Ошибка помечена окончательной, как
-в примере с уже исполненным возвратом, — повтор ничего не изменит, и вместо
-цикла повторов такой случай стоит записать у себя.
+Errors from `deliver` and `refuse` are returned rather than thrown, and they
+carry a flag saying whether repeating is worth anything. The network let you
+down, or our side was slow to answer — repeat with the same call, which is
+idempotent. The error is marked final, as in the case of the refund already
+paid out — then repeating changes nothing, and instead of a retry loop the
+case is worth writing down on your side.
 
-## Отказаться после того, как приняли заказ
+## Refusing after you have taken the order on
 
-Приём заказа к исполнению вас не связывает: пока заказ не закрыт, от него
-можно отказаться отдельным вызовом.
+Taking an order on does not bind you: while the order is open, you can refuse
+it with a separate call.
 
 ```ts
 await order.refuse({
   code: 'out_of_stock',
-  message: 'Поставщик не подтвердил номер',
+  message: 'The supplier did not confirm the number',
 })
 ```
 
-Вызов нужен там, где вы уже ответили «принял», — в асинхронном режиме и в
-режиме с подтверждением после оплаты. В синхронном режиме отказ отдаёт сам
-обработчик своим ответом, и отдельного вызова там нет.
+The call is for the places where you have already answered that you took the
+order on: the asynchronous mode, and the confirmation mode after the payment.
+In the synchronous mode the handler refuses in its own answer, and there is no
+separate call there at all.
 
-Деньги по принятому заказу уже списаны, поэтому отказ сразу помечает заказ
-требующим возврата. Дожидаться своего срока выдачи, чтобы прийти к тому же
-результату молчанием, смысла нет: покупатель узнаёт о долге в ту минуту, когда
-о нём узнали вы, а не через сутки.
+The buyer has already been charged for an order you took on, so a refusal
+marks the order as needing a refund straight away. There is nothing to gain by
+waiting out your delivery deadline and arriving at the same result through
+silence: the buyer hears about the debt the minute you do, rather than a day
+later.
 
-## Узнать состояние заказа
+## Finding out where an order stands
 
-Состояние заказов помним и мы, поэтому спрашивать нас можно в любой момент.
+We remember where the orders stand as well, so you can ask us at any moment.
 
 ```ts
 const order = await coinslot.orders.get(orderId)
@@ -176,193 +189,206 @@ for (const waiting of open) {
 }
 ```
 
-Первый вызов возвращает один заказ, второй — все незакрытые. Нужны они там,
-где ваш процесс перезапустился и своей записи о заказе не осталось: список
-незакрытых показывает, что ещё ждёт выдачи, и восстанавливать эту картину по
-одной своей базе не приходится.
+The first call returns one order, the second every order still open. They are
+for the case where your process restarted and no record of the order is left
+on your side: the list of open orders shows what is still waiting for a
+delivery, so the picture does not have to be rebuilt from your database alone.
 
-Заказы отсюда несут те же вызовы, что и заказы из обработчика: `deliver` и
-`refuse` делаются прямо на них. Поэтому после перезапуска процесс проходит по
-списку, спрашивает у себя, что по каждому заказу уже готово, и закрывает
-готовое — не собирая наши идентификаторы в отдельную переменную. Готовность
-знаете вы, а не мы: в списке лежит всё незакрытое, включая заказы, по которым
-выдача ещё идёт.
+Orders from here carry the same calls that orders from the handler do:
+`deliver` and `refuse` are made directly on them. After a restart your process
+therefore walks the list, asks itself what is ready for each order, and closes
+what is ready — without collecting identifiers of ours into a variable of its
+own. What is ready is something you know and we do not: the list holds
+everything still open, including the orders whose delivery is still under way.
 
-Если своя запись о заказе всё-таки осталась и в ней лежит наш идентификатор —
-задание в очереди, строка в вашей базе, — заказ по нему собирается без
-обращения к нам:
+If your own record of the order did survive and it holds our identifier — a
+job in a queue, a row in your database — the order can be assembled from it
+without asking us anything:
 
 ```ts
 await coinslot.orders.forId(savedId).deliver({ access_url: url })
 ```
 
-Этот вызов ничего не спрашивает и потому работает и тогда, когда до нас не
-достучаться: `get` в такой момент вернуть заказ не сможет, а выдача по
-сохранённому идентификатору уйдёт и вернёт ошибку с признаком «повторить
-имеет смысл». Сам заказ он не читает — ни параметров покупки, ни состояния в
-нём нет, только вызовы, которые заказ закрывают.
+That call asks nothing, and so it works even when we cannot be reached: `get`
+at such a moment can return no order at all, while a delivery against a saved
+identifier goes out and comes back as an error flagged worth repeating. It
+does not read the order itself — there are no purchase parameters and no state
+in it, only the calls that close an order.
 
-## События по той же подписке
+## Events on the same subscription
 
-Кроме заказов той же подпиской приходят события — сообщения о том, что с
-заказом случилось без вашего участия. Обработчик для них объявляется так же,
-как для заказов, — `coinslot.on('event', ...)`. Отвечать на них не нужно:
-событие уведомляет, а не требует работы, и подписка ничего по ним не
-отправляет.
+Besides orders, the same subscription carries events: messages about something
+that happened to an order without you. A handler for them is declared the way
+one is for orders, with `coinslot.on('event', ...)`. They need no answer — an
+event notifies rather than asking for work, and the subscription sends nothing
+back for one.
 
-| Событие | Что произошло |
+| Event | What happened |
 | --- | --- |
-| Заказ помечен требующим возврата | вы не выдали в срок или отказались после списания |
-| Подтверждённый заказ не оплачен | вы ответили «выдам», а агент не заплатил в свой срок; вы свободны |
-| Платёж не исполнился после синхронной выдачи | вы выдали, а деньги не пришли |
+| An order was marked as needing a refund | you did not deliver in time, or refused after the charge |
+| A confirmed order was not paid for | you answered that you would deliver and the agent did not pay in its own time; you are free |
+| A payment did not execute after a synchronous delivery | you delivered and the money never arrived |
 
-## Выдали, а платёж не исполнился
+## You delivered and the payment did not execute
 
-Случай редкий и возможен только в синхронном режиме. Платёж мы сначала
-проверяем, а исполняем последним шагом, уже после вашей выдачи; между
-проверкой и исполнением средства могут уйти с кошелька покупателя на
-что-нибудь другое. Тогда товар вы произвели, а денег за него нет.
+A rare case, and possible only in the synchronous mode. We check a payment
+first and execute it as the last step, after your delivery; between the check
+and the execution the funds can leave the buyer's wallet for something else.
+Then you have produced the goods and there is no money for them.
 
-Заказ в этом случае помечается выданным без оплаты, и вам приходит событие —
-искать такие случаи сверкой переводов не нужно. Для агента покупка не
-состоялась: товар мы отдаём после исполнения платежа, поэтому он не получил ни
-товара, ни списания. Заказ у вас при этом остаётся незакрытым.
+The order is marked in this case as delivered and unpaid, and an event reaches
+you — there is no need to go looking for such cases by reconciling transfers.
+For the agent the purchase did not happen: we hand the goods over after the
+payment executes, so it received neither the goods nor a charge. The order
+stays open on your side.
 
-Закрывает его повтор покупки: агент повторяет её тем же ключом, платёж
-исполняется, и заказ закрывается вашей уже произведённой выдачей — выдавать
-второй раз не нужно. Отзывать выданное или ждать повтора — решаете вы;
-величина риска ограничена ценой одной покупки, и владельцу бизнеса об этом
-риске сказано на странице [«Деньги»](/money).
+A repeat purchase is what closes it: the agent repeats it under the same key,
+the payment executes, and the order closes on the delivery you have already
+made — there is no need to deliver a second time. Whether to revoke what you
+gave out or to wait for the repeat is yours to decide; the size of the risk is
+bounded by the price of one purchase, and the owner of the business is told
+about that risk on [Money](/money).
 
-## Чем заказ может закончиться
+## How an order can end
 
-Заказ всегда закрывается — выдачей, отказом или по сроку, — и агент видит,
-чем именно. Незакрытыми остаются три случая, все редкие: деньги списаны, а
-выдачи не случилось; вы выдали, а платёж не исполнился; и платёжная сеть не
-ответила, состоялось ли списание.
+An order always closes — with a delivery, with a refusal or on a deadline —
+and the agent sees which. Three cases stay open, and all three are rare: the
+money was charged and no delivery happened; you delivered and the payment did
+not execute; and the payment network never said whether the charge went
+through.
 
-| Ситуация | Где деньги | Что видит агент |
+| Situation | Where the money is | What the agent sees |
 | --- | --- | --- |
-| Вы выдали товар | у вас | товар и квитанция |
-| Товара нет, параметры не подошли, платёж не прошёл проверку — или вы отказали в синхронном режиме | не двигались | отказ с причиной, покупка не состоялась |
-| Вы ответили «не выдам» на запрос подтверждения | не двигались | отказ, ничего не списано |
-| Время вышло: не дождались подтверждения, оплаты или синхронной выдачи | не двигались | заказ закрыт по сроку |
-| Вы ушли, и открытые заказы закрылись | по невыданному [возвращаете вы](/money) | заказ закрыт, деньги вернутся |
-| Деньги списаны, выдачи не случилось | у вас | заказ ждёт возврата |
-| Вы выдали синхронно, а платёж не исполнился | не пришли | покупка не состоялась; повтор доводит оплату |
-| Платёжная сеть не ответила, списаны ли деньги | неизвестно — выясняем и сообщаем, когда узнаём | «исход платежа неизвестен» — не «отказ»: повтор тем же ключом безопасен |
+| You delivered the goods | with you | the goods and a receipt |
+| There is none, the parameters did not fit, the payment failed its check — or you refused in the synchronous mode | never moved | a refusal with a reason; the purchase did not happen |
+| You answered "I will not deliver" to a request to confirm | never moved | a refusal, and nothing was charged |
+| Time ran out: no confirmation, no payment or no synchronous delivery arrived | never moved | the order was closed on its deadline |
+| You left, and the open orders closed | for what was not delivered, [you send it back](/money) | the order is closed, the money will come back |
+| The money was charged and no delivery happened | with you | the order is waiting for a refund |
+| You delivered synchronously and the payment did not execute | never arrived | the purchase did not happen; a repeat drives the payment home |
+| The payment network did not say whether the money was charged | not known — we are finding out and will tell you when we do | "the outcome of the payment is not known", not "refused": a repeat under the same key is safe |
 
-Пауза заказов не закрывает: карточки перестают продаваться, а уже принятые
-заказы доигрываются обычным порядком. Открытые заказы закрывает только уход.
+A pause closes no orders: cards stop selling, and the orders already taken on
+play out in the ordinary way. Only leaving closes the ones that are open.
 
-Статус говорит ровно то, что система знает. Если ответа от вас ещё нет, так в
-статусе и написано, и агент не принимает неизвестность за отказ.
+A status says exactly what the system knows. Where there is no answer from you
+yet, that is what the status says, and the agent does not take not knowing for
+a refusal.
 
-## Время вышло
+## Time ran out
 
-Заказ, у которого вышел срок, не зависает в неопределённости: он закрывается,
-и агент видит, чем именно всё кончилось. Что произойдёт, зависит от того, на
-каком шаге стояло ожидание.
+An order whose deadline has passed does not hang in the air. It closes, and
+the agent sees how it ended. What happens depends on which step the waiting
+was at.
 
-Числа сроков мы называем до пилота. Ваших сроков в карточке два: на ответ
-подтверждением и на асинхронную выдачу; оба видны агенту до покупки. Сколько
-ждать синхронного ответа, задаём мы — это общий потолок ожидания агента, и в
-карточке его нет.
+We name the numbers before the pilot. An asynchronous card carries one
+deadline of yours, on the delivery, and the agent sees it before it buys; the
+confirmation mode has a deadline of its own and it arrives together with the
+mode. How long to wait for a synchronous answer is set by us — that is the
+general ceiling on how long an agent waits, and no card carries it.
 
-| Ситуация | Время вышло — что произошло |
+| Situation | Time ran out — what happened |
 | --- | --- |
-| Агент получил цену и думает | цена больше не действует; захочет купить — запросит свежую |
-| Вам пришёл запрос «выдадите?» | заказ закрылся, деньги покупателя не двигались |
-| Агент должен оплатить подтверждённый заказ | заказ закрылся, вы свободны; вам придёт событие |
-| Вы выдаёте синхронный заказ | покупка не состоялась, списания не было; поздняя выдача не пропадает — её заберёт повтор |
-| Вы выдаёте асинхронный заказ | деньги уже у вас, заказ помечен «требует возврата» |
+| The agent has the price and is thinking | the price no longer holds; if it still wants to buy, it asks for a fresh one |
+| A request asking whether you will deliver has arrived | the order closed, and the buyer's money never moved |
+| The agent owes payment for a confirmed order | the order closed and you are free; an event comes to you |
+| You are delivering a synchronous order | the purchase did not happen and nothing was charged; a late delivery is not lost — a repeat collects it |
+| You are delivering an asynchronous order | the money is already with you, and the order is marked as needing a refund |
 
-## Как опознать повтор
+## Telling a repeat apart
 
-По идентификатору заказа: он одинаковый при всех повторах, и ваша сторона
-отдаёт по нему прежний результат вместо второй выдачи. Доставка заказов
-гарантирует «не меньше одного раза», поэтому повтор — штатное событие, а не
-признак поломки.
+By the order's identifier: it is the same across every repeat, and your side
+answers with the earlier result under it instead of delivering a second time.
+Orders are delivered at least once, which makes a repeat an ordinary event
+rather than a sign of something broken.
 
-Со стороны агента повтор устроен по-разному в разных режимах. В синхронном
-ключом служит сам заказ: квитанция появляется вместе с платежом, а платёж
-исполняется здесь последним, так что в момент повтора её может ещё не быть. В
-асинхронном режиме и в режиме с подтверждением платёж уже прошёл, и повтор
-идёт по квитанции.
+On the agent's side a repeat works differently in different modes. In the
+synchronous mode the order itself is the key: the receipt appears together
+with the payment, and the payment executes last here, so at the moment of a
+repeat there may not be one yet. In the asynchronous mode and in the
+confirmation mode the payment has already gone through, and the repeat goes by
+the receipt.
 
-Отдельный случай — повтор асинхронного заказа, который вы уже выдали. Выдачу
-вы подтверждали не ответом обработчика, а вызовом `deliver`, поэтому отвечать
-на такой повтор нужно тем же, чем вы ответили в первый раз: приёмом заказа к
-исполнению. Выдавать второй раз и звать `deliver` второй раз не нужно — заказ
-уже закрыт.
+One case stands apart: a repeat of an asynchronous order you have already
+delivered. You confirmed that delivery with the `deliver` call rather than
+with the handler's answer, so the answer to such a repeat is the one you gave
+the first time — taking the order on. There is no need to deliver a second
+time or to call `deliver` again, because the order is already closed.
 
-Наша проверка это и смотрит. Она сравнивает не байты двух ответов, а эффект:
-после второго заказа не должно появиться второй выдачи. Сами ответы при этом
-могут различаться — скажем, в первом вы назвали ожидаемое время выдачи, а во
-втором нет.
+Our check looks at exactly this. It compares the effect of two answers rather
+than their bytes: after a second order there must be no second delivery. The
+answers themselves may well differ — you named an expected delivery time in
+the first, say, and not in the second.
 
-## Обработчик запущен в нескольких экземплярах
+## Running the handler in several instances
 
-Один заказ уходит одному экземпляру. Запустите обработчик в трёх процессах —
-три подписки разберут поток между собой, и один и тот же заказ в два процесса
-одновременно не попадёт.
+One order goes to one instance. Run the handler in three processes and three
+subscriptions divide the stream between them, and one order does not land in
+two processes at once.
 
-Обработку заказа подтверждает ваш ответ: пока он не вернулся, заказ считается
-незакрытым. Процесс упал или переподключился, не ответив, — заказ уйдёт снова,
-возможно другому экземпляру. Это штатное поведение, и ради него обработчик
-держит идемпотентность по идентификатору заказа.
+Your answer is what acknowledges an order: until it comes back, the order
+counts as open. A process that fell over or reconnected without answering
+leaves the order to go out again, possibly to another instance. That is
+ordinary behaviour, and it is what the handler's idempotency by the order's
+identifier is for.
 
-Сколько заказов экземпляр берёт одновременно, вы задаёте параметром подписки.
+How many orders one instance takes at a time is a parameter of the
+subscription.
 
-## Тестовые заказы
+## Test orders
 
-Тестовый заказ помечен признаком `test`, и по нему обработчик отличает
-проверку от живой продажи. Что делать с этим признаком, решаете вы: увести
-такой заказ в свой тестовый контур, ответить заглушкой или обслужить как
-обычный.
+A test order is marked with the `test` flag, and it is how the handler tells a
+check from a live sale. What to do with the flag is yours to decide: send such
+an order into your own test environment, answer with a stub, or serve it like
+any other.
 
-Признак приходит с заказом, а отдельного адреса или отдельного ключа для
-тестов на пилоте нет. Чем в итоге будут разделены песочница и боевой режим, мы
-ещё выбираем: пункт есть в списке на странице
-[«Первая тестовая продажа»](/quickstart).
+The flag arrives with the order, and during the pilot there is no separate
+address and no separate key for tests. What will separate the sandbox from the
+live system in the end is still being chosen; the item is in the list on
+[The first test sale](/quickstart).
 
-## Не успели выдать вовремя
+## You did not deliver in time
 
-Синхронный заказ несёт срок, после которого мы вашу выдачу уже не запускаем.
-Сложный случай — выдача, начатая до срока и закончившаяся после: покупка к
-этому моменту уже закрыта отказом без списания.
+A synchronous order carries a deadline after which we no longer start your
+delivery. The hard case is a delivery that began before the deadline and
+finished after it, by which time the purchase is closed as a refusal with
+nothing charged.
 
-Скажем, на синхронный ответ отведено десять секунд (число примерное). Ваш
-обработчик начал выдачу на девятой секунде, а закончил на двенадцатой. Агент
-к этой секунде уже получил отказ, ничего не потратив, но выданный вами доступ
-никуда не делся.
+Say ten seconds are allowed for a synchronous answer (an example figure). Your
+handler began the delivery in the ninth second and finished in the twelfth. By
+that second the agent has already had a refusal and spent nothing, but the
+access you gave out has not gone anywhere.
 
-Сделанная работа не пропадает: повтор покупки с тем же ключом заказа забирает
-уже произведённую выдачу, теперь с оплатой. Поэтому отдавать по ключу прежний
-результат стоит и после того, как срок вышел.
+Work already done is not lost: a repeat purchase under the same order key
+collects the delivery that was made, this time with the payment. Which is why
+answering with the earlier result under the key is worth doing after the
+deadline has passed as well.
 
-Ошибкой опоздание не считается и исключением не оборачивается: на опоздавший
-ответ наши инструменты возвращают вашему коду результат «покупка уже закрыта».
-Сделать по нему можно одно — записать случай у себя: товар вы произвели,
-оплаты по нему пока нет, и придёт она повтором.
+Being late is not an error and does not come back as an exception: for a late
+answer our tools hand your code the result "the purchase is already closed".
+There is one thing to do with it — write the case down on your side. You have
+produced the goods, there is no payment for them yet, and it will arrive with
+a repeat.
 
-## Цена изменилась, пока агент думал
+## The price changed while the agent was thinking
 
-Платёж по устаревшей цене не проходит: агент получает свежую цену и решает
-заново. Это ожидаемый ход событий, а не сбой, и ваша сторона о нём не узнаёт —
-заказа при таком раскладе не появляется.
+A payment at a stale price does not go through: the agent is given a fresh
+price and decides again. This is the expected course of events rather than a
+failure, and your side never hears about it — no order appears at all.
 
-## Что ещё не решено
+## What is not settled yet
 
-- Числа сроков: сколько живёт цена, сколько мы ждём синхронного ответа, какие
-  значения по умолчанию у сроков подтверждения и выдачи.
-- Порог, с которого цена считается устаревшей: любая разница или разница
-  больше названной.
-- Какие ещё события мы шлём: три названных — это минимум, каталог мы дополняем
-  по мере того, как находятся случаи, о которых ваша сторона иначе узнаёт
-  только сверкой руками.
-- Задержка и число повторных доставок недоставленного заказа.
-- Транспорт подтверждения для продавцов без API — вместе с путём «заказ
-  сообщением», после пилота.
-- Как ваша сторона узнаёт, что по заказу исполнен возврат: вместе с самой
-  механикой возврата ([«Деньги»](/money)).
+- The numbers of the deadlines: how long a price holds, how long we wait for a
+  synchronous answer, and the defaults for the confirmation and delivery
+  deadlines.
+- The threshold at which a price counts as stale: any difference at all, or a
+  difference larger than a named one.
+- What other events we send. The three named here are a minimum, and we add to
+  the catalogue as cases turn up where your side would otherwise learn of
+  something only by reconciling by hand.
+- The delay before we resend an order that never reached you, and how many
+  times we do it.
+- The transport for confirmations, for sellers with no API — together with the
+  path where an order arrives as a message, after the pilot.
+- How your side learns that a refund on an order has gone out: together with
+  the mechanics of refunding ([Money](/money)).
