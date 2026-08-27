@@ -185,9 +185,13 @@ describe("a password we generate", () => {
     // It is handed over by whoever runs the command that makes the account, and
     // it gets read aloud or copied by hand at least once. A character that can be
     // confused for another is a support conversation.
-    for (let attempt = 0; attempt < 50; attempt += 1) {
-      expect(newPassword()).toMatch(/^[a-z2-9]+$/);
-      expect(newPassword()).not.toMatch(/[lo]/);
+    // One password per round, held to both rules. Written as two calls it read
+    // as one check of two things and was two checks of two different passwords,
+    // which is half the coverage for twice the work.
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      const password = newPassword();
+      expect(password, password).toMatch(/^[a-z2-9]+$/);
+      expect(password, password).not.toMatch(/[lo]/);
     }
   });
 });
