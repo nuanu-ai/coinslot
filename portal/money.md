@@ -47,10 +47,10 @@ spent nothing and you owe nobody anything. For the rest the money arrives at
 the moment of purchase, ahead of your delivery, and then a product that was
 never delivered leaves a debt: such an order is marked as needing a refund.
 
-You choose the order, and you choose it product by product — it is written in
-that product's card alongside the price and the description. There is no
-switch for the whole shop: one product can be paid for after delivery and the
-one next to it before.
+Which of the two comes first is your choice, and you make it product by
+product — it is written in that product's card alongside the price and the
+description. There is no switch for the whole shop: one product can be paid for
+after delivery and the one next to it before.
 
 Say you sell a month of access for five dollars (an example figure). If the
 access goes to the buyer in the answer to the purchase, those five dollars
@@ -58,8 +58,8 @@ reach your wallet after your side has handed it over. If preparing the access
 takes minutes or hours, the same five dollars arrive at the moment of purchase
 and you deliver later.
 
-There is a third order, for goods you hand over yourself, and it arrives after
-the pilot. Before any money moves you are asked whether you will deliver;
+A third arrangement exists, for goods you hand over yourself, and it arrives
+after the pilot. Before any money moves you are asked whether you will deliver;
 until you answer yes nothing is charged, and after your yes the money arrives
 at once, with the delivery still ahead of it.
 
@@ -86,12 +86,12 @@ You hear about such a case from us: we tell you the payment did not execute.
 There is no need to reconcile the transfers into your wallet against what you
 delivered by hand.
 
-Choosing the other order closes the case. For a product whose money comes
-ahead of the delivery, the charge happens at the moment of purchase and you
-never deliver anything unpaid. That choice is yours product by product, in the
-card, and we do not set a general rule on your behalf.
+Putting the money first closes the case. For a product paid for ahead of the
+delivery, the charge happens at the moment of purchase and you never deliver
+anything unpaid. Which comes first is yours to choose product by product, in
+the card, and we do not set a general rule on your behalf.
 
-## What a sale is evidenced by
+## What proves a sale happened
 
 Every paid purchase leaves a receipt — a record of the payment that went
 through. It shows what was bought and for how much; to the buyer it is proof
