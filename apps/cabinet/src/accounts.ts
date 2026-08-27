@@ -31,6 +31,13 @@ export interface Account {
   readonly createdAt: Date;
 }
 
+/** A session that has not expired, and whose it is. */
+export interface LiveSession {
+  /** The identifier it was asked about under, so a caller can end this one. */
+  readonly fingerprint: string;
+  readonly account: Account;
+}
+
 /** What the command line prints about an account, which is never its password. */
 export interface AccountSummary {
   readonly email: string;
@@ -67,8 +74,24 @@ export interface Accounts {
    * the table grows for the life of the deployment.
    */
   open(fingerprint: string, accountId: string, at: Date, until: Date): Promise<number>;
-  /** Whose session that is, or null when it has expired, ended, or never was. */
-  whose(fingerprint: string, now: Date): Promise<Account | null>;
+  /**
+   * Which of these identifiers are sessions that are still alive, and whose.
+   *
+   * A list and not one at a time, because that is the question the caller
+   * actually has: a browser can send several cookies of one name, and the
+   * cabinet cannot decide who is asking until it knows about all of them. Asked
+   * one at a time, a request carrying as many cookies as the runtime will read
+   * turns one page view into that many round trips; asked together it is one
+   * question whatever arrives. It is also one moment: a session ended between
+   * two of those round trips would make the answer depend on which half of the
+   * request it fell in.
+   *
+   * An identifier nothing was opened under, one that was ended and one whose
+   * time is up are all simply absent from the answer, and the three are not
+   * distinguished. Each identifier is answered at most once however many times
+   * it was given, and the order is not promised.
+   */
+  whose(fingerprints: readonly string[], now: Date): Promise<readonly LiveSession[]>;
   /** Ends one session. Ending one that is not there is not an error. */
   end(fingerprint: string): Promise<void>;
   /** Ends every session one person has, and answers how many that was. */
@@ -174,12 +197,22 @@ export function memoryAccounts(): Accounts {
       return swept;
     },
 
-    async whose(fingerprint, now) {
-      const session = sessions.get(fingerprint);
-      if (session === undefined || session.expiresAt <= now) {
-        return null;
+    async whose(fingerprints, now) {
+      const live: LiveSession[] = [];
+      // Over a set, because the database answers one row per identifier however
+      // many times it was named and a store that answered twice would let a
+      // caller count one session as two.
+      for (const fingerprint of new Set(fingerprints)) {
+        const session = sessions.get(fingerprint);
+        if (session === undefined || session.expiresAt <= now) {
+          continue;
+        }
+        const account = byId.get(session.accountId);
+        if (account !== undefined) {
+          live.push({ fingerprint, account });
+        }
       }
-      return byId.get(session.accountId) ?? null;
+      return live;
     },
 
     async end(fingerprint) {

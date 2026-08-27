@@ -30,6 +30,7 @@ import { loadConfig } from "./config.js";
 import { fingerprintOf, hashPassword } from "./credentials.js";
 import type { Answer } from "./gateway.js";
 import { buildApp } from "./server.js";
+import { sessionFor } from "./testing/accounts-contract.js";
 
 const KEY = "a-merchant-key-long-enough";
 const asMerchant = { authorization: `Bearer ${KEY}` };
@@ -40,6 +41,15 @@ const COOKIE = "coinslot_session";
 
 /** The person whose account every test in this file signs in as. */
 const PERSON = "dmitry@example.com";
+/**
+ * A second person with an account on the same cabinet.
+ *
+ * ADR-0009 §9 says the pilot has one merchant and one person, and this is the
+ * fixture for the case that does not care: a request can carry a session that
+ * belongs to somebody else, and "somebody else" cannot be tested with one
+ * account in the store.
+ */
+const OTHER = "someone@example.com";
 const PASSWORD = "a-password-nobody-guesses";
 /**
  * Derived once for the whole file. A scrypt derivation is a tenth of a second
@@ -48,10 +58,11 @@ const PASSWORD = "a-password-nobody-guesses";
  */
 const PASSWORD_HASH = await hashPassword(PASSWORD);
 
-/** The store a cabinet under test signs people in against, with one account. */
-const withOneAccount = async (): Promise<Accounts> => {
+/** The store a cabinet under test signs people in against, with two accounts. */
+const withAccounts = async (): Promise<Accounts> => {
   const accounts = memoryAccounts();
   await accounts.add(PERSON, PASSWORD_HASH, new Date());
+  await accounts.add(OTHER, PASSWORD_HASH, new Date());
   return accounts;
 };
 
@@ -125,7 +136,7 @@ const started = async (
 ): Promise<Running> => {
   const harnessed = await harness({ PAY_TO_ADDRESS: PAY_TO, ...options.gateway });
   const gateway = await serve(harnessed);
-  const accounts = await withOneAccount();
+  const accounts = await withAccounts();
   const basePath = options.base ?? "";
   const { browser, url } = await visiting(gateway.url, basePath, accounts, options.cabinet);
   let stopped = false;
@@ -271,6 +282,28 @@ async function attachedTo(url: string, basePath: string): Promise<Browser> {
 
   return browser;
 }
+
+/**
+ * A store that keeps a note of what the cabinet asked it about sessions.
+ *
+ * The cabinet under test is built on this store rather than beside it, so what
+ * a test reads is the cabinet's own behaviour and not the test's arithmetic.
+ * Each entry is one question, and what is in it is the identifiers that
+ * question carried.
+ */
+const counting = (accounts: Accounts): { asked: (readonly string[])[]; cabinet: Accounts } => {
+  const asked: (readonly string[])[] = [];
+  return {
+    asked,
+    cabinet: {
+      ...accounts,
+      whose: (fingerprints, now) => {
+        asked.push(fingerprints);
+        return accounts.whose(fingerprints, now);
+      },
+    },
+  };
+};
 
 /**
  * The page's text with the tags taken out, so a test reads what a person does.
@@ -479,8 +512,12 @@ describe("getting into the cabinet", () => {
 
     // And what the store will answer, which is the one that decides. A minute
     // of slack on each side, because the session opened a moment before `at`.
-    await expect(accounts.whose(held, new Date(at + twelveHours - 60_000))).resolves.not.toBeNull();
-    await expect(accounts.whose(held, new Date(at + twelveHours + 60_000))).resolves.toBeNull();
+    await expect(
+      sessionFor(accounts, held, new Date(at + twelveHours - 60_000)),
+    ).resolves.not.toBeNull();
+    await expect(
+      sessionFor(accounts, held, new Date(at + twelveHours + 60_000)),
+    ).resolves.toBeNull();
   });
 
   it("keeps a person signed in when the merchant key is rotated under them", async () => {
@@ -552,7 +589,7 @@ describe("getting into the cabinet", () => {
 
     expect((await browser.get("/cards")).to).toBe("/sign-in");
     // The row is gone, and replaying the exact cookie gets nowhere.
-    await expect(accounts.whose(fingerprintOf(token), new Date())).resolves.toBeNull();
+    await expect(sessionFor(accounts, fingerprintOf(token), new Date())).resolves.toBeNull();
     const replayed = await browser.withRawCookie(`${COOKIE}=${token}`).get("/cards");
     expect(replayed.to).toBe("/sign-in");
   });
@@ -1127,7 +1164,7 @@ describe("when something goes wrong that the merchant has to get out of", () => 
     reply: () => Promise<Answer<never>>,
   ): Promise<{ browser: Browser; close: () => Promise<void> }> => {
     const answer = async () => await reply();
-    const accounts = await withOneAccount();
+    const accounts = await withAccounts();
     const app = buildApp(
       loadConfig({
         GATEWAY_URL: "http://127.0.0.1:1",
@@ -1265,40 +1302,110 @@ describe("when something goes wrong that the merchant has to get out of", () => 
     // considered — a cap is a way to push the merchant's own cookie out of
     // sight and lock them out — so the shape is what does the work, and it
     // costs nothing.
+    //
+    // Both halves of the shape, because a value of the right length with a
+    // character we never write is exactly what somebody planting cookies would
+    // reach for once the length alone stopped working.
     const { browser, accounts } = await started();
     await browser.signIn();
     const mine = browser.sessionToken() ?? "";
-    let asked = 0;
-    const counting = {
-      ...accounts,
-      whose: (...given: Parameters<Accounts["whose"]>) => {
-        asked += 1;
-        return accounts.whose(...given);
-      },
-    };
-    // The counting store is what the cabinet under test is built on, so what is
-    // measured is the cabinet's own behaviour and not the test's arithmetic.
-    const own = await visiting("http://127.0.0.1:1", "", counting as Accounts);
+    const { asked, cabinet } = counting(accounts);
+    const own = await visiting("http://127.0.0.1:1", "", cabinet);
     try {
-      const junk = Array.from({ length: 50 }, (_, at) => `${COOKIE}=planted-${at}`).join("; ");
-      await own.browser.withRawCookie(`${junk}; ${COOKIE}=${mine}`).get("/cards");
+      const junk = [
+        // Too short, and too long, and the right length spelled wrong.
+        ...Array.from({ length: 20 }, (_, at) => `planted-${at}`),
+        ...Array.from({ length: 20 }, (_, at) => `${"A".repeat(43)}${at}`),
+        "!".repeat(43),
+        `${"A".repeat(42)}+`,
+        `${"A".repeat(42)}/`,
+        `${"A".repeat(42)}=`,
+        `${"A".repeat(42)}.`,
+      ].map((value) => `${COOKIE}=${value}`);
+      await own.browser.withRawCookie(`${junk.join("; ")}; ${COOKIE}=${mine}`).get("/cards");
 
-      expect(asked).toBe(1);
+      // The merchant's own identifier and nothing else reached the store.
+      expect(asked.flat()).toStrictEqual([fingerprintOf(mine)]);
     } finally {
       await own.browser.close();
     }
   });
 
-  it("refuses to choose when two of the cookies are live sessions", async () => {
-    // The case where the ambiguity actually matters: working inside a session
-    // somebody else opened would put the wrong person on the one record of who
-    // stopped the selling. Two live ones is nobody.
+  it("asks about every identifier a request carried in one question", async () => {
+    // The most a request can carry is a fact about the runtime: Node stops
+    // reading headers at 16 KB and one cookie of this name and shape is 62
+    // bytes with its separator, so 263 of them arrive over a bare socket and
+    // the 264th is answered 431 before the cabinet sees anything. Asked one at
+    // a time that was 263 round trips to the database on a route a stranger can
+    // reach, and ten such requests fill a pool of ten; asked together it is one
+    // question whatever arrives.
+    //
+    // Two hundred here rather than the runtime's own ceiling, because `fetch`
+    // sends headers of its own and a request built to the last byte would be
+    // measuring those instead. What the promise is about is that the number
+    // does not appear in the answer at all.
+    const { browser, accounts } = await started();
+    await browser.signIn();
+    const mine = browser.sessionToken() ?? "";
+    const { asked, cabinet } = counting(accounts);
+    const own = await visiting("http://127.0.0.1:1", "", cabinet);
+    try {
+      const planted = Array.from(
+        { length: 200 },
+        (_, at) => `${COOKIE}=${`${at}`.padStart(43, "a")}`,
+      );
+      await own.browser.withRawCookie(`${planted.join("; ")}; ${COOKIE}=${mine}`).get("/cards");
+
+      expect(asked.length).toBe(1);
+      expect(asked[0]?.length).toBe(201);
+    } finally {
+      await own.browser.close();
+    }
+  });
+
+  it("is one person's cabinet when both live cookies are that person's", async () => {
+    // What a change of mount point leaves in a browser: the cookie from the old
+    // path and the cookie from the new one, both this person's and both alive.
+    // There is no ambiguity in that to refuse, and refusing it would end a
+    // session the merchant is sitting in for a reason that is ours.
     const { browser, another } = await started();
     await browser.signIn();
     const mine = browser.sessionToken() ?? "";
     const telephone = await another();
     await telephone.signIn();
-    const theirs = telephone.sessionToken() ?? "";
+    const also = telephone.sessionToken() ?? "";
+
+    expect(mine).not.toBe(also);
+    const answered = await browser
+      .withRawCookie(`${COOKIE}=${mine}; ${COOKIE}=${also}`)
+      .get("/cards");
+
+    expect(answered.status).toBe(200);
+    expect(readable(answered.html)).toContain(PERSON);
+    // And neither session was ended on the way: both still work on their own.
+    expect((await browser.withRawCookie(`${COOKIE}=${mine}`).get("/cards")).status).toBe(200);
+    expect((await browser.withRawCookie(`${COOKIE}=${also}`).get("/cards")).status).toBe(200);
+  });
+
+  it("ends both sessions rather than choosing when they belong to two people", async () => {
+    // The case where the ambiguity actually matters: working inside a session
+    // somebody else opened would put the wrong person on the one record of who
+    // stopped the selling (ADR-0009 §7). Nobody is signed in.
+    //
+    // And the sessions are ended, which is the half that decides whether this
+    // rule is safe to have. The cabinet cannot take a cookie out of a browser —
+    // a cookie set for a broader domain or a broader path survives everything
+    // this process can send — so a rule that only refused would meet the
+    // planted session again on every redirect and every fresh sign-in, and the
+    // merchant would never reach the control that stops their selling again.
+    // Ending them means the planted value stops being a session, and the next
+    // sign-in works.
+    const { browser, another } = await started();
+    await browser.signIn();
+    const mine = browser.sessionToken() ?? "";
+    const somebody = await another();
+    await somebody.signIn(OTHER);
+    const theirs = somebody.sessionToken() ?? "";
 
     expect(mine).not.toBe(theirs);
     const answered = await browser
@@ -1307,10 +1414,18 @@ describe("when something goes wrong that the merchant has to get out of", () => 
 
     expect(answered.status).toBe(303);
     expect(answered.to).toBe("/sign-in");
-    // And either one on its own is still a session: this refuses the choice,
-    // not the sessions.
-    expect((await browser.withRawCookie(`${COOKIE}=${mine}`).get("/cards")).status).toBe(200);
-    expect((await browser.withRawCookie(`${COOKIE}=${theirs}`).get("/cards")).status).toBe(200);
+    // Neither is a session any more, so the plant is spent rather than waiting.
+    expect((await browser.withRawCookie(`${COOKIE}=${mine}`).get("/cards")).to).toBe("/sign-in");
+    expect((await browser.withRawCookie(`${COOKIE}=${theirs}`).get("/cards")).to).toBe("/sign-in");
+    // And the merchant gets back in, which is the whole point of ending them:
+    // the dead cookie is still in the browser and no longer decides anything.
+    const back = await browser.signIn();
+    expect(back.status).toBe(200);
+    const carrying = await browser
+      .withRawCookie(`${COOKIE}=${theirs}; ${COOKIE}=${browser.sessionToken() ?? ""}`)
+      .get("/cards");
+    expect(carrying.status).toBe(200);
+    expect(readable(carrying.html)).toContain(PERSON);
   });
 
   it("turns away a form post that came from another site", async () => {

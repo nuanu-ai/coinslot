@@ -18,9 +18,24 @@
  */
 
 import { afterEach, describe, expect, it } from "vitest";
-import type { Accounts } from "../accounts.js";
+import type { Account, Accounts } from "../accounts.js";
 
 const HOUR = 60 * 60 * 1_000;
+
+/**
+ * The one session behind one identifier, or null.
+ *
+ * A store answers about as many identifiers as a request carried, because that
+ * is the question its caller has. Most of the promises below are about a single
+ * session, and reading them through this keeps each one about its promise
+ * instead of about the shape of the answer. The promises that are about the
+ * list itself are written out in full further down.
+ */
+export const sessionFor = async (
+  accounts: Accounts,
+  fingerprint: string,
+  now: Date,
+): Promise<Account | null> => (await accounts.whose([fingerprint], now))[0]?.account ?? null;
 
 /** Runs the whole contract against one store. */
 export function describeAccounts(name: string, open: () => Promise<Accounts>): void {
@@ -94,7 +109,7 @@ export function describeAccounts(name: string, open: () => Promise<Accounts>): v
         const person = await accounts.add("dmitry@example.com", "hash-one", at);
 
         await accounts.open("fingerprint-one", person?.id ?? "", at, new Date(+at + 12 * HOUR));
-        const whose = await accounts.whose("fingerprint-one", new Date(+at + HOUR));
+        const whose = await sessionFor(accounts, "fingerprint-one", new Date(+at + HOUR));
 
         expect(whose?.email).toBe("dmitry@example.com");
         expect(whose?.id).toBe(person?.id);
@@ -108,10 +123,12 @@ export function describeAccounts(name: string, open: () => Promise<Accounts>): v
         await accounts.open("fingerprint-one", person?.id ?? "", at, until);
 
         // The instant it expires, not merely well after it.
-        await expect(accounts.whose("fingerprint-one", until)).resolves.toBeNull();
-        await expect(accounts.whose("fingerprint-one", new Date(+until + 1))).resolves.toBeNull();
+        await expect(sessionFor(accounts, "fingerprint-one", until)).resolves.toBeNull();
         await expect(
-          accounts.whose("fingerprint-one", new Date(+until - 1)),
+          sessionFor(accounts, "fingerprint-one", new Date(+until + 1)),
+        ).resolves.toBeNull();
+        await expect(
+          sessionFor(accounts, "fingerprint-one", new Date(+until - 1)),
         ).resolves.not.toBeNull();
       });
 
@@ -130,12 +147,12 @@ export function describeAccounts(name: string, open: () => Promise<Accounts>): v
         // Used, repeatedly, right up to the last minute.
         for (const minutes of [10, 20, 30, 40, 50, 59]) {
           await expect(
-            accounts.whose("laptop", new Date(+at + minutes * 60 * 1_000)),
+            sessionFor(accounts, "laptop", new Date(+at + minutes * 60 * 1_000)),
             `${minutes} minutes in`,
           ).resolves.not.toBeNull();
         }
 
-        await expect(accounts.whose("laptop", until)).resolves.toBeNull();
+        await expect(sessionFor(accounts, "laptop", until)).resolves.toBeNull();
       });
 
       it("is nobody's once it has been ended", async () => {
@@ -146,7 +163,7 @@ export function describeAccounts(name: string, open: () => Promise<Accounts>): v
 
         await accounts.end("fingerprint-one");
 
-        await expect(accounts.whose("fingerprint-one", at)).resolves.toBeNull();
+        await expect(sessionFor(accounts, "fingerprint-one", at)).resolves.toBeNull();
       });
 
       it("is ended one at a time, which is the whole reason it is a row", async () => {
@@ -159,17 +176,84 @@ export function describeAccounts(name: string, open: () => Promise<Accounts>): v
 
         await accounts.end("laptop");
 
-        await expect(accounts.whose("laptop", at)).resolves.toBeNull();
-        await expect(accounts.whose("telephone", at)).resolves.not.toBeNull();
+        await expect(sessionFor(accounts, "laptop", at)).resolves.toBeNull();
+        await expect(sessionFor(accounts, "telephone", at)).resolves.not.toBeNull();
       });
 
       it("is nobody's when nothing was ever opened under that identifier", async () => {
         const accounts = await fresh();
 
-        await expect(accounts.whose("never-issued", new Date())).resolves.toBeNull();
+        await expect(sessionFor(accounts, "never-issued", new Date())).resolves.toBeNull();
         // And ending one that does not exist is not an error: a person pressing
         // sign out twice is not a broken cabinet.
         await expect(accounts.end("never-issued")).resolves.toBeUndefined();
+      });
+    });
+
+    describe("several identifiers asked about together", () => {
+      it("says which of them are live and whose each one is", async () => {
+        // The question the cabinet actually has. A browser can send several
+        // cookies of one name, and the cabinet cannot decide who is asking
+        // until it knows about all of them — including whether two of them
+        // belong to two different people, which is the case it refuses.
+        const accounts = await fresh();
+        const at = new Date("2026-08-27T09:00:00.000Z");
+        const until = new Date(+at + 12 * HOUR);
+        const one = await accounts.add("dmitry@example.com", "hash-one", at);
+        const other = await accounts.add("someone@example.com", "hash-two", at);
+        await accounts.open("laptop", one?.id ?? "", at, until);
+        await accounts.open("telephone", one?.id ?? "", at, until);
+        await accounts.open("theirs", other?.id ?? "", at, until);
+
+        const live = await accounts.whose(["laptop", "theirs", "telephone"], at);
+
+        expect(
+          [...live]
+            .map((session) => `${session.fingerprint}:${session.account.email}`)
+            .sort()
+            .join(" "),
+        ).toBe("laptop:dmitry@example.com telephone:dmitry@example.com theirs:someone@example.com");
+      });
+
+      it("leaves out the ones that were never opened, were ended, or have run out", async () => {
+        // Three ways of not being a session, and none of them is told apart
+        // from the others: they are one answer to whoever is asking.
+        const accounts = await fresh();
+        const at = new Date("2026-08-27T09:00:00.000Z");
+        const person = await accounts.add("dmitry@example.com", "hash-one", at);
+        await accounts.open("laptop", person?.id ?? "", at, new Date(+at + 12 * HOUR));
+        await accounts.open("telephone", person?.id ?? "", at, new Date(+at + HOUR));
+        await accounts.open("ended", person?.id ?? "", at, new Date(+at + 12 * HOUR));
+        await accounts.end("ended");
+
+        const live = await accounts.whose(
+          ["laptop", "telephone", "ended", "never-issued"],
+          new Date(+at + 2 * HOUR),
+        );
+
+        expect(live.map((session) => session.fingerprint)).toStrictEqual(["laptop"]);
+      });
+
+      it("answers each identifier once, however many times it is given", async () => {
+        // A browser that sent the same cookie twice must not read as two
+        // sessions, because two sessions is the thing the cabinet refuses to
+        // choose between.
+        const accounts = await fresh();
+        const at = new Date("2026-08-27T09:00:00.000Z");
+        const person = await accounts.add("dmitry@example.com", "hash-one", at);
+        await accounts.open("laptop", person?.id ?? "", at, new Date(+at + 12 * HOUR));
+
+        const live = await accounts.whose(["laptop", "laptop", "laptop"], at);
+
+        expect(live.length).toBe(1);
+      });
+
+      it("answers nothing when asked about nothing", async () => {
+        // The commonest request the cabinet answers is one with no cookie at
+        // all, and it must not become a query.
+        const accounts = await fresh();
+
+        await expect(accounts.whose([], new Date())).resolves.toStrictEqual([]);
       });
 
       it("is refused for an account that is not there", async () => {
@@ -183,7 +267,7 @@ export function describeAccounts(name: string, open: () => Promise<Accounts>): v
         await expect(
           accounts.open("laptop", "acc_nobody", at, new Date(+at + HOUR)),
         ).rejects.toThrow();
-        await expect(accounts.whose("laptop", at)).resolves.toBeNull();
+        await expect(sessionFor(accounts, "laptop", at)).resolves.toBeNull();
       });
 
       it("is refused under an identifier that already has one", async () => {
@@ -199,7 +283,7 @@ export function describeAccounts(name: string, open: () => Promise<Accounts>): v
         await expect(
           accounts.open("laptop", other?.id ?? "", at, new Date(+at + 12 * HOUR)),
         ).rejects.toThrow();
-        expect((await accounts.whose("laptop", at))?.email).toBe("dmitry@example.com");
+        expect((await sessionFor(accounts, "laptop", at))?.email).toBe("dmitry@example.com");
       });
 
       it("does not pile up after it has expired", async () => {
@@ -238,9 +322,9 @@ export function describeAccounts(name: string, open: () => Promise<Accounts>): v
         const ended = await accounts.endEveryFor("DMITRY@example.com");
 
         expect(ended).toBe(2);
-        await expect(accounts.whose("laptop", at)).resolves.toBeNull();
-        await expect(accounts.whose("telephone", at)).resolves.toBeNull();
-        await expect(accounts.whose("theirs", at)).resolves.not.toBeNull();
+        await expect(sessionFor(accounts, "laptop", at)).resolves.toBeNull();
+        await expect(sessionFor(accounts, "telephone", at)).resolves.toBeNull();
+        await expect(sessionFor(accounts, "theirs", at)).resolves.not.toBeNull();
       });
 
       it("says nothing was ended for an address nobody has", async () => {
@@ -265,7 +349,7 @@ export function describeAccounts(name: string, open: () => Promise<Accounts>): v
         await expect(accounts.endEveryFor(crafted)).resolves.toBe(0);
         await expect(accounts.endEveryFor("x'; delete from cabinet_sessions; --")).resolves.toBe(0);
 
-        await expect(accounts.whose("theirs", at)).resolves.not.toBeNull();
+        await expect(sessionFor(accounts, "theirs", at)).resolves.not.toBeNull();
       });
     });
 
@@ -284,8 +368,8 @@ export function describeAccounts(name: string, open: () => Promise<Accounts>): v
 
         expect(changed).toBe(true);
         expect((await accounts.byEmail("dmitry@example.com"))?.passwordHash).toBe("hash-three");
-        await expect(accounts.whose("laptop", at)).resolves.toBeNull();
-        await expect(accounts.whose("theirs", at)).resolves.not.toBeNull();
+        await expect(sessionFor(accounts, "laptop", at)).resolves.toBeNull();
+        await expect(sessionFor(accounts, "theirs", at)).resolves.not.toBeNull();
       });
 
       it("is refused for an address nobody has", async () => {

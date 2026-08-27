@@ -14,7 +14,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { and, count, eq, gt, lte, sql } from "drizzle-orm";
+import { and, count, eq, gt, inArray, lte, sql } from "drizzle-orm";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool } from "pg";
@@ -227,10 +227,20 @@ export function postgresAccounts(pool: Pool): Accounts {
       });
     },
 
-    async whose(fingerprint, now) {
+    async whose(fingerprints, now) {
+      // Nothing to ask about is not a query. Left to drizzle an empty list
+      // becomes `where false`, which is correct and is still a round trip to
+      // the database — and a request carrying no cookie at all is the
+      // commonest request this cabinet answers, every visitor's first one
+      // among them.
+      const asked = [...new Set(fingerprints)];
+      if (asked.length === 0) {
+        return [];
+      }
       return await guarded("reading of a session", async () => {
-        const [row] = await db
+        const rows = await db
           .select({
+            fingerprint: sessions.fingerprint,
             id: accounts.id,
             email: accounts.email,
             passwordHash: accounts.passwordHash,
@@ -238,9 +248,8 @@ export function postgresAccounts(pool: Pool): Accounts {
           })
           .from(sessions)
           .innerJoin(accounts, eq(accounts.id, sessions.accountId))
-          .where(and(eq(sessions.fingerprint, fingerprint), gt(sessions.expiresAt, now)))
-          .limit(1);
-        return row === undefined ? null : accountFrom(row);
+          .where(and(inArray(sessions.fingerprint, asked), gt(sessions.expiresAt, now)));
+        return rows.map((row) => ({ fingerprint: row.fingerprint, account: accountFrom(row) }));
       });
     },
 

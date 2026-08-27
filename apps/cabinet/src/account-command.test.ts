@@ -15,6 +15,7 @@ import { describe, expect, it } from "vitest";
 import { runAccount } from "./account-command.js";
 import { type Accounts, memoryAccounts } from "./accounts.js";
 import { hashPassword, passwordMatches } from "./credentials.js";
+import { sessionFor } from "./testing/accounts-contract.js";
 
 const HOUR = 60 * 60 * 1_000;
 
@@ -117,7 +118,7 @@ describe("setting a new password from the command line", () => {
     const stored = (await accounts.byEmail("dmitry@example.com"))?.passwordHash ?? "";
     await expect(passwordMatches("old", stored)).resolves.toBe(false);
     await expect(passwordMatches(changed.password ?? "", stored)).resolves.toBe(true);
-    await expect(accounts.whose("laptop", at)).resolves.toBeNull();
+    await expect(sessionFor(accounts, "laptop", at)).resolves.toBeNull();
   });
 
   it("says so rather than inventing an account for an address nobody has", async () => {
@@ -143,8 +144,8 @@ describe("ending somebody's sessions from the command line", () => {
 
     expect(ended.code).toBe(0);
     expect(ended.said).toContain("2");
-    await expect(accounts.whose("laptop", at)).resolves.toBeNull();
-    await expect(accounts.whose("telephone", at)).resolves.toBeNull();
+    await expect(sessionFor(accounts, "laptop", at)).resolves.toBeNull();
+    await expect(sessionFor(accounts, "telephone", at)).resolves.toBeNull();
     // The account is still there: ending a session is not deleting a person.
     await expect(accounts.byEmail("dmitry@example.com")).resolves.not.toBeNull();
   });

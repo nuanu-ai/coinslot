@@ -95,7 +95,7 @@ if (databaseUrl === null) {
 
       const said = await Promise.all(
         [
-          () => store.whose(fingerprint, new Date()),
+          () => store.whose([fingerprint], new Date()),
           () => store.setPassword("dmitry@example.com", stored),
           () => store.add("dmitry@example.com", stored, new Date()),
           () => store.open(fingerprint, "acc_1", new Date(), new Date()),
@@ -125,6 +125,36 @@ if (databaseUrl === null) {
       }
       // What it does say is what somebody reading a log can act on.
       expect(said[0]).toContain("session");
+    });
+  });
+
+  describe("a request that carried no session identifier at all", () => {
+    it("does not become a query", async () => {
+      // Every visitor's first request is this one, and so is every request to
+      // the sign-in page. Left to drizzle an empty list becomes `where false`,
+      // which is a correct answer bought with a round trip to the database on
+      // the commonest request the cabinet answers.
+      //
+      // Counted at the pool, because that is where a round trip either happens
+      // or does not; the store above it cannot tell a caller how much it cost.
+      const counted = connect(databaseUrl);
+      const asked = counted.query.bind(counted);
+      let queries = 0;
+      counted.query = ((...given: Parameters<typeof asked>) => {
+        queries += 1;
+        return asked(...given);
+      }) as typeof counted.query;
+      const store = postgresAccounts(counted);
+
+      await expect(store.whose([], new Date())).resolves.toStrictEqual([]);
+      expect(queries).toBe(0);
+
+      // The negative control: one identifier is one query, so what is being
+      // measured is the emptiness and not a counter that never moves.
+      await store.whose(["never-issued"], new Date());
+      expect(queries).toBe(1);
+
+      await store.close();
     });
   });
 
