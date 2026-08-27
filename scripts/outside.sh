@@ -64,7 +64,7 @@ contains() {
   fi
 }
 
-echo "Packing them the way npm would"
+echo "Packing the two publishable packages the way a release would"
 # The build output is deleted first on purpose. Each package's `prepack` runs
 # its own build, so packing from nothing is the path a release actually takes,
 # and a package that had lost that hook would pack an empty tarball here rather
