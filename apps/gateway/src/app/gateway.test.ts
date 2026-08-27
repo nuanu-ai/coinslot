@@ -1078,10 +1078,12 @@ describe("the merchant's calls", () => {
     expect(await harnessed.gateway.acceptOrder("ord_nope", {})).toBeNull();
   });
 
-  it("says out loud that this contract has no word for a successful acceptance", async () => {
-    // The gap is in the route table rather than in the code: the answer route's
-    // success has to name one of five published results and none of them is an
-    // acceptance. The order is taken on all the same, and the message says so.
+  it("answers an acceptance on the answer route with the word for a successful one", async () => {
+    // The promise: taking an order on is a success and reads as one. The SDK
+    // posts every handler answer to this route without the merchant asking,
+    // and relays anything that is not ok:true to him as a problem — so an
+    // acceptance answered with a failure writes "something went wrong" against
+    // an order that is going through and will deliver normally.
     const harnessed = await started();
     const itemId = await published(harnessed, asyncCard);
     const offered = await harnessed.gateway.beginPurchase(itemId, {});
@@ -1094,14 +1096,57 @@ describe("the merchant's calls", () => {
       accepted: { eta_seconds: 30 },
     });
 
-    expect(answered?.ok).toBe(false);
-    if (answered?.ok !== false) throw new Error("the answer route found a word after all");
-    expect(answered.error.code).toBe("acceptance_has_no_word_in_this_contract");
-    // And the acceptance itself did land.
+    expect(answered).toStrictEqual({ ok: true, result: "accepted" });
+    // And the acceptance itself landed.
     expect((await harnessed.store.orderById(orderId))?.order.dispatch.accepted).toBe(true);
 
-    // The call written for acceptances answers them properly.
+    // The call written for acceptances keeps its wordless success: it can only
+    // ever mean the one thing, so there is nothing for a word to tell apart.
     expect(await harnessed.gateway.acceptOrder(orderId, {})).toStrictEqual({ ok: true });
+  });
+
+  it("answers an acceptance of a delivered order with the state it is in", async () => {
+    // Deliveries are at least once, so a worker takes an order on again after
+    // it has closed as a matter of course. "Accepted" would be a lie about the
+    // work: it means the goods are owed and the order is under way, and this
+    // merchant already handed them over. He is told what he can act on — there
+    // is nothing left to deliver — and no second fulfillment is asked of him.
+    const harnessed = await started();
+    const itemId = await published(harnessed, asyncCard);
+    const offered = await harnessed.gateway.beginPurchase(itemId, {});
+    if (offered.step !== "pay") throw new Error("no price was offered");
+    const orderId = offered.order.order.id;
+    await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
+    await harnessed.gateway.poll(10, 0);
+    await harnessed.gateway.answerOrder(orderId, { accepted: {} });
+    await harnessed.gateway.deliverOrder(orderId, { activation_code: "A" });
+    expect((await harnessed.store.orderById(orderId))?.order.state).toBe("delivered");
+
+    expect(await harnessed.gateway.answerOrder(orderId, { accepted: {} })).toStrictEqual({
+      ok: true,
+      result: "already_delivered",
+    });
+  });
+
+  it("still takes an order on that is owed a refund, because the goods still close it", async () => {
+    // The other order an acceptance can arrive for late. Here it is true: the
+    // deadline ran out and the buyer is owed his money back, but goods that
+    // arrive before the refund does close the debt instead — so the merchant
+    // taking it on is taking on work that still exists, and is told so.
+    const harnessed = await started();
+    const itemId = await published(harnessed, asyncCard);
+    const offered = await harnessed.gateway.beginPurchase(itemId, {});
+    if (offered.step !== "pay") throw new Error("no price was offered");
+    const orderId = offered.order.order.id;
+    await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
+    await workOnce(harnessed, { onOrder: () => ({ accepted: {} }) });
+    await harnessed.gateway.refuseOrder(orderId, { code: "out_of_stock", message: "none" });
+    expect((await harnessed.store.orderById(orderId))?.order.state).toBe("refund_due");
+
+    expect(await harnessed.gateway.answerOrder(orderId, { accepted: {} })).toStrictEqual({
+      ok: true,
+      result: "accepted",
+    });
   });
 });
 

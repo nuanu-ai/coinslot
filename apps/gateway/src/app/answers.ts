@@ -9,18 +9,19 @@
  * three in the morning — and one written at each call site would drift into
  * three different accounts of the same fact.
  *
- * One answer this file cannot give is written down rather than guessed at, and
- * it is a gap in the contract rather than in the code. The answer route carries
- * what a handler returned — the goods, a refusal, or an acceptance — and it
- * answers in a shape whose success has to name one of five published results.
- * None of them names a successful acceptance. The separate accept call has the
- * shape for that and answers with a bare success; the answer route does not,
- * and inventing a sixth word here would be a wire value no decision stands
- * behind. So an acceptance that arrives on the answer route is recorded and
- * then told, in words, that this contract has nowhere to put its yes.
+ * The answer this file used to be unable to give is the lesson it was written
+ * out of. The answer route carries what a handler returned — the goods, a
+ * refusal, or an acceptance — and answers in a shape whose success has to name
+ * a published result. For a while none of them named a successful acceptance,
+ * so the route answered every accepted order with an error explaining, in
+ * words, that it had nowhere to put its yes. The words were true and nobody
+ * read them: the SDK reports anything that is not a success to the merchant,
+ * so every asynchronous order that went through perfectly well left a problem
+ * in his log. A gap between two vocabularies is not closed by a sentence
+ * apologising for it, and `accepted` is now a word in both.
  */
 
-import type { OrderCallError, OrderCallResponse } from "@coinslot/contracts";
+import type { OrderCallResponse } from "@coinslot/contracts";
 import type { MerchantAnswer, MerchantAnswerError } from "@coinslot/core";
 
 const WHY: Record<MerchantAnswerError, string> = {
@@ -40,16 +41,3 @@ export function orderCallResponseOf(answer: MerchantAnswer): OrderCallResponse {
     error: { code: answer.error, message: WHY[answer.error], retryable: answer.retryable },
   };
 }
-
-/**
- * What an acceptance on the answer route is told. The order has taken it —
- * the merchant will be held to his delivery deadline and not sent the order
- * again for having answered — and the message says so, because a merchant who
- * read this as "your acceptance was lost" would answer again and again.
- */
-export const ACCEPTANCE_HAS_NO_WORD: OrderCallError = {
-  code: "acceptance_has_no_word_in_this_contract",
-  message:
-    "the acceptance is recorded and the order is yours to deliver; this call's answer can only name one of five published results and none of them is a successful acceptance, so it cannot say yes. The accept call answers acceptances properly.",
-  retryable: false,
-};
