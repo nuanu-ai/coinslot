@@ -1,58 +1,59 @@
-# Первая тестовая продажа
+# The first test sale
 
-*Предварительная версия контракта — до пилота формулировки могут уточняться.*
+*A preliminary contract: the wording can still change before the pilot.*
 
-Писать код здесь будете вы: у бизнеса есть API, и выдачу вы хотите держать в
-своих руках. Ниже — путь от пустого проекта до тестовой продажи, которую ваша
-сторона проводит целиком: карточка, заказ, выдача, квитанция. Живой агент
-приходит после неё, на последнем шаге. Магазин вы при этом не переписываете:
-рядом с ним появляется обработчик, то есть процесс, который принимает
-оплаченные заказы и отдаёт по ним товар.
+You are the one writing code here: the business has an API, and you want to
+keep the delivery in your own hands. Below is the path from an empty project
+to a test sale that your side runs end to end — the card, the order, the
+delivery, the receipt. A live agent comes after that, on the last step. You do
+not rewrite the shop to get there: a handler appears beside it, a process that
+takes paid orders and gives out the goods for them.
 
-Пути без кода тоже есть: по умолчанию карточки пишем мы, а выдачу через
-интернет-магазин настраиваем и держим тоже мы. Они описаны на странице
-[«Подключение к Coinslot»](/), написанной для владельца бизнеса.
+There are paths with no code at all. By default we write the cards, and we set
+up and run the link to an online shop ourselves. Both are described on
+[Connecting to Coinslot](/), which is written for the owner of the business.
 
-## Слова, которые встретятся ниже
+## The words used below
 
-- Карточка — описание товара в каталоге, по которому агент принимает решение
-  и совершает покупку; её поля собраны в
-  [справочнике карточки](/cards).
-- Заказ — объект, который появляется у нас после покупки и приходит на вашу
-  сторону; его жизнь целиком описана на странице [«Заказы»](/orders).
-- Обработчик — ваш код, который получает заказы и выполняет выдачу.
-- Ключ идемпотентности — строка, одинаковая при всех повторах одного и того
-  же заказа; у нас это идентификатор заказа, и по нему ваша сторона отдаёт
-  прежний результат вместо второй выдачи.
-- Режим выдачи — приходит ли товар прямо в ответ на покупку; от режима
-  зависит, когда списываются деньги ([«Три режима выдачи»](/orders)).
-- Проверка цены и наличия — вопрос «сколько стоит и есть ли», который мы
-  задаём в момент покупки товарам с плавающей ценой. Отвечает на него либо
-  обработчик цены, стоящий в вашем процессе рядом с обработчиком заказов,
-  либо хук цены — адрес на вашей стороне, куда мы приходим HTTP-запросом.
-- Результат выдачи — то, что агент получает, когда выдача прошла: ссылка,
-  ключ, набор полей. Его схема объявлена в карточке.
+- Card — the description of a product in the catalogue that an agent decides
+  from and buys through; its fields are in the [card reference](/cards).
+- Order — the object that appears on our side after a purchase and arrives on
+  yours; its whole life is on [Orders and fulfillment modes](/orders).
+- Handler — your code, which receives orders and carries out the delivery.
+- Idempotency key — a string that is the same across every repeat of one
+  order. Ours is the order's identifier, and your side answers with the
+  earlier result under it instead of delivering a second time.
+- Fulfillment mode — whether the goods arrive in the answer to the purchase or
+  later. The mode decides when the buyer is charged
+  ([Three fulfillment modes](/orders)).
+- Price check — the question of how much a product costs and whether it is
+  there, which we ask at the moment of purchase about products whose price
+  moves. It is answered either by a price handler, standing in your process
+  beside the order handler, or by a price hook, an address on your side that
+  we reach over HTTP.
+- Delivery result — what the agent receives once the delivery has gone
+  through: a link, a key, a set of fields. Its shape is declared in the card.
 
-::: warning Поверхность инструментов предварительная
-Имя пакета, имена функций и имена полей в примерах ниже — рабочие.
-Зафиксирована модель интеграции, а не сигнатуры: из машинных имён
-окончательны только `merchant_item_id`, `as_of` и наш каталожный `id`.
-Остальное до пилота может измениться, и об изменениях мы предупреждаем
-заранее.
+::: warning The tool surface is preliminary
+The package name, the function names and the field names in the examples below
+are working names. What is fixed is the integration model and not the
+signatures: of the machine names only `merchant_item_id`, `as_of` and our
+catalogue `id` are final. The rest can still change before the pilot, and we
+tell you in advance when it does.
 :::
 
-## 1. Поставить инструменты
+## 1. Install the tools
 
-Всё, что нужно вашей стороне, лежит в одном пакете. Дерево его зависимостей
-короткое и перечислено явно: наш пакет контрактов и библиотека проверки
-данных zod. Ничего сверх этого в ваш проект не встанет.
+Everything your side needs is in one package. Its dependency tree is short and
+listed outright: our contracts package, and zod, the library that validates
+data. Nothing beyond those arrives in your project.
 
 ```sh
 npm install @coinslot/sdk
 ```
 
-Ключ доступа к нашему API вы получаете при подключении и держите там же, где
-держите остальные свои секреты.
+You are given a key to our API when you connect, and you keep it wherever you
+keep the rest of your secrets.
 
 ```ts
 import { createClient } from '@coinslot/sdk'
@@ -63,29 +64,30 @@ const coinslot = createClient({
 })
 ```
 
-Адрес в `baseUrl` вы получаете при подключении вместе с ключом — у песочницы
-и у боевой системы адреса разные, поэтому клиент не подставляет никакой сам.
-Получилось, если пакет установился и клиент создался. Правильность ключа
-проверит первый же вызов к нам — он на следующем шаге.
+The address in `baseUrl` comes with the key when you connect. The sandbox and
+the live system are at different addresses, so the client supplies neither by
+itself. This step worked if the package installed and the client was built.
+Whether the key is the right one is answered by the first call that reaches
+us, and that call is on the next step.
 
-## 2. Описать товар карточкой
+## 2. Describe the product with a card
 
-Карточку вы заливаете к нам сами, вызовом. Ошибки проверки возвращаются в
-ответе того же вызова, поэтому цикл правки короткий: править и звать снова
-можно хоть десять раз подряд.
+You upload the card yourself, with a call. What is wrong with it comes back in
+that same call's answer, so the edit loop is short: fixing and calling again
+ten times in a row costs nothing.
 
 ```ts
 const published = await coinslot.catalog.publish({
   merchant_item_id: 'access-monthly',
-  title: 'Доступ к сервису на один месяц',
+  title: 'One month of access to the service',
   description:
-    'Что покупатель получает, для какой задачи это годится и что в это не входит.',
+    'What the buyer gets, what it is good for, and what is not included.',
   price: { amount: '5.00', currency: 'USD' },
   params: {
-    email: { type: 'string', required: true, title: 'Куда прислать доступ' },
+    email: { type: 'string', required: true, title: 'Where to send it' },
   },
   result: {
-    access_url: { type: 'string', title: 'Ссылка для входа' },
+    access_url: { type: 'string', title: 'The link to sign in with' },
   },
   fulfillment: 'sync',
 })
@@ -95,55 +97,61 @@ if ('errors' in published) {
 }
 ```
 
-Невалидная карточка исключения не бросает: вместо `ok` вызов возвращает
-`errors` — непустой список полей с объяснением, что в каждом не так. Есть
-`ok` — карточка принята, и в нём лежит наш каталожный идентификатор.
+An invalid card throws nothing. In place of `ok` the call answers with
+`errors`, a list — never an empty one — of the fields at fault with an
+explanation of what is wrong in each. Where there is an `ok`, the card was
+accepted, and our catalogue identifier is inside it.
 
-Поле `merchant_item_id` — ваш собственный идентификатор товара, тот же, что у
-вас в базе. Рядом мы заводим свой каталожный `id`, но ваш ключ остаётся с
-карточкой навсегда, и по нему вы связываете пришедший заказ со своим товаром
-без таблицы соответствий. По нему же мы узнаём карточку при повторной
-публикации: второй вызов с тем же `merchant_item_id` обновит прежнюю карточку,
-а не заведёт дубликат, так что публикацию можно держать в скрипте и гонять
-сколько угодно раз.
+The field `merchant_item_id` is your own identifier for the product, the same
+one it has in your database. We issue our catalogue `id` beside it, but your
+key stays with the card for good, and it is what ties an arriving order to
+your product without a lookup table. It is also how we recognise the card when
+it is published again: a second call with the same `merchant_item_id` updates
+the card that is already there instead of creating a duplicate, so publishing
+can live in a script and be run as often as you like.
 
-Поле `result` описывает, что агент получит при выдаче. Он читает эту схему до
-оплаты и решает по ней, годится ли покупка; обработчик потом возвращает JSON
-ровно по ней, и агенту мы передаём его как есть.
+The field `result` describes what the agent receives on delivery. The agent
+reads that declaration before paying and decides from it whether the purchase
+suits it; your handler then returns JSON exactly to it, and we pass that on
+unchanged.
 
-Цена в карточке обязательна всегда: именно её агент видит в каталоге, когда
-выбирает. Если у вас она считается на лету — от курса, от себестоимости
-поставщика, от текущей доступности, — к карточке добавляется проверка цены и
-наличия, и тогда работают обе. Отвечает проверка — продажа идёт по названной
-ею цене; молчит — в дело идёт цена из карточки, и что произойдёт дальше,
-зависит от режима. Отвечать на этот вопрос вы будете кодом на следующем шаге;
-поля вопроса и ответа — в [справочнике карточки](/cards), поведение при
-молчании — на странице [«Что может пойти не так»](/failures).
+A price in the card is required in every case: it is what the agent sees in
+the catalogue while it is choosing. If your price is worked out on the fly —
+from a rate, from a supplier's cost, from what is available at that minute —
+you add a price check to the card, and then the two work together. When the
+check answers, the sale goes through at the price it named; when it is silent,
+the card's price is used, and what happens after that depends on the mode. You
+will answer that question in code on the next step. The fields of the question
+and of the answer are in the [card reference](/cards), and what silence leads
+to is on [What can go wrong](/failures).
 
-Поле `fulfillment` объявляет режим выдачи и принимает одно из трёх значений:
-`'sync'` — товар уходит агенту в ответ на покупку, `'async'` — товар уходит
-позже, `'confirm'` — сначала вы подтверждаете, что выдадите, и только потом
-списываются деньги. Какой режим ставить, определяет товар. Канал только
-ограничивает выбор: через API выдают и синхронно, и асинхронно — выпуск eSIM,
-например, оплачивается сразу, а профиль приходит позже, — а заказ, пришедший
-сообщением, синхронным не бывает никогда.
+The field `fulfillment` declares the mode. With `'sync'` the goods go to the
+agent in the answer to the purchase; with `'async'` they go later. There is a
+third mode, `'confirm'`, where you say first that you will deliver and the
+buyer is charged only after that — a card cannot be published in it during the
+pilot, because the request that asks you has no shape on the wire yet and your
+handler could not tell one from a paid order. Which mode a product takes is
+decided by the product. The channel only narrows the choice: an API delivers
+both synchronously and asynchronously — issuing an eSIM, for one, is paid for
+at once while the profile arrives later — and an order that came as a message
+is never synchronous.
 
-Шаг пройден, когда вызов вернул каталожный `id`. Снаружи карточка пока не
-видна: в каталоги она уходит на шаге 6.
+The step is done when the call has returned a catalogue `id`. The card is not
+visible outside yet: it goes into the catalogues on step 6.
 
-## 3. Принять заказ и выдать товар
+## 3. Take an order and deliver the goods
 
-Заказы мы держим в очереди на своей стороне, и вы забираете их оттуда
-подпиской. Принимать входящие соединения у себя не нужно: подписку открывает
-ваша сторона, так что ни публичного адреса, ни открытых портов не потребуется.
+We hold the orders in a queue on our side, and you take them from it with a
+subscription. You do not have to accept incoming connections: your side opens
+the subscription, so neither a public address nor an open port is needed.
 
-Вы объявляете, на что ваш процесс отвечает, вызовом `on` — по одному на каждый
-вид сообщения, — и затем открываете подписку вызовом `start`. Одним видом
-приходят заказы, другим вопросы о цене, третьим события по заказам; все они
-идут одним соединением, поэтому подписка нужна одна.
+You declare what your process answers with `on`, once for each kind of
+message, and then open the subscription with `start`. One kind carries orders,
+another price questions, a third events about orders; they all travel down one
+connection, so one subscription is all you need.
 
-В синхронном режиме обработчик возвращает результат сразу — либо выдачу, либо
-отказ. Оба ответа собираются на самом заказе:
+In the synchronous mode the handler returns the result straight away, either
+the delivery or a refusal. Both answers are built on the order itself:
 
 ```ts
 coinslot.on('order', async (order) => {
@@ -152,7 +160,10 @@ coinslot.on('order', async (order) => {
   })
 
   if (!access.ok) {
-    return order.refused({ code: 'out_of_stock', message: 'Мест на тарифе нет' })
+    return order.refused({
+      code: 'out_of_stock',
+      message: 'No seats left on that plan',
+    })
   }
 
   return order.delivered({ access_url: access.url })
@@ -161,14 +172,14 @@ coinslot.on('order', async (order) => {
 await coinslot.start()
 ```
 
-Ответ — это то, что обработчик вернул. Отправляем его мы сами, и отдельного
-вызова «ответить» нет: забытый ответ означал бы неотданный заказ, а
-возвращённое значение забыть нельзя.
+The answer is whatever the handler returned. We send it ourselves, and there
+is no separate call for replying: a forgotten reply would be an order nobody
+delivered, and a returned value cannot be forgotten.
 
-В асинхронном режиме обработчик отвечает сразу, что заказ принят, а саму
-выдачу подтверждает отдельным вызовом — позже и из любого места вашего кода.
-Вызов делается на сохранённом заказе, поэтому идентификатор наш вам нигде
-передавать не приходится:
+In the asynchronous mode the handler answers at once that the order is
+accepted, and confirms the delivery itself with a separate call, later and
+from anywhere in your code. That call is made on the order you kept, so an
+identifier of ours never has to be passed anywhere:
 
 ```ts
 coinslot.on('order', async (order) => {
@@ -179,74 +190,82 @@ coinslot.on('order', async (order) => {
 
 await coinslot.start()
 
-// позже, когда выдача закончилась, — по сохранённому заказу:
+// later, once the delivery is finished, on the order you kept:
 await order.deliver({ access_url: url })
 ```
 
-В `accepted` можно назвать ожидаемое время выдачи, если оно вам известно;
-пустой `accepted` тоже допустим. Пока `deliver` не вызван, заказ считается
-принятым, и на нём идёт срок выдачи, названный в вашей карточке. У синхронного
-режима такого поля в карточке нет: сколько ждать синхронного ответа, назначаем
-мы, одним числом для всех.
+An `accepted` can name the time you expect the delivery to take, where you
+know it; an empty `accepted` is a complete answer too. Until `deliver` is
+called the order counts as accepted, and the delivery deadline named in your
+card is running on it. A synchronous card carries no such field: how long to
+wait for a synchronous answer is set by us, as one number for everybody.
 
-Если ваш процесс успел перезапуститься, сохранённого объекта у вас уже нет.
-Тогда незакрытые заказы перечитываются у нас, и выдача делается на них же —
-[«Узнать состояние заказа»](/orders).
+If your process has restarted in the meantime, the object you kept is gone.
+The open orders are then read back from us, and the delivery is made on those
+instead — [Finding out where an order stands](/orders).
 
-Вызов `deliver` идемпотентен по идентификатору заказа: позовёте его дважды —
-получите тот же успех, второй выдачи не появится. Повторять его после обрыва
-связи безопасно, и отметку «уже отправил» ради этого хранить не нужно.
+The call `deliver` is idempotent by the order's identifier. Call it twice and
+the second call succeeds as well, marked as already delivered, and no second
+delivery appears. Success is the same flag in both cases, so there is nothing
+to branch on. Repeating the call after a dropped connection is therefore safe,
+and you do not have to keep a note of what you have already sent.
 
-Если выдать не удалось, а заказ вы уже приняли, скажите об этом сразу, не
-дожидаясь своего срока:
+If the delivery did not work out and you have already taken the order on, say
+so at once rather than waiting for your deadline:
 
 ```ts
 await order.refuse({
   code: 'out_of_stock',
-  message: 'Поставщик не подтвердил номер',
+  message: 'The supplier did not confirm the number',
 })
 ```
 
-Деньги по асинхронному заказу уже списаны, поэтому такой отказ помечает заказ
-требующим возврата, и покупатель узнаёт о долге сразу. Отказать раньше дешевле
-для всех: что происходит с деньгами при отказе в каждом режиме, сведено в
-таблицу режимов на странице [«Заказы и режимы выдачи»](/orders), а коды
-отказа собраны в [справочнике карточки](/cards).
+The buyer has already been charged for an asynchronous order, so a refusal
+like this marks the order as needing a refund, and the buyer hears about the
+debt straight away. Refusing earlier is cheaper for everybody: what happens to
+the money on a refusal in each mode is in the table of modes on
+[Orders and fulfillment modes](/orders), and the refusal codes are in the
+[card reference](/cards).
 
-Ошибки `deliver` и `refuse` не бросаются, а возвращаются, и несут признак,
-имеет ли смысл повторить вызов ([какие бывают ошибки](/orders)).
+Errors from `deliver` and `refuse` are returned rather than thrown, and they
+carry a flag saying whether repeating the call is worth anything
+([what the errors are](/orders)).
 
-Отказ мы понимаем как окончательное «выдать нельзя», поэтому временный сбой на
-вашей стороне выражайте не отказом, а исключением: заказ тогда считается
-недоставленным и придёт снова, с задержкой
-([«Обработчик упал, не ответив»](/failures)).
+We read a refusal as a final "this cannot be delivered", so express a
+temporary failure on your side by throwing rather than by refusing. The order
+then counts as never having reached you and comes again, after a delay
+([The handler crashed without answering](/failures)).
 
-Кроме параметров покупки заказ несёт цену продажи — сумму, валюту, момент
-покупки и `as_of` цены, по которой она посчитана, — и признак `test`,
-отличающий тестовый заказ от живого. Полный состав заказа — в разделе
-[«Из чего состоит заказ»](/orders).
+Besides the purchase parameters, the order carries the sale price — the
+amount, the currency, the moment of purchase and the `as_of` of the price it
+was worked out from — and a `test` flag that tells a test order from a live
+one. What an order is made of in full is in
+[What an order is made of](/orders).
 
-Доставка заказов гарантирует «не меньше одного раза», и это значит, что один
-и тот же заказ может прийти в обработчик повторно — после сетевого обрыва,
-после перезапуска вашего процесса, после нашей повторной попытки. Прокидывайте
-ключ идемпотентности в свою систему выдачи и отдавайте по нему прежний
-результат; если ваш API уже принимает такой ключ, достаточно передать наш.
+Orders are delivered at least once, which means the same order can reach your
+handler again: after a network break, after your process restarted, after a
+retry of ours. Pass the idempotency key on into your own delivery system and
+answer with the earlier result under it. If your API already takes a key like
+that, ours is the one to give it.
 
-Один заказ уходит одному экземпляру обработчика: запустите три процесса — три
-подписки разберут поток между собой, и в два процесса разом заказ не попадёт.
-Сколько заказов экземпляр берёт одновременно, вы задаёте параметром подписки.
+One order goes to one instance of the handler. Run three processes and three
+subscriptions divide the stream between them, and no order lands in two
+processes at once. How many orders one instance takes at a time is a parameter
+of the subscription.
 
-Состояние заказов помним и мы, поэтому после перезапуска процесса поднимать
-картину только по своей базе не приходится: незакрытые заказы можно перечитать
-у нас — [«Узнать состояние заказа»](/orders).
+We remember where the orders stand as well, so after a restart you do not have
+to rebuild the picture from your own database alone: the open orders can be
+read back from us — [Finding out where an order stands](/orders).
 
-Подписка стоит по умолчанию, и рядом с ней есть ещё два способа получить
-заказ: запросом на ваш адрес, если инфраструктура для входящих у вас уже
-есть, и выборкой партиями по курсору. Оба работают с тем же объектом заказа и
-переключаются без переписывания выдачи.
+The subscription is the default, and the model has two more ways of receiving
+an order beside it: a request to an address of yours, for a side that already
+has the infrastructure for incoming traffic, and a cursor that pulls orders in
+batches. Both work with the same order object, so moving between them does not
+mean rewriting the delivery. Neither is open during the pilot.
 
-Если цена товара считается на лету, тем же каналом приходит и вопрос о цене.
-Обработчик цены вы ставите рядом с обработчиком заказов, в том же процессе:
+If a product's price is worked out on the fly, the price question comes down
+the same channel. You put the price handler beside the order handler, in the
+same process:
 
 ```ts
 coinslot.on('quote', async (q) => {
@@ -263,97 +282,97 @@ coinslot.on('quote', async (q) => {
 })
 ```
 
-Ответ «нет в наличии» цены не несёт — по такому ответу мы покупку не
-начинаем.
+The answer that there is none carries no price: we begin no purchase on it.
 
-Последним аргументом оба вызова принимают `as_of` — момент, на который ответ
-верен. Он отличает «сходил и посмотрел» от «отдал то, что лежало в кеше», по
-нему мы решаем, насколько ответу доверять, и он же попадает в запись о
-продаже. В примере выше он назван там, где цена пришла из справочника со
-своей отметкой времени, и опущен там, где обработчик только что сходил и
-убедился, что товара нет: пропущенный `as_of` — это момент самого ответа.
-Поэтому если цену вы берёте из кеша, называйте момент, когда этот кеш
-наполнялся, а не полагайтесь на подстановку — иначе ответ скажет о свежести
-больше, чем вы знаете.
+Both calls take `as_of` as their last argument — the moment the answer is true
+for. It separates "went and looked" from "handed over what was in the cache",
+we read it to decide how far the answer can be trusted, and it goes into the
+record of the sale. In the example above it is named where the price came from
+a lookup that carries its own timestamp, and left out where the handler has
+just been and confirmed there is none: an `as_of` left out is the moment of
+the answer itself. So if you take the price from a cache, name the moment that
+cache was filled rather than relying on the default — otherwise the answer
+claims more freshness than you have.
 
-Это путь по умолчанию: канал тот же, что у заказов, выставлять наружу ничего
-не нужно. Второй транспорт, хук цены, — HTTP-адрес на вашей стороне; он для
-тех, у кого цену считает отдельный сервис прайсинга. Поля вопроса и ответа у
-обоих одинаковые и описаны в [справочнике карточки](/cards).
+This is the default path: the same channel the orders use, and nothing of
+yours facing outward. The second transport, the price hook, is an HTTP address
+on your side, for a business whose price is worked out by a separate pricing
+service. The fields of the question and of the answer are the same for both,
+and they are described in the [card reference](/cards).
 
-Признак успеха здесь скромный: запущенный процесс держит соединение и не
-падает при старте. Первый заказ придёт в него на шаге 5.
+The sign of success here is a modest one: the process starts, holds the
+connection and does not fall over. The first order reaches it on step 5.
 
-## 4. Проверить себя
+## 4. Check yourself
 
-Перед тем как звать нас, прогоните проверку. Она смотрит на две вещи: хватает
-ли карточки, чтобы агент сумел составить корректную покупку, и держит ли ваш
-обработчик идемпотентность — то есть не появляется ли вторая выдача, когда
-один и тот же заказ приходит дважды.
+Before calling us, run the check. It looks at two things: whether the card is
+enough for an agent to assemble a correct purchase, and whether your handler
+holds against repeats — that is, whether a second delivery appears when the
+same order arrives twice.
 
 ```sh
 npx coinslot verify
 ```
 
-Заказы для проверки идут обычным путём: по вашей карточке, уже опубликованной,
-но ещё не видной в каталогах, через ту же живую подписку и с признаком `test`.
-Отдельного контура под это нет, поэтому обработчик должен быть запущен: не
-запущен — проверка скажет об этом словами, а не выдаст непройденную
-идемпотентность.
+The check's orders travel the ordinary path: against your card, published and
+not yet visible in the catalogues, through the same live subscription, with
+the `test` flag on. There is no separate environment for it, so your handler
+has to be running. If it is not, the check says so in words rather than
+reporting a failed check for repeats.
 
-Проверка сравнивает эффект, а не байты ответов. Два разных `accepted` на один
-заказ ошибкой не считаются, вторая выдача считается.
+The check compares the effect and not the bytes of the answers. Two different
+`accepted` answers to one order are not a fault; a second delivery is.
 
-Получилось, если обе проверки прошли. Молчаливого «невалидно» здесь нет:
-каждая находка объясняется словами и указывает на конкретное поле карточки
-или конкретный ответ обработчика.
+It worked if both checks passed. There is no silent "invalid" here: every
+finding is explained in words and points at one field of the card or one
+answer of the handler.
 
-## 5. Пройти тестовую покупку
+## 5. Walk a test purchase
 
-Первую покупку вашего товара делает не живой агент, а наш песочный
-покупатель — программа, которая проходит весь путь: находит карточку,
-спрашивает цену, платит и принимает выдачу. Это настоящая покупка на тестовых
-деньгах, и после неё видно, что связка работает целиком.
+The first purchase of your product is made by our sandbox buyer rather than by
+a live agent — a program that walks the whole path: it finds the card, asks
+the price, pays and takes delivery. It is a real purchase on test money, and
+afterwards the whole chain can be seen working.
 
-На пилоте эту покупку запускаем мы по вашему сигналу: скажите, что готовы, —
-и мы проведём её при вас, чтобы вы видели, что происходит на каждом шаге.
-Заказ от песочного покупателя придёт с признаком `test`, и обработчик по этому
-признаку отличит проверку от живой продажи — например, уведёт такой заказ в
-ваш тестовый контур.
+During the pilot we start that purchase on your signal: say you are ready, and
+we run it with you watching, so that you see what happens at every step. The
+order from the sandbox buyer arrives with the `test` flag, and your handler
+tells a check from a live sale by that flag — sending such an order into your
+own test environment, for instance.
 
-Всё сошлось, если заказ дошёл до вашего обработчика, песочный покупатель
-получил товар и по покупке осталась квитанция.
+It all came together if the order reached your handler, the sandbox buyer
+received the goods, and the purchase left a receipt behind it.
 
-## 6. Выйти в каталоги
+## 6. Go into the catalogues
 
-Карточка уходит в каталоги после того, как тестовая покупка прошла. Полноту
-карточки перед публикацией проверяем и мы со своей стороны: по ней агент
-должен суметь купить.
+The card goes into the catalogues once the test purchase has gone through.
+Before it is published we check the card for completeness on our side too: an
+agent has to be able to buy from it.
 
-Готово, когда карточка видна в каталоге. С этого момента её может купить
-живой агент, а подключение новых каталогов, переезды на новые форматы обмена
-и правки карточек при смене товаров и цен — уже наша работа, и вашего кода
-они не касаются.
+Done when the card is visible in a catalogue. From that moment a live agent
+can buy it, and connecting new catalogues, moving to new exchange formats and
+editing cards as products and prices change are our work and do not touch your
+code.
 
-## Что ещё не решено
+## What is not settled yet
 
-- Подписи наших HTTP-запросов к хуку цены: чем ваша сторона убеждается, что
-  запрос пришёл от нас. У обработчиков этого вопроса нет — канал подписки
-  аутентифицирован при подключении.
-- Точные имена полей заказа и формат отказа.
-- Имена полей, которыми в карточке задаются сроки, и все числа: сколько живёт
-  цена, сколько мы ждём синхронного ответа, какие значения по умолчанию у
-  сроков подтверждения и выдачи.
-- Сетевые координаты подписки: куда она подключается и что для неё открыть в
-  исходящих правилах.
-- Имя параметра, которым задаётся параллелизм подписки, и его значение по
-  умолчанию.
-- Как принимать заказы не из Node: проводной протокол подписки задокументируем
-  к пилоту, пока готовые инструменты есть только для Node.
-- Поверхность альтернативных транспортов заказа: запроса на ваш адрес и
-  выборки по курсору.
-- Чем разделены песочница и боевой режим: отдельным окружением, отдельным
-  ключом доступа или только признаком `test` на заказе.
-- Куда сообщать, что вы готовы к тестовой покупке: канала для этого у нас
-  ещё нет.
-- Запуск тестовой покупки командой из ваших рук — после пилота.
+- Signatures on our HTTP requests to a price hook: what your side checks a
+  request against to know that it came from us. A price handler has no such
+  question — the subscription channel is authenticated when it connects.
+- The exact names of an order's fields, and the shape of a refusal.
+- The names of the fields a card sets deadlines in, and all of the numbers:
+  how long a price holds, how long we wait for a synchronous answer, and the
+  defaults for the confirmation and delivery deadlines.
+- The subscription's network coordinates: where it connects and what to open
+  for it in your outbound rules.
+- The name of the parameter that sets how many orders a subscription takes at
+  once, and its default.
+- How to take orders outside Node. We document the subscription's wire
+  protocol by the pilot; the ready-made tools are for Node only.
+- The surface of the other order transports: the request to an address of
+  yours, and the cursor that pulls batches.
+- What separates the sandbox from the live system: a separate environment, a
+  separate access key, or only the `test` flag on the order.
+- Where to say that you are ready for a test purchase: we have no channel for
+  that yet.
+- Starting the test purchase with a command of your own — after the pilot.
