@@ -57,6 +57,18 @@
 # secret that has to be found somewhere else to bring up a sandbox is a secret
 # people paste into chat. Nothing here is a value any deployment reuses.
 
+# One image behind four of the services below. They are four entry points into
+# one workspace and share every dependency below their own file, so which one a
+# container is is decided at `command` — and naming the image explicitly is what
+# makes that true in practice as well as on paper. Without it compose builds the
+# same Dockerfile once per service and tags the result four times, which is
+# 2.7 GB of identical layers where 678 MB would do.
+x-app: &app
+  build:
+    context: .
+    dockerfile: deploy/Dockerfile.app
+  image: coinslot-app
+
 services:
   postgres:
     image: postgres:17-alpine
@@ -93,9 +105,7 @@ services:
   # separate histories (ADR-0009 §8); they are one service because they are one
   # database and one thing to wait for.
   migrate:
-    build:
-      context: .
-      dockerfile: deploy/Dockerfile.app
+    <<: *app
     command: ["pnpm", "db:migrate"]
     environment:
       DATABASE_URL: postgres://coinslot:coinslot@postgres:5432/coinslot
@@ -105,9 +115,7 @@ services:
     restart: "no"
 
   gateway:
-    build:
-      context: .
-      dockerfile: deploy/Dockerfile.app
+    <<: *app
     command: ["pnpm", "--filter", "@coinslot/gateway", "start"]
     environment:
       DATABASE_URL: postgres://coinslot:coinslot@postgres:5432/coinslot
@@ -146,9 +154,7 @@ services:
       retries: 20
 
   cabinet:
-    build:
-      context: .
-      dockerfile: deploy/Dockerfile.app
+    <<: *app
     command: ["pnpm", "--filter", "@coinslot/cabinet", "start"]
     environment:
       PORT: "3001"
@@ -184,9 +190,7 @@ services:
   # its own process, which makes it the code a merchant's engineer would write
   # rather than a demonstration written to look like it.
   merchant:
-    build:
-      context: .
-      dockerfile: deploy/Dockerfile.app
+    <<: *app
     command: ["pnpm", "--filter", "@coinslot/slice", "serve"]
     environment:
       GATEWAY_URL: http://gateway:3000
