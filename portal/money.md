@@ -27,10 +27,11 @@ of purchase and the sum that lands in your wallet are the same: nothing is
 converted at a rate in between.
 
 These payments have one more property worth knowing in advance: the transfer
-is final. A buyer cannot reverse it the way a card charge is reversed, because
-these payments have no such mechanism at all. The case familiar from cards,
-where money is taken back off your account a month after the sale and you are
-left proving the goods went out, does not happen here. Whatever you give back,
+is final. A buyer cannot reverse it the way a charge on a bank card is
+reversed, because these payments have no such mechanism at all. The case
+familiar from bank cards, where money is taken back off your account a month
+after the sale and you are left proving the goods went out, does not happen
+here. Whatever you give back,
 you give back yourself and by your own decision.
 
 Which digital dollar we use, and which network the transfers run over, is not
