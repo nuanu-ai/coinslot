@@ -610,11 +610,18 @@ export class Gateway {
           orderId,
           { kind: "order_dispatched", at },
           { openDeliveryId: handOver },
-          // The envelope came off this merchant's own stream, so this is belt
-          // and braces rather than the scoping itself — and it is the belt
-          // worth having: a hand-over recorded against a stranger's order would
-          // be this gateway telling one merchant's order that another merchant
-          // is working on it.
+          // The envelope came off this merchant's own stream and an envelope
+          // only ever reaches the stream of the merchant on its own order, so
+          // this cannot fire today: no test dies when it is taken out, and that
+          // is the honest state of it rather than a gap in the tests.
+          //
+          // It stays because of what it guards against and what that would
+          // cost. If the two ever came apart — one shared stream, a document
+          // and a column that disagree — a hand-over would be recorded against
+          // a stranger's order and the order then handed to the wrong merchant
+          // to work on. With this, the envelope is finished and nobody is given
+          // the order, which is also wrong but is the smaller of the two and is
+          // the one a merchant notices.
           { merchantId },
         );
       } catch (thrown) {
