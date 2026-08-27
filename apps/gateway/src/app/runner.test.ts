@@ -110,6 +110,46 @@ describe("an order that cannot be true", () => {
   });
 });
 
+describe("an effect that must be written down, asked for at the birth of an order", () => {
+  it("stops before the order exists rather than after", async () => {
+    // Creation is the one path with nowhere to write such an effect: `addOrder`
+    // takes no writes to go alongside, so an effect that must not be lost has
+    // no unit of work here to be lost with. Nothing the machine produces at
+    // creation is one — a price question and a request to verify a payment,
+    // neither of which leaves a record — so, exactly like the money invariant
+    // above, this has to be asked for by hand to be checked at all.
+    //
+    // The instant matters as much as the refusal. Stopping after the order was
+    // written would leave a merchant with an order in the database and no work
+    // on his stream, which is the failure the whole of ADR-0013 is about.
+    open = await harness();
+    const published = await open.gateway.publishCard(open.merchant.id, {
+      merchant_item_id: "esim",
+      title: "A seven day eSIM",
+      description: "Seven days of data",
+      price: { amount: "12.00", currency: "USD" },
+      result: { activation_code: { type: "string" } },
+      fulfillment: "async",
+    });
+    if (!("ok" in published)) throw new Error("the card would not publish");
+    const offered = await open.gateway.beginPurchase(published.ok.id, {});
+    if (offered.step !== "pay") throw new Error("no price was offered");
+
+    // The same order again, as a record that does not exist yet, born asking
+    // for a hand-over.
+    const born: StoredOrder = {
+      ...offered.order,
+      order: { ...offered.order.order, id: "ord_born" },
+    };
+
+    await expect(
+      open.gateway.runner.create(born, [{ kind: "dispatch_order" }], open.now()),
+    ).rejects.toThrow(/nowhere to write them/);
+
+    expect(await open.store.orderById("ord_born")).toBeNull();
+  });
+});
+
 describe("an order whose next clock could not be started", () => {
   it("is not written down at all", async () => {
     // Of the two ways this can fail, one is repairable and one is not. Written
