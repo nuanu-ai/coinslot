@@ -240,6 +240,63 @@ describe("an address carrying characters a terminal acts on", () => {
   });
 });
 
+describe("a database the migrations have never been run against", () => {
+  /** A store whose every call fails the way the Postgres one does. */
+  const withoutTables = (): Accounts => {
+    const failing = () => {
+      throw Object.assign(
+        new Error("the cabinet's listing of accounts was not answered by the database (42P01)"),
+        { code: "42P01" },
+      );
+    };
+    return new Proxy(memoryAccounts(), {
+      get: (store, member) => (member === "close" ? store.close.bind(store) : failing),
+    }) as Accounts;
+  };
+
+  it("says which command puts the tables there, on every verb", async () => {
+    // The first thing a person meets on a new machine. What the database says
+    // for itself names a table nobody has heard of and does not say what to
+    // run, and a stack trace into the store's internals is worse than either.
+    //
+    // This was unreachable for a while and nothing noticed: the store stopped
+    // letting the driver's exception out, in order to keep the query's bound
+    // parameters from reaching the log, and the recognition further up was
+    // still looking for a property the new exception did not carry.
+    for (const argv of [
+      ["list"],
+      ["add", "dmitry@example.com"],
+      ["revoke", "dmitry@example.com"],
+    ]) {
+      const said = await run(withoutTables(), ...argv);
+
+      expect(said.code, argv.join(" ")).toBe(1);
+      expect(said.said, argv.join(" ")).toContain("tables are not in this database yet");
+      expect(said.said, argv.join(" ")).toContain("db:migrate");
+      // Not the database's own words, and nothing about a table or a column.
+      expect(said.said, argv.join(" ")).not.toContain("42P01");
+      expect(said.said, argv.join(" ")).not.toContain("cabinet_accounts");
+    }
+  });
+
+  it("lets any other failure go up rather than blaming the migrations", async () => {
+    // An unfamiliar failure with a confident sentence written over it sends
+    // somebody to run a migration that was never the problem.
+    const elsewhere: Accounts = new Proxy(memoryAccounts(), {
+      get: () => () => {
+        throw Object.assign(
+          new Error("the cabinet's listing of accounts was not answered (57P03)"),
+          {
+            code: "57P03",
+          },
+        );
+      },
+    }) as Accounts;
+
+    await expect(run(elsewhere, "list")).rejects.toThrow("57P03");
+  });
+});
+
 describe("a command nobody meant to run", () => {
   it("names the ones there are rather than doing something close to it", async () => {
     const accounts = memoryAccounts();

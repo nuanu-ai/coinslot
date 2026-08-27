@@ -33,6 +33,12 @@ const MIGRATIONS_TABLE = "cabinet_migrations";
 /** Postgres's own answer for "that value is already in a unique column". */
 const ALREADY_THERE = "23505";
 
+/** What this file throws: a sentence, a code, and nothing else. */
+export interface DatabaseTrouble extends Error {
+  /** The database's own code for what went wrong, where it gave one. */
+  readonly code?: string;
+}
+
 /**
  * What is allowed out of this file when the database will not answer.
  *
@@ -47,13 +53,22 @@ const ALREADY_THERE = "23505";
  * what went wrong, which is what somebody reading the log can act on. There is
  * deliberately no `cause`: an exception printed by `console.error` prints its
  * causes too, so keeping one would put the parameters straight back.
+ *
+ * The code is a property as well as a word in the sentence, and that is not
+ * decoration. A caller that has something better to say about one particular
+ * failure has to be able to tell which one it is, and the first version of this
+ * left the code inside a string — which turned the account command's "your
+ * tables are not there yet, run the migration" into a sentence naming a table
+ * an operator has never heard of, on their very first run. A code is the
+ * database's own five characters and carries no parameter with it.
  */
-function databaseTrouble(operation: string, thrown: unknown): Error {
+function databaseTrouble(operation: string, thrown: unknown): DatabaseTrouble {
   const code = codeIn(thrown);
-  return new Error(
+  const failed: DatabaseTrouble = new Error(
     `the cabinet's ${operation} was not answered by the database` +
       (code === null ? "" : ` (${code})`),
   );
+  return code === null ? failed : Object.assign(failed, { code });
 }
 
 /** Runs one query, letting nothing out of it that carries a parameter. */

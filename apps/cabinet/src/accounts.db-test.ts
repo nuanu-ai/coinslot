@@ -126,6 +126,32 @@ if (databaseUrl === null) {
       // What it does say is what somebody reading a log can act on.
       expect(said[0]).toContain("session");
     });
+
+    it("carries the database's own code, so a caller can say something better", async () => {
+      // The account command has a better sentence for exactly one failure — a
+      // database the migrations have never been run against — and the only
+      // thing it can tell that failure apart by is the code. Kept inside the
+      // message alone, the recognition above stopped matching without anything
+      // noticing, and an operator's first run printed the name of a table they
+      // had never heard of and a stack into this file.
+      //
+      // A foreign key violation is what is provoked here because it is a real
+      // failure this store can be asked for on demand. What is held is that a
+      // code travels at all, not which code it is.
+      const failed: unknown = await store
+        .open("a-fingerprint", "acc_nobody-has-this", new Date(), new Date(Date.now() + 1_000))
+        .then(
+          () => null,
+          (thrown: unknown) => thrown,
+        );
+
+      expect(failed).toBeInstanceOf(Error);
+      expect((failed as { code?: unknown }).code).toBe("23503");
+      // And still nothing of the query with it: a code is five characters of
+      // the database's own vocabulary and carries no parameter along.
+      expect(asLogged(failed)).not.toContain("params:");
+      expect(asLogged(failed)).not.toContain("a-fingerprint");
+    });
   });
 
   describe("a request that carried no session identifier at all", () => {

@@ -26,6 +26,18 @@ import { hashPassword, newPassword } from "./credentials.js";
  */
 const LOOKS_LIKE_AN_ADDRESS = /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/;
 
+const USAGE = [
+  "Usage: pnpm --filter @coinslot/cabinet account <command>",
+  "",
+  "  add <address>       make an account and print a password for it, once",
+  "  password <address>  set a new password, print it once, end every session",
+  "  revoke <address>    end every session that person has, keeping the account",
+  "  list                the accounts there are, and how many sessions are open",
+  "",
+  "There is no sign-up page and no reset by mail (ADR-0009): an account exists",
+  "because somebody ran this.",
+];
+
 /**
  * One line with nothing left in it that a terminal will act on.
  *
@@ -41,19 +53,34 @@ const printable = (line: string): string =>
     return at <= 0xff ? `\\x${at.toString(16).padStart(2, "0")}` : `\\u{${at.toString(16)}}`;
   });
 
-const USAGE = [
-  "Usage: pnpm --filter @coinslot/cabinet account <command>",
-  "",
-  "  add <address>       make an account and print a password for it, once",
-  "  password <address>  set a new password, print it once, end every session",
-  "  revoke <address>    end every session that person has, keeping the account",
-  "  list                the accounts there are, and how many sessions are open",
-  "",
-  "There is no sign-up page and no reset by mail (ADR-0009): an account exists",
-  "because somebody ran this.",
-];
+/** Postgres's own answer for "there is no table by that name". */
+const NO_SUCH_TABLE = "42P01";
 
-/** Runs one command. The answer is the exit code. */
+/**
+ * Whether this is the database saying the cabinet's tables are not there.
+ *
+ * The store never lets the driver's own exception out — its message is the SQL
+ * it tried followed by every bound parameter — so what arrives here is a
+ * sentence and the database's own code carried beside it, and the code is what
+ * this reads. It lives in this file rather than in the wiring next door because
+ * this is where the sentences an operator reads are, and where they are tested.
+ */
+const missingTables = (thrown: unknown): boolean =>
+  typeof thrown === "object" &&
+  thrown !== null &&
+  "code" in thrown &&
+  String((thrown as { code: unknown }).code) === NO_SUCH_TABLE;
+
+/**
+ * Runs one command. The answer is the exit code.
+ *
+ * One failure is answered here rather than thrown: a database that has never
+ * had the cabinet's migrations run against it. It is the first thing a person
+ * meets on a new machine, and the database's own sentence for it names a table
+ * they have never heard of and does not say what to run. Everything else goes
+ * up as it is — an unfamiliar failure with a sentence invented over it is worse
+ * than an unfamiliar failure.
+ */
 export async function runAccount(
   argv: readonly string[],
   accounts: Accounts,
@@ -69,6 +96,23 @@ export async function runAccount(
   // where one row can hide another cannot answer "who can sign into this
   // cabinet", which is the only question it is for.
   const say = (line: string): void => print(printable(line));
+  try {
+    return await dispatch(argv, accounts, say);
+  } catch (thrown) {
+    if (!missingTables(thrown)) {
+      throw thrown;
+    }
+    say("The cabinet's tables are not in this database yet.");
+    say("Run: pnpm --filter @coinslot/cabinet db:migrate");
+    return 1;
+  }
+}
+
+async function dispatch(
+  argv: readonly string[],
+  accounts: Accounts,
+  say: (line: string) => void,
+): Promise<number> {
   const [verb, address] = argv;
 
   if (verb === "list") {
