@@ -7,7 +7,7 @@ import type {
 } from "@coinslot/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FIRST_RETRY_MS } from "./backoff.js";
-import { createClient } from "./client.js";
+import { createClient, type QuoteHandler } from "./client.js";
 import { contractVersion } from "./contract.js";
 import { type FakeGateway, type GatewayAnswer, startFakeGateway } from "./testing/fake-gateway.js";
 import {
@@ -112,7 +112,7 @@ const workerOver = async (
   routes: Parameters<typeof startFakeGateway>[0]["routes"],
   handlers: {
     order?: (given: Order) => HandlerAnswer | Promise<HandlerAnswer>;
-    quote?: Parameters<ReturnType<typeof createClient>["pricing"]["onQuote"]>[0];
+    quote?: QuoteHandler;
   },
 ): Promise<Subscribed> => {
   gateway = await startFakeGateway({ apiKey: API_KEY, routes });
@@ -121,17 +121,21 @@ const workerOver = async (
   const events: OrderEvent[] = [];
   const coinslot = createClient({ apiKey: API_KEY, baseUrl: gateway.url });
 
-  if (handlers.order !== undefined) {
-    running = coinslot.orders.subscribe(handlers.order, {
-      onEvent: (arrived) => {
-        events.push(arrived);
-      },
-      onProblem: (problem) => problems.push(problem),
+  const answering = handlers.order;
+
+  if (answering !== undefined) {
+    coinslot.on("order", (arrived) => answering(arrived));
+    coinslot.on("event", (arrived) => {
+      events.push(arrived);
     });
   }
   if (handlers.quote !== undefined) {
-    running = coinslot.pricing.onQuote(handlers.quote);
+    coinslot.on("quote", handlers.quote);
   }
+
+  coinslot.on("problem", (problem) => problems.push(problem));
+  running = coinslot;
+  await coinslot.start();
 
   return { problems, events };
 };
@@ -156,7 +160,13 @@ describe("an order off the worker stream", () => {
     );
 
     await waitUntil(() => seen.length === 1, "the order to reach the handler");
-    expect(seen[0]).toStrictEqual(order);
+
+    // The order as the contract writes it, field for field. What the handler
+    // is actually given carries the calls that close it too, so the comparison
+    // is against the fields rather than against the whole object.
+    const { id, merchant_item_id, params, price, test } = seen[0] as Order;
+
+    expect({ id, merchant_item_id, params, price, test }).toStrictEqual(order);
   });
 
   it.each([
@@ -308,7 +318,11 @@ describe("a price question off the same stream", () => {
 
     await waitUntil(() => (gateway?.callsTo("answer_quote").length ?? 0) === 1, "the price answer");
 
-    expect(seen[0]).toStrictEqual(question);
+    // The question as the contract writes it; what the handler is given also
+    // carries the two answers it can be given, so the fields are compared.
+    const { merchant_item_id, price_id, purpose, expires_at } = seen[0] as QuoteRequest;
+
+    expect({ merchant_item_id, price_id, purpose, expires_at }).toStrictEqual(question);
     expect(gateway?.callsTo("answer_quote")[0]?.params).toStrictEqual({ price_id: "price-1" });
     expect(gateway?.callsTo("answer_quote")[0]?.body).toStrictEqual({
       available: true,
@@ -516,12 +530,11 @@ describe("a gateway speaking another dialect", () => {
     expect(problems[0]?.fatal).toBe(false);
   });
 
-  it("keeps the merchant's handlers, reporter and handle when it starts a loop again", async () => {
-    // The subscription is the merchant's; only its loop ended. A registration
-    // that built a whole new subscription instead would leave the handle they
-    // are holding naming nothing — their stop() would return having stopped
-    // something already over while the replacement polled on — and would
-    // quietly drop the order handler and the reporter they had registered.
+  it("keeps the merchant's handlers and reporter when a loop is started again", async () => {
+    // The loop ended and the client did not. Everything the merchant
+    // registered is still registered, so starting again is one line and not a
+    // rebuild — and a client that quietly dropped the order handler or the
+    // reporter on the way would look exactly the same until an order arrived.
     const problems: WorkerProblem[] = [];
     const orders: string[] = [];
 
@@ -537,43 +550,41 @@ describe("a gateway speaking another dialect", () => {
     });
 
     const coinslot = createClient({ apiKey: API_KEY, baseUrl: gateway.url });
-    const subscription = coinslot.orders.subscribe(
-      (arrived) => {
-        orders.push(arrived.id);
-        return { delivered: { access_url: "https://a.example" } };
-      },
-      { onProblem: (problem) => problems.push(problem) },
-    );
+
+    coinslot.on("order", (arrived) => {
+      orders.push(arrived.id);
+      return arrived.delivered({ access_url: "https://a.example" });
+    });
+    coinslot.on("problem", (problem) => problems.push(problem));
+
+    await coinslot.start();
 
     await waitUntil(() => problems.length === 1, "the mismatch that ends the first loop");
     expect(problems[0]?.kind).toBe(WORKER_PROBLEM_KINDS.CONTRACT_VERSION_MISMATCH);
 
-    // A later registration, exactly as a merchant writes it on the next line
-    // of their startup.
-    coinslot.pricing.onQuote(() => ({ available: false, as_of: AT }));
+    // The loop died of its own accord, so nothing has to be stopped first.
+    running = coinslot;
+    await coinslot.start();
 
-    // The order handler registered on the first line is still the one that
-    // receives orders.
     await waitUntil(() => orders.length > 0, "the order handler to keep receiving");
     expect(orders[0]).toBe(order.id);
 
-    // And the handle from the first line still stops what is running: after
-    // it, no further order reaches the handler. Counting polls instead would
-    // count a request the gateway records a moment after the caller has gone,
-    // which says nothing about whether the loop is still working.
-    await subscription.stop();
+    // And stopping still stops what is running: after it, no further order
+    // reaches the handler. Counting polls instead would count a request the
+    // gateway records a moment after the caller has gone, which says nothing
+    // about whether the loop is still working.
+    await coinslot.stop();
 
     const deliveredWhenItStopped = orders.length;
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(orders).toHaveLength(deliveredWhenItStopped);
   });
 
-  it("does not attach a later handler to a loop that has already died", async () => {
-    // A process that registered its order handler, lost the worker to a
-    // mismatch, and registers a price handler afterwards. Handed the dead
-    // loop, it would receive nothing and be told nothing; started afresh, it
-    // meets the same mismatch and is told about it again, which is the answer
-    // it can act on.
+  it("meets a gateway of another dialect again rather than pretending to run", async () => {
+    // A process whose loop died on a mismatch and which starts again. What it
+    // must not get is a client that reports "started" over nothing: the reason
+    // the first loop ended has not gone away, and hearing about it a second
+    // time is the answer the merchant can act on.
     const problems: WorkerProblem[] = [];
 
     gateway = await startFakeGateway({
@@ -583,17 +594,14 @@ describe("a gateway speaking another dialect", () => {
 
     const coinslot = createClient({ apiKey: API_KEY, baseUrl: gateway.url });
 
-    running = coinslot.orders.subscribe(() => ({ accepted: {} }), {
-      onProblem: (problem) => problems.push(problem),
-    });
+    coinslot.on("order", (arrived) => arrived.accepted());
+    coinslot.on("problem", (problem) => problems.push(problem));
+    running = coinslot;
 
+    await coinslot.start();
     await waitUntil(() => problems.length === 1, "the first mismatch");
 
-    running = coinslot.pricing.onQuote(() => ({ available: false, as_of: AT }));
-
-    // A loop runs again and meets the same gateway, and the reporter that was
-    // registered for this subscription hears about it a second time rather
-    // than the merchant being left with a price handler on nothing.
+    await coinslot.start();
     await waitUntil(() => problems.length === 2, "a loop that ran again and reported");
 
     expect(problems[1]?.kind).toBe(WORKER_PROBLEM_KINDS.CONTRACT_VERSION_MISMATCH);
@@ -906,9 +914,11 @@ describe("a merchant who passed no reporter at all", () => {
       const coinslot = createClient({ apiKey: API_KEY, baseUrl: gateway.url });
       const thrown = new Error("the supplier timed out");
 
-      running = coinslot.orders.subscribe(() => {
+      coinslot.on("order", () => {
         throw thrown;
       });
+      running = coinslot;
+      await coinslot.start();
 
       await waitUntil(() => written.length > 0, "the problem to reach the console");
 
@@ -1089,13 +1099,13 @@ describe("shutting down a subscription the merchant built", () => {
     });
 
     const coinslot = createClient({ apiKey: API_KEY, baseUrl: gateway.url });
-    const subscription = coinslot.orders.subscribe(
-      () => ({ delivered: { access_url: "https://a.example" } }),
-      { onProblem: (problem) => problems.push(problem) },
-    );
+
+    coinslot.on("order", (arrived) => arrived.delivered({ access_url: "https://a.example" }));
+    coinslot.on("problem", (problem) => problems.push(problem));
+    await coinslot.start();
 
     await held;
-    await subscription.stop();
+    await coinslot.stop();
 
     const kinds = problems.map((problem) => problem.kind);
 
@@ -1126,7 +1136,8 @@ describe("shutting down a subscription the merchant built", () => {
     });
 
     const coinslot = createClient({ apiKey: API_KEY, baseUrl: gateway.url });
-    const subscription = coinslot.orders.subscribe(async () => {
+
+    coinslot.on("order", async (arrived) => {
       inTheHandler?.();
       await handlerMayFinish;
       // A turn of the event loop between being released and being done, so
@@ -1135,13 +1146,14 @@ describe("shutting down a subscription the merchant built", () => {
       // happen to run in.
       await new Promise((resolve) => setTimeout(resolve, 0));
       handlerFinished = true;
-      return { delivered: { access_url: "https://a.example" } };
+      return arrived.delivered({ access_url: "https://a.example" });
     });
+    await coinslot.start();
 
     await reached;
 
-    const first = subscription.stop();
-    const second = subscription.stop();
+    const first = coinslot.stop();
+    const second = coinslot.stop();
 
     releaseHandler?.();
 
@@ -1153,9 +1165,12 @@ describe("shutting down a subscription the merchant built", () => {
     await first;
   });
 
-  it("refuses to register a handler while a stop is still in flight", async () => {
-    // Silently binding it to the loop that is going away would be a handler
-    // that never receives anything, registered without complaint.
+  it("refuses to start again while a stop is still in flight", async () => {
+    // Two loops for one merchant would open two long polls, and an envelope
+    // handed to the one that is going away is an envelope the one that stays
+    // never sees. Registering during a stop is a different matter and is
+    // allowed: handlers belong to the client, not to the loop, so one
+    // registered here is in place for the loop that comes next.
     let inTheHandler: (() => void) | undefined;
     const reached = new Promise<void>((resolve) => {
       inTheHandler = resolve;
@@ -1174,109 +1189,32 @@ describe("shutting down a subscription the merchant built", () => {
     });
 
     const coinslot = createClient({ apiKey: API_KEY, baseUrl: gateway.url });
-    const subscription = coinslot.orders.subscribe(async () => {
+
+    coinslot.on("order", async (arrived) => {
       inTheHandler?.();
       await handlerMayFinish;
-      return { delivered: { access_url: "https://a.example" } };
+      return arrived.delivered({ access_url: "https://a.example" });
     });
+    await coinslot.start();
 
     await reached;
 
-    const stopping = subscription.stop();
+    const stopping = coinslot.stop();
 
-    expect(() => coinslot.pricing.onQuote(() => ({ available: false, as_of: AT }))).toThrow(
-      /being stopped/,
-    );
-    expect(() => coinslot.orders.subscribe(() => ({ accepted: {} }))).toThrow(/being stopped/);
+    await expect(coinslot.start()).rejects.toThrow(/being stopped/);
+    coinslot.on("quote", (asked) => asked.unavailable(AT));
 
     releaseHandler?.();
     await stopping;
 
-    // And once it has stopped, registering works again.
-    running = coinslot.pricing.onQuote(() => ({ available: false, as_of: AT }));
+    // And once it has stopped, starting works again, on the handler registered
+    // while the stop was in flight as well as the one from before it.
+    running = coinslot;
+    await coinslot.start();
   });
 });
 
-describe("registering twice", () => {
-  it("refuses a second order handler rather than replacing the first in silence", async () => {
-    gateway = await startFakeGateway({ apiKey: API_KEY, routes: { poll_worker: polling() } });
-    const coinslot = createClient({ apiKey: API_KEY, baseUrl: gateway.url });
-
-    running = coinslot.orders.subscribe(() => ({ accepted: {} }));
-
-    expect(() => coinslot.orders.subscribe(() => ({ accepted: {} }))).toThrow(/twice/);
-  });
-
-  it("gives a working subscription back after one was stopped", async () => {
-    // A merchant who stopped a subscription and registers again must not be
-    // handed the loop that ended: nothing would arrive, nothing would be
-    // said, and everything would look registered.
-    gateway = await startFakeGateway({
-      apiKey: API_KEY,
-      routes: {
-        poll_worker: () => batch(envelopes.order),
-        answer_order: () => ({ body: { ok: true, result: "delivered" } }),
-      },
-    });
-
-    const coinslot = createClient({ apiKey: API_KEY, baseUrl: gateway.url });
-
-    let toTheFirst = 0;
-    const first = coinslot.orders.subscribe(() => {
-      toTheFirst += 1;
-      return { delivered: { access_url: "https://a.example" } };
-    });
-
-    await waitUntil(() => toTheFirst > 0, "the first subscription to receive an order");
-    await first.stop();
-
-    const afterStopping = toTheFirst;
-    let toTheSecond = 0;
-
-    running = coinslot.orders.subscribe(() => {
-      toTheSecond += 1;
-      return { delivered: { access_url: "https://a.example" } };
-    });
-
-    await waitUntil(() => toTheSecond > 0, "the second subscription to receive an order");
-
-    // And the handler of the subscription that was stopped receives nothing
-    // more, which is the other half of what stopping means.
-    expect(toTheFirst).toBe(afterStopping);
-  });
-
-  it("lets a process that answers only prices choose where problems go", async () => {
-    // Without it, such a process is given the error console whether it wants
-    // it or not, because the only place to pass a reporter is the order
-    // subscription it never opens.
-    const problems: WorkerProblem[] = [];
-
-    gateway = await startFakeGateway({
-      apiKey: API_KEY,
-      routes: { poll_worker: polling(batch(envelopes.order)) },
-    });
-
-    const coinslot = createClient({ apiKey: API_KEY, baseUrl: gateway.url });
-
-    running = coinslot.pricing.onQuote(() => ({ available: false, as_of: AT }), {
-      onProblem: (problem) => problems.push(problem),
-    });
-
-    await waitUntil(() => problems.length > 0, "the problem to reach the merchant's reporter");
-    expect(problems[0]?.kind).toBe(WORKER_PROBLEM_KINDS.NO_HANDLER);
-  });
-
-  it("refuses a second price handler for the same reason", async () => {
-    gateway = await startFakeGateway({ apiKey: API_KEY, routes: { poll_worker: polling() } });
-    const coinslot = createClient({ apiKey: API_KEY, baseUrl: gateway.url });
-
-    running = coinslot.pricing.onQuote(() => ({ available: false, as_of: AT }));
-
-    expect(() => coinslot.pricing.onQuote(() => ({ available: false, as_of: AT }))).toThrow(
-      /twice/,
-    );
-  });
-
+describe("one loop for one process", () => {
   it("carries the orders and the prices of one process on one subscription", async () => {
     // The portal promises one subscription for all three kinds. Two loops
     // would mean two long polls open at once per merchant, and two places for
@@ -1305,8 +1243,10 @@ describe("registering twice", () => {
 
     const coinslot = createClient({ apiKey: API_KEY, baseUrl: gateway.url });
 
-    running = coinslot.orders.subscribe(() => ({ delivered: { access_url: "https://a.example" } }));
-    coinslot.pricing.onQuote(() => ({ available: false, as_of: AT }));
+    coinslot.on("order", (arrived) => arrived.delivered({ access_url: "https://a.example" }));
+    coinslot.on("quote", (asked) => asked.unavailable(AT));
+    running = coinslot;
+    await coinslot.start();
 
     await waitUntil(
       () =>

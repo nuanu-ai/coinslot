@@ -56,6 +56,7 @@ import {
   type QuoteResponse,
   QuoteResponseSchema,
   type WorkerEnvelope,
+  type WorkerEnvelopeKind,
 } from "@coinslot/contracts";
 import { retryDelayMs } from "./backoff.js";
 import { contractVersion, speaksContract } from "./contract.js";
@@ -78,11 +79,19 @@ const andSoTheOrder = (failure: TransportFailure): string =>
     ? ", so the order will be delivered again"
     : ", so whether the order is delivered again is not something this side can say";
 
-/** What the merchant's code does with one paid order. */
-export type OrderHandler = (order: Order) => HandlerAnswer | Promise<HandlerAnswer>;
+/**
+ * What this loop calls with one paid order off the stream.
+ *
+ * It is not what a merchant writes. The order a merchant's handler receives
+ * carries the calls that close it, and putting those on it is `client.ts`'s
+ * job: this loop reads the envelope and knows nothing about a gateway address
+ * or an API key beyond the one it polls with. So the client registers a
+ * function of this shape which wraps the merchant's own.
+ */
+export type OrderDispatch = (order: Order) => HandlerAnswer | Promise<HandlerAnswer>;
 
-/** What the merchant's code answers to "how much is this and is it there". */
-export type QuoteHandler = (question: QuoteRequest) => QuoteResponse | Promise<QuoteResponse>;
+/** The same, for "how much is this and is it there". */
+export type QuoteDispatch = (question: QuoteRequest) => QuoteResponse | Promise<QuoteResponse>;
 
 /**
  * How this delivery of a message is named, for the one kind that needs it.
@@ -164,20 +173,49 @@ export interface WorkerProblem {
 export type ProblemReporter = (problem: WorkerProblem) => void;
 
 /**
+ * Which registration each kind on the stream is answered by, in the word a
+ * merchant passes to `on`.
+ *
+ * This table is the vocabulary, and everything that has to know the stream's
+ * kinds is derived from it rather than written out again: what a merchant may
+ * register, what the registry holds, what `start` counts as an answer, and the
+ * sentence that names a registration a merchant is missing. It is written over
+ * the contract's own kinds, so a fourth kind added to the envelope — the
+ * confirmation request, whose shape the contract does not carry yet — stops
+ * this file compiling until it has a word of its own here. The `switch` in
+ * `dispatch` below is the second half of that guard, and it is the one that
+ * demands the behaviour.
+ */
+export const REGISTERED_AS = Object.freeze({
+  order: "order",
+  quote_request: "quote",
+  order_event: "event",
+} as const satisfies { readonly [Kind in WorkerEnvelopeKind]: string });
+
+/** The words a merchant registers something on the stream under. */
+export type StreamHandlerKind = (typeof REGISTERED_AS)[WorkerEnvelopeKind];
+
+/** What answers each of them, in the shape this loop calls. */
+export interface StreamDispatch {
+  order: OrderDispatch;
+  quote: QuoteDispatch;
+  event: EventHandler;
+}
+
+/**
  * The handlers the loop dispatches to, read at the moment an envelope is
  * handled rather than captured when the loop starts.
  *
- * That is what lets a merchant write `orders.subscribe(...)` and
- * `pricing.onQuote(...)` on two consecutive lines: the second registration is
- * in place before the first envelope can be dispatched, and the loop does not
- * have to be built twice or started twice.
+ * The registry belongs to the client and outlives any one loop. A merchant
+ * registers what their process answers, starts, stops, and starts again on the
+ * same handlers — and a handler registered while a loop is already running is
+ * in place for the next envelope rather than for the next loop.
  */
-export interface HandlerRegistry {
-  order?: OrderHandler | undefined;
-  quote?: QuoteHandler | undefined;
-  event?: EventHandler | undefined;
+export type HandlerRegistry = {
+  [Kind in StreamHandlerKind]?: StreamDispatch[Kind] | undefined;
+} & {
   problem: ProblemReporter;
-}
+};
 
 /**
  * Time, as the loop sees it.
@@ -289,7 +327,8 @@ export const POLL_WAIT_SECONDS = 25;
  */
 export const POLL_DEADLINE_MS = POLL_WAIT_SECONDS * 2 * 1_000;
 
-export interface Subscription {
+/** What `startWorker` hands its caller, which is the client and never a merchant. */
+export interface RunningWorker {
   /**
    * Stops the loop and waits for it to finish. Safe to call twice.
    *
@@ -308,10 +347,6 @@ export interface Subscription {
    * is going away.
    */
   stop(): Promise<void>;
-}
-
-/** What `startWorker` hands its caller, which is a little more than a merchant sees. */
-export interface RunningWorker extends Subscription {
   /** Whether the loop is still going. False once it has stopped for any reason. */
   running(): boolean;
 }
@@ -339,10 +374,26 @@ export const startWorker = (
    * unwind the loop and, from the loop's own last-resort handler, escape as an
    * unhandled rejection and take the host process down with it. There is
    * nowhere left to report a reporter that throws, so it is swallowed.
+   *
+   * Both ways of throwing, and the second is the one that hid. A reporter
+   * declared `void` may still be an `async` function — TypeScript allows it,
+   * and a merchant shipping problems to an HTTP logger will write one — and
+   * such a reporter does not throw, it returns a promise that rejects a turn
+   * later, past this `catch`, with nothing holding it. That is the unhandled
+   * rejection this comment claims not to allow, arriving by the door the
+   * `try` does not cover. So what comes back is settled too, and its failure
+   * dropped in the same silence and for the same reason.
    */
   const report = (problem: WorkerProblem): void => {
     try {
-      handlers.problem(problem);
+      // Anything with a `then` and not only a real Promise: a reporter built
+      // on another library's promise, or one from another realm, fails in
+      // exactly the same way and must be settled in exactly the same silence.
+      const reporting = handlers.problem(problem) as { then?: unknown } | undefined;
+
+      if (typeof reporting?.then === "function") {
+        void Promise.resolve(reporting).catch(() => {});
+      }
     } catch {
       // Nowhere to say it. See above.
     }
@@ -427,7 +478,7 @@ export const startWorker = (
         kind: WORKER_PROBLEM_KINDS.NO_HANDLER,
         fatal: false,
         subject: order.id,
-        message: `order ${order.id} arrived and no handler was registered with orders.subscribe, so it was left unanswered and will be delivered again`,
+        message: `order ${order.id} arrived and no handler was registered with on('${REGISTERED_AS.order}'), so it was left unanswered and will be delivered again`,
       });
       return;
     }
@@ -472,7 +523,7 @@ export const startWorker = (
         kind: WORKER_PROBLEM_KINDS.NO_HANDLER,
         fatal: false,
         subject: question.price_id,
-        message: `a price question for ${question.merchant_item_id} arrived and no handler was registered with pricing.onQuote, so it was left unanswered`,
+        message: `a price question for ${question.merchant_item_id} arrived and no handler was registered with on('${REGISTERED_AS.quote_request}'), so it was left unanswered`,
       });
       return;
     }
@@ -548,7 +599,7 @@ export const startWorker = (
         kind: WORKER_PROBLEM_KINDS.NO_HANDLER,
         fatal: false,
         subject: event.order_id,
-        message: `${event.type} arrived for order ${event.order_id} and nothing is listening for events; pass onEvent to orders.subscribe to receive them`,
+        message: `${event.type} arrived for order ${event.order_id} and nothing is listening for events; register one with on('${REGISTERED_AS.order_event}') to receive them`,
       });
       return;
     }
@@ -594,8 +645,13 @@ export const startWorker = (
   };
 
   const run = async (): Promise<void> => {
-    // One turn, so that handlers registered on the lines after the one that
-    // started this loop are in place before the first envelope can arrive.
+    // One turn before the first poll goes out, so that a process which calls
+    // start() without awaiting it and registers on the next line has that
+    // registration in place before anything is asked of the gateway. A
+    // handler registered later than that is in place too — the registry is
+    // read when an envelope is dispatched, not when the loop begins — so this
+    // buys only the synchronous lines immediately after the call, which is
+    // exactly where a merchant writes them.
     await Promise.resolve();
 
     let failures = 0;

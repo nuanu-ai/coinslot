@@ -37,10 +37,11 @@
 import type { Card, HandlerAnswer, Order, OrderEvent, QuoteRequest } from "@coinslot/contracts";
 import { afterEach, expect, it } from "vitest";
 import { checkCard } from "./check-card.js";
+import type { OrderHandle } from "./client.js";
 import { createClient } from "./client.js";
 import { contractVersion } from "./contract.js";
 import { type FakeGateway, type GatewayAnswer, startFakeGateway } from "./testing/fake-gateway.js";
-import type { Subscription, WorkerProblem } from "./worker.js";
+import type { WorkerProblem } from "./worker.js";
 
 const API_KEY = "freeland-merchant-key";
 const AT = "2026-08-26T11:00:00Z";
@@ -113,7 +114,7 @@ const envelope = (kind: string, id: string, payload: unknown): object => ({
 });
 
 let gateway: FakeGateway | undefined;
-let running: Subscription | undefined;
+let running: { stop(): Promise<void> } | undefined;
 
 afterEach(async () => {
   await running?.stop();
@@ -199,32 +200,33 @@ it("carries one merchant's two products from publishing to the last refusal", as
   const events: OrderEvent[] = [];
   const accepted: string[] = [];
 
-  running = coinslot.orders.subscribe(
-    (order): HandlerAnswer => {
-      if (order.merchant_item_id === numberCard.merchant_item_id) {
-        return { delivered: { phone_number: "+31 970 1020 3040" } };
-      }
+  const takenOn = new Map<string, OrderHandle>();
 
-      // The asynchronous product: say it is taken on, provision behind the
-      // answer, and close it with a call made later. The idempotency key is
-      // the order's identifier, so the redelivery below provisions nothing
-      // twice.
-      accepted.push(order.id);
-      provision(order.id);
+  coinslot.on("order", (order): HandlerAnswer => {
+    if (order.merchant_item_id === numberCard.merchant_item_id) {
+      return order.delivered({ phone_number: "+31 970 1020 3040" });
+    }
 
-      return { accepted: { eta_seconds: 120 } };
-    },
-    {
-      onEvent: (arrived) => {
-        events.push(arrived);
-      },
-      onProblem: (problem) => problems.push(problem),
-    },
-  );
+    // The asynchronous product: say it is taken on, provision behind the
+    // answer, and close it with a call made later. What is kept for that call
+    // is the order itself and not its identifier. The idempotency key is still
+    // the order's identifier, so the redelivery below provisions nothing twice.
+    accepted.push(order.id);
+    takenOn.set(order.id, order);
+    provision(order.id);
 
-  coinslot.pricing.onQuote((question) => {
+    return order.accepted({ eta_seconds: 120 });
+  });
+
+  coinslot.on("event", (arrived) => {
+    events.push(arrived);
+  });
+
+  coinslot.on("problem", (problem) => problems.push(problem));
+
+  coinslot.on("quote", (question) => {
     if (question.merchant_item_id !== numberCard.merchant_item_id) {
-      return { available: false, as_of: AT };
+      return question.unavailable(AT);
     }
 
     // The markup comes from the worked example in the record — $7.00 becomes
@@ -233,12 +235,11 @@ it("carries one merchant's two products from publishing to the last refusal", as
     // firmer of the two facts.
     const cost = Number(supplierCostUsd);
 
-    return {
-      available: true,
-      price: { amount: (cost * (8.75 / 7)).toFixed(2), currency: "USD" },
-      as_of: AT,
-    };
+    return question.available({ amount: (cost * (8.75 / 7)).toFixed(2), currency: "USD" }, AT);
   });
+
+  running = coinslot;
+  await coinslot.start();
 
   await waitUntil(() => events.length === 1, "everything through the subscription");
 
@@ -274,7 +275,7 @@ it("carries one merchant's two products from publishing to the last refusal", as
   // The profile that was issued is closed by a call made later, out of the
   // handler entirely.
   const issued = provisioned.get(esimOrder.id);
-  const delivered = await coinslot.orders.deliver(esimOrder.id, {
+  const delivered = await takenOn.get(esimOrder.id)?.deliver({
     iccid: issued?.iccid,
     lpa_string: issued?.lpa,
     ios_tap_link: issued?.ios,
@@ -284,7 +285,7 @@ it("carries one merchant's two products from publishing to the last refusal", as
 
   // The one the supplier had nothing left for is refused, without waiting for
   // the delivery deadline to arrive at the same place by silence.
-  const refused = await coinslot.orders.refuse(soldOutOrder.id, {
+  const refused = await takenOn.get(soldOutOrder.id)?.refuse({
     code: "out_of_stock",
     message: "the supplier has no profile available for this plan",
   });

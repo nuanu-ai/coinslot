@@ -4,8 +4,9 @@
  *
  * There are two things in here and they are one process. `createClient` builds
  * a handle on the gateway from a key and an address; through it a merchant
- * publishes cards, receives paid orders on an outgoing subscription, answers
- * questions about prices, and closes orders they took on earlier. Beside it,
+ * says what their process answers with `on`, opens one outgoing subscription
+ * that carries paid orders, price questions and order events together, and
+ * closes orders they took on earlier off the orders themselves. Beside it,
  * `checkCard` and `runVerify` are the check a merchant runs on their own cards
  * before publishing them — the same check the documentation calls
  * `npx coinslot verify`, which is not yet a command that can start: this
@@ -55,10 +56,17 @@ export type {
   CatalogNamespace,
   ClientOptions,
   CoinslotClient,
+  HandlerKind,
+  Handlers,
+  LiveOrder,
+  LiveOrderWithStatus,
+  LiveQuoteRequest,
+  OrderCalls,
+  OrderHandle,
+  OrderHandler,
   OrdersNamespace,
-  PricingNamespace,
-  QuoteOptions,
-  SubscribeOptions,
+  QuoteCalls,
+  QuoteHandler,
 } from "./client.js";
 export {
   ANSWER_NOT_UNDERSTOOD,
@@ -72,10 +80,7 @@ export { IDEMPOTENCY_IS_NOT_BUILDABLE, NOT_JSON, runVerify, VERIFY_EXIT } from "
 export type {
   Delivered,
   EventHandler,
-  OrderHandler,
   ProblemReporter,
-  QuoteHandler,
-  Subscription,
   WorkerProblem,
   WorkerProblemKind,
 } from "./worker.js";

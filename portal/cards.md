@@ -142,18 +142,14 @@ result: {
 Выставлять наружу нечего — ни адреса, ни открытых портов.
 
 ```ts
-coinslot.pricing.onQuote(async (q) => {
+coinslot.on('quote', async (q) => {
   const item = await lookupItem(q.merchant_item_id)
 
   if (!item.in_stock) {
-    return { available: false, as_of: item.checked_at }
+    return q.unavailable(item.checked_at)
   }
 
-  return {
-    available: true,
-    price: { amount: item.price, currency: 'USD' },
-    as_of: item.checked_at,
-  }
+  return q.available({ amount: item.price, currency: 'USD' }, item.checked_at)
 })
 ```
 
@@ -215,6 +211,10 @@ POST https://api.example.com/quote
 Отметка `as_of` говорит, на какой момент верен ответ, и отличает «сходил и
 проверил сейчас» от «отдал то, что лежало в кеше». По ней мы решаем,
 насколько ответу можно доверять, и она же попадает в записи о продаже.
+Обработчику цены её передают последним аргументом; вызов, сделанный без неё,
+проставит момент самого ответа, и это верно ровно тогда, когда вы в этот
+момент действительно смотрели. Ответ из кеша датируется тем моментом, когда
+кеш наполнялся, — как в примере выше.
 
 Ответ `available: false` на вопрос о покупке закрывает её до всяких денег, и
 заказа у вас не появляется. Цена из ответа живёт до `expires_at`: срок жизни

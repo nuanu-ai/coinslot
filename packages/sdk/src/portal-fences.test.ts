@@ -52,16 +52,22 @@ const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
  * into `order` — shadows the global instead of colliding with it.
  */
 const HARNESS = `
-import type { CoinslotClient, Order } from "@coinslot/sdk";
+import type { CoinslotClient, LiveOrder } from "@coinslot/sdk";
 
 declare global {
   /** The client the quickstart builds on its first page. */
   const coinslot: CoinslotClient;
-  /** An order the merchant saved when they took it on. */
-  const order: Order;
+  /**
+   * An order the merchant saved when they took it on — the object their
+   * handler was given, which carries the calls that close it.
+   */
+  const order: LiveOrder;
   const orderId: string;
+  /** An identifier the merchant kept in their own record, without the order. */
+  const savedId: string;
   const url: string;
   const until: string;
+  function accessFor(orderId: string): Promise<{ url: string } | null>;
   function grantAccess(
     recipient: unknown,
     options: { idempotencyKey: string },
@@ -93,7 +99,7 @@ interface Page {
 
 const PAGES: readonly Page[] = [
   { file: "portal/quickstart.md", fences: 6 },
-  { file: "portal/orders.md", fences: 3 },
+  { file: "portal/orders.md", fences: 4 },
   { file: "portal/cards.md", fences: 2, pieces: { 0: asCardResult } },
 ];
 
@@ -237,12 +243,17 @@ describe("the portal's TypeScript examples", () => {
     for (const promised of [
       "createClient",
       "coinslot.catalog.publish",
-      "coinslot.orders.subscribe",
-      "coinslot.orders.deliver",
-      "coinslot.orders.refuse",
+      "coinslot.on('order'",
+      "coinslot.on('quote'",
+      "coinslot.start()",
+      "order.delivered(",
+      "order.refused(",
+      "order.accepted(",
+      "order.deliver(",
+      "order.refuse(",
+      "coinslot.orders.forId(",
       "coinslot.orders.get",
       "coinslot.orders.list",
-      "coinslot.pricing.onQuote",
     ]) {
       expect(everything).toContain(promised);
     }
@@ -256,10 +267,17 @@ describe("the portal's TypeScript examples", () => {
     const broken = compile([
       { name: "renamed", source: "await coinslot.catalog.publishTheCard({})\n" },
       { name: "wrong-argument", source: "await coinslot.orders.get(42)\n" },
+      {
+        // The kind a handler is registered under is checked too: a merchant
+        // who wrote `orders` would otherwise get a handler nothing calls.
+        name: "wrong-kind",
+        source: "coinslot.on('orders', () => ({ accepted: {} }))\n",
+      },
     ]);
 
     expect(broken.ok).toBe(false);
     expect(broken.output).toMatch(/publishTheCard/);
     expect(broken.output).toMatch(/wrong-argument/);
+    expect(broken.output).toMatch(/wrong-kind/);
   });
 });

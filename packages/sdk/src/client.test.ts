@@ -73,9 +73,12 @@ describe("creating a client", () => {
     await expect(coinslot.catalog.publish(card)).rejects.toThrow(/baseUrl/);
     await expect(coinslot.orders.get("order-1")).rejects.toThrow(/baseUrl/);
     await expect(
-      coinslot.orders.deliver("order-1", { access_url: "https://a.example" }),
+      coinslot.orders.forId("order-1").deliver({ access_url: "https://a.example" }),
     ).rejects.toThrow(/baseUrl/);
-    expect(() => coinslot.orders.subscribe(() => ({ accepted: {} }))).toThrow(/baseUrl/);
+
+    // Registering is not a call and does not need one; starting the loop is.
+    coinslot.on("order", (arrived) => arrived.accepted());
+    await expect(coinslot.start()).rejects.toThrow(/baseUrl/);
   });
 
   it("refuses an address that is not one", () => {
@@ -184,7 +187,7 @@ describe("closing an order the merchant took on", () => {
       deliver_order: () => ({ body: { ok: true, result: "delivered" } }),
     });
 
-    const result = await coinslot.orders.deliver("order-1", {
+    const result = await coinslot.orders.forId("order-1").deliver({
       access_url: "https://example.com/a",
     });
 
@@ -207,7 +210,7 @@ describe("closing an order the merchant took on", () => {
       deliver_order: () => ({ status: 409, body: { ok: false, error } }),
     });
 
-    const result = await coinslot.orders.deliver("order-1", {
+    const result = await coinslot.orders.forId("order-1").deliver({
       access_url: "https://example.com/a",
     });
 
@@ -222,7 +225,7 @@ describe("closing an order the merchant took on", () => {
       refuse_order: () => ({ status: 502, text: "bad gateway" }),
     });
 
-    const result = await coinslot.orders.refuse("order-1", {
+    const result = await coinslot.orders.forId("order-1").refuse({
       code: "out_of_stock",
       message: "Поставщик не подтвердил номер",
     });
@@ -240,7 +243,9 @@ describe("closing an order the merchant took on", () => {
       deliver_order: () => ({ text: JSON.stringify({ ok: "yes", result: "delivered" }) }),
     });
 
-    const result = await coinslot.orders.deliver("order-1", { access_url: "https://a.example" });
+    const result = await coinslot.orders.forId("order-1").deliver({
+      access_url: "https://a.example",
+    });
 
     expect(result.ok).toBe(false);
     expect(result.ok === false && result.error.retryable).toBe(true);
@@ -258,7 +263,9 @@ describe("closing an order the merchant took on", () => {
     const answering = await gatewayServing({
       deliver_order: () => ({ text: "<html>gateway timeout</html>" }),
     });
-    const answered = await answering.orders.deliver("order-1", { access_url: "https://a.example" });
+    const answered = await answering.orders.forId("order-1").deliver({
+      access_url: "https://a.example",
+    });
 
     expect(answered.ok === false && answered.error.code).toBe(ANSWER_NOT_UNDERSTOOD);
     expect(answered.ok === false && answered.error.message).toMatch(/reached us/);
@@ -269,7 +276,7 @@ describe("closing an order the merchant took on", () => {
     await closed.close();
 
     const gone = createClient({ apiKey: API_KEY, baseUrl: closed.url });
-    const never = await gone.orders.deliver("order-1", { access_url: "https://a.example" });
+    const never = await gone.orders.forId("order-1").deliver({ access_url: "https://a.example" });
 
     expect(never.ok === false && never.error.code).toBe(CALL_DID_NOT_REACH_US);
     expect(never.ok === false && never.error.retryable).toBe(true);
@@ -291,7 +298,9 @@ describe("closing an order the merchant took on", () => {
     const coinslot = createClient({ apiKey: API_KEY, baseUrl: `http://127.0.0.1:${port}` });
 
     try {
-      const result = await coinslot.orders.deliver("order-1", { access_url: "https://a.example" });
+      const result = await coinslot.orders.forId("order-1").deliver({
+        access_url: "https://a.example",
+      });
 
       expect(result.ok === false && result.error.code).toBe(OUTCOME_UNKNOWN);
       expect(result.ok === false && result.error.retryable).toBe(true);
@@ -314,12 +323,10 @@ describe("closing an order the merchant took on", () => {
       accept_order: () => ({ text: "not an answer" }),
     });
 
-    const delivered = await coinslot.orders.deliver("order-1", { access_url: "https://a.example" });
-    const refused = await coinslot.orders.refuse("order-1", {
-      code: "out_of_stock",
-      message: "no",
-    });
-    const accepted = await coinslot.orders.accept("order-1");
+    const held = coinslot.orders.forId("order-1");
+    const delivered = await held.deliver({ access_url: "https://a.example" });
+    const refused = await held.refuse({ code: "out_of_stock", message: "no" });
+    const accepted = await held.accept();
 
     expect(delivered.ok === false && delivered.error.message).toMatch(/may be made again/);
     expect(accepted.ok === false && accepted.error.message).toMatch(/may be made again/);
@@ -329,10 +336,10 @@ describe("closing an order the merchant took on", () => {
   it("takes an order on, with and without an expected time", async () => {
     const coinslot = await gatewayServing({ accept_order: () => ({ body: { ok: true } }) });
 
-    expect(await coinslot.orders.accept("order-1", { eta_seconds: 60 })).toStrictEqual({
-      ok: true,
-    });
-    expect(await coinslot.orders.accept("order-1")).toStrictEqual({ ok: true });
+    const held = coinslot.orders.forId("order-1");
+
+    expect(await held.accept({ eta_seconds: 60 })).toStrictEqual({ ok: true });
+    expect(await held.accept()).toStrictEqual({ ok: true });
 
     expect(gateway?.callsTo("accept_order").map((call) => call.body)).toStrictEqual([
       { eta_seconds: 60 },
