@@ -149,6 +149,14 @@ const USAGE = [
  * publishing is more than this check: it can refuse a card for reasons no
  * schema carries, which `checkCard` says in its own words.
  *
+ * Taking no key is a choice and not a hole, which is worth saying here because
+ * the first line of the message reads like a limitation somebody would set out
+ * to remove. A check that read published cards over that route would always
+ * pass — they got onto it by passing this very schema — and a green that cannot
+ * fail teaches a merchant to stop reading it. What would earn a keyed mode is a
+ * dry run of publishing, which can refuse for reasons no schema carries; there
+ * is no such route (`docs/research/00-open-questions.md`).
+ *
  * So this is a stop and not a scolding, and it is answered with the code that
  * means "did not run". The way through it is to name the card files, which are
  * the copy the merchant can still change — the file is what the next publish
