@@ -43,9 +43,16 @@ import type { DeadlineKind } from "@coinslot/core";
 export interface DrawnEnvelope {
   readonly envelope: WorkerEnvelope;
   /**
-   * The handle for this delivery, not for the envelope. The same envelope
-   * drawn twice carries two handles, and finishing one does not finish the
-   * other — which is the honest shape for a queue that delivers at least once.
+   * The handle for this delivery, not for the envelope.
+   *
+   * One envelope really can be drawn twice, and never because the queue offered
+   * it again — this port does not do that, as the header above says. It is put
+   * on the stream a second time by somebody: the order machine asking for
+   * another delivery after a silence, or the poll itself putting back an
+   * envelope whose hand-over it could not record. Each of those is a fresh
+   * arrival with a handle of its own, and finishing one does not finish the
+   * other; a shared handle would let the answer to one delivery close a
+   * delivery nobody had answered.
    */
   readonly handle: string;
 }

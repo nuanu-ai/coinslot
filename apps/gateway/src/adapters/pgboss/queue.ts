@@ -74,9 +74,9 @@ export const REMINDERS = "coinslot_reminders";
  * filter on the way out, and it does not work: pg-boss hands out work by queue
  * name and has no way to fetch by anything inside a job, so filtering would
  * mean drawing a stranger's envelope in order to look at it — and a drawn
- * envelope is one its own merchant is not offered until it is finished or its
- * window runs out. A worker polling would silently delay everybody else's
- * orders.
+ * envelope is one nobody is offered again, this adapter finishing it in the
+ * pass it was drawn in and the library failing it outright if that pass never
+ * came. A worker polling would silently swallow everybody else's orders.
  *
  * What a queue costs is a row. With pg-boss's own partitioning left off, which
  * is the default, `createQueue` is an insert into its `queue` table and every
@@ -246,10 +246,10 @@ export class PgBossQueue implements Queue {
     // it or drawn from it, because the merchants are rows now and this process
     // does not hold a list of them at start-up.
     // Both queues run on pg-boss's own defaults, and the important one is the
-    // fifteen minutes a delivery may be held before it is taken back. That is
-    // deliberate for envelopes, where the machine rather than the queue decides
-    // whether anything is repeated, and it has never been thought about for
-    // reminders.
+    // fifteen minutes a delivery may be held before the library gives up on it
+    // and fails the job. That is deliberate for envelopes, where the machine
+    // rather than the queue decides whether anything is repeated, and it has
+    // never been thought about for reminders.
     //
     // Whoever thinks about it should know that these calls cannot be the place
     // it is changed. pg-boss writes a queue's settings when the queue is first
