@@ -81,9 +81,15 @@ What it can cost you is the price of one sale, so the only thing you have to
 weigh here is how expensive and how irreversible your delivery is. Access you
 can revoke and a parcel already on its way are worth different amounts to you.
 
-You hear about such a case from us: we tell you the payment did not execute.
-There is no need to reconcile the transfers into your wallet against what you
+You hear about such a case from us: we tell you the money did not arrive. There
+is no need to reconcile the transfers into your wallet against what you
 delivered by hand.
+
+Sometimes that is the whole of what anybody knows. Where the payment network
+was asked and never answered, nobody can say whether the buyer was charged, and
+the case can stay that way — so taking back what you gave out may be taking it
+from somebody who paid for it. That is the case to weigh when you decide how
+irreversible a delivery of yours should be.
 
 Putting the money first closes the case. For a product paid for ahead of the
 delivery, the charge happens at the moment of purchase and you never deliver
