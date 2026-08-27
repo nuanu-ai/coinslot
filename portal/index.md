@@ -91,9 +91,9 @@ formats we exchange in change, we move everyone at once and your side is not
 touched.
 
 You can stop the sales yourself at any moment. The cabinet is a page on our
-side that you sign in to with your key, and it shows your cards, your orders
-and the receipts for the sales that went through. It carries a pause on each
-card and one button that stops selling altogether. Paused, a card stops
+side that you sign in to with your own address and password, and it shows your
+cards, your orders and the receipts for the sales that went through. It carries
+a pause on each card and one button that stops selling altogether. Paused, a card stops
 selling and disappears from the catalogues, while the orders already taken on
 play out in the ordinary way; to be left with no open orders at all you have
 to leave entirely.
