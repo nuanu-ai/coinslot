@@ -83,10 +83,19 @@ echo "What the tarballs would ship"
 # pass anything nobody thought of — a stray `.env`, a `node_modules`, the
 # sources — whereas `dist` plus the manifest is the entire agreed surface, so
 # anything else appearing is the finding.
+#
+# The two named patterns are inside that surface rather than outside it, and
+# that is why they need naming as well. `files` ships `dist` and only `dist`,
+# so the one way a test or the fake gateway can reach a merchant is by being
+# compiled into it — which is a build that stopped excluding them, not a stray
+# file. The allowlist alone would pass exactly that, and nothing else pins the
+# exclusions in tsconfig.build.json.
 for tarball in "$scratch"/coinslot-*.tgz; do
   unexpected="$(tar -tzf "$tarball" |
     grep -vE '^package/(package\.json|dist/)' || true)"
-  check "$(basename "$tarball") ships its build and nothing else" "" "$unexpected"
+  compiled_tests="$(tar -tzf "$tarball" | grep -E '\.test\.|/testing/' || true)"
+  check "$(basename "$tarball") ships its build and nothing else" "" \
+    "${unexpected}${compiled_tests}"
 done
 
 contains "the command is in it" "package/dist/cli.js" \
