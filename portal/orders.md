@@ -299,10 +299,11 @@ a second refund out of your own wallet.
 
 The last cause of a refund is the one that will not match your own record: a
 charge we had written off as never having happened reports in afterwards, and
-the buyer is owed the money back through no fault of yours. The reason on that
-event reads as a deadline, which is ours on the charge rather than yours on the
-goods — the vocabulary has three words and none of them is for this, and
-inventing a fourth on the wire is a decision nobody has taken.
+the buyer is owed the money back through no fault of yours. That event carries
+a short reason beside the sum, and for this cause it reads as a deadline —
+ours, on the charge, rather than yours on the goods. The vocabulary has three
+words and none of them is for this, and inventing a fourth on the wire is a
+decision nobody has taken.
 
 ## You delivered and the payment did not execute
 
@@ -311,11 +312,11 @@ first and execute it as the last step, after your delivery; between the check
 and the execution the funds can leave the buyer's wallet for something else.
 Then you have produced the goods and there is no money for them.
 
-In this case the order is marked delivered and unpaid, and an event reaches you
-— there is no need to go looking for such cases by reconciling transfers. For
-the agent the purchase did not happen: we hand the goods over after the payment
-executes, so it received neither the goods nor a charge. The order stays open
-on your side.
+In this case the goods are recorded and the money is not, and an event reaches
+you — there is no need to go looking for such cases by reconciling transfers.
+For the agent the purchase did not happen: we hand the goods over after the
+payment executes, so it received neither the goods nor a charge. The order
+stays open on your side.
 
 Two situations reach you through that one event, and they part on what the
 payment network finally said. The order carries the word that tells them apart,
