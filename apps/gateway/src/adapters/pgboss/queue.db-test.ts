@@ -28,9 +28,12 @@ import { Pool } from "pg";
 import { type Queue as LibraryQueueOptions, PgBoss } from "pg-boss";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Reminder } from "../../ports/queue.js";
+import { readyDatabase, testDatabaseUrl } from "../../testing/database.js";
 import { A_NAME_PG_BOSS_ACCEPTS, ENVELOPES, PgBossQueue, REMINDERS } from "./queue.js";
 
-const databaseUrl = process.env.DATABASE_URL;
+// This suite's own database, made if it is not there. The sentence explaining
+// that there is no server at all is printed once, by the adapters suite.
+const databaseUrl = await readyDatabase(testDatabaseUrl());
 
 /** Real time, because a queue that lives in a database keeps its own. */
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -58,11 +61,11 @@ const SCHEMAS = [
   "pgboss_queue_settings",
 ] as const;
 
-if (databaseUrl === undefined || databaseUrl === "") {
+if (databaseUrl === null) {
   // Said quietly: the sentence with the instructions in it is printed once, by
   // the adapters suite, and twice would read like two different problems.
   describe("the queue on a real database", () => {
-    it.skip("is skipped: DATABASE_URL is not set, so there is no database to run it against", () => {
+    it.skip("is skipped: there is no Postgres to run it against", () => {
       // Intentionally empty: the skip is the message.
     });
   });

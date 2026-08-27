@@ -3,9 +3,13 @@
  *
  * These are not in `pnpm test`. That command is free, deterministic and works
  * without a network, and a suite that needs a database server is none of those.
- * They run under `pnpm test:db`, which needs DATABASE_URL pointing at a
- * Postgres — `docker compose up -d --wait postgres` brings one up — and skips itself with that
- * sentence when there is none.
+ * They run under `pnpm test:db`, which needs a Postgres — `docker compose up -d
+ * --wait postgres` brings one up — and skips itself with a sentence saying so
+ * when there is none.
+ *
+ * The database it runs against is `coinslot_test`, which is this suite's own
+ * and not the one the stack runs on: see `testing/database.ts` for what
+ * happened when they were the same.
  *
  * What is checked here is only what cannot be checked in memory: that the two
  * adapters keep the same promises the in-memory ones do, in the one place where
@@ -34,21 +38,25 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { Gateway } from "../../app/gateway.js";
 import type { Runtime } from "../../app/runtime.js";
 import type { OrderChange, Store } from "../../ports/store.js";
+import { noDatabaseHere, readyDatabase, testDatabaseUrl } from "../../testing/database.js";
 import { countedIds, testConfig, workUntilStopped } from "../../testing/harness.js";
 import { ScriptedFacilitator } from "../memory/facilitator.js";
 import { MemoryStore } from "../memory/store.js";
 import { PgBossQueue } from "../pgboss/queue.js";
 import { connect, PostgresStore } from "./store.js";
 
-const databaseUrl = process.env.DATABASE_URL;
+// Made if it is not there, so that an existing volume needs nothing done to it.
+const wanted = testDatabaseUrl();
+const databaseUrl = await readyDatabase(wanted);
 
 /**
  * Where this suite's pg-boss lives, which is not where a deployment's does.
  *
- * The queue is reset between runs by dropping the whole schema, and the
- * database this runs against is the same one `docker compose up` gives a
- * gateway. Dropping `pgboss` would leave that gateway's workers querying tables
- * that are not there any more.
+ * The suite has a database of its own now, so this is belt and braces rather
+ * than the thing standing between a test run and somebody's queue. It stays
+ * because it is also what keeps the two db-test files out of each other's way,
+ * and because `DATABASE_URL` can still be pointed at a database somebody else
+ * is using.
  */
 const QUEUE_SCHEMA = "pgboss_adapters";
 
@@ -71,17 +79,13 @@ const syncCard: Card = {
   fulfillment: "sync",
 };
 
-if (databaseUrl === undefined || databaseUrl === "") {
+if (databaseUrl === null) {
   // Said out loud as well as in the skipped test's name, because a run that
   // reports "1 skipped" and nothing else looks like a suite that passed.
-  console.log(
-    "\n  The database tests need a Postgres and DATABASE_URL is not set." +
-      "\n  Start one with `docker compose up -d --wait postgres`, then:" +
-      "\n    DATABASE_URL=postgres://coinslot:coinslot@localhost:5432/coinslot pnpm test:db\n",
-  );
+  console.log(noDatabaseHere(wanted));
 
   describe("the real adapters", () => {
-    it.skip("are skipped: DATABASE_URL is not set, so there is no database to run them against", () => {
+    it.skip("are skipped: there is no Postgres to run them against", () => {
       // Intentionally empty: the message above is the whole point.
     });
   });

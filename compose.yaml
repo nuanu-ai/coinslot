@@ -15,6 +15,24 @@
 # existing database is brought up to date rather than found to be a version
 # behind on the first query.
 #
+# The suite that needs a real database runs against a database of its own,
+# `coinslot_test`, on this same server. It needs the server and nothing else
+# from this file:
+#
+#   docker compose up -d --wait postgres
+#   pnpm test:db
+#
+# `--wait` holds the command until the healthcheck below has passed, and naming
+# the service matters: `docker compose up -d` with nothing after it starts all
+# six of these. Nothing needs to be set for the suite to find its database — it
+# makes it if it is not there — and pointing DATABASE_URL at `coinslot` is
+# refused rather than obeyed, because that is the database the cabinet is
+# showing and this suite empties what it is given.
+#
+# Two runs of the suite at once still interfere: they share the names of the
+# tables they empty and the schemas they drop, so each pulls the ground out from
+# under the other. One run at a time, per database.
+#
 # Nothing is bought by itself. The merchant publishes its catalogue and waits;
 # a purchase is an explicit command, so a sale in the cabinet is one somebody
 # made:
@@ -35,11 +53,17 @@ services:
       POSTGRES_PASSWORD: coinslot
       POSTGRES_DB: coinslot
     ports:
-      # Published so that `pnpm test:db` and a psql from the terminal reach the
-      # same database the containers use.
+      # Published so that `pnpm test:db` and a psql from the terminal reach this
+      # server. They reach a different database on it: the suite empties what it
+      # is given, and `coinslot` is what the cabinet is showing.
       - "5432:5432"
     volumes:
       - coinslot-postgres:/var/lib/postgresql/data
+      # Makes `coinslot_test` beside `coinslot` on a volume that is new. On one
+      # that is not — which is every volume that has ever run this stack —
+      # Postgres does not look at this directory at all, and the suite makes its
+      # own database instead. See deploy/postgres-init/01-test-database.sql.
+      - ./deploy/postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       # The gateway's first query is what would otherwise discover that the
       # server is up and the database is not ready yet.
