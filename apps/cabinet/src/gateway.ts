@@ -104,9 +104,7 @@ export const gatewayFor = (
       // never returns, and the page a merchant is holding is sometimes the one
       // that stops their selling.
       const late = thrown instanceof Error && thrown.name === "TimeoutError";
-      const why = late
-        ? "the gateway did not answer in time"
-        : "the gateway could not be reached";
+      const why = late ? "the gateway did not answer in time" : "the gateway could not be reached";
       console.error(`[cabinet] ${why}`, thrown);
       return { ok: false, status: 0, why };
     }
