@@ -280,8 +280,12 @@ and no order appears on your side. The price from an answer lives until
 `expires_at`: how long a price holds is set by us and is the same across the
 system, and what happens once it has passed is in [Time ran out](/orders).
 
-We hold down the load on your side ourselves, limiting how often the questions
-go out.
+Nothing on our side holds down how often these questions go out. One purchase
+asks one question and that question is put on your stream once, so the rate
+your price handler meets is the rate agents buy at, and that is the number to
+size it against. The thresholds that would hold the rate down are among what is
+not settled below; until they exist there is nothing between a burst of
+purchases and your handler.
 
 Coinslot keeps no stock counts: only you know how much of anything there is. So
 a product that can run out is worth listing with a check, because without one
