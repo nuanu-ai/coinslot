@@ -484,19 +484,30 @@ function sameOriginUnder(base: string) {
     // from the forwarded header where a terminator set one, because behind
     // Caddy this process speaks http and the browser does not.
     //
-    // The last value in the header and not the first. A chain that appends
-    // rather than replaces leaves the client's own claim leftmost, so reading
-    // the front is reading whatever the browser sent; the nearest proxy's word
-    // is at the back. Caddy replaces, so behind the stack in this repository
-    // there is one value and the two readings agree.
+    // The first value in the header and not the last, which is worth arguing
+    // because the reverse looks safer. What this is compared against is the
+    // `Origin` a browser sent, and that names the scheme the browser used at
+    // the edge of the chain — which is the leftmost value, by what the header
+    // means. The last value is the scheme between the final two hops, and
+    // preferring it would answer "this form did not come from the cabinet" to
+    // an honest merchant behind a chain that terminates TLS early.
     //
-    // What this costs when the header is absent is worth knowing before it
-    // happens: over https with a terminator that sets nothing, the fallback is
-    // "http", every origin then mismatches, and every form post on the site —
-    // the sign-in included — answers "This form did not come from the cabinet."
+    // The usual argument for the last value is that a chain which appends
+    // rather than replaces leaves a client's own claim leftmost. It does not
+    // reach this check: the only attacker this refusal is for is a page in a
+    // browser, a page cannot put a header on a form post at all, and a `fetch`
+    // that sets one is held for a preflight this cabinet answers with a
+    // redirect and no CORS headers, which browsers refuse. A client that can
+    // set `X-Forwarded-Proto` can also leave `Origin` off, and this middleware
+    // waves that through by design.
+    //
+    // What the fallback costs when the header is absent is worth knowing
+    // before it happens: over https with a terminator that sets nothing, the
+    // scheme reads "http", every origin then mismatches, and every form post
+    // on the site — the sign-in included — is refused.
     const forwarded = request.headers["x-forwarded-proto"];
-    const said = Array.isArray(forwarded) ? forwarded[forwarded.length - 1] : forwarded;
-    const scheme = said?.split(",").at(-1)?.trim();
+    const said = Array.isArray(forwarded) ? forwarded[0] : forwarded;
+    const scheme = said?.split(",")[0]?.trim();
     const asked = request.headers.host;
 
     if (asked !== undefined && origin === `${scheme ?? "http"}://${asked}`) {

@@ -183,6 +183,10 @@ export function postgresAccounts(pool: Pool): Accounts {
     },
 
     async open(fingerprint, accountId, at, until) {
+      // The sweep and the insert are two statements and not one transaction,
+      // deliberately. Nothing is lost if the second fails after the first: what
+      // the sweep removes are sessions whose time was already up, and rolling
+      // that back would only put expired rows back.
       return await guarded("opening of a session", async () => {
         const swept = await db.delete(sessions).where(lte(sessions.expiresAt, at)).returning({
           fingerprint: sessions.fingerprint,
