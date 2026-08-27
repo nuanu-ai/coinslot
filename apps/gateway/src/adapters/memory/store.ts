@@ -329,6 +329,14 @@ export class MemoryStore implements Store {
       // back through this very lock to do it, so nobody can see the stream and
       // the order disagree. The other order — writing the order first — is the
       // one that leaves a record saying something happened when nothing did.
+      //
+      // Where this is weaker than a transaction, said out loud rather than
+      // left to be found: a list whose second write refuses does not take the
+      // first one back, and there Postgres would. It costs nothing today
+      // because no transition asks for two of these at once — a receipt is
+      // issued when goods are released and an envelope goes out when they are
+      // asked for, and the machine never emits both — and it would cost
+      // something the day one does.
       for (const write of decided.alongside ?? []) {
         await this.#writeWithTheOrder(write);
       }
