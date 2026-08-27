@@ -25,6 +25,9 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     environment: "node",
+    // A run with no server reachable fails here rather than skipping every file
+    // and exiting zero. See the file for why that mattered.
+    globalSetup: ["./vitest.db.setup.ts"],
     include: ["apps/*/src/**/*.db-test.ts"],
     passWithNoTests: false,
     // Verbose so that the sentence explaining a skip is actually printed. A run

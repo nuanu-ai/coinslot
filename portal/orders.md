@@ -131,11 +131,19 @@ A delivery carries exactly what the card's result declares: every field it
 promises the agent, in the type it names, and nothing it does not name
 ([Delivery result](/cards#delivery-result)). Goods that do not fit are refused
 with the offending fields named, and the order does not move at all — nothing
-of what you sent is written down, no receipt is issued, and your delivery
-deadline stands where it stood, so the order is still yours to finish. Fix what
-the refusal names and deliver again. The check stands in front of every
-delivery that could put goods on the order, whether it comes back from your
-handler or from a `deliver` call, and whether it arrives on time or late.
+of what you sent is written down, no receipt is issued, and no deadline of
+yours moves. Fix what the refusal names and deliver again.
+
+What that refusal does not tell you is whether the order is still there to
+finish. Goods are weighed against the card and never against the state of the
+order, so one that ran out of time, one you refused yourself and one whose
+refund has already gone out all answer a bad delivery in the same words as an
+order that is still open. Your handler's fault is what you hear about first,
+and where the order stands is what the call after it tells you.
+
+The check stands in front of every delivery that could put goods on the order,
+whether it comes back from your handler or from a `deliver` call, and whether
+it arrives on time or late.
 
 The call is idempotent by the order's identifier. Call it a second time with
 the same `order.id` and it succeeds again, marked as already delivered: no
@@ -198,9 +206,16 @@ const order = await coinslot.orders.get(orderId)
 const open = await coinslot.orders.list({ open: true })
 
 for (const waiting of open) {
+  // This one has its goods already; it is waiting on money rather than on you.
+  if (waiting.status === 'delivered_unpaid') {
+    continue
+  }
+
   const issued = await accessFor(waiting.id)
 
   if (issued !== null) {
+    // On an order marked as needing a refund this closes the debt with the
+    // goods instead of paying the money back.
     await waiting.deliver({ access_url: issued.url, expires_at: issued.expiresAt })
   }
 }
@@ -214,15 +229,36 @@ they cannot reach us, which is worth remembering about a loop that runs the
 moment a process comes back up.
 
 Orders from here carry the same calls that orders from the handler do:
-`deliver` and `refuse` are made directly on them. After a restart your process
-therefore walks the list, asks itself what is ready for each order, and closes
-what is ready — without collecting identifiers of ours into a variable of its
-own. What is ready is yours to know and not ours. Open here means open and not
-owed: the list holds the orders whose delivery is under way, and also an order
-already marked as needing a refund, and delivering against one of those closes
-the debt with the goods instead of paying the money back. That may be what you
-want, and it is a decision, so a loop over this list is worth writing against
-where each order stands.
+`deliver` and `refuse` are made directly on them. They also carry one field a
+handler's order does not: the word for where this one stands.
+
+After a restart your process therefore walks the list, asks itself what is
+ready for each order, and closes what is ready — without collecting identifiers
+of ours into a variable of its own. What is ready is yours to know and not
+ours.
+
+Open here means the order is still owed something, by you or by the buyer or by
+us, and that is a wider set than the orders you have been handed. It holds an
+order the agent has been given a price for and has not paid, which has never
+reached your handler. It holds an order marked as needing a refund, where
+delivering closes the debt with the goods instead of paying the money back, and
+that may be what you want.
+
+It also holds orders that already have their goods and are waiting only on
+money, and those are the ones a loop over the list has to step around. A
+delivery against an order that already has its goods is answered as a success,
+and nothing of what it carried is written down or reaches the agent.
+
+One of them you can see coming: an order you delivered synchronously whose
+payment did not execute reads `delivered_unpaid`, which is why the loop above
+skips it. The other you cannot. An order whose goods are made and whose charge
+is still running, or was never answered for, reads `in_progress` — the same
+word as an order that is still waiting for you.
+
+So a loop over this list rests on your own record of what you have already
+sent. One that makes the goods afresh for every order it finds will issue a new
+code, be told it succeeded, and lose it
+([Telling a repeat apart](#telling-a-repeat-apart)).
 
 If your own record of the order did survive and it holds our identifier — a job
 in a queue, a row in your database — the order can be assembled from it without
@@ -414,14 +450,18 @@ passed too.
 
 Being late is not in itself an error and does not come back as an exception.
 The goods are read before the state of the order is, so a late answer whose
-goods do not fit the card is refused for that and the lateness never comes up —
-the fault in your handler is what you are told about first, and where the order
-stands is something you learn on the call you make after fixing it. An answer
-whose goods do fit is taken: our side records the purchase as already closed,
-and your code is not told, because the tools report the answers we refuse and
-this is one we accept. The case is then invisible to you until the repeat
-arrives and pays for it — you have produced the goods, there is no payment for
-them yet, and it comes with the repeat.
+goods do not fit the card is refused for that and the lateness never comes up:
+the fault in your handler is what you are told about first, and that refusal
+does reach you, because the tools report the answers we refuse.
+
+Fixing the handler tells you nothing further. A synchronous answer leaves
+through the tools rather than through a call of your own, and an answer whose
+goods do fit is taken — our side records the purchase as already closed, and
+your code is not told, because this is an answer we accept.
+
+The case is then invisible to you until the repeat arrives and pays for it —
+you have produced the goods, there is no payment for them yet, and it comes
+with the repeat.
 
 ## The price changed while the agent was thinking
 
