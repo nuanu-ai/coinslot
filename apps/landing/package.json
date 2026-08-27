@@ -1,0 +1,10 @@
+{
+  "name": "@coinslot/landing",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The public landing — static HTML and CSS, served by Caddy from public/",
+  "files": [
+    "public"
+  ]
+}
