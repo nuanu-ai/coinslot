@@ -70,13 +70,26 @@ handler's return value to it, referencing the order, in every mode; the
 explicit `deliver` and `refuse` calls remain the asynchronous mode's
 closure verbs. A late synchronous answer receives the typed
 "purchase already closed" acknowledgment rather than an error — provided
-the goods in it are the ones the card declares. The gateway holds every
-delivery to the selling card's `result` before the order machine sees it,
-so an answer whose goods do not fit is refused as
-`delivery_does_not_match_card` whatever the state of the order, and the
+the goods in it are the ones the card declares. The gateway holds a
+delivery to the selling card's `result` before the order machine sees it
+wherever that delivery could still be written down, so an answer whose
+goods do not fit is refused as `delivery_does_not_match_card` and the
 lateness is never reached. That is the deliberate order: the fault in the
 handler is what the merchant is told about first, and the state of his
-order arrives on the call after he has fixed it.
+order arrives afterwards.
+
+Two limits on that, both measured against the code rather than reasoned
+from this text. The check is skipped on an order that already carries
+goods (`deliverOrder` in `apps/gateway/src/app/gateway.ts`): a repeat is
+answered `already_delivered`, and what it carried is neither weighed
+against the card nor kept, which is what makes a merchant's retry safe
+rather than a failure branch. And "arrives afterwards" holds only on the
+explicit `deliver` and `refuse` calls, where the merchant reads the
+returned answer himself. On the answer route it does not: the fixed
+synchronous answer comes back as a success carrying the word
+`purchase_already_closed`, and the SDK reports only the answers we refuse,
+so the word is dropped and nothing reaches his code. The gap is listed as
+open on `portal/orders.md`.
 
 Carrying answers inside the next poll request was rejected: it would couple
 the latency-critical synchronous answer — the agent is waiting on it — to
