@@ -534,6 +534,23 @@ export type Order = {
   /** The price this order is being sold at, once there is one. */
   readonly price: Price | null;
   readonly quoteSource: QuoteSource | null;
+  /**
+   * How many times the order has been handed to its merchant, and whether one
+   * of those hand-overs was taken on. The two are not read the same way, and
+   * the difference is worth knowing before either is used.
+   *
+   * `attempts` drives things: the backoff and the attempt cap are both counted
+   * off it. `accepted` drives nothing — nothing in this machine or in the
+   * gateway branches on it, and what actually stops an order being sent again
+   * is the gateway clearing the hand-over it was waiting on. It is here because
+   * `dispatched` covers both an order handed over and one already taken on, and
+   * without it the record cannot tell those apart.
+   *
+   * So it is a fact and not a signal, and it is a coarser fact than it looks: a
+   * further hand-over of an order already taken on leaves it true, since only
+   * entering `dispatched` from `paid` resets it. It says this order has been
+   * taken on, never that the hand-over now outstanding has been.
+   */
   readonly dispatch: { readonly attempts: number; readonly accepted: boolean };
   /**
    * The merchant produced the goods for a purchase that was already closed —

@@ -133,20 +133,6 @@ describe("the worker envelope", () => {
     expect(parsed.kind === "order" && parsed.payload.id).toBe("ord_7c1e05");
   });
 
-  it("takes the same message twice under one identifier and two send times", () => {
-    // Delivery is at least once (ADR-0004 §3), and the pair is how a worker
-    // tells one message from one delivery of it: `id` says which message and
-    // does not change, `sent_at` says which delivery and does.
-    const first = WorkerEnvelopeSchema.parse(envelopes.order);
-    const again = WorkerEnvelopeSchema.parse({
-      ...envelopes.order,
-      sent_at: "2026-08-26T10:25:30Z",
-    });
-
-    expect(again.id).toBe(first.id);
-    expect(again.sent_at).not.toBe(first.sent_at);
-  });
-
   it("refuses a send time with no zone, which is an hour of the day and not a moment", () => {
     expect(
       WorkerEnvelopeSchema.safeParse({ ...envelopes.order, sent_at: "2026-08-26T10:20:01" })

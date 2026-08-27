@@ -781,6 +781,14 @@ function fromDispatched(order: Order, event: StateEvent): TransitionResult {
       // The order is his, and he is told so. Delivery is at least once, so the
       // same acceptance arrives again on every redelivery and is answered the
       // same way each time — there is nothing here for a repeat to get wrong.
+      //
+      // The flag is a record and not a control, and a reader who came here
+      // asking what acknowledges an acceptance would otherwise leave with the
+      // right answer for the wrong reason. Nothing branches on it, here or in
+      // the gateway. What stops the order being sent out again is the gateway
+      // clearing the hand-over it was waiting on when it applies this event, so
+      // that the reminder left against that hand-over finds it is no longer the
+      // open one (`openDeliveryId`, apps/gateway/src/app/gateway.ts:186).
       return ok({ ...order, dispatch: { ...order.dispatch, accepted: true } }, [ACCEPTANCE_LANDED]);
     case "handler_delivered":
       return deliverGoods(order, event.at);
