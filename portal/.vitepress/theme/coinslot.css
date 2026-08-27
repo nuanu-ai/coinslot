@@ -1,0 +1,108 @@
+/*
+ * The documentation, in the same colours and the same type as the landing and
+ * the cabinet.
+ *
+ * The typefaces are declared against the shared origin, where Caddy serves the
+ * files beside the landing (deploy/Caddyfile), so the documentation and the
+ * landing load one copy of one font between them. Under `vitepress dev` there
+ * is no Caddy, the files are not there, and the pages fall back to the stacks
+ * below — the right failure: the local preview looks a little different and
+ * nothing is broken.
+ *
+ * The colours are written out here rather than imported from
+ * apps/landing/public/styles/tokens.css, and that is a deliberate cost. The
+ * portal is a separate project with its own lockfile and its own build; making
+ * its stylesheet depend on a file inside another application would tie the two
+ * builds together to save a copy of eleven values. They are the values of that
+ * file, and this comment is where the next person is told to keep them in step.
+ */
+
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/styles/fonts/ibm-plex-sans-400-latin.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/styles/fonts/ibm-plex-sans-500-latin.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/styles/fonts/ibm-plex-sans-600-latin.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/styles/fonts/ibm-plex-mono-400-latin.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/styles/fonts/ibm-plex-mono-500-latin.woff2") format("woff2");
+}
+
+:root {
+  --coinslot-bg: oklch(0.985 0.003 90);
+  --coinslot-surface: oklch(1 0 0);
+  --coinslot-raised: oklch(0.972 0.004 90);
+  --coinslot-line: oklch(0.895 0.006 90);
+  --coinslot-fg: oklch(0.24 0.012 260);
+  --coinslot-muted: oklch(0.52 0.012 260);
+  --coinslot-accent: oklch(0.56 0.14 55);
+  --coinslot-on-accent: oklch(0.99 0 0);
+
+  --vp-font-family-base: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --vp-font-family-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --vp-c-bg: var(--coinslot-bg);
+  --vp-c-bg-alt: var(--coinslot-raised);
+  --vp-c-bg-soft: var(--coinslot-raised);
+  --vp-c-bg-elv: var(--coinslot-surface);
+  --vp-c-divider: var(--coinslot-line);
+  --vp-c-border: var(--coinslot-line);
+  --vp-c-gutter: var(--coinslot-line);
+  --vp-c-text-1: var(--coinslot-fg);
+  --vp-c-text-2: var(--coinslot-muted);
+
+  --vp-c-brand-1: var(--coinslot-accent);
+  --vp-c-brand-2: var(--coinslot-accent);
+  --vp-c-brand-3: var(--coinslot-accent);
+  --vp-c-brand-soft: color-mix(in oklch, var(--coinslot-accent) 12%, transparent);
+
+  --vp-button-brand-bg: var(--coinslot-accent);
+  --vp-button-brand-hover-bg: var(--coinslot-accent);
+  --vp-button-brand-text: var(--coinslot-on-accent);
+
+  /* The site is square-cornered everywhere else; the theme's default is not. */
+  --vp-code-block-bg: var(--coinslot-raised);
+}
+
+.dark {
+  --coinslot-bg: oklch(0.165 0.012 260);
+  --coinslot-surface: oklch(0.205 0.013 260);
+  --coinslot-raised: oklch(0.19 0.013 260);
+  --coinslot-line: oklch(0.31 0.013 260);
+  --coinslot-fg: oklch(0.94 0.004 90);
+  --coinslot-muted: oklch(0.67 0.011 260);
+  --coinslot-accent: oklch(0.74 0.13 55);
+  --coinslot-on-accent: oklch(0.19 0.012 260);
+}
+
+/* Three corners the theme rounds and the rest of the site does not. */
+.VPButton,
+.vp-doc div[class*="language-"],
+.custom-block {
+  border-radius: 3px;
+}
