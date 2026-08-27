@@ -206,15 +206,32 @@ const environmentSchema = z.object({
    * is not the address an agent called, so it is configuration rather than
    * something read off the request.
    *
-   * The trailing slash is taken off here, once, and the reason is not tidiness.
-   * A path is joined onto this string, so a base written with a slash produces
-   * an address with two in the middle of it — a second spelling of one product,
-   * which a discovery catalog reads as a second resource. Whoever wrote the
-   * variable cannot be expected to know that, and the two spellings are one
-   * deployment: the one place that can settle it is here.
+   * A path is joined onto this string, and everything below follows from that.
+   *
+   * The trailing slash is taken off here, once. A base written with one
+   * produces an address with two slashes in the middle of it — a second
+   * spelling of one product, which a discovery catalog reads as a second
+   * resource. Whoever wrote the variable cannot be expected to know that, and
+   * the two spellings are one deployment: the one place that can settle it is
+   * here.
+   *
+   * A query or a fragment is refused rather than repaired, and the difference
+   * from the slash is that neither has a reading that was meant. Joined the
+   * same way they land in the middle of every resource address, which then
+   * answers nothing at all and is still what a listing would be keyed on. A
+   * trim would be us deciding somebody did not mean what they typed; a refusal
+   * at start-up is the same news in front of the person who typed it.
    */
   PUBLIC_BASE_URL: z
     .url()
+    .refine(
+      (value) => !value.includes("?"),
+      "must not carry a query: a path is joined onto this, so a query would end up in the middle of every address",
+    )
+    .refine(
+      (value) => !value.includes("#"),
+      "must not carry a fragment: a path is joined onto this, so a fragment would end up in the middle of every address",
+    )
     .default("http://localhost:3000")
     .transform((value) => value.replace(/\/+$/, "")),
 

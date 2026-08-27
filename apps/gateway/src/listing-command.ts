@@ -27,8 +27,23 @@
  * if nobody writes it down, so it is written down here and it exits non-zero.
  */
 
-import type { CatalogPage } from "@coinslot/contracts";
-import { API_ROUTES, CatalogPageSchema, expandPath } from "@coinslot/contracts";
+import { API_ROUTES, expandPath } from "@coinslot/contracts";
+import { z } from "zod";
+
+/**
+ * The whole of a catalog this command reads: one identifier per product.
+ *
+ * Everything else in the document is somebody else's business here — a price a
+ * probe never quotes, a description a probe never shows — and every field this
+ * does not name is one more way for a working gateway to be turned away by a
+ * copy of the code older than it is.
+ */
+const CATALOG_IDENTIFIERS = z.object({
+  items: z.array(z.object({ id: z.string().min(1) })),
+});
+
+/** What a catalog is, to this command. */
+type CatalogIdentifiers = z.infer<typeof CATALOG_IDENTIFIERS>;
 
 /** Where the public validation endpoint lives. No key, no cost. */
 export const VALIDATE_ENDPOINT = "https://api.cdp.coinbase.com/platform/v2/x402/validate";
@@ -54,7 +69,7 @@ export type ValidateAnswer =
 /** The two things this command has to go outside for. */
 export interface Reach {
   /** The public catalog of a running gateway, or a reason there is none. */
-  readonly catalog: (baseUrl: string) => Promise<CatalogPage>;
+  readonly catalog: (baseUrl: string) => Promise<CatalogIdentifiers>;
   readonly validate: (resource: string, method: string) => Promise<ValidateAnswer>;
 }
 
@@ -95,6 +110,22 @@ export async function runListingCheck(
 
   const base = baseUrl.replace(/\/+$/, "");
 
+  // The same mistake the gateway's own configuration refuses at start-up, for
+  // the same reason: a path is joined onto this, so either one lands in the
+  // middle of every resource address. Asking the endpoint about an address like
+  // that would come back a refusal, and the refusal would read as though there
+  // were something wrong with the product.
+  for (const [mark, what] of [
+    ["?", "query"],
+    ["#", "fragment"],
+  ] as const) {
+    if (base.includes(mark)) {
+      say(`${baseUrl} carries a ${what}, and a path is joined onto this address.`);
+      say("Give the address the gateway answers at and nothing after it.");
+      return 2;
+    }
+  }
+
   if (!base.toLowerCase().startsWith("https://")) {
     // Measured rather than read: put an http address to the endpoint and it
     // answers 400 with "doesn't match the regular expression ^https://.*$".
@@ -112,7 +143,7 @@ export async function runListingCheck(
   if (named.length > 0) {
     items = named;
   } else {
-    let catalog: CatalogPage;
+    let catalog: CatalogIdentifiers;
     try {
       catalog = await reach.catalog(base);
     } catch (thrown) {
@@ -250,11 +281,19 @@ export const overTheNetwork = (): Reach => ({
     if (!answered.ok) {
       throw new Error(`${at} answered ${answered.status}`);
     }
-    // Parsed rather than asserted. An answer that is JSON and is not a catalog
-    // is something in front of the gateway answering instead of it, and the
-    // caller has a sentence ready for that; cast, it would come out further
-    // down as a stack trace about reading a property of undefined.
-    return CatalogPageSchema.parse(await answered.json()) as CatalogPage;
+    // Read for what this command needs and nothing else: the identifiers, so a
+    // resource address can be built from each. Two mistakes are avoided at
+    // once. Cast rather than read, an answer that is JSON and not a catalog —
+    // a proxy, a login page, a maintenance stub answering for the gateway —
+    // came out further down as a stack trace about a property of undefined,
+    // and the sentence written for exactly that case never printed. Held to
+    // the whole catalog document instead, this would refuse a good catalog
+    // from a gateway newer than the copy it is run from: that document says in
+    // its own words that it grows a paging field the day paging is designed,
+    // and this command is run from somebody's local checkout against a
+    // deployment that may be ahead of it. Then the report would say nothing
+    // was checked, about a gateway that was working.
+    return CATALOG_IDENTIFIERS.parse(await answered.json());
   },
   validate: async (resource, method) => {
     try {
