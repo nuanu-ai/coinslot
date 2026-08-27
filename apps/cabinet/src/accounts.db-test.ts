@@ -25,7 +25,7 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { noDatabaseHere, readyDatabase, testDatabaseUrl } from "@coinslot/gateway/testing/database";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import type { Accounts } from "./accounts.js";
 import { connect, migrateAccounts, postgresAccounts } from "./accounts-postgres.js";
 import { describeAccounts } from "./testing/accounts-contract.js";
@@ -125,6 +125,56 @@ if (databaseUrl === null) {
       }
       // What it does say is what somebody reading a log can act on.
       expect(said[0]).toContain("session");
+    });
+  });
+
+  describe("when a connection is dropped while nobody is using it", () => {
+    it("is logged, and the pool goes on rather than the process ending", async () => {
+      // A database restart, a failover, an idle reaper or `docker compose
+      // restart postgres` closes a connection the pool is holding and nobody is
+      // waiting on. `pg` reports that as an `error` event on the pool itself,
+      // and an `error` event with no listener is an uncaught exception in Node
+      // — the cabinet exits, and the merchant cannot reach the control that
+      // stops their selling until somebody starts it again. Every other kind of
+      // database trouble surfaces on the next query, where somebody is waiting
+      // for an answer; this one does not.
+      //
+      // The drop is real rather than simulated: the backend behind this pool's
+      // own idle connection is terminated from a second connection, which is
+      // what a restart of the server does to every connection at once.
+      const said: string[] = [];
+      const printed = vi.spyOn(console, "error").mockImplementation((...line) => {
+        said.push(line.map(String).join(" "));
+      });
+
+      const its = connect(databaseUrl);
+      const { rows } = await its.query<{ pid: number }>("select pg_backend_pid() as pid");
+      const backend = rows[0]?.pid ?? 0;
+      expect(backend).toBeGreaterThan(0);
+
+      const other = connect(databaseUrl);
+      await other.query("select pg_terminate_backend($1)", [backend]);
+      await other.end();
+
+      // Waited for rather than slept through, and bounded: the connection is
+      // gone once the pool has let go of it, which on a local server is a few
+      // milliseconds and on a slow one is not.
+      for (let waited = 0; waited < 100 && its.totalCount > 0; waited += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      expect(its.totalCount).toBe(0);
+
+      // Still here, and still able to answer. Without a listener on the pool
+      // this line is never reached, because the process is gone by now — which
+      // is why the failure shows up as an unhandled error on the run rather
+      // than as a failed assertion in this test.
+      await expect(its.query("select 1 as ok")).resolves.toMatchObject({ rowCount: 1 });
+      await its.end();
+
+      // And somebody reading the log is told, because a connection that went
+      // away silently is a restart nobody can correlate anything with.
+      printed.mockRestore();
+      expect(said.join("\n")).toContain("[cabinet] an idle database connection failed");
     });
   });
 

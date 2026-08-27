@@ -77,8 +77,32 @@ function codeIn(thrown: unknown): string | null {
   return null;
 }
 
+/**
+ * One pool for the process, with the one listener it cannot run without.
+ *
+ * A pool reports the failure of a connection nobody is waiting on — a database
+ * restart, a failover, an idle reaper — as an `error` event on itself, and an
+ * `error` event with no listener is an uncaught exception and a dead process.
+ * Every other kind of database trouble arrives at a caller, where `guarded`
+ * turns it into a sentence; this one arrives at nobody, so without this the
+ * cabinet exits and the merchant cannot reach the control that stops their
+ * selling until somebody starts the process again.
+ *
+ * The gateway's store has carried the same three lines and the same reasoning
+ * since before this file existed, and it did not travel here on its own.
+ *
+ * What is logged is the name and the message, not the object. Everywhere else
+ * in this file the rule is that nothing the driver produced goes into a log
+ * unread, because drizzle's wrapper carries the query's bound parameters; a
+ * connection failure carries none, and `String` leaves every property behind in
+ * either case.
+ */
 export function connect(databaseUrl: string): Pool {
-  return new Pool({ connectionString: databaseUrl });
+  const pool = new Pool({ connectionString: databaseUrl });
+  pool.on("error", (failed) => {
+    console.error(`[cabinet] an idle database connection failed: ${String(failed)}`);
+  });
+  return pool;
 }
 
 /** Brings the cabinet's two tables up to date. A step somebody takes. */
