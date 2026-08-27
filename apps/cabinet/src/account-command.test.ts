@@ -26,9 +26,24 @@ interface Run {
   readonly password: string | null;
 }
 
+/**
+ * The moment every run in this file happens at, unless one says otherwise.
+ *
+ * Fixed rather than the wall clock: the listing counts sessions that are alive
+ * now, so a test that made one at a written-down instant and then asked the
+ * real clock was a test that passed until nine in the evening and failed after
+ * it. It did, on the day it was written.
+ */
+const NOON = new Date("2026-08-27T12:00:00.000Z");
+
 const run = async (accounts: Accounts, ...argv: string[]): Promise<Run> => {
   const lines: string[] = [];
-  const code = await runAccount(argv, accounts, (line) => lines.push(line));
+  const code = await runAccount(
+    argv,
+    accounts,
+    (line) => lines.push(line),
+    () => NOON,
+  );
   const said = lines.join("\n");
   // The command prints a password indented on a line of its own, so that it can
   // be copied without picking it out of a sentence.

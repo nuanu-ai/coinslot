@@ -86,6 +86,12 @@ export async function runAccount(
   argv: readonly string[],
   accounts: Accounts,
   print: (line: string) => void,
+  // The moment this run happens at. An argument with the obvious default, so
+  // that a test asking what the listing says about a session can put itself at
+  // a moment when that session is alive. Reading the wall clock here instead
+  // made one test fail every day after nine in the evening, which is a test
+  // that reports on the hour rather than on the code.
+  now: () => Date = () => new Date(),
 ): Promise<number> {
   // Everything this command prints goes through one rendering, rather than the
   // half-dozen places that print an address, because forgetting one of those is
@@ -98,7 +104,7 @@ export async function runAccount(
   // cabinet", which is the only question it is for.
   const say = (line: string): void => print(printable(line));
   try {
-    return await dispatch(argv, accounts, say);
+    return await dispatch(argv, accounts, say, now);
   } catch (thrown) {
     if (!missingTables(thrown)) {
       throw thrown;
@@ -113,11 +119,12 @@ async function dispatch(
   argv: readonly string[],
   accounts: Accounts,
   say: (line: string) => void,
+  now: () => Date,
 ): Promise<number> {
   const [verb, address] = argv;
 
   if (verb === "list") {
-    return await listAccounts(accounts, say);
+    return await listAccounts(accounts, say, now);
   }
   if (verb !== "add" && verb !== "password" && verb !== "revoke") {
     for (const line of USAGE) {
@@ -135,7 +142,7 @@ async function dispatch(
   }
 
   if (verb === "add") {
-    return await addAccount(accounts, say, address);
+    return await addAccount(accounts, say, address, now);
   }
   if (verb === "password") {
     return await changePassword(accounts, say, address);
@@ -147,9 +154,10 @@ async function addAccount(
   accounts: Accounts,
   say: (line: string) => void,
   address: string,
+  now: () => Date,
 ): Promise<number> {
   const password = newPassword();
-  const made = await accounts.add(address, await hashPassword(password), new Date());
+  const made = await accounts.add(address, await hashPassword(password), now());
   if (made === null) {
     // Not an overwrite. Somebody running this twice must not silently replace a
     // password the person on the other end is already using.
@@ -200,8 +208,12 @@ async function revokeSessions(
   return 0;
 }
 
-async function listAccounts(accounts: Accounts, say: (line: string) => void): Promise<number> {
-  const listed = await accounts.list(new Date());
+async function listAccounts(
+  accounts: Accounts,
+  say: (line: string) => void,
+  now: () => Date,
+): Promise<number> {
+  const listed = await accounts.list(now());
   if (listed.length === 0) {
     say("There are no accounts. Nobody can sign into this cabinet yet.");
     say("Make one: pnpm --filter @coinslot/cabinet account add someone@example.com");
