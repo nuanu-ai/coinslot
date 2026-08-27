@@ -92,10 +92,13 @@ lists it.
   card has two, and joining a merchant's headline to their description with
   punctuation of ours would be writing their listing for them.
 - The examples in the declaration are shapes and not facts: every declared field
-  at the empty value of its type, because a card carries no example values.
-  Tests hold them to the card's own checks, so what goes out is something our own
-  door accepts. A card that could carry real examples would say more, and adding
-  a field for them is not part of this.
+  holding a value that stands for its type, because a card carries no example
+  values. Tests hold them to the card's own checks, so what goes out is something
+  our own door accepts — which is what settles what a string stands for. A
+  delivered string has to carry something, so it is the word `string` rather than
+  an empty one, and an example built out of empty strings would have advertised a
+  delivery this system refuses. A card that could carry real examples would say
+  more, and adding a field for them is not part of this.
 - The challenge now carries the declaration in one header, and nothing bounds a
   card's description or the number of its parameters. Measured: a card with a
   55-character description and one parameter produces a 1.9 KB header; one with
