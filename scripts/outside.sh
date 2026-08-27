@@ -23,7 +23,6 @@
 
 set -euo pipefail
 
-repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/coinslot-outside.XXXXXX")"
 trap 'rm -rf "$scratch"' EXIT
 
@@ -76,9 +75,11 @@ contains "the command is in it" "package/dist/cli.js" "$shipped"
 
 echo
 echo "Installing the tarballs into $scratch"
-# The tarballs are copied in first so that nothing in this directory names a
-# path inside the repository. Node resolves modules by walking up from here, and
-# from a temporary directory that walk never reaches our workspace.
+# The tarballs were written here rather than into the repository, so nothing in
+# this directory names a path inside our workspace. Node resolves modules by
+# walking up from where it starts, and from a temporary directory that walk
+# never reaches us. npm and not pnpm, because npm is what the quickstart tells
+# a merchant to use and what most of them have.
 cd "$scratch"
 cat > package.json <<'JSON'
 {
@@ -139,6 +140,15 @@ contains "the check runs on a real card" "complete=true" "$imported"
 echo
 echo "Step 4 of the quickstart: npx coinslot verify"
 
+# Where `npx coinslot` will resolve, checked before it is run. This matters more
+# than it looks: `coinslot` is an unscoped name and there is an unrelated package
+# under it on the public registry. If our `bin` wiring ever broke, npx would go
+# and fetch that one, and the runs below would fail with somebody else's output
+# instead of saying our command is missing.
+linked="$(readlink node_modules/.bin/coinslot 2>&1 || true)"
+check "npx will find our command and not a stranger's" \
+  "../@coinslot/sdk/dist/cli.js" "$linked"
+
 run() {
   set +e
   out="$(npx coinslot "$@" 2>&1)"
@@ -158,7 +168,7 @@ run verify untitled-card.json
 echo "--- npx coinslot verify untitled-card.json (exit $code) ---"
 echo "$out"
 check "a card with a finding answers 1" "1" "$code"
-contains "it names the missing field" "title" "$out"
+contains "it names the field that is missing" "title:" "$out"
 
 run verify
 echo "--- npx coinslot verify (exit $code) ---"
