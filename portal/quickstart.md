@@ -119,9 +119,11 @@ A price in the card is required in every case: it is what the agent sees in
 the catalogue while it is choosing. If your price is worked out on the fly —
 from a rate, from a supplier's cost, from what is available at that minute —
 you add a price check to the card, and then the two work together. When the
-check answers, the sale goes through at the price it named; when it is silent,
-the card's price is used, and what happens after that depends on the mode. You
-will answer that question in code on the next step. The fields of the question
+check answers, the sale goes through at the price it named. When it is silent,
+what happens depends on the mode: a synchronous product sells at the price in
+the card, and an asynchronous one does not sell at all, because its buyer is
+charged at the moment of purchase and we will not take money for stock nobody
+has confirmed. You will answer that question in code on the next step. The fields of the question
 and of the answer are in the [card reference](/cards), and what silence leads
 to is on [What can go wrong](/failures).
 
@@ -197,7 +199,8 @@ await order.deliver({ access_url: url })
 An `accepted` can name the time you expect the delivery to take, where you
 know it; an empty `accepted` is a complete answer too. Until `deliver` is
 called the order counts as accepted, and the delivery deadline named in your
-card is running on it. A synchronous card carries no such field: how long to
+card is running on it — it started when the buyer was charged, at the moment
+of purchase, before the order reached you. A synchronous card carries no such field: how long to
 wait for a synchronous answer is set by us, as one number for everybody.
 
 If your process has restarted in the meantime, the object you kept is gone.
@@ -206,8 +209,9 @@ instead — [Finding out where an order stands](/orders).
 
 The call `deliver` is idempotent by the order's identifier. Call it twice and
 the second call succeeds as well, marked as already delivered, and no second
-delivery appears. Success is the same flag in both cases, so there is nothing
-to branch on. Repeating the call after a dropped connection is therefore safe,
+delivery appears. Success is the same flag in both cases, so you do not have
+to branch on the word inside it. Repeating the call after a dropped connection
+is therefore safe,
 and you do not have to keep a note of what you have already sent.
 
 If the delivery did not work out and you have already taken the order on, say

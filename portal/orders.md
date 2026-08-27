@@ -129,10 +129,12 @@ delivery missing one does not go through
 The call is idempotent by the order's identifier. Call it a second time with
 the same `order.id` and it succeeds again, marked as already delivered: no
 second delivery happened and no second charge. There is nothing here for your
-code to treat as a failure, and nothing to branch on inside the success — the
-flag for success is the same one in both cases. Repeating the call after a
-dropped connection is therefore safe, and you do not have to keep a note of
-what you have already sent.
+code to treat as a failure: the flag for success is the same one in both
+cases, and you do not have to branch on the word inside it. The word is there
+when you do want it — a delivery that closed a refund debt rather than
+completing a sale says so. Repeating the call after a dropped connection is
+therefore safe, and you do not have to keep a note of what you have already
+sent.
 
 A late call is accepted. If your delivery deadline has passed, the order is
 already marked as needing a refund and the refund has not yet gone out,
@@ -209,8 +211,8 @@ await coinslot.orders.forId(savedId).deliver({ access_url: url })
 ```
 
 That call asks nothing, and so it works even when we cannot be reached: `get`
-at such a moment can return no order at all, while a delivery against a saved
-identifier goes out and comes back as an error flagged worth repeating. It
+at such a moment throws, while a delivery against a saved identifier goes out
+and comes back as an error flagged worth repeating. It
 does not read the order itself — there are no purchase parameters and no state
 in it, only the calls that close an order.
 
@@ -281,7 +283,8 @@ the agent sees how it ended. What happens depends on which step the waiting
 was at.
 
 We name the numbers before the pilot. An asynchronous card carries one
-deadline of yours, on the delivery, and the agent sees it before it buys; the
+deadline of yours, on the delivery, counted from the moment the buyer was
+charged, and the agent sees it before it buys; the
 confirmation mode has a deadline of its own and it arrives together with the
 mode. How long to wait for a synchronous answer is set by us — that is the
 general ceiling on how long an agent waits, and no card carries it.

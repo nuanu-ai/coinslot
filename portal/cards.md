@@ -34,7 +34,10 @@ are working names and can still change before the pilot.
 | `fulfillment` | `'sync'` or `'async'`; `'confirm'` is not published during the pilot | required | `'sync'` |
 
 An asynchronous card carries one deadline of your own: how long you may take
-to deliver an order you have accepted. The agent sees it before it buys, and
+to deliver. It runs from the moment the buyer is charged, which for an
+asynchronous product is the moment of purchase — so the clock is already going
+when the order reaches your handler, and it covers every attempt we make to
+deliver that order to you. The agent sees the deadline before it buys, and
 what happens when it runs out is in [Time ran out](/orders). A synchronous
 card has no such field, because how long to wait for a synchronous answer is
 our own ceiling on how long an agent waits, and it is the same for every
