@@ -40,10 +40,10 @@ describe("the shape of the machine", () => {
   });
 
   it("answers every pairing of a state and an event without throwing", () => {
-    // The gateway feeds this machine events that came off a queue with
-    // at-least-once delivery, so it will see pairings nobody planned. Each one
-    // gets either a transition or a named refusal — never an exception, and
-    // never a silent nothing.
+    // The gateway feeds this machine events from a redelivered order, a
+    // reminder the queue tried twice, and a merchant's own repeated call, so it
+    // will see pairings nobody planned. Each one gets either a transition or a
+    // named refusal — never an exception, and never a silent nothing.
     let accepted = 0;
 
     for (const state of ORDER_STATES) {

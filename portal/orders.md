@@ -298,18 +298,19 @@ rule for orders on the same subscription. An order is acknowledged by the call
 that closes it, so we can tell whether it arrived and send it out again when it
 did not. An event is acknowledged by nothing, so we cannot tell — and an event
 that went into a batch your process never received is gone. Nothing brings it
-back and nothing tells you it existed. So the guard an order needs is against a
-repeat, and the guard an event needs is against a silence; a handler written for
-one of those rules and pointed at the other gets that one wrong.
+back, and nothing afterwards announces that a message went missing. So the guard
+an order needs is against a repeat, and the guard an event needs is against a
+silence; a handler written for one of those rules and pointed at the other gets
+that one wrong.
 
 The silence that costs money is the notice that an order needs a refund. The
 buyer has paid, the goods did not go out, the one message that would have told
 you did not arrive — and the money sits with you while nobody asks for it. What
 closes that hole is the list of open orders. Every order still owed something is
 on it, an order marked as needing a refund included, so walking that list finds
-what a lost event would otherwise have been your only word of. It is worth
-walking on a schedule rather than only after a restart: a restart is not what
-loses an event.
+what a lost event would otherwise have been your only word of. Walk it on a
+schedule and not only after a restart: a process that stayed up loses an event
+the same way one that went down does, and it has no restart to prompt it.
 
 | Event | What happened |
 | --- | --- |
