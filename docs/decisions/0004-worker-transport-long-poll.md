@@ -94,3 +94,39 @@ open on `portal/orders.md`.
 Carrying answers inside the next poll request was rejected: it would couple
 the latency-critical synchronous answer — the agent is waiting on it — to
 polling cadence and batch size, which §4 exists to keep out of that path.
+
+## Addendum (2026-08-28): §3 was never how this works, and two rules replace it
+
+Point 3 above says delivery is at-least-once with redelivery by visibility
+timeout in the queue. It is not, and it never was. The queue's own retries are
+switched off — the pg-boss adapter publishes with `retryLimit: 0` and finishes a
+job as it hands the envelope over — and redelivery is decided by the order
+machine instead, which arms it against the order's own state. There is a test
+against a live Postgres that pins the failing half: an envelope drawn into a
+poll response that never reached its worker goes to `failed` rather than back
+onto the stream (`apps/gateway/src/adapters/pgboss/queue.db-test.ts`).
+
+This is corrected here rather than in place because contract schemas and the
+order machine exist, which is the trigger this repository named in advance for
+decisions becoming append-only. The sentence stays above so that anybody who
+read it, or built on it, can see what they read.
+
+**Two rules, and they are opposites.** An order is delivered at least once: a
+merchant who does not answer gets it again, so their handler has to survive
+seeing the same order twice. An event is delivered at most once: it is handed
+over and finished in the same pass, it is never re-offered, and one lost in a
+poll response that did not arrive is simply gone — the port says so in its own
+header (`apps/gateway/src/ports/queue.ts`). Guarding against a repeat is the
+right move for one and pointless for the other; expecting one to arrive is safe
+for the order and not for the event.
+
+What makes the lost event survivable is that no event is the only record of
+anything. The order it is about stays in `orders.list({ open: true })` until
+whatever it owes is settled, an order owing a refund among them. That was
+always true and was never connected to the loss; `portal/orders.md` now
+connects them.
+
+The consequence worth naming: a merchant who treats events as a complete
+notification channel will miss things, and the failure is silent on both sides.
+Whether we owe them a stronger promise than "read your open orders" is a real
+question and not one this addendum answers.
