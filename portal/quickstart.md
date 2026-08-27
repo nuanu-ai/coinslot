@@ -303,33 +303,36 @@ and they are described in the [card reference](/cards).
 The sign of success here is a modest one: the process starts, holds the
 connection and does not fall over. The first order reaches it on step 5.
 
-## 4. Check yourself
+## 4. Check the card
 
-Before calling us, run the check. It looks at two things: whether the card is
-enough for an agent to assemble a correct purchase, and whether your handler
-holds against repeats — that is, whether a second delivery appears when the
-same order arrives twice.
+Before calling us, run your cards through the check. It reads a card the way
+we read it at publication and reports what an agent could not do with it: a
+parameter your delivery needs and the card does not name, a result that
+promises nothing, a deadline on a card whose mode never uses one.
 
 ```sh
-npx coinslot verify
+npx coinslot verify card.json
 ```
 
-That command does not exist yet: the package does not declare it, and until it
-does, the same check is reached through the functions the package exports. The
-item is in the list at the end of this page.
+That is not yet a command you can run — the package does not declare it, so
+today the check is reached through the functions the package exports. Either
+way it takes the cards as arguments and reads them off disk. It raises no
+order and it does not need your handler running.
 
-The check's orders travel the ordinary path: against your card, published and
-not yet visible in the catalogues, through the same live subscription, with
-the `test` flag on. There is no separate environment for it, so your handler
-has to be running. If it is not, the check says so in words instead of
-reporting a failed check for repeats.
+There is no silent "invalid": every finding is explained in words and points
+at one field of one card. A card whose shape is wrong is not then checked
+against the rules that compare one field with another, so a short list of
+findings is not a promise that one round of fixes is enough.
 
-The check compares the effect and not the bytes of the answers. Two different
-`accepted` answers to one order are not a fault; a second delivery is.
-
-It worked if both checks passed. There is no silent "invalid" here: every
-finding is explained in words and points at one field of the card or one
-answer of the handler.
+The other half of checking yourself is missing, and it is the half worth more.
+Whether your handler holds against repeats — whether a second delivery appears
+when the same order arrives twice — cannot be checked from here, because
+nothing on our surface raises a test order to try it against. The check says
+so in its own output instead of reporting a pass, and it claims nothing about
+your side. Until that changes, holding against repeats is yours to prove
+against your own delivery system, and what has to hold is the effect and not
+the bytes: two differently filled answers to one order are fine, a second
+delivery is not.
 
 ## 5. Walk a test purchase
 
@@ -377,9 +380,12 @@ code.
   yours, and the cursor that pulls batches.
 - What separates the sandbox from the live system: a separate environment, a
   separate access key, or only the `test` flag on the order.
-- `coinslot verify` as a command you can run. The check itself is written and
-  the package exports it; what the package does not yet declare is the command
-  that wraps it.
+- The half of the check that would send one order twice and watch for a second
+  delivery. Nothing on our surface raises a test order to send, and behind that
+  sits the question of what separates the sandbox from the live system.
+- `coinslot verify` as a command you can run. The card check is written and the
+  package exports it; what the package does not declare is the command that
+  wraps it.
 - Where to say that you are ready for a test purchase: we have no channel for
   that yet.
 - Starting the test purchase with a command of your own — after the pilot.

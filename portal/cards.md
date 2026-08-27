@@ -272,9 +272,11 @@ same measure without a code at all.
 
 ## Who checks a card before it is published
 
-Two of us: the `coinslot verify` command on your side, and we ourselves before
-the card goes into the catalogues. Both sides look at the same thing — whether
-an agent can assemble a correct purchase from this card.
+Two of us: the check we ship, run on your side, and we ourselves before the
+card goes into the catalogues. Both sides look at the same thing — whether an
+agent can assemble a correct purchase from this card — and both read the card
+by the same contract, so a card the first accepts is not turned away by the
+second.
 
 ## Updating or withdrawing a card
 

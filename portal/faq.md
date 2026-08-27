@@ -125,12 +125,12 @@ repeat in which mode is in [Telling a repeat apart](/orders).
 
 ### What do I check myself with before publishing?
 
-The check we ship, which these pages call `coinslot verify`. It looks at two
-things: whether the card is enough for an agent to assemble a correct
-purchase, and whether your handler holds against repeats — that is, whether a
-second delivery appears when the same order arrives twice. It compares the
-effect and not the bytes of the answers. The whole step, and what you can
-actually run today, is in [Check yourself](/quickstart).
+The check we ship, which these pages call `coinslot verify`. It reads your
+cards and reports what an agent could not do with them. What it cannot do yet
+is send one order twice and watch for a second delivery: nothing on our
+surface raises a test order, so holding against repeats is yours to prove
+against your own system. The whole step, and what can actually be run today,
+is in [Check the card](/quickstart).
 
 ## What is not settled yet
 

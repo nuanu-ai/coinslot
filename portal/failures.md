@@ -115,12 +115,12 @@ Repeats are an ordinary event here: orders are delivered at least once, and
 the same order arrives again after a connection breaks, after your process
 restarts, after a retry of ours.
 
-That your side really does hold against repeats can be checked before
-publishing: our check sends one order twice and watches for a second delivery
-— that is the [step where you check yourself](/quickstart). Those orders
-travel the ordinary path, through the live subscription, so the handler has to
-be running while the check runs. It compares the effect and not the bytes of
-the answers, so two differently filled answers to one order are not a fault.
+Whether your side really holds against repeats is not something we can check
+for you yet: nothing on our surface raises a test order to send twice, and the
+check we ship says so instead of reporting a pass
+([Check the card](/quickstart)). Proving it is yours, and what has to hold is
+the effect and not the bytes of the answers — two differently filled answers
+to one order are fine, a second delivery is not.
 
 ## The buyer paid and the answer was lost
 

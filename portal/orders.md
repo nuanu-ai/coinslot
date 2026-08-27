@@ -314,10 +314,10 @@ with the handler's answer, so the answer to such a repeat is the one you gave
 the first time — taking the order on. There is no need to deliver a second
 time or to call `deliver` again, because the order is already closed.
 
-Our check looks at exactly this. It compares the effect of two answers rather
-than their bytes: after a second order there must be no second delivery. The
-answers themselves may well differ — you named an expected delivery time in
-the first, say, and not in the second.
+The rule to hold yourself to is about the effect and not the bytes: after a
+second order there must be no second delivery, while the two answers may well
+differ — you named an expected delivery time in the first, say, and not in the
+second.
 
 ## Running the handler in several instances
 
