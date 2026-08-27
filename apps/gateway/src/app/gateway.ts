@@ -787,7 +787,23 @@ export class Gateway {
         params: { ...record.params },
         price_id: priceId,
         purpose: "purchase",
-        expires_at: asTimestamp(askedAt + config.deadlines.quoteResponseMs),
+        // Until when the price the merchant names will be honoured, which is
+        // what this field means to the merchant holding stock against it — not
+        // how long we are prepared to wait for the answer. The two are
+        // different numbers and the second is much the shorter, so sending it
+        // here told a merchant to release a unit while the gateway was still
+        // selling at that price.
+        //
+        // It cannot be exact at the moment of asking, because the price's own
+        // life starts when the answer lands and nobody knows yet when that will
+        // be. So this is the upper bound: an answer later than our patience is
+        // refused outright, so the price can never be alive past that patience
+        // plus its own life. Long is the safe direction — a merchant holds
+        // stock a little longer than needed; short is the direction that
+        // oversells.
+        expires_at: asTimestamp(
+          askedAt + config.deadlines.quoteResponseMs + config.deadlines.quoteTtlMs,
+        ),
       },
     });
 

@@ -784,6 +784,42 @@ describe("the price question", () => {
     );
   });
 
+  it("tells a merchant how long his price will be honoured, not how long we will wait", async () => {
+    // The promise, and it is a merchant's stock: `expires_at` on a price
+    // question means "until when the price you name will be honoured, so a
+    // merchant holding stock against it knows when to stop" (quote.ts). That is
+    // not the same number as our own patience for an answer — the gateway sells
+    // at a quoted price for the whole of the price's life, which begins when the
+    // answer lands and not when the question went out.
+    //
+    // Told the shorter number, a merchant who set a unit aside releases it while
+    // we are still selling against it, which is the oversell the price question
+    // exists to prevent.
+    const harnessed = await started({ QUOTE_RESPONSE_MS: "500", QUOTE_TTL_MS: "60000" });
+    const itemId = await published(harnessed, livePriced(asyncCard));
+
+    const buying = harnessed.gateway.beginPurchase(itemId, {});
+    const drawn = await harnessed.gateway.poll(10, 200);
+    const question = drawn.envelopes.find((envelope) => envelope.kind === "quote_request");
+    if (question?.kind !== "quote_request") throw new Error("nobody was asked the price");
+
+    const askedAt = Date.parse(question.sent_at);
+    const promised = Date.parse(question.payload.expires_at) - askedAt;
+
+    // An answer later than our patience is refused, so the latest a price can
+    // still be alive is that patience plus the price's own life. Erring long
+    // makes a merchant hold stock a little too long; erring short makes them
+    // release stock we are still selling against.
+    expect(promised).toBe(500 + 60_000);
+
+    await harnessed.gateway.answerQuote(question.payload.price_id, {
+      available: true,
+      price: { amount: "95.00", currency: "USD" },
+      as_of: new Date(askedAt).toISOString(),
+    });
+    await buying;
+  });
+
   it("tells a merchant his answer priced nothing when the machine would not take it", async () => {
     // The other half of the same promise, and the one the wording exists for.
     // Somebody is still parked on the question, so an acknowledgement built out
