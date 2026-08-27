@@ -229,8 +229,8 @@ The call `deliver` is idempotent by the order's identifier. Call it twice and
 the second call succeeds as well, marked as already delivered, and no second
 delivery appears. Success is the same flag in both cases, so you do not have to
 branch on the word inside it. Repeating the call after a dropped connection is
-therefore safe, and you do not have to keep a note of what you have already
-sent.
+therefore safe. What such a repeat has to carry is on [Telling a repeat
+apart](/orders#telling-a-repeat-apart).
 
 If the delivery did not work out and you have already taken the order on, say
 so at once, without waiting for your deadline:
@@ -369,8 +369,9 @@ when the same order arrives twice — cannot be checked from here, because
 nothing on our surface raises a test order to try it against. The check says so
 in its own output instead of reporting a pass, and it claims nothing about your
 side. Until that changes, holding against repeats is yours to prove against
-your own delivery system, and what has to hold is the effect and not the bytes:
-two differently filled answers to one order are fine, a second delivery is not.
+your own delivery system, and what has to hold is that a second order produces
+no second delivery and no fresh goods — the buyer keeps what the first delivery
+carried ([Telling a repeat apart](/orders#telling-a-repeat-apart)).
 
 ## 5. Walk a test purchase
 

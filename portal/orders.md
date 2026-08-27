@@ -127,9 +127,15 @@ the shape declared in the card, which goes to the agent as it is.
 await order.deliver({ access_url: url, expires_at: until })
 ```
 
-A delivery carries every field the card's result promises the agent, and a
-delivery missing one does not go through ([Delivery
-result](/cards#delivery-result)).
+A delivery carries exactly what the card's result declares: every field it
+promises the agent, in the type it names, and nothing it does not name
+([Delivery result](/cards#delivery-result)). Goods that do not fit are refused
+with the offending fields named, and the order does not move at all — nothing
+of what you sent is written down, no receipt is issued, and your delivery
+deadline stands where it stood, so the order is still yours to finish. Fix what
+the refusal names and deliver again. The check stands in front of every
+delivery that could put goods on the order, whether it comes back from your
+handler or from a `deliver` call, and whether it arrives on time or late.
 
 The call is idempotent by the order's identifier. Call it a second time with
 the same `order.id` and it succeeds again, marked as already delivered: no
@@ -137,8 +143,10 @@ second delivery happened and no second charge. There is nothing here for your
 code to treat as a failure: the flag for success is the same one in both cases,
 and you do not have to branch on the word inside it. The word is there when you
 do want it — a delivery that closed a refund debt rather than completing a sale
-says so. Repeating the call after a dropped connection is therefore safe, and
-you do not have to keep a note of what you have already sent.
+says so. Repeating the call after a dropped connection is therefore safe. A
+repeat is not weighed against the card at all, because there is nothing left
+for it to write: what it carries is neither checked nor kept. What it ought to
+carry is in [Telling a repeat apart](#telling-a-repeat-apart).
 
 A late call is accepted. If your delivery deadline has passed, the order is
 already marked as needing a refund and the refund has not yet gone out,
@@ -340,10 +348,19 @@ the handler's answer, so the answer to such a repeat is the one you gave the
 first time — taking the order on. There is no need to deliver a second time or
 to call `deliver` again, because the order is already closed.
 
-The rule to hold yourself to is about the effect and not the bytes: after a
-second order there must be no second delivery, while the two answers may well
-differ — you named an expected delivery time in the first, say, and not in the
-second.
+The rule to hold yourself to is that the goods on a repeat are the goods you
+sent the first time. What the buyer keeps is the first delivery: a later one is
+answered as a success, and whatever it carries is neither written down nor
+handed to the agent. So a handler that makes the goods afresh on every attempt
+— a new access code each time, because the one it made before went back to
+stock when its deadline passed — leaves the buyer holding the first code while
+your own records say the second one was spent. Nothing in our answer shows you
+that: a repeat is answered the same way whether it carried the same goods or
+different ones.
+
+Answers that are not the goods may differ freely. You named an expected
+delivery time when you took the order on the first time, say, and not the
+second; that is not a second delivery and nothing turns on it.
 
 ## Running the handler in several instances
 
@@ -395,10 +412,14 @@ collects the delivery that was made, this time with the payment. So answering
 with the earlier result under the key is worth doing after the deadline has
 passed too.
 
-Being late is not an error and does not come back as an exception. Our side
-takes the answer and records the purchase as already closed. Your code is not
-told: the tools report an answer we refused, and this is one we accept, so
-nothing surfaces on your side. The case is invisible to you until the repeat
+Being late is not in itself an error and does not come back as an exception.
+The goods are read before the state of the order is, so a late answer whose
+goods do not fit the card is refused for that and the lateness never comes up —
+the fault in your handler is what you are told about first, and where the order
+stands is something you learn on the call you make after fixing it. An answer
+whose goods do fit is taken: our side records the purchase as already closed,
+and your code is not told, because the tools report the answers we refuse and
+this is one we accept. The case is then invisible to you until the repeat
 arrives and pays for it — you have produced the goods, there is no payment for
 them yet, and it comes with the repeat.
 

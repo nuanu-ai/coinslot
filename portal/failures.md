@@ -124,9 +124,10 @@ restarts, after a retry of ours.
 Whether your side really holds against repeats is not something we can check
 for you yet: nothing on our surface raises a test order to send twice, and the
 check we ship says so instead of reporting a pass ([Check the
-card](/quickstart)). Proving it is yours, and what has to hold is the effect
-and not the bytes of the answers — two differently filled answers to one order
-are fine, a second delivery is not.
+card](/quickstart)). Proving it is yours, and what has to hold is that a second
+order produces no second delivery and no fresh goods: the buyer keeps what the
+first delivery carried, so the repeat has to carry the same thing ([Telling a
+repeat apart](/orders#telling-a-repeat-apart)).
 
 ## The buyer paid and the answer was lost
 
