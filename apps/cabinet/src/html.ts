@@ -44,6 +44,13 @@ const TABS: readonly [Tab, string][] = [
  * The stylesheet is linked rather than inlined so that a merchant moving
  * between the three screens fetches it once, and so that the one visual
  * language ADR-0005 §6 asks for is one file rather than three copies.
+ *
+ * The faces are linked separately, from the shared origin, because they are
+ * woff2 files the landing already serves and their addresses are relative to
+ * that directory. Behind Caddy this resolves and the pages are set in IBM Plex;
+ * run on its own the cabinet has no /styles, the link 404s and the fallback
+ * stack in the tokens carries the page — which is what a fallback stack is for,
+ * and why every family here names a full one.
  */
 export const page = (chrome: Chrome): string => `<!doctype html>
 <html lang="en">
@@ -51,6 +58,7 @@ export const page = (chrome: Chrome): string => `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escaped(chrome.title)} — Coinslot</title>
+<link rel="stylesheet" href="/styles/fonts.css">
 <link rel="stylesheet" href="${escaped(chrome.base)}/coinslot.css">
 </head>
 <body>
@@ -84,6 +92,7 @@ export const bare = (base: string, title: string, body: string): string => `<!do
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escaped(title)} — Coinslot</title>
+<link rel="stylesheet" href="/styles/fonts.css">
 <link rel="stylesheet" href="${escaped(base)}/coinslot.css">
 </head>
 <body>

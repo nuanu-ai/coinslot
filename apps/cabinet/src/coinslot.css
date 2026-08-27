@@ -1,105 +1,38 @@
 /*
- * The visual language of every Coinslot surface, in one file.
+ * What the cabinet needs on top of the shared visual language.
  *
- * ADR-0005 §6: the landing, the portal and the cabinet share one look, held in
- * tokens rather than repeated per page, so the three do not read as three
- * products. Today only the cabinet is served from here; the landing takes the
- * same tokens when it exists, and the portal's VitePress theme is pointed at
- * them rather than given its own palette.
+ * ADR-0005 §6 asks for one visual language across the landing, the portal and
+ * the cabinet, held in one stylesheet rather than repeated per page. That file
+ * is `apps/landing/public/styles/tokens.css`, and it is the one this branch
+ * used to carry a second copy of — with the pre-contrast-fix values, which is
+ * exactly how "one visual language" becomes two that look almost alike. The
+ * copy is gone: the cabinet serves the shared file itself, ahead of this one,
+ * so there is a single set of tokens on disk and no way for the two surfaces to
+ * drift without somebody editing the shared file.
  *
- * Both themes are defined here and neither is a toggle. The light set is on the
- * root and the dark set replaces it under `prefers-color-scheme: dark`, so a
- * merchant gets the one their system already asked for. A page that only
- * painted one of them would be unreadable on half the machines it is opened on.
- *
- * The type is IBM Plex — Sans for reading, Mono for anything a merchant might
- * copy or compare character by character: identifiers, keys and money. Money in
- * particular: a column of prices in a proportional face does not line up, and
- * lining up is most of what a column of prices is for.
- *
- * Nothing is fetched from anywhere. The faces are named and the fallback stacks
- * behind them carry the page on their own, because the two things this file
- * must not do are tell a third party the origin of every visit to a merchant's
- * private console, and make the local stack — which is meant to come up with no
- * network at all — depend on a font host answering. Self-hosted faces on the
- * shared origin are what these names will find when they are put there; until
- * then the fallbacks are what a merchant sees, and they are chosen for that.
+ * So nothing here declares a colour, a family, a radius or a base element rule.
+ * What is here is the cabinet's own layout — its frame, its tables, its state
+ * dots and its controls — which is what tokens.css means by "a rule that only
+ * the cabinet needs lives with the cabinet".
  */
 
-:root {
-  --bg: oklch(0.985 0.003 90);
-  --surface: oklch(1 0 0);
-  --raised: oklch(0.972 0.004 90);
-  --line: oklch(0.895 0.006 90);
-  --fg: oklch(0.24 0.012 260);
-  --muted: oklch(0.52 0.012 260);
-  --accent: oklch(0.6 0.14 55);
-  --ok: oklch(0.58 0.13 155);
-  --warn: oklch(0.58 0.16 25);
-  --on-accent: oklch(0.99 0 0);
-
-  --radius: 3px;
-  --sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
-  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: oklch(0.165 0.012 260);
-    --surface: oklch(0.205 0.013 260);
-    --raised: oklch(0.235 0.013 260);
-    --line: oklch(0.31 0.013 260);
-    --fg: oklch(0.94 0.004 90);
-    --muted: oklch(0.67 0.011 260);
-    --accent: oklch(0.74 0.13 55);
-    --ok: oklch(0.72 0.12 155);
-    --warn: oklch(0.7 0.15 25);
-    --on-accent: oklch(0.17 0.012 260);
-  }
-}
-
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
-}
-
+/*
+ * The one thing the cabinet takes back from the shared base, and why.
+ *
+ * tokens.css sets 16px/1.6, which is right for a landing somebody reads. This
+ * is a console with six-column tables that a merchant scans rather than reads,
+ * and at that size a row of them does not fit a laptop without scrolling
+ * sideways. The design was drawn at 14px for that reason.
+ */
 body {
-  margin: 0;
-  background: var(--bg);
-  color: var(--fg);
-  font-family: var(--sans);
   font-size: 14px;
   line-height: 1.5;
-  -webkit-font-smoothing: antialiased;
 }
 
-h1,
-h2 {
-  margin: 0;
-  font-weight: 600;
-  letter-spacing: -0.015em;
-}
-
+/* The page heading, at the size the console was drawn at. Declared before
+   `.gate h1` below, so that the more specific rule is the one that wins. */
 h1 {
   font-size: 22px;
-}
-
-p {
-  margin: 0;
-}
-
-a {
-  color: var(--accent);
-  text-decoration: none;
-}
-
-a:hover {
-  text-decoration: underline;
-}
-
-.mono {
-  font-family: var(--mono);
 }
 
 /* --- the frame ---------------------------------------------------------- */
@@ -116,7 +49,7 @@ a:hover {
   justify-content: space-between;
   gap: 24px;
   padding: 0 32px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: var(--hairline) solid var(--line);
   background: var(--surface);
   flex-wrap: wrap;
 }
@@ -129,7 +62,7 @@ a:hover {
 }
 
 .wordmark {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: 15px;
   font-weight: 500;
 }
@@ -188,7 +121,7 @@ a:hover {
  */
 .scroller {
   margin: 24px 32px 32px;
-  border: 1px solid var(--line);
+  border: var(--hairline) solid var(--line);
   border-radius: var(--radius);
   background: var(--surface);
   overflow-x: auto;
@@ -209,13 +142,13 @@ thead th {
   color: var(--muted);
   font-weight: 500;
   padding: 12px 24px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: var(--hairline) solid var(--line);
   white-space: nowrap;
 }
 
 tbody td {
   padding: 15px 24px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: var(--hairline) solid var(--line);
   vertical-align: middle;
 }
 
@@ -244,7 +177,7 @@ tbody tr.needs-you td {
 td.amount,
 td.key,
 td.ident {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   white-space: nowrap;
 }
 
@@ -317,12 +250,12 @@ td.quiet {
  * narrow screen while the number it qualifies stays visible.
  */
 .tag {
-  font-family: var(--sans);
+  font-family: var(--font-sans);
   font-size: 10px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--warn);
-  border: 1px solid var(--warn);
+  border: var(--hairline) solid var(--warn);
   border-radius: 2px;
   padding: 1px 4px;
   margin-left: 6px;
@@ -337,13 +270,15 @@ button {
   border-radius: var(--radius);
   padding: 6px 12px;
   font-size: 13px;
-  border: 1px solid var(--line);
+  /* --line-strong and not --line: a hairline is right for a rule between two
+     cells and too faint for the edge of something you are meant to click. */
+  border: var(--hairline) solid var(--line-strong);
   background: var(--surface);
   color: var(--fg);
 }
 
 button:hover {
-  border-color: var(--muted);
+  border-color: var(--fg);
 }
 
 button.primary {
@@ -368,7 +303,7 @@ td.control {
 .filter {
   display: flex;
   gap: 6px;
-  border: 1px solid var(--line);
+  border: var(--hairline) solid var(--line);
   border-radius: var(--radius);
   padding: 3px;
 }
@@ -394,7 +329,7 @@ td.control {
   display: flex;
   gap: 12px;
   align-items: flex-start;
-  border: 1px dashed var(--line);
+  border: var(--hairline) dashed var(--line-strong);
   border-radius: var(--radius);
   padding: 16px 20px;
   color: var(--muted);
@@ -408,7 +343,7 @@ td.control {
 
 .callout {
   margin: 0 32px 32px;
-  border: 1px solid var(--line);
+  border: var(--hairline) solid var(--line);
   border-left: 2px solid var(--warn);
   border-radius: var(--radius);
   padding: 16px 20px;
@@ -441,7 +376,7 @@ td.control {
 }
 
 .tile {
-  border: 1px solid var(--line);
+  border: var(--hairline) solid var(--line);
   border-radius: var(--radius);
   background: var(--surface);
   padding: 20px 24px;
@@ -456,7 +391,7 @@ td.control {
 }
 
 .tile .figure {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: 26px;
   margin-top: 10px;
   letter-spacing: -0.02em;
@@ -499,7 +434,7 @@ td.control {
 .gate form {
   width: 100%;
   max-width: 420px;
-  border: 1px solid var(--line);
+  border: var(--hairline) solid var(--line);
   border-radius: var(--radius);
   background: var(--surface);
   padding: 28px;
@@ -525,12 +460,12 @@ td.control {
 }
 
 .gate input {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: 14px;
   width: 100%;
   margin-top: 8px;
   padding: 9px 12px;
-  border: 1px solid var(--line);
+  border: var(--hairline) solid var(--line-strong);
   border-radius: var(--radius);
   background: var(--bg);
   color: var(--fg);

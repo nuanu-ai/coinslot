@@ -15,6 +15,7 @@
  * not broken a promise to anybody.
  */
 
+import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import type { Card } from "@coinslot/contracts";
 import { buyOverHttp, type Harness, harness, type Served, serve } from "@coinslot/gateway/testing";
@@ -329,6 +330,32 @@ describe("getting into the cabinet", () => {
     expect(painted.length).toBeGreaterThan(5);
     // Every token the dark theme paints is painted by the light theme too.
     expect(tokensIn(light?.[1])).toEqual(expect.arrayContaining(painted));
+  });
+
+  it("serves the shared visual language rather than a copy of it", async () => {
+    // ADR-0005 §6 asks for one visual language across the three surfaces, in
+    // one stylesheet. This branch carried a second copy of it for a while, with
+    // the palette from before the contrast fix — which is how one visual
+    // language quietly becomes two that look almost alike, and why the check is
+    // that the bytes are the shared file's rather than that they resemble it.
+    const { browser } = await started();
+    const shared = readFileSync(
+      new URL("../../landing/public/styles/tokens.css", import.meta.url),
+      "utf8",
+    );
+
+    const sheet = await browser.get("/coinslot.css");
+
+    expect(sheet.html).toContain(shared);
+    // And the cabinet's own file declares no colour of its own, or the shared
+    // one would stop being where the palette lives. Comments are stripped
+    // first: this file names the tokens it uses in prose, and prose is not a
+    // declaration.
+    const own = readFileSync(new URL("./coinslot.css", import.meta.url), "utf8").replaceAll(
+      /\/\*[\s\S]*?\*\//g,
+      "",
+    );
+    expect(own).not.toMatch(/--(?:bg|surface|raised|line|fg|muted|accent|ok|warn)\s*:/);
   });
 
   it("fetches nothing from anywhere while it does it", async () => {

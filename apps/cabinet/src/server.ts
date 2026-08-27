@@ -36,8 +36,30 @@ const SESSION = "coinslot_key";
  */
 const SESSION_HOURS = 12;
 
-/** The stylesheet, read once at startup: it never changes while we run. */
-const STYLESHEET = readFileSync(new URL("./coinslot.css", import.meta.url), "utf8");
+/**
+ * The stylesheet the cabinet serves: the shared visual language, then the
+ * cabinet's own layout. Read once at startup — neither changes while we run.
+ *
+ * ADR-0005 §6 wants one visual language across the three surfaces, held in one
+ * stylesheet rather than repeated per page, and that file is the landing's
+ * `styles/tokens.css` — served by Caddy at /styles/tokens.css on the same
+ * origin as all three. The cabinet reads it off disk and serves it inside its
+ * own response rather than linking that address, for one reason: the cabinet
+ * has to render correctly when it is run on its own, without Caddy in front of
+ * it, which is how it is developed and how every one of its tests drives it. A
+ * link to an absolute path that only exists behind the proxy would leave the
+ * pages with no palette at all in exactly the situation somebody is looking at
+ * them closely.
+ *
+ * What matters is that it is one file on disk and not a copy. This branch did
+ * carry a copy, with the palette from before the contrast fix, which is how one
+ * visual language quietly becomes two that look almost alike.
+ */
+const TOKENS = readFileSync(
+  new URL("../../landing/public/styles/tokens.css", import.meta.url),
+  "utf8",
+);
+const STYLESHEET = `${TOKENS}\n${readFileSync(new URL("./coinslot.css", import.meta.url), "utf8")}`;
 
 /**
  * The whole cabinet on an express app.
