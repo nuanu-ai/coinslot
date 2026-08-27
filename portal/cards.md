@@ -28,11 +28,12 @@ working names and can still change before the pilot.
 | `id` | string | not yours to fill in: we issue it at publication | `itm_9f2c4a` |
 | `merchant_item_id` | string | required | `access-monthly` |
 | `title` | string | required | `One month of access to the service` |
-| `description` | string | required | `Access for 30 days from delivery, renewal not included` |
+| `description` | string, up to 500 characters | required | `Access for 30 days from delivery, renewal not included` |
 | `price` | an amount as a string, and a currency | required | `{ amount: '5.00', currency: 'USD' }` |
 | `price_check` | what to ask the price and availability with: a handler, or an address we do not call yet | optional | `'handler'` |
 | `params` | the shape of the purchase parameters | required where the delivery needs input | `{ email: { type: 'string', required: true } }` |
 | `result` | the shape of what the agent receives on delivery | required | `{ access_url: { type: 'string' } }` |
+| `tags` | words a catalogue's search finds this product by: up to five, each up to 32 characters of unaccented Latin letters, digits and punctuation, with no space at either end and no two the same but for their case | optional | `['esim', 'telecom']` |
 | `fulfillment` | `'sync'` or `'async'`; `'confirm'` is not published during the pilot | required | `'sync'` |
 | `fulfill_deadline_seconds` | how long you may take to deliver | on an asynchronous card only | `86400` |
 
