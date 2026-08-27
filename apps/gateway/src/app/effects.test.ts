@@ -27,7 +27,7 @@ import type { Card } from "@coinslot/contracts";
 import type { Order } from "@coinslot/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type Harness, harness, workOnce } from "../testing/harness.js";
-import { SWEEP_EFFECTS } from "./runner.js";
+import { SWEEP_EFFECTS, type Swept } from "./runner.js";
 
 const asyncCard: Card = {
   merchant_item_id: "esim-7d",
@@ -74,11 +74,14 @@ const quoted = async (harnessed: Harness, card: Card): Promise<string> => {
   return offered.order.order.id;
 };
 
-/** Runs the sweep the way the queue's own scheduler runs it. */
-const sweep = async (harnessed: Harness): Promise<void> => {
+/**
+ * Runs the sweep the way the queue's own scheduler runs it, and hands back what
+ * it says it repaired.
+ */
+const sweep = async (harnessed: Harness): Promise<Swept> => {
   const work = harnessed.queue.daily.get(SWEEP_EFFECTS);
   if (work === undefined) throw new Error("the gateway registered no sweep of effects");
-  await work();
+  return (await work()) as Swept;
 };
 
 describe("an effect that could not be written down", () => {
@@ -184,14 +187,35 @@ describe("the sweep of what an order is still owed", () => {
     // when the order was made is waiting on real time and no real time passed.
     harnessed.advance(harnessed.runtime.config.deadlines.quoteTtlMs + 1_000);
 
-    await sweep(harnessed);
+    expect((await sweep(harnessed)).rearmed).toBe(1);
     await vi.waitFor(async () => {
       expect((await harnessed.store.orderById(orderId))?.order.state).toBe("expired");
     });
 
     // The order is closed, so the second run has nothing to ask about it.
-    await sweep(harnessed);
+    expect((await sweep(harnessed)).rearmed).toBe(0);
     expect((await harnessed.store.orderById(orderId))?.order.state).toBe("expired");
+  });
+
+  it("leaves alone a clock that is still running", async () => {
+    // A sweep with no patience here would put a reminder on every open order in
+    // the gateway every time it ran. Nothing would come of any of them — the
+    // machine refuses an expiry claiming an instant its deadline has not
+    // reached — so the cost is a queue full of work that can only be refused,
+    // and nothing about an order would ever show it.
+    const harnessed = await started();
+    await quoted(harnessed, asyncCard);
+
+    // Still inside the life of the price, which is the whole difference from
+    // the case above.
+    harnessed.advance(harnessed.runtime.config.deadlines.quoteTtlMs - 1_000);
+
+    expect(await sweep(harnessed)).toStrictEqual({
+      dispatched: 0,
+      receipted: 0,
+      rearmed: 0,
+      refused: 0,
+    });
   });
 
   it("hands a paid order to its merchant again when nobody has taken it", async () => {
@@ -209,6 +233,27 @@ describe("the sweep of what an order is still owed", () => {
     // The order itself, not some other merchant's and not an event about it.
     expect(sent?.kind).toBe("order");
     expect(sent?.kind === "order" ? sent.payload.id : null).toBe(orderId);
+  });
+
+  it("leaves alone an order that has only just been paid for", async () => {
+    // Every sale is in `paid` for a while — from the moment the money is in
+    // until a worker draws its envelope — and a sweep with no patience would
+    // hand a duplicate to every merchant who happened to be between polls.
+    const harnessed = await started();
+    const orderId = await quoted(harnessed, asyncCard);
+    await harnessed.gateway.runner.presentVerifiedPayment(
+      orderId,
+      "alice",
+      "PAY-A",
+      harnessed.now(),
+    );
+    expect(await harnessed.queue.draw(harnessed.merchant.id, 10, 0)).toHaveLength(1);
+
+    // Just inside the grace, which is the whole difference from the case above.
+    harnessed.advance(harnessed.runtime.config.sweepDispatchGraceMs - 1_000);
+    await sweep(harnessed);
+
+    expect(await harnessed.queue.draw(harnessed.merchant.id, 10, 0)).toStrictEqual([]);
   });
 
   it("stops asking once the merchant has actually taken it", async () => {
