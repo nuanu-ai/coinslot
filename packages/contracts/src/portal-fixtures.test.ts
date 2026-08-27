@@ -252,8 +252,8 @@ type Fixture =
  * cross-page test further down that holds the orders page's delivery to it.
  */
 const declaredResult = {
-  access_url: { type: "string", title: "Ссылка для входа" },
-  expires_at: { type: "string", title: "До какого момента действует" },
+  access_url: { type: "string", title: "The link to sign in with" },
+  expires_at: { type: "string", title: "When it stops working" },
 };
 
 /**
@@ -283,14 +283,14 @@ const fixtures: Fixture[] = [
     completeKeys: true,
     value: {
       merchant_item_id: "access-monthly",
-      title: "Доступ к сервису на один месяц",
-      description: "Что покупатель получает, для какой задачи это годится и что в это не входит.",
+      title: "One month of access to the service",
+      description: "What the buyer gets, what it is good for, and what is not included.",
       price: { amount: "5.00", currency: "USD" },
       params: {
-        email: { type: "string", required: true, title: "Куда прислать доступ" },
+        email: { type: "string", required: true, title: "Where to send it" },
       },
       result: {
-        access_url: { type: "string", title: "Ссылка для входа" },
+        access_url: { type: "string", title: "The link to sign in with" },
       },
       fulfillment: "sync",
     },
@@ -311,7 +311,7 @@ const fixtures: Fixture[] = [
     fence: { file: "portal/quickstart.md", language: "ts", index: 2 },
     schema: HandlerAnswerSchema,
     builtBy: "refused",
-    value: { refused: { code: "out_of_stock", message: "Мест на тарифе нет" } },
+    value: { refused: { code: "out_of_stock", message: "No seats left on that plan" } },
   },
   {
     kind: "transcribed",
@@ -366,14 +366,14 @@ const fixtures: Fixture[] = [
     what: "a refusal sent after the order was taken on",
     fence: { file: "portal/orders.md", language: "ts", index: 1 },
     schema: RefusalSchema,
-    value: { code: "out_of_stock", message: "Поставщик не подтвердил номер" },
+    value: { code: "out_of_stock", message: "The supplier did not confirm the number" },
   },
   {
     kind: "transcribed",
     what: "the same refusal, as the quickstart writes it",
     fence: { file: "portal/quickstart.md", language: "ts", index: 4 },
     schema: RefusalSchema,
-    value: { code: "out_of_stock", message: "Поставщик не подтвердил номер" },
+    value: { code: "out_of_stock", message: "The supplier did not confirm the number" },
   },
   {
     kind: "transcribed",

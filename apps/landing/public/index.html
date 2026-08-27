@@ -12,17 +12,13 @@
 
     the hero and the flow    docs/vision.md, portal/index.md
     the code sample          portal/quickstart.md §2, its own example with the
-                             optional fields dropped and the title in English
+                             optional fields dropped
     the money section        portal/money.md
-    what we need from you    portal/index.md, "О чём мы вас спросим", and
-                             "Своими руками или нашими"
+    what we need from you    portal/index.md, "What we will ask you", and
+                             "Your hands or ours"
     what is not settled yet  portal/money.md and portal/index.md, both closing
                              sections, portal/quickstart.md's closing list, and
                              docs/research/00-open-questions.md
-
-  The documentation links are marked hreflang="ru": the portal is written in
-  Russian and this page is not, which is a question for Dmitry rather than a
-  thing to paper over. It is also the last item in the open list below.
 -->
 <html lang="en">
   <head>
@@ -65,8 +61,8 @@
         <span class="wordmark__stage">pilot</span>
       </div>
       <nav class="masthead__nav" aria-label="Main">
-        <a href="/docs/" hreflang="ru">Documentation</a>
-        <a href="/docs/money" hreflang="ru">How the money moves</a>
+        <a href="/docs/">Documentation</a>
+        <a href="/docs/money">How the money moves</a>
         <a class="button--small" href="/cabinet/">Cabinet</a>
       </nav>
     </header>
@@ -88,7 +84,7 @@
                yet, so a button labelled "Talk to us" would be an invitation to
                a room that does not exist. -->
           <div class="hero__actions">
-            <a class="button button--primary" href="/docs/" hreflang="ru">Read the documentation</a>
+            <a class="button button--primary" href="/docs/">Read the documentation</a>
             <a class="button button--quiet" href="#not-settled">What is not settled yet</a>
           </div>
         </div>
@@ -104,7 +100,7 @@
           </div>
           <p class="caption">
             The example is the one in the
-            <a href="/docs/quickstart" hreflang="ru">first test sale</a>, with the optional fields
+            <a href="/docs/quickstart">first test sale</a>, with the optional fields
             dropped. Of the machine names in it only <span class="mono">merchant_item_id</span> is
             settled; the package name, the function names and the rest of the fields are working
             names, because what is fixed so far is the integration model and not the signatures.
@@ -121,8 +117,8 @@
             <p class="cell__body">
               A card is what the agent sees in the catalogue and buys: title, description, price and
               the list of what has to be given at purchase. Send us a link to your site or your
-              documentation and we write the cards from it; you approve them, because a card sells
-              under your name and at your prices. If you would rather keep the card in your own
+              documentation and we write the cards from it; you approve them, because it is your
+              product at your price and the card is the whole of what an agent reads. If you would rather keep the card in your own
               code, your engineer publishes it with the call above.
             </p>
           </div>
@@ -161,8 +157,9 @@
           </p>
           <p class="section__body">
             The transfer is final. There is no mechanism in these payments for a buyer to reverse
-            one the way a card charge is reversed, so the familiar case where money is pulled back a
-            month after the sale and you argue that the goods went out does not happen. Whatever you
+            one the way a charge on a bank card is reversed, so the familiar case where money is
+            pulled back a month after the sale and you argue that the goods went out does not
+            happen. Whatever you
             give back, you give back yourself and by your own decision.
           </p>
           <p class="section__body">
@@ -325,9 +322,10 @@
             </li>
             <li>
               <span
-                >The point at which we stop your sales without being asked. We do stop them when
-                your side goes quiet or too often answers that the goods are gone; what counts as
-                either, and how selling resumes, is not fixed.</span
+                >Stopping your sales without being asked. Nothing does it today: when your side
+                goes quiet, or answers too often that the goods are gone, the switch is still the
+                one in your hands. What will count as either, and how selling resumes, is not
+                fixed.</span
               >
             </li>
             <li>
@@ -335,12 +333,6 @@
                 >What we promise you when it is our side that goes quiet. Everything we have written
                 so far covers your side falling silent; the other direction is not written down
                 yet.</span
-              >
-            </li>
-            <li>
-              <span
-                >Which language we write in. The documentation behind the links on this page is in
-                Russian and this page is not.</span
               >
             </li>
           </ul>
@@ -354,7 +346,7 @@
     <footer class="colophon">
       <span class="mono">coinslot</span>
       <div class="colophon__links">
-        <a href="/docs/" hreflang="ru">Documentation</a>
+        <a href="/docs/">Documentation</a>
         <a href="/cabinet/">Cabinet</a>
         <span>No address yet: <span class="mono slot">[CONTACT]</span></span>
       </div>

@@ -1,138 +1,144 @@
-# Частые вопросы
+# Common questions
 
-*Предварительная версия контракта — до пилота формулировки могут уточняться.*
+*A preliminary contract: the wording can still change before the pilot.*
 
-Короткие ответы со ссылкой туда, где вопрос разобран целиком. Первая половина
-собрана из того, что спрашивают, решая, подключаться ли; вторая — из того,
-что спрашивают, когда садятся писать код.
+Short answers, each with a link to where the question is worked through in
+full. The first half comes from what people ask while deciding whether to
+connect; the second from what they ask once they sit down to write the code.
 
-## Вопросы владельца
+## Questions from the owner
 
-### Нужно ли переделывать мой магазин?
+### Do I have to rebuild my shop?
 
-Нет. Магазин и его код остаются прежними, ассортимент и цены — вашими.
-Если товар выдаётся через ваш API, рядом с магазином появляется обработчик,
-который принимает оплаченные заказы и отдаёт по ним товар; внутри магазина
-при этом ничего не меняется. Три способа выдачи и то, чем они отличаются,
-разобраны на странице [«Подключение к Coinslot»](/).
+No. The shop and its code stay as they are, and the range and the prices stay
+yours. Where a product is delivered through your API, a handler appears beside
+the shop that takes paid orders and gives out the goods for them; nothing
+inside the shop changes. The three ways of delivering, and how they differ, are
+worked through on [Connecting to Coinslot](/).
 
-### Инженер для этого нужен?
+### Do I need an engineer for this?
 
-Смотря какой путь выдачи вы выберете. Связку с интернет-магазином настраиваем
-и держим мы, инженерной работы она с вашей стороны не требует. Обработчик к
-вашему API может написать ваш инженер нашими инструментами, а если своего
-инженера нет или он занят другим, эту часть тоже делаем и держим у себя мы —
-от вас нужны доступ к API и утверждение карточек. Выбор описан в разделе
-[«Своими руками или нашими»](/).
+It depends which delivery path you take. We set up the link to an online shop
+and run it ourselves, and it asks no engineering work of your side. Your own
+engineer can write a handler against your API with our tools, and if you have
+no engineer, or they are busy with something else, we do that part and run it
+too — what we need from you then is access to the API and your approval of the
+cards. The choice is described in [Your hands or ours](/).
 
-### Сколько это стоит?
+### What does it cost?
 
-Процента с платежей мы не берём: деньги идут с кошелька покупателя прямо на
-ваш, мимо нас. Зарабатываем мы на инструментах и подписке. Цену подписки и её
-состав мы называем до подключения — вместе с остальным про деньги это на
-странице [«Деньги»](/money).
+We take no percentage of the payments: the money goes from the buyer's wallet
+straight to yours, past us. We earn on the tools and on a subscription. The
+price of the subscription and what it covers we name before you connect — that,
+and the rest of the money, is on [Money](/money).
 
-### Карточки товаров пишете вы или я?
+### Do you write the product cards, or do I?
 
-Пишем мы — по вашему сайту, каталогу или документации, а вы проверяете и
-утверждаете. Утверждение идёт перепиской, а не кнопкой: карточку мы
-присылаем вам, вы отвечаете «да» или говорите, что поправить. Последнее
-слово остаётся за вами, потому что продажа идёт под вашим именем и по вашим
-ценам. Дальше это тоже наша
-работа: поменялся товар, состав или цена — сообщите, правки внесём мы.
-Если вам удобнее вести карточки самостоятельно, инструменты для этого есть:
-[«Первая тестовая продажа»](/quickstart).
+We do, from your site, your catalogue or your documentation, and you check them
+and approve them. Approval goes by correspondence rather than by a button: we
+send you the card, and you either say yes or say what to fix. The last word
+stays with you: it is your product at your price, and the card is the whole of
+what an agent reads. Keeping the cards up is our work too: the product, what is
+in it or the price changes, you tell us, and we make the edit. If you would
+rather keep the cards yourself, the tools for it are there: [The first test
+sale](/quickstart).
 
-### Придут ли ко мне живые покупатели?
+### Will live customers come to me?
 
-Нет. Покупатели здесь — программы, которые выполняют поручение человека и
-платят из выданного им бюджета; сам человек на ваш сайт не заходит, корзину не
-собирает и с поддержкой не переписывается. Покупать или нет, программа решает
-по тексту карточки, и требования к этому тексту описаны в
-[справочнике карточки](/cards).
+No. The buyers here are programs carrying out a person's instruction and paying
+from a budget they were given; the person themselves does not visit your site,
+does not fill a basket and does not write to your support. The program decides
+whether to buy from the text of the card, and what that text has to do is
+described in the [card reference](/cards).
 
-### Как я узнаю о продаже?
+### How do I find out about a sale?
 
-Заказ приходит к вам тем способом, о котором мы договорились при подключении:
-в ваш API, в ваш интернет-магазин как обычный оплаченный заказ или сообщением.
-Платёж приходит отдельным переводом на ваш кошелёк; до вашей выдачи или после
-— зависит от товара: [«Деньги»](/money). Заказы видны в кабинете — это страница
-на нашей стороне, там же лежат ваши карточки и выключатель продаж. Полной сводки
-денег в нём нет: чек мы записываем в момент выдачи товара, поэтому оплаченный,
-но ещё не выданный заказ виден в списке заказов и не виден в чеках. Деньги
-приходят прямо к вам на кошелёк, мимо нас, и сводить их с заказами пока
-приходится вам.
+The order reaches you by whichever way we agreed when you connected: into your
+API, into your online shop as an ordinary paid order, or as a message. The
+payment arrives as its own transfer into your wallet, before your delivery or
+after it depending on the product: [Money](/money). Orders are visible in the
+cabinet, a page on our side that also holds your cards and the switch that
+stops selling. It is not a full picture of the money: we write a receipt at the
+moment the goods are delivered, so an order that is paid for and not yet
+delivered is in the list of orders and not among the receipts. The money
+arrives straight in your wallet, past us, and matching the two up is still
+yours to do.
 
-### Продажи можно поставить на паузу?
+### Can I pause the selling?
 
-Да, в любой момент и своими руками: в кабинете есть пауза на каждой карточке и
-одна кнопка, которая останавливает продажи целиком. На паузе карточки
-перестают продаваться и пропадают из каталогов, а уже принятые заказы
-доигрываются обычным порядком. Если ваша сторона перестала отвечать, продажи
-останавливаются и без вас — [автоматическая остановка](/failures) устроена так
-же. Полный список того, чем заказ может закончиться, — в разделе
-[«Чем заказ может закончиться»](/orders).
+Yes, at any moment and with your own hands: the cabinet has a pause on each
+card and one button that stops selling altogether. Paused, a card stops selling
+and disappears from the catalogues, while the orders already taken on play out
+in the ordinary way. Stopping it without you, when your side goes quiet, is
+designed and not built — [what that would look like](/failures). The full list
+of how an order can end is in [How an order can end](/orders).
 
-### Можно ли уйти совсем?
+### Can I leave altogether?
 
-Уйти можно, и это обычная операция. Карточки снимаются из каталогов,
-незакрытые заказы закрываются, а деньги по невыданному вы возвращаете
-покупателям сами, со своего кошелька: на него они и приходили. Ни денег, ни
-товаров ваших у нас не остаётся — они и так всегда шли мимо нас. Одна вещь
-остаётся — ключ доступа к вашему API, если обработчик писали и держали у себя
-мы; отзовите его, и наша сторона до вашей больше не
-дотянется. Само обязательство возврата и то, что в его механике ещё не
-выбрано, описано на странице [«Деньги»](/money).
+Leaving is designed, and nothing on our surface does it yet — during the pilot
+it is arranged with us. The cards come out of the catalogues, the orders nobody
+paid for close, and the money for anything paid for and not delivered you send
+back to the buyers yourself, from your own wallet: that is where it arrived.
+Neither your money nor your goods are left with us — they always went past us
+anyway. One thing does remain: the key to your API, if we were the ones writing
+and running the handler. Revoke it, and our side can no longer reach yours. The
+obligation to refund, and what is still unchosen in its mechanics, is described
+on [Money](/money).
 
-### Покупатель недоволен — кто разбирает спор?
+### The buyer is unhappy — who settles the dispute?
 
-Спор разбираете вы, по своим правилам, так же как разбираете его в обычном
-магазине. Мы не встаём между вами и покупателем и не выносим решений за вас:
-правила возврата и добросовестности у вас свои, и не нам их за вас применять.
-Наша часть техническая — мы передаём вам заказ и записи о том, что и когда
-происходило с выдачей, включая [квитанцию с ценой продажи](/money).
+You do, by your own rules, the same way you settle one in an ordinary shop. We
+do not stand between you and the buyer and do not make decisions on your
+behalf: the rules about refunds and about good faith are yours, and they are
+not ours to apply for you. Our part is technical — we hand you the order and
+the records of what happened with the delivery and when. Where the goods went
+out there is a [receipt with the sale price](/money) as well; where they did
+not, there is the order and the event saying a refund is owed.
 
-### Чем платят покупатели?
+### What do buyers pay with?
 
-Стейблкоином — цифровым долларом, то есть деньгами, курс которых привязан к
-доллару, так что между покупкой и зачислением ничего не пересчитывается. Какой
-именно цифровой доллар и в какой сети идут переводы, ещё выбирается:
-[«Деньги»](/money).
+A stablecoin: a digital dollar, meaning money whose rate is pegged to the
+dollar, so nothing is converted between the purchase and the arrival. Which
+digital dollar, and which network the transfers run over, is still being
+chosen: [Money](/money).
 
-## Вопросы инженера
+## Questions from the engineer
 
-### Товар кончился или цена изменилась — откуда вы об этом узнаёте?
+### The goods ran out or the price changed — how do you find out?
 
-Спрашиваем вас в момент покупки, если у карточки включена проверка цены и
-наличия. Отвечает на вопрос ваш код: по умолчанию — обработчик цены в том же
-процессе, что и обработчик заказов, а если цену считает отдельный сервис
-прайсинга, вместо него ставится хук цены, адрес на вашей стороне; поля вопроса
-и ответа у обоих одинаковые ([что нужно вернуть](/cards)). Продажа тогда идёт
-по названной вами цене, а ответ «нет в наличии» закрывает покупку до всяких
-денег. Без проверки мы продаём по цене из карточки и об исчерпании узнаём от
-вашего отказа при выдаче; что бывает, когда проверка молчит, — на странице
-[«Что может пойти не так»](/failures).
+We ask you at the moment of purchase, where the card has a price check turned
+on. Your code answers it, in a price handler that sits in the same process as
+the order handler; the sale then goes at the price you named, and an answer of
+"there is none" closes the purchase before any money moves ([what to answer
+with](/cards)). A second transport for a separate pricing service — a price
+hook at an address of your own — is designed and not called yet, so a card that
+names one is priced as though nobody had answered. Without a check we sell at
+the card's price and hear that the goods have run out from your refusal at
+delivery; what happens when the check is silent is on [What can go
+wrong](/failures).
 
-### Один и тот же заказ пришёл дважды — это нормально?
+### The same order arrived twice — is that normal?
 
-Да, это штатное событие: доставка заказов гарантирует «не меньше одного раза»,
-и заказ приходит снова после обрыва связи, после перезапуска вашего процесса,
-после нашей повторной попытки. Обработчик обязан отдать по ключу
-идемпотентности прежний результат вместо второй выдачи; какой именно ключ
-опознаёт повтор в каком режиме, сказано в разделе
-[«Как опознать повтор»](/orders).
+Yes, it is an ordinary event: orders are delivered at least once, and one
+arrives again after a connection breaks, after your process restarts, after a
+retry of ours. The handler has to answer with the earlier result under the
+idempotency key instead of delivering a second time. Which key recognises a
+repeat in which mode is in [Telling a repeat apart](/orders).
 
-### Чем проверить себя до публикации?
+### What do I check myself with before publishing?
 
-Командой `coinslot verify` на вашей стороне. Она смотрит на две вещи: хватает
-ли карточки, чтобы агент сумел составить корректную покупку, и держит ли ваш
-обработчик повторы — то есть не появляется ли вторая выдача, когда один и тот
-же заказ приходит дважды. Сравнивает она эффект, а не байты ответов. Шаг
-целиком — в разделе [«Проверить себя»](/quickstart).
+The check we ship, which these pages call `coinslot verify`. It reads your
+cards and reports what an agent could not do with them. What it cannot do yet
+is send one order twice and watch for a second delivery: nothing on our surface
+raises a test order, so holding against repeats is yours to prove against your
+own system. The whole step, and what can actually be run today, is in [Check
+the card](/quickstart).
 
-## Что ещё не решено
+## What is not settled yet
 
-- Сроки процедуры ухода и судьба заказов, принятых в последний момент.
-- Состав записей о выдаче, которые мы передаём вам для разбора спора.
-- Как до вас доходит претензия: покупатель — программа, и человек, которому
-  она покупала, с вашей поддержкой не переписывается.
+- How leaving is done at all — no call makes it happen today — its timings, and
+  what becomes of orders taken on at the last moment.
+- What the records of a delivery contain, the ones we hand you to settle a
+  dispute with.
+- How a complaint reaches you at all: the buyer is a program, and the person it
+  was buying for does not write to your support.

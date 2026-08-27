@@ -92,20 +92,20 @@ function paidAsync(): Order {
   ]);
 }
 
-// --- portal/orders.md, "Чем заказ может закончиться" ------------------------
+// --- portal/orders.md, "How an order can end" -----------------------------
 
 const ENDINGS = [
-  "Вы выдали товар",
-  "Товара нет, параметры не подошли, платёж не прошёл проверку — или вы отказали в синхронном режиме",
-  "Вы ответили «не выдам» на запрос подтверждения",
-  "Время вышло: не дождались подтверждения, оплаты или синхронной выдачи",
-  "Вы ушли, и открытые заказы закрылись",
-  "Деньги списаны, выдачи не случилось",
-  "Вы выдали синхронно, а платёж не исполнился",
-  "Платёжная сеть не ответила, списаны ли деньги",
+  "You delivered the goods",
+  "There is none, the parameters did not fit, the payment failed its check — or you refused in the synchronous mode",
+  'You answered "I will not deliver" to a request to confirm',
+  "Time ran out: no confirmation, no payment or no synchronous delivery arrived",
+  "You left",
+  "The money was charged and no delivery happened",
+  "You delivered synchronously and the payment did not execute",
+  "The payment network did not say whether the money was charged",
 ] as const;
 
-describe('portal/orders.md, "Чем заказ может закончиться"', () => {
+describe('portal/orders.md, "How an order can end"', () => {
   it(`${ENDINGS[0]}: the money is the merchant's, the agent has goods and a receipt`, () => {
     const { order, effects } = must(paidAsync(), { kind: "deliver_called", at: T0 + 60 });
 
@@ -192,10 +192,10 @@ describe('portal/orders.md, "Чем заказ может закончиться
 
   it(`${ENDINGS[7]}: the agent is told the outcome is unknown, not that he was refused`, () => {
     // The row's own third column, pinned verbatim by the guard at the bottom of
-    // this file: «исход платежа неизвестен» — не «отказ»: повтор тем же ключом
-    // безопасен. The two are different answers to an agent deciding whether to
-    // go and buy the same thing somewhere else, and the machine may not give
-    // the cheaper one when it does not know.
+    // this file: "the outcome of the payment is not known", not "refused" — a
+    // repeat under the same key is safe. The two are different answers to an
+    // agent deciding whether to go and buy the same thing somewhere else, and
+    // the machine may not give the cheaper one when it does not know.
     const unresolved = walk(newOrder("async"), [
       { kind: "payment_verified", at: T0 + 1 },
       { kind: "deadline_expired", at: T0 + 999_999, deadline: "settle_response" },
@@ -230,17 +230,17 @@ describe('portal/orders.md, "Чем заказ может закончиться
   });
 });
 
-// --- portal/orders.md, "Время вышло" ----------------------------------------
+// --- portal/orders.md, "Time ran out" --------------------------------------
 
 const TIMEOUTS = [
-  "Агент получил цену и думает",
-  "Вам пришёл запрос «выдадите?»",
-  "Агент должен оплатить подтверждённый заказ",
-  "Вы выдаёте синхронный заказ",
-  "Вы выдаёте асинхронный заказ",
+  "The agent has the price and is thinking",
+  "A request asking whether you will deliver has arrived",
+  "The agent owes payment for a confirmed order",
+  "You are delivering a synchronous order",
+  "You are delivering an asynchronous order",
 ] as const;
 
-describe('portal/orders.md, "Время вышло"', () => {
+describe('portal/orders.md, "Time ran out"', () => {
   it(`${TIMEOUTS[0]}: the price stops holding`, () => {
     const { order } = must(newOrder("sync"), {
       kind: "deadline_expired",
@@ -316,15 +316,15 @@ describe('portal/orders.md, "Время вышло"', () => {
   });
 });
 
-// --- portal/orders.md, "События по той же подписке" -------------------------
+// --- portal/orders.md, "Events on the same subscription" -------------------
 
 const EVENTS = [
-  "Заказ помечен требующим возврата",
-  "Подтверждённый заказ не оплачен",
-  "Платёж не исполнился после синхронной выдачи",
+  "An order was marked as needing a refund",
+  "A confirmed order was not paid for",
+  "A payment did not execute after a synchronous delivery",
 ] as const;
 
-describe('portal/orders.md, "События по той же подписке"', () => {
+describe('portal/orders.md, "Events on the same subscription"', () => {
   it("emits exactly the three events the portal promises, and no others", () => {
     expect(MERCHANT_EVENTS).toStrictEqual([
       "order.refund_due",
@@ -369,14 +369,14 @@ describe('portal/orders.md, "События по той же подписке"',
 // --- portal/failures.md -----------------------------------------------------
 
 const FAILURES = [
-  "Проверка цены и наличия молчит",
-  "Выдать не получилось",
-  "Обработчик упал, не ответив",
-  "Ответа на выдачу нет",
-  "Заказ пришёл дважды",
-  "Покупатель заплатил, а ответ потерялся",
-  "Товар кончился",
-  "Ваша сторона замолчала надолго",
+  "The price check is silent",
+  "You could not deliver",
+  "The handler crashed without answering",
+  "No answer about the delivery",
+  "An order arrived twice",
+  "The buyer paid and the answer was lost",
+  "The goods ran out",
+  "Your side went quiet for a long time",
 ] as const;
 
 describe("portal/failures.md", () => {
@@ -501,79 +501,80 @@ describe("portal/failures.md", () => {
 // --- the guard --------------------------------------------------------------
 
 describe("the portal and this machine cannot drift apart quietly", () => {
-  it('has exactly the encoded rows in "Чем заказ может закончиться"', () => {
-    expect(tableRows(ORDERS_PAGE, "Чем заказ может закончиться")).toStrictEqual([...ENDINGS]);
+  it('has exactly the encoded rows in "How an order can end"', () => {
+    expect(tableRows(ORDERS_PAGE, "How an order can end")).toStrictEqual([...ENDINGS]);
   });
 
   it("still says where the money is in each of those endings", () => {
     // The row label alone is not the promise. The middle column is where the
     // page tells the merchant whose money it is, and that is the sentence the
     // scenarios above are written against.
-    expect(tableRows(ORDERS_PAGE, "Чем заказ может закончиться", 2)).toStrictEqual([
-      "у вас",
-      "не двигались",
-      "не двигались",
-      "не двигались",
-      "по невыданному [возвращаете вы](/money)",
-      "у вас",
-      "не пришли",
-      "неизвестно — выясняем и сообщаем, когда узнаём",
+    expect(tableRows(ORDERS_PAGE, "How an order can end", 2)).toStrictEqual([
+      "with you",
+      "never moved",
+      "never moved",
+      "never moved",
+      "for what was not delivered, [you send it back](/money)",
+      "with you",
+      "never arrived",
+      "not known — we are finding out and will tell you when we do",
     ]);
   });
 
   it("still tells the agent the same thing about each of those endings", () => {
     // The third column is the sentence the agent is given, and it is the one
     // place in the portal where the machine's refusal to overstate can be
-    // undone by an edit: «исход платежа неизвестен» rewritten as «отказ» would
-    // have the page promise the very claim the code will not make, and the
-    // agent would go and buy the same thing again on a wallet already lighter.
-    expect(tableRows(ORDERS_PAGE, "Чем заказ может закончиться", 3)).toStrictEqual([
-      "товар и квитанция",
-      "отказ с причиной, покупка не состоялась",
-      "отказ, ничего не списано",
-      "заказ закрыт по сроку",
-      "заказ закрыт, деньги вернутся",
-      "заказ ждёт возврата",
-      "покупка не состоялась; повтор доводит оплату",
-      "«исход платежа неизвестен» — не «отказ»: повтор тем же ключом безопасен",
+    // undone by an edit: "the outcome is not known" rewritten as "refused"
+    // would have the page promise the very claim the code will not make, and
+    // the agent would go and buy the same thing again on a wallet already
+    // lighter.
+    expect(tableRows(ORDERS_PAGE, "How an order can end", 3)).toStrictEqual([
+      "the goods and a receipt",
+      "a refusal with a reason; the purchase did not happen",
+      "a refusal, and nothing was charged",
+      "the order was closed on its deadline",
+      "an unpaid order is closed; a paid one waits for your refund",
+      "the order is waiting for a refund",
+      "the purchase did not happen; a repeat drives the payment home",
+      '"the outcome of the payment is not known", not "refused": a repeat under the same key is safe',
     ]);
   });
 
-  it('has exactly the encoded rows in "Время вышло"', () => {
-    expect(tableRows(ORDERS_PAGE, "Время вышло")).toStrictEqual([...TIMEOUTS]);
+  it('has exactly the encoded rows in "Time ran out"', () => {
+    expect(tableRows(ORDERS_PAGE, "Time ran out")).toStrictEqual([...TIMEOUTS]);
   });
 
   it("still says what running out of each of those times costs", () => {
     // The label names the waiting; the second column is what the merchant is
     // owed and what the buyer paid, and the scenarios above are written against
     // that sentence rather than against the label.
-    expect(tableRows(ORDERS_PAGE, "Время вышло", 2)).toStrictEqual([
-      "цена больше не действует; захочет купить — запросит свежую",
-      "заказ закрылся, деньги покупателя не двигались",
-      "заказ закрылся, вы свободны; вам придёт событие",
-      "покупка не состоялась, списания не было; поздняя выдача не пропадает — её заберёт повтор",
-      "деньги уже у вас, заказ помечен «требует возврата»",
+    expect(tableRows(ORDERS_PAGE, "Time ran out", 2)).toStrictEqual([
+      "the price no longer holds; if it still wants to buy, it asks for a fresh one",
+      "the order closed, and the buyer's money never moved",
+      "the order closed and you are free; an event comes to you",
+      "the purchase did not happen and nothing was charged; a late delivery is not lost — a repeat collects it",
+      "the money is already with you, and the order is marked as needing a refund",
     ]);
   });
 
-  it('has exactly the encoded rows in "События по той же подписке"', () => {
-    expect(tableRows(ORDERS_PAGE, "События по той же подписке")).toStrictEqual([...EVENTS]);
+  it('has exactly the encoded rows in "Events on the same subscription"', () => {
+    expect(tableRows(ORDERS_PAGE, "Events on the same subscription")).toStrictEqual([...EVENTS]);
   });
 
   it("still says what each of those events means", () => {
     // The event name is the wire word; the second column is what the merchant
     // is told it means, and it is the half he acts on.
-    expect(tableRows(ORDERS_PAGE, "События по той же подписке", 2)).toStrictEqual([
-      "вы не выдали в срок или отказались после списания",
-      "вы ответили «выдам», а агент не заплатил в свой срок; вы свободны",
-      "вы выдали, а деньги не пришли",
+    expect(tableRows(ORDERS_PAGE, "Events on the same subscription", 2)).toStrictEqual([
+      "you did not deliver in time, or refused after the charge",
+      "you answered that you would deliver and the agent did not pay in its own time; you are free",
+      "you delivered and the money never arrived",
     ]);
   });
 
   it("has exactly the encoded failure scenarios", () => {
     // The portal's own open-questions section is not a scenario, so it is the
     // one heading this list excludes.
-    expect(headings(FAILURES_PAGE).filter((h) => h !== "Что ещё не решено")).toStrictEqual([
+    expect(headings(FAILURES_PAGE).filter((h) => h !== "What is not settled yet")).toStrictEqual([
       ...FAILURES,
     ]);
   });
@@ -581,15 +582,13 @@ describe("the portal and this machine cannot drift apart quietly", () => {
   it("reads the portal rather than trusting a copy of it", () => {
     // The negative control for the guard itself: a parser that quietly
     // returned nothing would let every check above pass on an empty page.
-    expect(tableRows(ORDERS_PAGE, "Время вышло").length).toBe(5);
-    expect(() => tableRows(ORDERS_PAGE, "Секция, которой нет")).toThrowError(/no section/);
-    expect(() => tableRows(ORDERS_PAGE, "Тестовые заказы")).toThrowError(/no table/);
+    expect(tableRows(ORDERS_PAGE, "Time ran out").length).toBe(5);
+    expect(() => tableRows(ORDERS_PAGE, "A section that is not here")).toThrowError(/no section/);
+    expect(() => tableRows(ORDERS_PAGE, "Test orders")).toThrowError(/no table/);
     // And a column the table does not have is an error rather than a row of
     // empty strings, which is what a guard against a moved column would
     // otherwise compare itself against.
-    expect(() => tableRows(ORDERS_PAGE, "Время вышло", 3)).toThrowError(/no column 3/);
-    expect(() => tableRows(ORDERS_PAGE, "Чем заказ может закончиться", 4)).toThrowError(
-      /no column 4/,
-    );
+    expect(() => tableRows(ORDERS_PAGE, "Time ran out", 3)).toThrowError(/no column 3/);
+    expect(() => tableRows(ORDERS_PAGE, "How an order can end", 4)).toThrowError(/no column 4/);
   });
 });
