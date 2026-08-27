@@ -59,4 +59,10 @@ try {
   await accounts.close();
 }
 
-process.exit(code);
+// `process.exitCode` and not `process.exit`, because this command's whole
+// output is a password shown once. Node's own documentation says writes to
+// stdout are asynchronous when it is a pipe — which is what it is under
+// `docker compose exec` — and `process.exit` does not wait for them. I could
+// not make it truncate on this machine; the cost of not finding out the hard
+// way is one word.
+process.exitCode = code;

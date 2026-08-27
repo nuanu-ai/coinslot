@@ -483,6 +483,37 @@ describe("getting into the cabinet", () => {
     await expect(accounts.whose(held, new Date(at + twelveHours + 60_000))).resolves.toBeNull();
   });
 
+  it("keeps a person signed in when the merchant key is rotated under them", async () => {
+    // The promise this whole decision was written for. Before it, the key in
+    // the cabinet was the person's password: rotating it signed the human out
+    // and broke the merchant's own code in the same instant, and neither could
+    // be done alone. Here the key changes and the session does not notice.
+    const { browser, accounts, gateway } = await started();
+    await publish(gateway, roomCard);
+    await browser.signIn();
+    const held = browser.sessionToken() ?? "";
+
+    // The same cabinet, restarted with a different key — and the same store,
+    // because the sessions are rows and not something the process holds.
+    const rotated = await visiting(gateway.url, "", accounts, {
+      MERCHANT_API_KEY: "a-different-merchant-key",
+    });
+    try {
+      const after = await rotated.browser.withRawCookie(`${COOKIE}=${held}`).get("/cards");
+
+      // Still signed in: the session survived a key it never held.
+      expect(after.status).not.toBe(303);
+      expect(after.to).toBeNull();
+      // The gateway does not know the new key, so the cabinet says its own key
+      // is not accepted — and says nothing about the person's sign-in.
+      expect(after.status).toBe(502);
+      expect(readable(after.html)).toMatch(/key/i);
+      expect(after.headers.getSetCookie().join(" ")).not.toContain(`${COOKIE}=;`);
+    } finally {
+      await rotated.browser.close();
+    }
+  });
+
   it("clears the old cookie that used to hold a live merchant key", async () => {
     // Everybody who ever signed into the previous cabinet has one of these in
     // their browser, and it is a working API key. Nothing reads it any more, so
