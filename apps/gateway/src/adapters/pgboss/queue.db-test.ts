@@ -25,7 +25,7 @@
 
 import type { WorkerEnvelope } from "@coinslot/contracts";
 import { Pool } from "pg";
-import { PgBoss, type Queue as PgBossQueueOptions } from "pg-boss";
+import { type Queue as LibraryQueueOptions, PgBoss } from "pg-boss";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Reminder } from "../../ports/queue.js";
 import { A_NAME_PG_BOSS_ACCEPTS, ENVELOPES, PgBossQueue, REMINDERS } from "./queue.js";
@@ -48,9 +48,11 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
  */
 const SCHEMAS = [
   "pgboss_reminder_retry",
+  "pgboss_reminder_bound",
   "pgboss_reminder_delay",
   "pgboss_reminder_expiry",
   "pgboss_envelope_expiry",
+  "pgboss_envelope_delay",
   "pgboss_every_day",
   "pgboss_queue_names",
 ] as const;
@@ -85,6 +87,14 @@ if (databaseUrl === undefined || databaseUrl === "") {
       // Stopped rather than left: a boss still polling holds connections open,
       // and the next file's first act is to drop the schema underneath it.
       await Promise.all(running.map((queue) => queue.stop().catch(() => undefined)));
+      // Taken away again, so that a developer opening this database finds the
+      // tables the gateway uses and not six pg-boss installations belonging to
+      // a test run. The drop in beforeAll is what makes the suite repeatable
+      // and stays there: a run that dies in the middle leaves its schemas
+      // behind, and the next run must not care.
+      for (const schema of SCHEMAS) {
+        await pool.query(`drop schema if exists ${schema} cascade`);
+      }
       await pool.end();
     });
 
@@ -95,7 +105,7 @@ if (databaseUrl === undefined || databaseUrl === "") {
      */
     async function labQueue(
       schema: (typeof SCHEMAS)[number],
-      queues: Record<string, Omit<PgBossQueueOptions, "name">> = {},
+      queues: Record<string, Omit<LibraryQueueOptions, "name">> = {},
     ): Promise<{ boss: PgBoss; queue: PgBossQueue }> {
       const boss = new PgBoss({ connectionString: url, schema });
       boss.on("error", (error: unknown) => {
@@ -170,6 +180,47 @@ if (databaseUrl === undefined || databaseUrl === "") {
       ]);
     }, 40_000);
 
+    it("gives up on a reminder that never succeeds, after the number of attempts it was given", async () => {
+      // The other half of the retry, and the half a test that throws once
+      // cannot see. The port promises a reminder is delivered again "a bounded
+      // number of times", and the configuration's own comment says delivering
+      // it forever would turn a defect into a loop. A handler that always
+      // throws is what asks whether the bound is real: with the attempts below
+      // set to three, the third failure has to be the last word.
+      const seen: Reminder[] = [];
+      const { boss, queue } = await labQueue("pgboss_reminder_bound");
+      queue.onReminder(async (reminder) => {
+        seen.push(reminder);
+        throw new Error("this handler is never going to work");
+      });
+      await queue.start();
+
+      await queue.remind(
+        { kind: "deadline", orderId: "ord_doomed", deadline: "quote_expiry", at: 1 },
+        0,
+      );
+
+      // Three deliveries in all — the first and two retries — and then the job
+      // is failed rather than tried a fourth time.
+      await vi.waitFor(
+        async () => {
+          const { rows } = await pool.query<{ state: string }>(
+            "select state from pgboss_reminder_bound.job where name = $1",
+            [REMINDERS],
+          );
+          expect(rows.map((row) => row.state)).toStrictEqual(["failed"]);
+        },
+        { timeout: 30_000, interval: 250 },
+      );
+      expect(seen).toHaveLength(3);
+
+      // Left alone from here: a failed reminder is not picked up again, which
+      // is what stops a deadline nobody can act on from being retried for as
+      // long as the gateway runs.
+      await boss.supervise();
+      expect(seen).toHaveLength(3);
+    }, 60_000);
+
     it("holds a delayed reminder back until its moment", async () => {
       // Every deadline in the system is armed through this. A reminder that
       // fired the moment it was written would close an order whose merchant is
@@ -227,6 +278,10 @@ if (databaseUrl === undefined || databaseUrl === "") {
       expect(await boss.fetch<Reminder>(REMINDERS, { batchSize: 1 })).toStrictEqual([]);
 
       await sleep(1_500);
+      // Asked for rather than waited for. pg-boss runs this itself, on a timer,
+      // about once a minute; calling it by hand compresses that minute and
+      // changes nothing else, so what is watched below is the same recovery a
+      // running gateway gets without anybody asking.
       await boss.supervise();
 
       const again = await vi.waitFor(
@@ -293,6 +348,47 @@ if (databaseUrl === undefined || databaseUrl === "") {
         [ENVELOPES],
       );
       expect(rows.map((row) => row.state)).toStrictEqual(["failed"]);
+    }, 60_000);
+
+    it("holds a delayed envelope back, and reaches a poll in another process when it lands", async () => {
+      // Two promises that only a second process can show, and both are made in
+      // production. The gateway publishes an envelope with a wait on it when a
+      // delivery is to be tried again and when a charge is still in flight, and
+      // that is the branch of publish which deliberately does not wake the
+      // parked polls — a delayed envelope has nothing to wake anybody for yet.
+      //
+      // And a poll parked in one process has to be reached by work published in
+      // another. Everywhere else in this suite the publisher and the drawer are
+      // the same object, so what is exercised is the in-process signal, and the
+      // library's polling underneath it — the thing that would carry a second
+      // gateway the day there is one — is never touched. Here the two are
+      // separate pg-boss instances on one schema, so the signal cannot be what
+      // does it.
+      // The queue is made once, the way `start()` makes it, and the second
+      // instance finds it already there — which is what a second gateway
+      // process starting against a running system does.
+      const publisher = await labQueue("pgboss_envelope_delay", { [ENVELOPES]: {} });
+      const drawer = await labQueue("pgboss_envelope_delay");
+      const envelope: WorkerEnvelope = {
+        kind: "order_event",
+        id: "env_delayed_1",
+        sent_at: "2026-08-26T12:00:00.000Z",
+        payload: {
+          type: "order.unpaid_after_confirmation",
+          order_id: "ord_delayed_env",
+          at: "2026-08-26T12:00:00.000Z",
+        },
+      };
+
+      await publisher.queue.publish(envelope, 4_000);
+
+      // Not yet, and long enough after publishing for a draw that ignored the
+      // wait to have found it.
+      expect(await drawer.queue.draw(10, 2_500)).toStrictEqual([]);
+
+      const drawn = await drawer.queue.draw(10, 20_000);
+      expect(drawn.map((delivery) => delivery.envelope.id)).toStrictEqual(["env_delayed_1"]);
+      await drawer.queue.finish(drawn[0]?.handle ?? "");
     }, 60_000);
 
     it("takes on work to run every day, runs it, and does not stack up schedules", async () => {
