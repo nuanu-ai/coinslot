@@ -23,10 +23,21 @@
 
 set -euo pipefail
 
+repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/coinslot-outside.XXXXXX")"
-trap 'rm -rf "$scratch"' EXIT
 
 failures=0
+
+# A passing run leaves nothing behind; a failing one leaves everything, because
+# the install and the tarballs are what whoever debugs it needs to look at.
+cleanup() {
+  if [ "$failures" -eq 0 ]; then
+    rm -rf "$scratch"
+  else
+    printf '\nLeft in place for reading: %s\n' "$scratch"
+  fi
+}
+trap cleanup EXIT
 
 # Report and keep going, so one run names everything that is wrong rather than
 # only the first thing. The exit code at the bottom is what fails the command.
@@ -53,12 +64,12 @@ contains() {
   fi
 }
 
-echo "Building the publishable packages"
-pnpm --filter @coinslot/contracts run build
-pnpm --filter @coinslot/sdk run build
-
-echo
 echo "Packing them the way npm would"
+# The build output is deleted first on purpose. Each package's `prepack` runs
+# its own build, so packing from nothing is the path a release actually takes,
+# and a package that had lost that hook would pack an empty tarball here rather
+# than quietly inherit whatever an earlier build left lying around.
+rm -rf "$repo/packages/sdk/dist" "$repo/packages/contracts/dist"
 # `pnpm pack` applies `publishConfig`, so these tarballs carry the built entry
 # points and the command — not the source paths the working tree develops
 # against — and `workspace:*` has become a real version range.
@@ -67,11 +78,19 @@ pnpm --filter @coinslot/sdk exec pnpm pack --pack-destination "$scratch" >/dev/n
 ls -1 "$scratch"
 
 echo
-echo "What the tarball would ship"
-shipped="$(tar -tzf "$scratch"/coinslot-sdk-*.tgz)"
-leaked="$(printf '%s\n' "$shipped" | grep -E '\.test\.|/testing/|\.tsbuildinfo' || true)"
-check "nothing of ours leaks into a merchant's node_modules" "" "$leaked"
-contains "the command is in it" "package/dist/cli.js" "$shipped"
+echo "What the tarballs would ship"
+# An allowlist and not a list of things we fear. Naming the bad files would
+# pass anything nobody thought of — a stray `.env`, a `node_modules`, the
+# sources — whereas `dist` plus the manifest is the entire agreed surface, so
+# anything else appearing is the finding.
+for tarball in "$scratch"/coinslot-*.tgz; do
+  unexpected="$(tar -tzf "$tarball" |
+    grep -vE '^package/(package\.json|dist/)' || true)"
+  check "$(basename "$tarball") ships its build and nothing else" "" "$unexpected"
+done
+
+contains "the command is in it" "package/dist/cli.js" \
+  "$(tar -tzf "$scratch"/coinslot-sdk-*.tgz)"
 
 echo
 echo "Installing the tarballs into $scratch"

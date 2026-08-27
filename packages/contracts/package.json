@@ -28,6 +28,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "prepack": "pnpm run build",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {

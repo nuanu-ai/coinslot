@@ -19,17 +19,25 @@ concurrency:
 # pull_request jobs only ever run code from people who already have write
 # access to this repository.
 jobs:
-  # The three monorepo checks walk the same install path, so they are described
-  # once as a matrix: there is simply nowhere here for the Node versions or the
+  # The monorepo checks walk the same install path, so they are described once
+  # as a matrix: there is simply nowhere here for the Node versions or the
   # order of steps to drift apart between them. In the interface these are
-  # still three separate jobs — check, typecheck and test.
+  # still separate jobs — check, typecheck, test and build.
+  #
+  # `build` is here because `typecheck` does not cover it. The two compile
+  # different sets of files: `typecheck` reads everything including the tests,
+  # emits nothing and never looks at what would be shipped, while `build` uses
+  # the narrower `tsconfig.build.json` that decides what lands in a tarball.
+  # `pnpm outside`, which installs those tarballs and runs the command, needs
+  # the registry, so it stays out of here for the same reason `pnpm smoke`
+  # does.
   monorepo:
     name: ${{ matrix.task }}
     runs-on: [self-hosted, comino]
     strategy:
       fail-fast: false
       matrix:
-        task: [check, typecheck, test]
+        task: [check, typecheck, test, build]
     steps:
       - uses: actions/checkout@v5
 
