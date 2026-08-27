@@ -268,12 +268,20 @@ In full it looks like this:
 ```
 
 The mark `as_of` says which moment the answer is true for, and it separates
-"went and checked just now" from "handed over what was in the cache". We decide
-from it how far the answer can be trusted, and the same moment ends up in the
-record of the sale. A price handler is given it as the last argument; a call
-made without it stamps the moment of the answer itself, which is right only if
-you really did look just then. An answer out of a cache is dated by the moment
-that cache was filled, as in the example above.
+"went and checked just now" from "handed over what was in the cache". A price
+handler is given it as the last argument; a call made without it stamps the
+moment of the answer itself, which is right only if you really did look just
+then. An answer out of a cache is dated by the moment that cache was filled, as
+in the example above.
+
+We carry the mark and we do not yet weigh it. It travels into the order your
+handler is given and into the record of the sale, so whoever reconciles a
+charge afterwards can see how old the number behind it was — but nothing
+compares it against anything. An answer stamped a year ago is honoured for
+exactly as long as one stamped a second ago, because a price's life runs from
+the moment your answer reached us rather than from the moment it says it was
+true. So nothing here catches a stale price on your behalf: a handler answering
+out of a cache is the one deciding how old that cache may get.
 
 An `available: false` answer to a purchase closes it before any money moves,
 and no order appears on your side. The price from an answer lives until
@@ -356,6 +364,8 @@ what that ought to be is not settled.
   yet.
 - The thresholds that limit how often price questions go out, and how long we
   wait for an answer.
+- Whether an answer whose `as_of` is too old is refused rather than honoured,
+  what counts as too old, and what a sale does when one arrives.
 - The price hook. We do not call the address a card names, and when we do, your
   side will need something to check a request against to know that it came from
   us. A price handler has neither question — the subscription channel is
