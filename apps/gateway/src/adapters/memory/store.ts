@@ -151,6 +151,14 @@ export class MemoryStore implements Store {
     return held.orderId === orderId ? { claimed: true } : { claimed: false, heldBy: held.orderId };
   }
 
+  async releaseClaim(fingerprint: string, orderId: string): Promise<void> {
+    // Only the holder lets go. A fingerprint some other order holds is left
+    // where it is, so this can never hand one buyer's signature to another.
+    if (this.#paymentClaims.get(fingerprint)?.orderId === orderId) {
+      this.#paymentClaims.delete(fingerprint);
+    }
+  }
+
   async forgetClaimsBefore(instant: number): Promise<number> {
     let gone = 0;
     for (const [fingerprint, claim] of [...this.#paymentClaims]) {

@@ -434,6 +434,19 @@ if (databaseUrl === null) {
         anotherOrder: await subject.claimPayment("fp-parity", "ord_two"),
         // The retry the portal promises is safe.
         ownRetry: await subject.claimPayment("fp-parity", "ord_one"),
+        // Letting go is the holder's to do and nobody else's: an order that
+        // never held this fingerprint asking for it back leaves it exactly
+        // where it was, so one buyer can never free another buyer's signature.
+        strangerLetsGo: await (async () => {
+          await subject.releaseClaim("fp-parity", "ord_two");
+          return subject.claimPayment("fp-parity", "ord_two");
+        })(),
+        // The holder letting go frees it, which is what a buyer turned away for
+        // ownership gets back.
+        holderLetsGo: await (async () => {
+          await subject.releaseClaim("fp-parity", "ord_one");
+          return subject.claimPayment("fp-parity", "ord_two");
+        })(),
         // The sweep runs against a table this suite shares, so what is compared
         // is that something went and not how many — the count is not the same
         // question in a table other tests have written to.
@@ -451,6 +464,8 @@ if (databaseUrl === null) {
         first: { claimed: true },
         anotherOrder: { claimed: false, heldBy: "ord_one" },
         ownRetry: { claimed: true },
+        strangerLetsGo: { claimed: false, heldBy: "ord_one" },
+        holderLetsGo: { claimed: true },
         sweptSomething: true,
         afterTheSweep: { claimed: true },
       });

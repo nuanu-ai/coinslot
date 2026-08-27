@@ -222,6 +222,23 @@ export interface Store {
   claimPayment(fingerprint: string, orderId: string): Promise<PaymentClaim>;
 
   /**
+   * Lets go of a claim this order took and then could not use.
+   *
+   * The claim is taken before the ownership decision, and it has to be: it is
+   * what stops one signature being spent on two orders, so it must be in place
+   * before anything is verified against a second one. But a presentation the
+   * ownership decision turns away never spent anything — the money did not
+   * move and no merchant was asked for goods — and a claim left behind then
+   * binds a live authorisation to an order that can never accept it. The agent
+   * that lost a race for the last unit would find its next attempt answered
+   * "already spent" and pointed at somebody else's order.
+   *
+   * Only the holder can let go: a fingerprint claimed by another order is left
+   * exactly as it is, so this can never hand one buyer's signature to another.
+   */
+  releaseClaim(fingerprint: string, orderId: string): Promise<void>;
+
+  /**
    * Forgets claims older than an instant, and says how many went.
    *
    * They cannot be kept forever. The route that makes them takes no key — the

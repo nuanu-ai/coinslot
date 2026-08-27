@@ -204,6 +204,14 @@ export class PostgresStore implements Store {
     return row.orderId === orderId ? { claimed: true } : { claimed: false, heldBy: row.orderId };
   }
 
+  async releaseClaim(fingerprint: string, orderId: string): Promise<void> {
+    // Both halves of the key in the predicate, so a fingerprint another order
+    // holds is left where it is even if this one asks for it by mistake.
+    await this.#db
+      .delete(paymentClaims)
+      .where(and(eq(paymentClaims.fingerprint, fingerprint), eq(paymentClaims.orderId, orderId)));
+  }
+
   async forgetClaimsBefore(instant: number): Promise<number> {
     const gone = await this.#db
       .delete(paymentClaims)

@@ -475,12 +475,20 @@ export class Gateway {
       this.runtime.clock(),
     );
 
+    // Both of these turned the payment away before it spent anything, so the
+    // claim taken a moment ago goes back. Held, it would bind a live
+    // authorisation to an order that can never accept it, and the buyer who
+    // lost the race would be told their next attempt was already spent — on
+    // somebody else's order. `refused` is deliberately not here: its causes
+    // want reading one at a time, and some of them have moved money.
     if (taken.kind === "no_such_order") {
       this.runner.purchases.giveUp(key);
+      await this.runtime.store.releaseClaim(fingerprint, orderId);
       return { step: "no_such_item" };
     }
     if (taken.kind === "not_owner") {
       this.runner.purchases.giveUp(key);
+      await this.runtime.store.releaseClaim(fingerprint, orderId);
       return { step: "not_this_purchase" };
     }
     if (taken.kind === "refused") {

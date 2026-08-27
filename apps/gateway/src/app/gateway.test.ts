@@ -546,6 +546,41 @@ describe("an asynchronous purchase", () => {
 });
 
 describe("two payments racing one order", () => {
+  it("gives a losing buyer their authorisation back, so it can buy something else", async () => {
+    // The promise: an agent that lost a race for an order still holds a usable
+    // signature. Two agents reaching for the last unit is the ordinary shape of
+    // this market, and the one that arrives second has done nothing wrong.
+    //
+    // The claim is taken before the ownership decision on purpose — it is what
+    // stops one signature being spent on two orders, and it has to be in place
+    // before anything is dispatched. But a presentation refused for ownership
+    // never spent anything, so holding the claim afterwards binds a live
+    // authorisation to an order it can never pay for, and the agent's next
+    // attempt is answered "already spent" and pointed at somebody else's order.
+    const harnessed = await started();
+    const itemId = await published(harnessed, asyncCard);
+
+    const first = await harnessed.gateway.beginPurchase(itemId, {});
+    if (first.step !== "pay") throw new Error("the first purchase did not reach a payment");
+    const firstOrder = first.order.order.id;
+
+    // Alice pays and owns it.
+    const won = await harnessed.gateway.payPurchase(firstOrder, "alice", "alice-auth");
+    expect(won.step).toBe("under_way");
+
+    // Bob arrives second with his own signature and is turned away.
+    const lost = await harnessed.gateway.payPurchase(firstOrder, "bob", "bob-auth");
+    expect(lost.step).toBe("not_this_purchase");
+
+    // The same signature, on an order of his own, buys. Without the release it
+    // is answered "already spent" and pointed at Alice's order.
+    const second = await harnessed.gateway.beginPurchase(itemId, {});
+    if (second.step !== "pay") throw new Error("the second purchase did not reach a payment");
+    const again = await harnessed.gateway.payPurchase(second.order.order.id, "bob", "bob-auth");
+
+    expect(again.step).toBe("under_way");
+  });
+
   it("lets exactly one own it, charges exactly one, and hands the goods to the winner alone", async () => {
     // The blocker the ownership rule exists for. Two verified payments for one
     // order both pass the payment layer and reach the decision at the same
