@@ -1078,9 +1078,32 @@ export class Gateway {
       return null;
     }
 
+    const goods = `these goods are not what the card "${cutShort(stored.card.merchant_item_id)}" declares it delivers, so nothing was written down`;
+    const misfits = misfitsIn(findingsOf(fit.error.issues));
+
+    // Two facts are true of a misfit delivery to an order whose ending has
+    // already come, and only one of them was being said. "Nothing was written
+    // down and this order still stands where it did" is literally true — the
+    // call moved nothing — and reads as "the sale is still yours"; marked
+    // retryable beside it, it is an instruction to fix the handler and send
+    // again. There is nothing to send it to. He would find out on the next
+    // call, having made the goods twice.
+    //
+    // So a closed order says it is closed, in the same words `refusedCall`
+    // uses for the machine's own refusals, and the fields that did not fit are
+    // still named: what he sent is his to know either way, and it is the
+    // ending rather than the misfit that decides what he can do next.
+    if (!isOpen(record.order.state)) {
+      return {
+        code: "delivery_does_not_match_card",
+        message: `${goods} — and this order ended as ${record.order.state}, so there is nothing left to deliver against — ${misfits}`,
+        retryable: false,
+      };
+    }
+
     return {
       code: "delivery_does_not_match_card",
-      message: `these goods are not what the card "${cutShort(stored.card.merchant_item_id)}" declares it delivers, so nothing was written down and this order still stands where it did — ${misfitsIn(findingsOf(fit.error.issues))}`,
+      message: `${goods} and this order still stands where it did — ${misfits}`,
       // He can fix his handler and deliver again; the order is his to finish
       // until its own deadline says otherwise. The alternative — closing the
       // order on the merchant's behalf — would end a sale he could still make,
