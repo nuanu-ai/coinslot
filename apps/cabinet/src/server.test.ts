@@ -548,10 +548,17 @@ describe("a merchant who has left", () => {
     await browser.signIn(KEY);
     await harnessed.store.setSelling("departed");
 
-    const text = readable((await browser.get("/cards")).html);
+    const page = (await browser.get("/cards")).html;
+    const text = readable(page);
 
     expect(text).toContain("left");
+    // No selling control of any kind, not merely not the resume one: offering
+    // "stop all selling" to a merchant who has already gone is the same
+    // confusion wearing the other label, and both were reachable from one fold.
+    expect(page).not.toContain("/selling/resume");
+    expect(page).not.toContain("/selling/pause");
     expect(text).not.toContain("Start selling again");
+    expect(text).not.toContain("Stop all selling");
     // And it does not tell them their accepted orders are playing out, which is
     // what a pause means and a departure does not.
     expect(text).not.toContain("play out as usual");
@@ -762,6 +769,10 @@ describe("the receipts screen", () => {
     expect(text).not.toContain("Refund due");
     expect(text).not.toContain("Awaiting fulfilment");
     expect(text).not.toContain("nothing outstanding");
+    // The sentence itself, not only the explanation under it. A page that says
+    // nothing is missing and then explains what is missing has still told a
+    // merchant, in the line they will actually read, that this is the money.
+    expect(text).toContain("This is not the whole of the money");
     expect(text).toContain("has no receipt yet");
     expect(text).toContain("Both are on Orders");
   });
