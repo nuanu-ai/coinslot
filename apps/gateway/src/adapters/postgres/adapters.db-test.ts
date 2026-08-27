@@ -4,7 +4,7 @@
  * These are not in `pnpm test`. That command is free, deterministic and works
  * without a network, and a suite that needs a database server is none of those.
  * They run under `pnpm test:db`, which needs DATABASE_URL pointing at a
- * Postgres — `docker compose up -d` brings one up — and skips itself with that
+ * Postgres — `docker compose up -d --wait postgres` brings one up — and skips itself with that
  * sentence when there is none.
  *
  * What is checked here is only what cannot be checked in memory: that the two
@@ -52,6 +52,16 @@ const databaseUrl = process.env.DATABASE_URL;
  */
 const QUEUE_SCHEMA = "pgboss_adapters";
 
+/** Which server session a connection is, so a lock can be attributed to it. */
+async function backendPid(of: Pool): Promise<number> {
+  const { rows } = await of.query<{ pid: number }>("select pg_backend_pid() as pid");
+  const pid = rows[0]?.pid;
+  if (pid === undefined) {
+    throw new Error("a connection would not say which backend it is");
+  }
+  return pid;
+}
+
 const syncCard: Card = {
   merchant_item_id: "room-101",
   title: "A room for the night",
@@ -66,7 +76,7 @@ if (databaseUrl === undefined || databaseUrl === "") {
   // reports "1 skipped" and nothing else looks like a suite that passed.
   console.log(
     "\n  The database tests need a Postgres and DATABASE_URL is not set." +
-      "\n  Start one with `docker compose up -d`, then:" +
+      "\n  Start one with `docker compose up -d --wait postgres`, then:" +
       "\n    DATABASE_URL=postgres://coinslot:coinslot@localhost:5432/coinslot pnpm test:db\n",
   );
 
@@ -282,12 +292,20 @@ if (databaseUrl === undefined || databaseUrl === "") {
       if (offered.step !== "pay") throw new Error("no price was offered");
       const orderId = offered.order.order.id;
 
-      const alice = connect(databaseUrl);
-      const bob = connect(databaseUrl);
+      // One connection each, and that is load-bearing rather than tidy. The
+      // check below names the two backends by their identifiers, so a pool that
+      // quietly opened a second connection would leave it watching a session
+      // that is not doing the work.
+      const alicePool = new Pool({ connectionString: databaseUrl, max: 1 });
+      const bobPool = new Pool({ connectionString: databaseUrl, max: 1 });
       const reads: string[] = [];
-      let bobWasBlocked = false;
+      let aliceHeldBobUp = false;
 
       try {
+        const alicePid = await backendPid(alicePool);
+        const bobPid = await backendPid(bobPool);
+        expect(alicePid).not.toBe(bobPid);
+
         let letBobIn: () => void = () => undefined;
         const bobMayStart = new Promise<void>((resolve) => {
           letBobIn = resolve;
@@ -302,31 +320,31 @@ if (databaseUrl === undefined || databaseUrl === "") {
             if (who === "alice") {
               letBobIn();
               // Waited for rather than slept through: what is wanted is the
-              // moment bob's transaction is actually stuck on this row, which
-              // is the row lock seen from outside the two clients holding it.
-              // It gives up rather than throwing, so that a lock that never
-              // took shows up below as two owners — the defect itself — and
-              // not as a timeout in the plumbing.
+              // moment bob's transaction is actually stuck behind alice's. It
+              // gives up rather than throwing, so that a lock that never took
+              // shows up below as two owners — the defect itself — and not as
+              // a timeout in the plumbing.
               //
-              // What is looked for has to name this row and no other. A count
-              // of backends waiting on some lock somewhere would pass whether
-              // or not the waiter was bob: pg-boss is running against this same
-              // database and its own fetch is a `for update`, so even matching
-              // on that much would have found the queue waiting on itself. The
-              // query text names the orders table, and pg_blocking_pids says
-              // somebody is actually holding it up rather than merely being
-              // slow.
+              // The question is asked about the two backends by name, and it
+              // took three goes to get there. Counting backends waiting on any
+              // lock passed whether or not the waiter was bob. Adding the query
+              // text ruled out pg-boss, which is running against this same
+              // database and whose own fetch is a `for update`, but still
+              // passed for any two sessions contending over any row of this
+              // table — an adversarial review demonstrated exactly that with a
+              // decoy pair and no row lock at all. `pg_blocking_pids(bobPid)`
+              // naming `alicePid` cannot be produced by anybody else: it says
+              // this session is held up by that one, and the only lock alice
+              // holds is the one her `select ... for update` took on this
+              // order's row.
               const until = Date.now() + 5_000;
-              while (Date.now() < until && !bobWasBlocked) {
-                const { rows } = await pool.query<{ blocked: number }>(
-                  "select count(*)::int as blocked from pg_stat_activity" +
-                    " where datname = current_database() and wait_event_type = 'Lock'" +
-                    " and pid <> pg_backend_pid()" +
-                    ` and query ilike '%from "orders"%for update%'` +
-                    " and cardinality(pg_blocking_pids(pid)) > 0",
+              while (Date.now() < until && !aliceHeldBobUp) {
+                const { rows } = await pool.query<{ blockers: number[] }>(
+                  "select pg_blocking_pids($1) as blockers",
+                  [bobPid],
                 );
-                bobWasBlocked = (rows[0]?.blocked ?? 0) > 0;
-                if (!bobWasBlocked) {
+                aliceHeldBobUp = (rows[0]?.blockers ?? []).includes(alicePid);
+                if (!aliceHeldBobUp) {
                   await new Promise((resolve) => setTimeout(resolve, 50));
                 }
               }
@@ -344,27 +362,29 @@ if (databaseUrl === undefined || databaseUrl === "") {
             return { save: { ...found, paidBy: who }, result: { took: true } };
           });
 
-        const aliceTaking = take(new PostgresStore(alice.db, countedIds()), "alice");
+        const aliceTaking = take(new PostgresStore(drizzle(alicePool), countedIds()), "alice");
         await bobMayStart;
-        const bobTaking = take(new PostgresStore(bob.db, countedIds()), "bob");
+        const bobTaking = take(new PostgresStore(drizzle(bobPool), countedIds()), "bob");
         const [first, second] = await Promise.all([aliceTaking, bobTaking]);
 
         const decided = [first, second].map((lookup) => (lookup.found ? lookup.result : null));
         // Exactly one, and the other told whose it is. Without the hold both
         // read an order nobody owns and both take it.
         expect(decided).toStrictEqual([{ took: true }, { took: false, heldBy: "alice" }]);
-        // Bob really was made to wait by the database, rather than merely
-        // having been started late.
-        expect(bobWasBlocked).toBe(true);
-        // And bob's read did not land inside alice's decision. This is the
-        // sequence the hold exists to produce: without it the marks come out
-        // "alice", "bob", "alice decided", "bob decided" — both of them having
-        // read an order that was still nobody's.
+        // And the database is what made bob wait: his session, held up by her
+        // session, on the one row she had locked.
+        expect(aliceHeldBobUp).toBe(true);
+        // The marks are the same fact told as a sequence rather than as a
+        // catalogue query, and they stand on the wait above being a wait for
+        // the real lock. Without it alice polls out her five seconds, bob reads
+        // and decides while she waits, and the marks come out "alice", "bob",
+        // "bob decided", "alice decided" — both of them having read an order
+        // that was still nobody's.
         expect(reads).toStrictEqual(["alice", "alice decided", "bob"]);
         expect((await store.orderById(orderId))?.paidBy).toBe("alice");
       } finally {
-        await alice.pool.end();
-        await bob.pool.end();
+        await alicePool.end();
+        await bobPool.end();
       }
     }, 30_000);
 
