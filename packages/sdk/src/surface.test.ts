@@ -136,17 +136,26 @@ describe("registering what a process answers", () => {
     expect(() => coinslot.on("problem", () => {})).toThrow(/twice/);
   });
 
-  it("refuses a kind nothing will ever deliver", async () => {
+  it("refuses a kind nothing will ever deliver, and says which ones there are", async () => {
     // A merchant who is not in TypeScript, or who typed `orders`, would
     // otherwise register a handler that is never called and be told nothing.
+    // Being told the four words they may use is what turns the refusal into a
+    // fix rather than a search.
     const coinslot = await clientOver({ poll_worker: polling() });
+    const on = (coinslot as unknown as { on(kind: string, handler: () => void): void }).on;
 
-    expect(() =>
-      (coinslot as unknown as { on(kind: string, handler: () => void): void }).on(
-        "orders",
-        () => {},
-      ),
-    ).toThrow(/orders/);
+    let complaint = "";
+
+    try {
+      on.call(coinslot, "orders", () => {});
+    } catch (refused) {
+      complaint = String(refused);
+    }
+
+    expect(complaint).toMatch(/orders/);
+    for (const kind of ["order", "quote", "event", "problem"]) {
+      expect(complaint).toContain(`'${kind}'`);
+    }
   });
 });
 
@@ -252,9 +261,15 @@ describe("an order that carries the calls which close it", () => {
         answers.push(call.body);
         return { body: { ok: true, result: "accepted" } };
       },
+      // Mounted so that a call made to one of them would be recorded rather
+      // than lost against an address the fake gateway does not serve.
+      deliver_order: () => ({ body: { ok: true, result: "delivered" } }),
+      refuse_order: () => ({ body: { ok: true, result: "refused" } }),
+      accept_order: () => ({ body: { ok: true } }),
     });
 
     coinslot.on("order", (arrived) => {
+      built.push(arrived.delivered({ access_url: "https://a.example" }));
       built.push(arrived.refused({ code: "out_of_stock", message: "Мест на тарифе нет" }));
       built.push(arrived.accepted({ eta_seconds: 60 }));
       built.push(arrived.accepted());
@@ -266,11 +281,21 @@ describe("an order that carries the calls which close it", () => {
     await waitUntil(() => answers.length === 1, "the one answer the handler returned");
 
     expect(built).toStrictEqual([
+      { delivered: { access_url: "https://a.example" } },
       { refused: { code: "out_of_stock", message: "Мест на тарифе нет" } },
       { accepted: { eta_seconds: 60 } },
       { accepted: {} },
     ]);
     expect(answers).toStrictEqual([{ accepted: { eta_seconds: 60 } }]);
+
+    // The load-bearing half: four answers were built and none of them was
+    // sent. A builder that also sent would close an order the handler was only
+    // considering, and the handler's own return would then be a second answer
+    // to an order that already had one.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(gateway?.callsTo("deliver_order")).toStrictEqual([]);
+    expect(gateway?.callsTo("refuse_order")).toStrictEqual([]);
+    expect(gateway?.callsTo("accept_order")).toStrictEqual([]);
   });
 
   it("delivers later, off the retained order, without the merchant holding an identifier", async () => {
@@ -328,6 +353,31 @@ describe("an order that carries the calls which close it", () => {
 
     expect(gateway?.callsTo("refuse_order")[0]?.params).toStrictEqual({ order_id: order.id });
     expect(gateway?.callsTo("accept_order")[0]?.body).toStrictEqual({ eta_seconds: 30 });
+  });
+
+  it("names the order the merchant asked for when they have only its identifier", async () => {
+    // The one place an identifier of ours is written by a merchant, and so the
+    // one place a delivery could be sent against the wrong order. It reaches
+    // no gateway to build, which is what makes it the call to use while the
+    // gateway is unreachable and a delivery still has to be retried.
+    const coinslot = await clientOver({
+      deliver_order: () => ({ body: { ok: true, result: "delivered" } }),
+      refuse_order: () => ({ body: { ok: true, result: "refused" } }),
+      accept_order: () => ({ body: { ok: true } }),
+    });
+
+    const held = coinslot.orders.forId("SKU 100/1");
+
+    expect(held.id).toBe("SKU 100/1");
+    expect(gateway?.calls).toStrictEqual([]);
+
+    await held.deliver({ access_url: "https://a.example" });
+    await held.refuse({ code: "out_of_stock", message: "gone" });
+    await held.accept();
+
+    for (const route of ["deliver_order", "refuse_order", "accept_order"] as const) {
+      expect(gateway?.callsTo(route)[0]?.params, route).toStrictEqual({ order_id: "SKU 100/1" });
+    }
   });
 
   it("hands the same calls to an order read back after a restart", async () => {
@@ -508,6 +558,31 @@ describe("where problems go", () => {
     await waitUntil(() => problems.length > 0, "the problem to reach the reporter");
     expect(problems[0]?.kind).toBe("no_handler");
     expect(problems[0]?.message).toMatch(/on\('order'\)/);
+  });
+
+  it("names the registration that is missing, and not another one", async () => {
+    // The sentence is the whole of what the merchant acts on: it tells them
+    // which line to write. Naming the wrong kind sends them to add a handler
+    // they already have while the one that is missing stays missing.
+    const problems: WorkerProblem[] = [];
+
+    const coinslot = await clientOver({
+      poll_worker: polling(batch(envelopes.quote, envelopes.event)),
+    });
+
+    coinslot.on("order", (arrived) => arrived.accepted());
+    coinslot.on("problem", (problem) => problems.push(problem));
+    running = coinslot;
+    await coinslot.start();
+
+    await waitUntil(() => problems.length === 2, "both kinds to go unhandled");
+
+    const said = problems.map((problem) => problem.message);
+
+    expect(said[0]).toMatch(/on\('quote'\)/);
+    expect(said[0]).not.toMatch(/on\('order'\)|on\('event'\)/);
+    expect(said[1]).toMatch(/on\('event'\)/);
+    expect(said[1]).not.toMatch(/on\('order'\)|on\('quote'\)/);
   });
 
   it("goes to the error console when the merchant registered none", async () => {
