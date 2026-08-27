@@ -261,6 +261,13 @@ const REFUSED = Symbol("the key on this call opens nothing");
  * a key that has been disabled come back the same way. That sameness is the
  * point: a door that answered them differently would confirm which guesses had
  * once been real keys, which is exactly what revoking one has to stop.
+ *
+ * What it costs is a database round trip on every call behind this door, where
+ * the single key it replaced cost nothing. It is one probe of a unique index
+ * and it does not grow with the number of merchants or of keys, so the trigger
+ * for caching it is a measurement rather than a feeling — and a cache would
+ * have to answer for how long a revoked key goes on working, which is the one
+ * thing revoking a key is for.
  */
 async function merchantBehind(
   auth: AuthMode,

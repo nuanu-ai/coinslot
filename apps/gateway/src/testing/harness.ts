@@ -168,10 +168,11 @@ export async function harness(overrides: Record<string, string> = {}): Promise<H
  * A key whose secret the caller chose, which is the one thing `issueKey` will
  * not do.
  *
- * It exists for exactly two callers and both of them are named: the harness's
- * default merchant, whose key a test writes into a header by hand, and the
- * sandbox seed, whose key is in `compose.yaml`. Everywhere else the secret is
- * generated, because a key somebody chooses is a key somebody reuses.
+ * It has one caller, and it is here rather than in `merchants.ts` for that
+ * reason: the harness's own merchant, whose key a test writes into a header by
+ * hand. Everywhere a merchant is real the secret is generated, because a key
+ * somebody chooses is a key somebody reuses; the sandbox's key is the other
+ * chosen one, and `seedSandboxKey` writes that one itself.
  */
 async function addKnownKey(
   store: MemoryStore,
@@ -192,7 +193,7 @@ const countedName = (() => {
   let issued = 0;
   return () => {
     issued += 1;
-    return String.fromCharCode(64 + ((issued - 1) % 26) + 1);
+    return String.fromCharCode(65 + ((issued - 1) % 26));
   };
 })();
 
