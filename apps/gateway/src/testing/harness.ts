@@ -14,6 +14,7 @@
 
 import type { AddressInfo } from "node:net";
 import type { HandlerAnswer, Order, QuoteResponse } from "@coinslot/contracts";
+import { decodePaymentRequiredHeader, encodePaymentSignatureHeader } from "@x402/core/http";
 import { ScriptedFacilitator } from "../adapters/memory/facilitator.js";
 import { MemoryQueue } from "../adapters/memory/queue.js";
 import { MemoryStore } from "../adapters/memory/store.js";
@@ -21,6 +22,7 @@ import { Gateway } from "../app/gateway.js";
 import type { Runtime } from "../app/runtime.js";
 import { type GatewayConfig, loadConfig } from "../config.js";
 import { buildApp } from "../http/server.js";
+import { PAYMENT_REQUIRED_HEADER, PAYMENT_SIGNATURE_HEADER } from "../http/x402.js";
 import type { Ids } from "../ports/clock.js";
 
 /** Identifiers a test can read: ord_1, item_1, env_3. */
@@ -157,6 +159,52 @@ export function workUntilStopped(
       await loop;
     },
   };
+}
+
+/**
+ * One purchase over HTTP, from the challenge to whatever the order came to.
+ *
+ * It exists so that a test whose subject is not the payment exchange can get an
+ * order into a state without transcribing the x402 headers. The cabinet's tests
+ * are the case in point: they need a delivered sale to draw a screen from, and
+ * a second copy of the header names over there is a second place for them to
+ * drift from the ones the gateway actually sets.
+ *
+ * Everything it does is what an agent's client does — ask for the price, sign
+ * against the challenge, present it — with a worker turning alongside so the
+ * merchant's side answers.
+ */
+export async function buyOverHttp(
+  worked: Harness,
+  served: Served,
+  itemId: string,
+  behaviour: WorkerBehaviour,
+): Promise<Call> {
+  const priced = await served.call("POST", `/v0/items/${itemId}/purchase`, {
+    body: { params: {} },
+  });
+  const requirements = decodePaymentRequiredHeader(
+    priced.headers.get(PAYMENT_REQUIRED_HEADER) ?? "",
+  ).accepts[0];
+  if (requirements === undefined) {
+    throw new Error(`no payment option was offered for ${itemId}`);
+  }
+
+  const worker = workUntilStopped(worked, behaviour);
+  try {
+    return await served.call("POST", `/v0/items/${itemId}/purchase`, {
+      body: { params: {} },
+      headers: {
+        [PAYMENT_SIGNATURE_HEADER]: encodePaymentSignatureHeader({
+          x402Version: 2,
+          accepted: requirements,
+          payload: { signature: "0xsigned" },
+        }),
+      },
+    });
+  } finally {
+    await worker.stop();
+  }
 }
 
 /** One call against a gateway actually listening on a port. */

@@ -5,7 +5,8 @@
   "type": "module",
   "description": "Coinslot gateway \u2014 the 402 edge, the order queue, receipts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./testing": "./src/testing/harness.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",

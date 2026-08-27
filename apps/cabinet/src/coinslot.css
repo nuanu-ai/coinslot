@@ -1,0 +1,521 @@
+/*
+ * The visual language of every Coinslot surface, in one file.
+ *
+ * ADR-0005 §6: the landing, the portal and the cabinet share one look, held in
+ * tokens rather than repeated per page, so the three do not read as three
+ * products. Today only the cabinet is served from here; the landing takes the
+ * same tokens when it exists, and the portal's VitePress theme is pointed at
+ * them rather than given its own palette.
+ *
+ * Both themes are defined here and neither is a toggle. The light set is on the
+ * root and the dark set replaces it under `prefers-color-scheme: dark`, so a
+ * merchant gets the one their system already asked for. A page that only
+ * painted one of them would be unreadable on half the machines it is opened on.
+ *
+ * The type is IBM Plex — Sans for reading, Mono for anything a merchant might
+ * copy or compare character by character: identifiers, keys and money. Money in
+ * particular: a column of prices in a proportional face does not line up, and
+ * lining up is most of what a column of prices is for. Both faces name a full
+ * fallback stack, because a network that did not answer must not decide what
+ * the cabinet looks like.
+ */
+
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap");
+
+:root {
+  --bg: oklch(0.985 0.003 90);
+  --surface: oklch(1 0 0);
+  --raised: oklch(0.972 0.004 90);
+  --line: oklch(0.895 0.006 90);
+  --fg: oklch(0.24 0.012 260);
+  --muted: oklch(0.52 0.012 260);
+  --accent: oklch(0.6 0.14 55);
+  --ok: oklch(0.58 0.13 155);
+  --warn: oklch(0.58 0.16 25);
+  --on-accent: oklch(0.99 0 0);
+
+  --radius: 3px;
+  --sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: oklch(0.165 0.012 260);
+    --surface: oklch(0.205 0.013 260);
+    --raised: oklch(0.235 0.013 260);
+    --line: oklch(0.31 0.013 260);
+    --fg: oklch(0.94 0.004 90);
+    --muted: oklch(0.67 0.011 260);
+    --accent: oklch(0.74 0.13 55);
+    --ok: oklch(0.72 0.12 155);
+    --warn: oklch(0.7 0.15 25);
+    --on-accent: oklch(0.17 0.012 260);
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2 {
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+h1 {
+  font-size: 22px;
+}
+
+p {
+  margin: 0;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+.mono {
+  font-family: var(--mono);
+}
+
+/* --- the frame ---------------------------------------------------------- */
+
+.page {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 0 32px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  flex-wrap: wrap;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 36px;
+  flex-wrap: wrap;
+}
+
+.wordmark {
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.tabs a,
+.tabs span {
+  padding: 18px 14px;
+  color: var(--muted);
+}
+
+.tabs .here {
+  color: var(--fg);
+  font-weight: 500;
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.whoami {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  font-size: 13px;
+}
+
+.lede {
+  padding: 32px 32px 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.lede p {
+  margin-top: 6px;
+  color: var(--muted);
+  max-width: 68ch;
+}
+
+.actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+/* --- tables ------------------------------------------------------------- */
+
+/*
+ * A real table, so a merchant's browser can read the columns out and their
+ * find-in-page still works. The scroller around it is what keeps a wide row
+ * from pushing the whole page sideways on a narrow screen.
+ */
+.scroller {
+  margin: 24px 32px 32px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  min-width: 720px;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+thead th {
+  background: var(--raised);
+  font-size: 11px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 500;
+  padding: 12px 24px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+tbody td {
+  padding: 15px 24px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+
+/*
+ * The first column carries the name of the thing and needs room for it. Left to
+ * share the table's minimum evenly it collapses on a narrow screen and a title
+ * wraps one word per line, which is unreadable long before the row is.
+ */
+tbody td:first-child,
+thead th:first-child {
+  min-width: 220px;
+}
+
+tbody tr:last-child td {
+  border-bottom: none;
+}
+
+tbody tr.off td {
+  background: var(--raised);
+}
+
+tbody tr.needs-you td {
+  background: color-mix(in oklab, var(--warn) 7%, transparent);
+}
+
+td.amount,
+td.key,
+td.ident {
+  font-family: var(--mono);
+  white-space: nowrap;
+}
+
+td.key,
+td.ident {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.title {
+  font-weight: 500;
+}
+
+.under {
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 3px;
+}
+
+.under.mono {
+  font-size: 12.5px;
+}
+
+td.quiet {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* --- the state dot ------------------------------------------------------ */
+
+.state {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--muted);
+}
+
+.state.ok {
+  color: var(--ok);
+}
+.state.ok .dot {
+  background: var(--ok);
+}
+
+.state.warn {
+  color: var(--warn);
+}
+.state.warn .dot {
+  background: var(--warn);
+}
+
+.state.busy {
+  color: var(--accent);
+}
+.state.busy .dot {
+  background: var(--accent);
+}
+
+.state.done .dot {
+  background: var(--ok);
+}
+
+/* --- controls ----------------------------------------------------------- */
+
+button {
+  font: inherit;
+  cursor: pointer;
+  border-radius: var(--radius);
+  padding: 6px 12px;
+  font-size: 13px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--fg);
+}
+
+button:hover {
+  border-color: var(--muted);
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+
+button.wide {
+  padding: 9px 16px;
+  font-size: 13.5px;
+}
+
+form.inline {
+  display: inline;
+}
+
+td.control {
+  text-align: right;
+}
+
+.filter {
+  display: flex;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 3px;
+}
+
+.filter a,
+.filter span {
+  padding: 6px 14px;
+  font-size: 13px;
+  border-radius: 2px;
+  color: var(--muted);
+}
+
+.filter .here {
+  background: var(--raised);
+  color: var(--fg);
+  font-weight: 500;
+}
+
+/* --- notes and summaries ------------------------------------------------ */
+
+.note {
+  margin: 0 32px 32px;
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  color: var(--muted);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+.note .mark {
+  color: var(--accent);
+}
+
+.callout {
+  margin: 0 32px 32px;
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--warn);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  background: var(--surface);
+  line-height: 1.55;
+}
+
+.callout .what {
+  font-weight: 500;
+}
+
+.callout .why {
+  color: var(--muted);
+  margin-top: 4px;
+  font-size: 13.5px;
+}
+
+.summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+  margin: 24px 32px 0;
+}
+
+.tile {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 20px 24px;
+}
+
+.tile .label {
+  font-size: 11px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.tile .figure {
+  font-family: var(--mono);
+  font-size: 26px;
+  margin-top: 10px;
+  letter-spacing: -0.02em;
+}
+
+.tile .figure.ok {
+  color: var(--ok);
+}
+
+.tile .figure.warn {
+  color: var(--warn);
+}
+
+.tile .aside {
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 4px;
+}
+
+.empty {
+  padding: 40px 24px;
+  text-align: center;
+  color: var(--muted);
+}
+
+/* --- signing in --------------------------------------------------------- */
+
+.gate {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+}
+
+.gate form {
+  width: 100%;
+  max-width: 420px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 28px;
+}
+
+.gate h1 {
+  font-size: 18px;
+}
+
+.gate p {
+  color: var(--muted);
+  margin-top: 8px;
+}
+
+.gate label {
+  display: block;
+  margin-top: 20px;
+  font-size: 11px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.gate input {
+  font-family: var(--mono);
+  font-size: 14px;
+  width: 100%;
+  margin-top: 8px;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.gate button {
+  margin-top: 20px;
+  width: 100%;
+  padding: 10px;
+  font-size: 14px;
+}
+
+.problem {
+  margin-top: 16px;
+  color: var(--warn);
+  font-size: 13.5px;
+}
