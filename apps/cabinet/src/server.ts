@@ -28,6 +28,7 @@ import type { CabinetConfig } from "./config.js";
 import {
   fingerprintOf,
   hashPassword,
+  looksLikeSessionToken,
   MINIMUM_PASSWORD_LENGTH,
   newSessionToken,
   passwordMatches,
@@ -272,11 +273,15 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
   app.post(`${base}/sign-out`, async (request, response) => {
     // The row goes, not merely the cookie. Clearing a cookie asks the browser
     // to forget something; anybody who copied the value still holds a session.
-    const token = tokenIn(request);
-    if (token !== null) {
+    //
+    // Every identifier the request carried, not one of them: the gate has
+    // already established that exactly one of them is a live session, and
+    // ending the others is ending nothing.
+    const person = whoIs(request);
+    for (const token of tokensIn(request)) {
       await accounts.end(fingerprintOf(token));
     }
-    console.log(`[cabinet] ${whoIs(request).email} signed out`);
+    console.log(`[cabinet] ${person.email} signed out`);
     forget(response);
     response.redirect(303, `${base}/sign-in`);
   });
@@ -489,8 +494,33 @@ function sameOriginUnder(base: string) {
  * should be told beyond the sign-in page.
  */
 async function whoseSession(request: Request, accounts: Accounts): Promise<Account | null> {
-  const token = tokenIn(request);
-  return token === null ? null : await accounts.whose(fingerprintOf(token), new Date());
+  const now = new Date();
+  const live: Account[] = [];
+  for (const token of tokensIn(request)) {
+    const person = await accounts.whose(fingerprintOf(token), now);
+    if (person !== null) {
+      live.push(person);
+    }
+  }
+
+  // Exactly one live session, or nobody. The case this is shaped around is a
+  // page on a sibling subdomain setting a cookie of this name on a broader
+  // path, so that the browser sends two; the `Path` this cookie is scoped to
+  // rules out the `__Host-` prefix that would refuse such a plant outright.
+  //
+  // A planted value that is not a session is ignored rather than refused, and
+  // that is the whole of the reasoning. Refusing on the mere presence of a
+  // second cookie reads as the safer rule and is worse: the cabinet can only
+  // clear the cookie on its own path, so the planted one survives every
+  // redirect and every fresh sign-in, and a merchant is locked out for good of
+  // the control that stops their selling. Anybody able to set a cookie could
+  // then take the cabinet away permanently, which is a heavier loss than the
+  // one being prevented.
+  //
+  // Two live sessions at once is the case where the ambiguity matters, and that
+  // is refused: working inside a session somebody else opened would put the
+  // wrong person on the record of who stopped the selling.
+  return live.length === 1 ? (live[0] ?? null) : null;
 }
 
 /**
@@ -595,13 +625,13 @@ function problemPage(base: string, said: string): string {
  * nothing that could be edited into somebody else's identity. Whose session it
  * is is a question for the store.
  */
-function tokenIn(request: Request): string | null {
+function tokensIn(request: Request): readonly string[] {
   const header = request.headers.cookie;
   if (header === undefined) {
-    return null;
+    return [];
   }
 
-  const found: string[] = [];
+  const found = new Set<string>();
   for (const pair of header.split(";")) {
     const at = pair.indexOf("=");
     if (at === -1) {
@@ -615,23 +645,25 @@ function tokenIn(request: Request): string | null {
     // to throw, it reached the error page — whose only control leads to a page
     // that throws again, with the cookie HttpOnly and no way for a merchant to
     // clear it from the page they are stuck on.
+    let value: string;
     try {
-      found.push(decodeURIComponent(pair.slice(at + 1).trim()));
+      value = decodeURIComponent(pair.slice(at + 1).trim());
     } catch {
-      return null;
+      continue;
+    }
+    // Only values shaped like an identifier we would have issued, which costs
+    // nothing and means a pile of planted junk under this name is a pile of
+    // strings rather than a pile of queries.
+    //
+    // There is deliberately no cap on how many are considered. Any cap is a way
+    // in: a browser sends cookies with the longest path first and, among equal
+    // paths, the oldest first, so somebody able to plant cookies could push the
+    // merchant's own past the cap and lock them out of the control that stops
+    // their selling. What is left is bounded by the size of a header, and each
+    // one is a lookup by primary key on a small table.
+    if (looksLikeSessionToken(value)) {
+      found.add(value);
     }
   }
-
-  // Two of them is nobody, not the first of them. A page on a sibling subdomain
-  // can set a cookie of this name on a broader path, and the browser then sends
-  // both; taking the first is taking whichever the browser happened to put
-  // there, which is a way of getting a merchant to work inside a session
-  // somebody else opened — and the one record of who stopped their selling then
-  // names the wrong person. The `Path` this cookie is set on rules out the
-  // `__Host-` prefix that would refuse the plant outright, so the ambiguity is
-  // refused here instead.
-  if (found.length !== 1) {
-    return null;
-  }
-  return found[0] === "" ? null : (found[0] ?? null);
+  return [...found];
 }

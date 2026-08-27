@@ -1138,13 +1138,13 @@ describe("when something goes wrong that the merchant has to get out of", () => 
     }
   });
 
-  it("treats two session cookies at once as nobody being signed in", async () => {
+  it("cannot be signed out by a second cookie somebody planted", async () => {
     // A page on a sibling subdomain can set a cookie of this name on a broader
-    // path, and the browser then sends two of them. Picking one is picking
-    // whichever the browser happened to put first — which is a way of getting a
-    // merchant to work inside a session somebody else opened, so that the one
-    // record of who stopped their selling names the wrong person. An ambiguous
-    // session is not a session.
+    // path, and the browser then sends two of them. The cabinet can only clear
+    // the one on its own path, so a rule that refused on the mere presence of a
+    // second would lock the merchant out for good — every redirect and every
+    // fresh sign-in would meet the planted cookie again, and anybody able to
+    // set a cookie could take away the control that stops their selling.
     const { browser } = await started();
     await browser.signIn();
     const mine = browser.sessionToken() ?? "";
@@ -1153,15 +1153,66 @@ describe("when something goes wrong that the merchant has to get out of", () => 
     for (const raw of [
       `${COOKIE}=${mine}; ${COOKIE}=somebody-elses`,
       `${COOKIE}=somebody-elses; ${COOKIE}=${mine}`,
+      `${COOKIE}=a; ${COOKIE}=b; ${COOKIE}=${mine}`,
     ]) {
       const answered = await browser.withRawCookie(raw).get("/cards");
-      expect(answered.status, raw).toBe(303);
-      expect(answered.to, raw).toBe("/sign-in");
+      expect(answered.status, raw).toBe(200);
+      expect(readable(answered.html), raw).toContain(PERSON);
     }
+  });
 
-    // And the real one on its own still works: this refuses the ambiguity, not
-    // the session.
+  it("asks the store nothing about a cookie that is not shaped like a session", async () => {
+    // A browser carrying a pile of junk under this name must be a pile of
+    // strings and not a pile of queries. There is no cap on how many are
+    // considered — a cap is a way to push the merchant's own cookie out of
+    // sight and lock them out — so the shape is what does the work, and it
+    // costs nothing.
+    const { browser, accounts } = await started();
+    await browser.signIn();
+    const mine = browser.sessionToken() ?? "";
+    let asked = 0;
+    const counting = {
+      ...accounts,
+      whose: (...given: Parameters<Accounts["whose"]>) => {
+        asked += 1;
+        return accounts.whose(...given);
+      },
+    };
+    // The counting store is what the cabinet under test is built on, so what is
+    // measured is the cabinet's own behaviour and not the test's arithmetic.
+    const own = await visiting("http://127.0.0.1:1", "", counting as Accounts);
+    try {
+      const junk = Array.from({ length: 50 }, (_, at) => `${COOKIE}=planted-${at}`).join("; ");
+      await own.browser.withRawCookie(`${junk}; ${COOKIE}=${mine}`).get("/cards");
+
+      expect(asked).toBe(1);
+    } finally {
+      await own.browser.close();
+    }
+  });
+
+  it("refuses to choose when two of the cookies are live sessions", async () => {
+    // The case where the ambiguity actually matters: working inside a session
+    // somebody else opened would put the wrong person on the one record of who
+    // stopped the selling. Two live ones is nobody.
+    const { browser, another } = await started();
+    await browser.signIn();
+    const mine = browser.sessionToken() ?? "";
+    const telephone = await another();
+    await telephone.signIn();
+    const theirs = telephone.sessionToken() ?? "";
+
+    expect(mine).not.toBe(theirs);
+    const answered = await browser
+      .withRawCookie(`${COOKIE}=${mine}; ${COOKIE}=${theirs}`)
+      .get("/cards");
+
+    expect(answered.status).toBe(303);
+    expect(answered.to).toBe("/sign-in");
+    // And either one on its own is still a session: this refuses the choice,
+    // not the sessions.
     expect((await browser.withRawCookie(`${COOKIE}=${mine}`).get("/cards")).status).toBe(200);
+    expect((await browser.withRawCookie(`${COOKIE}=${theirs}`).get("/cards")).status).toBe(200);
   });
 
   it("turns away a form post that came from another site", async () => {

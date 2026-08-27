@@ -247,7 +247,23 @@ const deriveKey = (
  * into somebody else's session, because it says nothing — it is a lookup key
  * for a row, and the row is where the identity is.
  */
-export const newSessionToken = (): string => randomBytes(32).toString("base64url");
+export const newSessionToken = (): string => randomBytes(SESSION_BYTES).toString("base64url");
+
+const SESSION_BYTES = 32;
+
+/**
+ * Whether a value could be one of ours at all, told without asking anybody.
+ *
+ * It is the shape and nothing else: the right length, the right alphabet. What
+ * it is for is that a cookie somebody else planted, which is not shaped like an
+ * identifier, costs no lookup — so a browser carrying a pile of junk under this
+ * name is not a browser turning one page view into a pile of queries.
+ *
+ * It says nothing about whether the session exists. That is the store's answer
+ * and this is not a cheaper version of it.
+ */
+export const looksLikeSessionToken = (value: string): boolean =>
+  value.length === Math.ceil((SESSION_BYTES * 4) / 3) && /^[A-Za-z0-9_-]+$/.test(value);
 
 /**
  * What the database holds for a session, which is not what the browser holds.
