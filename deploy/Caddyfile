@@ -14,9 +14,12 @@
 #   COINSLOT_CABINET_UPSTREAM  host:port of the cabinet process   cabinet:3001
 #   COINSLOT_GATEWAY_UPSTREAM  host:port of the gateway process   gateway:3000
 #
-# The defaults are the container's view of the world, because ADR-0005 §7 makes
-# `docker compose up` how this runs. From a checkout, outside Docker, the same
-# file works with the roots pointed at the repository:
+# The defaults are the container's view of the world, because ADR-0005 §7 wants
+# the whole chain to come up from `docker compose up`. It does not yet: the
+# compose file in this repository brings up Postgres and nothing else, and the
+# services these defaults name — caddy, cabinet, gateway — still have to be
+# added to it. Until they are, the way to run this file is from a checkout,
+# outside Docker, with the roots pointed at the repository:
 #
 #   COINSLOT_LANDING_ROOT=apps/landing/public \
 #   COINSLOT_PORTAL_ROOT=portal/.vitepress/dist \
@@ -33,6 +36,24 @@
 {$COINSLOT_SITE_ADDRESS::8080} {
 	encode zstd gzip
 
+	# ADR-0005 §1 puts four things on one origin, and same-origin is then the
+	# whole of the boundary between them: a static landing, a static portal
+	# build, a cabinet that will hold a merchant's session, and the money path
+	# at /v0. These three headers are the part of the hardening that costs
+	# nothing and cannot break a page.
+	#
+	# What is deliberately not here: HSTS, because on a plain-HTTP local origin
+	# it would pin localhost in every developer's browser for its max-age; and a
+	# Content-Security-Policy, because the portal's build and the cabinet's
+	# inline scripts have not been surveyed and a policy written blind either
+	# breaks pages or is loose enough to be decoration. Both belong with the
+	# first deployment to a real host, and neither should be guessed here.
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		X-Frame-Options DENY
+	}
+
 	# The gateway. The contract's own route table is written under /v0
 	# (packages/contracts/src/api.ts), so the prefix is the gateway's, not a
 	# mount point invented here: the path is passed through untouched and the
@@ -42,7 +63,8 @@
 	# puts that address into the payment challenge it sends an agent, and an
 	# agent that is told to come back to the process's own port would be sent
 	# at a door that is closed from outside.
-	handle /v0/* {
+	@gateway path /v0 /v0/*
+	handle @gateway {
 		reverse_proxy {$COINSLOT_GATEWAY_UPSTREAM:gateway:3000}
 	}
 
@@ -77,6 +99,9 @@
 	# build argument rather than an edit to the portal's config on purpose: the
 	# mount point is this file's business, and the portal should not have to
 	# know it in a file of its own.
+	# Temporary rather than permanent on purpose: a 301 is cached by the browser
+	# past the life of the mount point, and the first person to move /docs would
+	# spend an afternoon on it.
 	redir /docs /docs/
 	handle_path /docs/* {
 		root * {$COINSLOT_PORTAL_ROOT:/srv/docs}
@@ -88,8 +113,14 @@
 	}
 
 	# Everything else is the landing: static files, no runtime behind them
-	# (ADR-0005 §5). This block is last and matches everything, so a path that
-	# no route above claimed lands on the landing's 404 rather than nowhere.
+	# (ADR-0005 §5). This block is last and matches everything, so a path no
+	# route above claimed is answered here rather than by a neighbouring prefix
+	# that happened to start with the same letters.
+	#
+	# What that answer looks like today is Caddy's own bare 404 with an empty
+	# body: the landing is one page and has no 404 of its own. That is a gap
+	# rather than a decision, and the fix is a page in the landing plus a
+	# handle_errors block here.
 	handle {
 		root * {$COINSLOT_LANDING_ROOT:/srv/landing}
 		file_server
