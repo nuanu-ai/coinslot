@@ -23,6 +23,47 @@ import {
 
 const PASSWORD = "a-password-nobody-guesses";
 
+/**
+ * The cost the stored rows in a running cabinet were written at.
+ *
+ * A literal here rather than the constant `credentials.ts` uses, and that is
+ * the entire point of it. The decoy an unknown address is derived against is
+ * built at whatever that constant says today; the rows in a database were built
+ * at whatever it said when each password was set. Raise the constant alone and
+ * an address with an old row answers a wrong password visibly faster than an
+ * address with no account at all — which is the sign-in form telling anybody
+ * who asks which addresses have accounts here, the one thing the decoy exists
+ * to prevent.
+ *
+ * So this number moves only in a change that also re-derives the stored rows,
+ * which for accounts we make by hand is the `account password` command run once
+ * per person (ADR-0009 §2). A run that fails here is that change being asked
+ * whether the rows were done.
+ */
+const ROWS_ARE_AT = { N: 32_768, r: 8, p: 1 } as const;
+
+/** A stored value built at a cost this test names, rather than at the code's. */
+const storedAt = async (
+  password: string,
+  cost: { N: number; r: number; p: number },
+  length = 32,
+): Promise<string> => {
+  const salt = Buffer.from("c2FsdGVkc2FsdGVkc2E", "base64url");
+  const key = await new Promise<Buffer>((resolve, reject) => {
+    scrypt(password, salt, length, { ...cost, maxmem: 256 * 1024 * 1024 }, (failed, derived) =>
+      failed === null ? resolve(derived) : reject(failed),
+    );
+  });
+  return [
+    "scrypt",
+    cost.N,
+    cost.r,
+    cost.p,
+    salt.toString("base64url"),
+    key.toString("base64url"),
+  ].join("$");
+};
+
 describe("a person's password", () => {
   it("is recognised again, and a different one is not", async () => {
     const stored = await hashPassword(PASSWORD);
@@ -108,23 +149,8 @@ describe("a stored value whose key is too short to be one", () => {
     // So the row here is built to match: the key in it is the first byte of the
     // derivation of a password this test knows. Refused, that password does not
     // match. Compared, it does, and there is no luck in it either way.
-    const salt = Buffer.from("c2FsdGVkc2FsdGVk", "base64url");
     const cheap = { N: 2, r: 1, p: 1 };
-    const shortened = async (length: number): Promise<string> => {
-      const key = await new Promise<Buffer>((resolve, reject) => {
-        scrypt(PASSWORD, salt, length, cheap, (failed, derived) =>
-          failed === null ? resolve(derived) : reject(failed),
-        );
-      });
-      return [
-        "scrypt",
-        cheap.N,
-        cheap.r,
-        cheap.p,
-        salt.toString("base64url"),
-        key.toString("base64url"),
-      ].join("$");
-    };
+    const shortened = (length: number): Promise<string> => storedAt(PASSWORD, cheap, length);
 
     for (const length of [1, 8, 16, 31]) {
       await expect(
@@ -139,16 +165,39 @@ describe("a stored value whose key is too short to be one", () => {
 });
 
 describe("what an address with no account costs", () => {
-  it("costs what a wrong password against a real account costs", async () => {
-    // Not merely "some work" — the same work. The decoy carries the cost that
-    // is written into every value this file stores, and a decoy at a different
-    // cost turns the sign-in form into a list of who has an account: one
-    // request, and the two answers take visibly different times.
+  it("is derived at the cost the stored rows are written at", async () => {
+    // The deterministic half, and the one that actually holds ADR-0009 §2. The
+    // decoy is derived at whatever cost this file's constant says, and so is a
+    // password set today; the rows already in a database are not. Written the
+    // obvious way — build a row with `hashPassword`, time it against the decoy
+    // — the two move together and the comparison says nothing about the risk
+    // it names: raising the constant leaves such a test green while an address
+    // with an old row answers in a third of the time an unknown one does.
     //
-    // The floor test below cannot see that. This one is why raising the cost is
-    // not the free change it looks like: rows written under the old one have to
-    // be re-derived, or they and the decoy stop matching.
-    const stored = await hashPassword(PASSWORD);
+    // So what is pinned is the cost itself, against a number this test names.
+    // Raising it is then a change that fails here until somebody also re-derives
+    // the rows, which is exactly the ritual that decision asks for.
+    const [algorithm, work, block, parallel] = (await hashPassword(PASSWORD)).split("$");
+
+    expect(algorithm).toBe("scrypt");
+    expect([Number(work), Number(block), Number(parallel)]).toStrictEqual([
+      ROWS_ARE_AT.N,
+      ROWS_ARE_AT.r,
+      ROWS_ARE_AT.p,
+    ]);
+  });
+
+  it("costs what a wrong password against a row in the database costs", async () => {
+    // Not merely "some work" — the same work. One request, and two answers that
+    // take visibly different times is a sign-in form that says which addresses
+    // have accounts.
+    //
+    // The row here is built at the cost above rather than by `hashPassword`, so
+    // that what is being compared is the decoy against a row as a database
+    // holds it and not the constant against itself. The bounds are generous
+    // because a clock in a test suite is: what they catch is gross drift, and
+    // the test above is what catches drift of any size at all.
+    const stored = await storedAt(PASSWORD, ROWS_ARE_AT);
     await passwordMatches(PASSWORD, stored); // warm the pool before either clock
 
     const timed = async (against: string | null): Promise<number> => {
@@ -160,9 +209,6 @@ describe("what an address with no account costs", () => {
     const known = Math.min(await timed(stored), await timed(stored));
     const unknown = Math.min(await timed(null), await timed(null));
 
-    // Generous in both directions: what this has to catch is a decoy at a
-    // different cost, which is a factor of two at the very least and usually
-    // eight or more. Ordinary scheduling noise is nothing like that.
     expect(unknown / known).toBeGreaterThan(0.4);
     expect(unknown / known).toBeLessThan(2.5);
   });
@@ -175,10 +221,14 @@ describe("a password we generate", () => {
 
     expect(first.length).toBeGreaterThanOrEqual(MINIMUM_PASSWORD_LENGTH);
     expect(first).not.toBe(second);
-    // Long enough that the absence of a rate limit on sign-in is a decision
-    // rather than an accident (ADR-0009). Twenty characters out of an alphabet
-    // of thirty-two is a hundred bits.
-    expect(first.length).toBeGreaterThanOrEqual(20);
+    // The exact length, not a floor. ADR-0009 leaves the sign-in form without a
+    // rate limit on purpose — a lockout would hand anybody who knows an address
+    // a way to shut the merchant out of the control that stops their selling —
+    // and what stands in the way instead is this number. Twenty-four characters
+    // out of an alphabet of thirty-two is a hundred and twenty bits; a floor of
+    // twenty would have let the code shrink to a hundred without a word.
+    expect(first.length).toBe(24);
+    expect(second.length).toBe(24);
   });
 
   it("is made of characters a person can read out over a telephone", () => {
