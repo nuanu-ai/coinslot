@@ -156,13 +156,8 @@ export function handlersFor(gateway: Gateway): Partial<Record<RouteName, Mounted
     },
 
     accept_order: {
-      serve: async ({ params, body, response }) => {
-        const taken = await gateway.acceptOrder(params.order_id ?? "", body as never);
-        if (taken === null) {
-          return written(response, NOT_FOUND, refusal("no_such_order", "there is no such order"));
-        }
-        return { status: taken.ok ? OK : CONFLICT, document: taken };
-      },
+      serve: async ({ params, body, response }) =>
+        answeredOrder(response, await gateway.acceptOrder(params.order_id ?? "", body as never)),
     },
 
     answer_quote: {

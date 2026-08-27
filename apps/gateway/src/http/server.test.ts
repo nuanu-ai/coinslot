@@ -726,6 +726,34 @@ describe("the worker's calls over HTTP", () => {
     expect((await harnessed.store.orderById(orderId))?.order.dispatch.accepted).toBe(true);
   });
 
+  it("still says no in the status when the answer route refuses one", async () => {
+    // The other half of the promise above, and what makes it mean anything: a
+    // success reads as one because a refusal does not. Nothing has been paid
+    // for this order, so there is no work to take on and the machine turns the
+    // answer away — and a client library that reads the status rather than the
+    // body has to see that, or it records an order as under way that the
+    // gateway never accepted.
+    const { served, harnessed } = await started();
+    const itemId = await publish(served, {
+      ...syncCard,
+      merchant_item_id: "esim-unpaid",
+      fulfillment: "async",
+    });
+    const offered = await harnessed.gateway.beginPurchase(itemId, {});
+    if (offered.step !== "pay") throw new Error("no price was offered");
+
+    const early = await served.call("POST", `/v0/orders/${offered.order.order.id}/answer`, {
+      body: { accepted: {} },
+      headers: asMerchant,
+    });
+
+    expect(early.status).toBe(409);
+    expect(early.body).toMatchObject({ ok: false, error: { retryable: false } });
+    expect((await harnessed.store.orderById(offered.order.order.id))?.order.dispatch.accepted).toBe(
+      false,
+    );
+  });
+
   it("refuses a body that is not JSON in the shape everything else refuses in", async () => {
     // The parser turns it away before any route runs, so without an answer of
     // our own it comes back as express's HTML page — from a surface whose every
