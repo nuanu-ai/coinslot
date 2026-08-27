@@ -192,8 +192,22 @@ export const REGISTERED_AS = Object.freeze({
   order_event: "event",
 } as const satisfies { readonly [Kind in WorkerEnvelopeKind]: string });
 
-/** The words a merchant registers something on the stream under. */
-export type StreamHandlerKind = (typeof REGISTERED_AS)[WorkerEnvelopeKind];
+/**
+ * The words a merchant registers something on the stream under.
+ *
+ * Indexed by the table's own keys and not by the contract's kinds, which reads
+ * the same today and behaves very differently on the day a fourth kind is
+ * added. Indexing by a key the table does not have yet collapses this type, and
+ * with it `Handlers[Kind]` and the contextual type of every `coinslot.on(...)`
+ * call — so the first compile after the contract grows reports sixty errors, of
+ * which fifty-five are implicit-any at call sites that are not the problem, and
+ * the three places that do need a hand are buried among them. Indexed this way
+ * that same compile names two places, both real.
+ *
+ * Completeness is not what was lost: the `satisfies` clause on the table above
+ * is what demands a word per contract kind, and it still fires.
+ */
+export type StreamHandlerKind = (typeof REGISTERED_AS)[keyof typeof REGISTERED_AS];
 
 /** What answers each of them, in the shape this loop calls. */
 export interface StreamDispatch {
