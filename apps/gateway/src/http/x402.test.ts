@@ -147,11 +147,74 @@ describe("one payment, one fingerprint", () => {
     expect(whispered).toBe(shouted);
   });
 
-  it("is one fingerprint however the amounts are written", () => {
-    // 1000000, "1000000" and "0xF4240" are one number to the chain.
-    const asText = fingerprintOf(signed({ proof: { value: "1000000" } }));
-    expect(fingerprintOf(signed({ proof: { value: 1_000_000 } }))).toBe(asText);
-    expect(fingerprintOf(signed({ proof: { value: "0xF4240" } }))).toBe(asText);
+  it("is one fingerprint however the amounts are written, and whatever they are called", () => {
+    // 1000000, "1000000" and "0xF4240" are one number to the chain, and a
+    // scheme may write that number under any of these names. This is the
+    // branch for a payload that carries neither an authorisation pair nor a
+    // signature, where the whole payload is the key: an authorisation whose
+    // validBefore arrives as a number in one presentation and as a string in
+    // another is one authorisation, and two fingerprints for it is one
+    // authorisation buying two orders.
+    //
+    // The names are written out rather than read from the set the code uses. A
+    // test that read that set would go on passing if a name were dropped from
+    // it, which is the direction that costs money — the names it stopped
+    // normalising would each split one authorisation into two fingerprints.
+    // The other direction is left unguarded on purpose: a name added to the set
+    // only merges more spellings, and merging never lets one payment buy twice.
+    const names = ["value", "amount", "validAfter", "validBefore", "maxAmount"];
+
+    // The plain decimal is written with leading zeros so that it is not already
+    // in its own normalised form. Against "1000000" the decimal arm of asAmount
+    // is exercised and cannot fail: deleting it changes nothing, because the
+    // text and the number it stands for are the same string.
+    for (const name of names) {
+      const asText = fingerprintOf(signed({ proof: { [name]: "0001000000" } }));
+
+      expect(fingerprintOf(signed({ proof: { [name]: "1000000" } })), name).toBe(asText);
+      expect(fingerprintOf(signed({ proof: { [name]: 1_000_000 } })), name).toBe(asText);
+      expect(fingerprintOf(signed({ proof: { [name]: "0xF4240" } })), name).toBe(asText);
+    }
+  });
+
+  it("merges a number and its text only as far as a JSON number is exact", () => {
+    // The merge holds to the last integer a JSON number carries exactly and
+    // stops there. Past 2^53 the number that arrives is no longer the integer
+    // it was written as, and putting it through BigInt would assert an equality
+    // nobody can check.
+    //
+    // The cost of stopping is real and is pinned here rather than left to be
+    // discovered: an amount that large and its own text are two fingerprints.
+    // One token of an eighteen-decimal asset is such an amount. No scheme this
+    // gateway speaks reaches this branch — an EIP-3009 payload is keyed on its
+    // payer and nonce long before the payload itself is read — so this is the
+    // bound as it stands, not a bound anybody has had to choose.
+    const exact = String(Number.MAX_SAFE_INTEGER);
+    const beyond = "1000000000000000000";
+
+    expect(fingerprintOf(signed({ proof: { value: Number.MAX_SAFE_INTEGER } }))).toBe(
+      fingerprintOf(signed({ proof: { value: exact } })),
+    );
+    expect(fingerprintOf(signed({ proof: { value: 1e18 } }))).not.toBe(
+      fingerprintOf(signed({ proof: { value: beyond } })),
+    );
+  });
+
+  it("merges two spellings of one number and not two different values", () => {
+    // The normalisation exists to make one payment one key. It may not go
+    // further and make two payments one: no token records a negative amount, so
+    // -5 and "-5" are two pieces of junk rather than one number, and merging
+    // them would have the second payment refused as a replay of the first.
+    expect(fingerprintOf(signed({ proof: { value: -5 } }))).not.toBe(
+      fingerprintOf(signed({ proof: { value: "-5" } })),
+    );
+  });
+
+  it("survives an amount that is not a whole number", () => {
+    // The decoder guarantees nothing about the payload, so a fraction under one
+    // of these names arrives from an agent like anything else. BigInt refuses
+    // it by throwing, and a throw here is a crash where a refusal belongs.
+    expect(() => fingerprintOf(signed({ proof: { value: 1.5 } }))).not.toThrow();
   });
 
   it("keys on the payer as well as the nonce, the way the token does", () => {

@@ -15,9 +15,15 @@ import { outcomeFor } from "./outcome.js";
  * the portal back and fails if the rows moved.
  *
  * The parser is deliberately tiny. It finds the section by its heading, takes
- * the first table in it, and returns the first cell of every row. If it ever
+ * the first table in it, and returns one named column of every row. If it ever
  * needs to be cleverer than that, the portal has grown a structure that the
  * tests should be reading differently anyway.
+ *
+ * Every column of every table is pinned, not only the one the row is named by.
+ * The first cell says which case the row is about; the ones after it are the
+ * promise, and the promise is what a merchant acts on and what an agent is
+ * quoted. A guard that read the labels alone would let the page keep its rows
+ * and change what they say.
  */
 
 const ORDERS_PAGE = readFileSync(new URL("../../../../portal/orders.md", import.meta.url), "utf8");
@@ -48,12 +54,20 @@ function tableRows(page: string, heading: string, column = 1): readonly string[]
   const rows: string[] = [];
   for (const line of lines.slice(first)) {
     if (!line.startsWith("|")) break;
-    const cells = line.split("|");
-    const cell = cells[column]?.trim() ?? "";
-    if (cells.length <= column)
+    // A row is bounded by a pipe at each end, so splitting it leaves an empty
+    // piece on both sides: a two-column row is four pieces. The row has column
+    // N only if there is a piece after the Nth one.
+    const pieces = line.split("|");
+    if (pieces.length <= column + 1) {
       throw new Error(`the table in "${heading}" has no column ${column}`);
-    if (/^-+$/.test(cell)) continue;
-    rows.push(cell);
+    }
+    const cells = pieces.slice(1, -1).map((piece) => piece.trim());
+    // Being the separator is a property of the whole row rather than of the
+    // cell this call happens to select. Read off one cell, a data row whose
+    // selected cell was written as "---" would drop out and shift every promise
+    // after it up by one — silently, and into the wrong row.
+    if (cells.every((cell) => /^:?-+:?$/.test(cell))) continue;
+    rows.push(cells[column - 1] ?? "");
   }
   return rows.slice(1);
 }
@@ -177,10 +191,11 @@ describe('portal/orders.md, "Чем заказ может закончиться
   });
 
   it(`${ENDINGS[7]}: the agent is told the outcome is unknown, not that he was refused`, () => {
-    // The row's own third column: «исход платежа неизвестен» — не «отказ».
-    // The two are different answers to an agent deciding whether to go and buy
-    // the same thing somewhere else, and the machine may not give the cheaper
-    // one when it does not know.
+    // The row's own third column, pinned verbatim by the guard at the bottom of
+    // this file: «исход платежа неизвестен» — не «отказ»: повтор тем же ключом
+    // безопасен. The two are different answers to an agent deciding whether to
+    // go and buy the same thing somewhere else, and the machine may not give
+    // the cheaper one when it does not know.
     const unresolved = walk(newOrder("async"), [
       { kind: "payment_verified", at: T0 + 1 },
       { kind: "deadline_expired", at: T0 + 999_999, deadline: "settle_response" },
@@ -506,12 +521,53 @@ describe("the portal and this machine cannot drift apart quietly", () => {
     ]);
   });
 
+  it("still tells the agent the same thing about each of those endings", () => {
+    // The third column is the sentence the agent is given, and it is the one
+    // place in the portal where the machine's refusal to overstate can be
+    // undone by an edit: «исход платежа неизвестен» rewritten as «отказ» would
+    // have the page promise the very claim the code will not make, and the
+    // agent would go and buy the same thing again on a wallet already lighter.
+    expect(tableRows(ORDERS_PAGE, "Чем заказ может закончиться", 3)).toStrictEqual([
+      "товар и квитанция",
+      "отказ с причиной, покупка не состоялась",
+      "отказ, ничего не списано",
+      "заказ закрыт по сроку",
+      "заказ закрыт, деньги вернутся",
+      "заказ ждёт возврата",
+      "покупка не состоялась; повтор доводит оплату",
+      "«исход платежа неизвестен» — не «отказ»: повтор тем же ключом безопасен",
+    ]);
+  });
+
   it('has exactly the encoded rows in "Время вышло"', () => {
     expect(tableRows(ORDERS_PAGE, "Время вышло")).toStrictEqual([...TIMEOUTS]);
   });
 
+  it("still says what running out of each of those times costs", () => {
+    // The label names the waiting; the second column is what the merchant is
+    // owed and what the buyer paid, and the scenarios above are written against
+    // that sentence rather than against the label.
+    expect(tableRows(ORDERS_PAGE, "Время вышло", 2)).toStrictEqual([
+      "цена больше не действует; захочет купить — запросит свежую",
+      "заказ закрылся, деньги покупателя не двигались",
+      "заказ закрылся, вы свободны; вам придёт событие",
+      "покупка не состоялась, списания не было; поздняя выдача не пропадает — её заберёт повтор",
+      "деньги уже у вас, заказ помечен «требует возврата»",
+    ]);
+  });
+
   it('has exactly the encoded rows in "События по той же подписке"', () => {
     expect(tableRows(ORDERS_PAGE, "События по той же подписке")).toStrictEqual([...EVENTS]);
+  });
+
+  it("still says what each of those events means", () => {
+    // The event name is the wire word; the second column is what the merchant
+    // is told it means, and it is the half he acts on.
+    expect(tableRows(ORDERS_PAGE, "События по той же подписке", 2)).toStrictEqual([
+      "вы не выдали в срок или отказались после списания",
+      "вы ответили «выдам», а агент не заплатил в свой срок; вы свободны",
+      "вы выдали, а деньги не пришли",
+    ]);
   });
 
   it("has exactly the encoded failure scenarios", () => {
@@ -528,5 +584,12 @@ describe("the portal and this machine cannot drift apart quietly", () => {
     expect(tableRows(ORDERS_PAGE, "Время вышло").length).toBe(5);
     expect(() => tableRows(ORDERS_PAGE, "Секция, которой нет")).toThrowError(/no section/);
     expect(() => tableRows(ORDERS_PAGE, "Тестовые заказы")).toThrowError(/no table/);
+    // And a column the table does not have is an error rather than a row of
+    // empty strings, which is what a guard against a moved column would
+    // otherwise compare itself against.
+    expect(() => tableRows(ORDERS_PAGE, "Время вышло", 3)).toThrowError(/no column 3/);
+    expect(() => tableRows(ORDERS_PAGE, "Чем заказ может закончиться", 4)).toThrowError(
+      /no column 4/,
+    );
   });
 });
