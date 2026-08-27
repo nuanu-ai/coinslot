@@ -364,9 +364,15 @@ export class PostgresStore implements Store {
 
   async deliveredWithoutReceipt(): Promise<readonly StoredOrder[]> {
     // The absence is asked in the predicate rather than by reading the orders
-    // and then the receipts: the answer is normally empty, and a version that
-    // read every delivered order to find that out would grow with the history
-    // of the gateway rather than with what is wrong with it.
+    // and then the receipts, so what comes back is the size of what is wrong
+    // and not the size of the history — normally nothing at all.
+    //
+    // What that does not do is bound the reading. There is no index on `state`
+    // and the one on `open` leads with the merchant, so this walks the orders
+    // table and so does `openOrders` above. Once a day, unpaged, which is
+    // nothing at a pilot's volume and is the first thing to look at when the
+    // table is large: the answer is an index, and it is not here yet because
+    // adding one is a change to the schema rather than to this file.
     const rows = await this.#db
       .select()
       .from(orders)

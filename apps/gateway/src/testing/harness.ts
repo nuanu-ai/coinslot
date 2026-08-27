@@ -105,14 +105,16 @@ export async function harness(overrides: Record<string, string> = {}): Promise<H
     attempts: config.reminderAttempts,
     retryDelayMs: config.reminderRetryDelayMs,
   });
-  // The queue is made first because the store publishes through it: an envelope
-  // that must not be lost is written where the order is (ADR-0013). The call is
-  // made through the queue rather than bound to its method, so a test that
-  // replaces `queue.publish` replaces the one the store uses too.
+  // The queue is made first because the store writes through it: an envelope
+  // that must not be lost is written where the order is (ADR-0013). It is
+  // `stage` rather than `publish` because the store needs the two halves apart
+  // — take it before the order is written, make it visible after — and the call
+  // is made through the queue rather than bound to its method, so a test that
+  // replaces `queue.stage` replaces the one the store uses too.
   const store = new MemoryStore(
     countedIds(),
     () => now,
-    (merchantId, envelope, afterMs) => queue.publish(merchantId, envelope, afterMs),
+    (merchantId, envelope, afterMs) => queue.stage(merchantId, envelope, afterMs),
   );
   const facilitator = new ScriptedFacilitator();
   const ids = countedIds();

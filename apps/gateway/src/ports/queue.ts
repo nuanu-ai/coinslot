@@ -115,6 +115,31 @@ export interface Queue {
    */
   finish(merchantId: string, handle: string): Promise<void>;
 
+  /**
+   * Whether this merchant's stream is still holding an order envelope for this
+   * order — one nobody has drawn yet, a redelivery waiting out its delay
+   * included.
+   *
+   * The one caller is the sweep, and the reason it has to ask is arithmetic
+   * rather than tidiness. A second envelope for one order is ordinary on the
+   * wire; it is not ordinary for the order, because the machine counts every
+   * hand-over and the count is what its attempt cap reads. A sweep that sent
+   * the order again while the first envelope was still sitting here would spend
+   * a delivery the merchant never failed, and the closure at the cap is a
+   * refund. So the sweep acts on an envelope that is actually missing rather
+   * than on a merchant who is between polls.
+   *
+   * What it cannot answer for is an envelope somebody has already drawn: from
+   * here that looks the same as one that was never written. The order's own
+   * state does not separate them either — it stays `paid` until the hand-over
+   * is recorded — so what covers that gap is patience rather than this, and
+   * `sweepDispatchGraceMs` is where the patience is set.
+   *
+   * It asks about order envelopes only. A merchant event is never re-sent by
+   * anybody, so nothing ever needs to know whether one is still waiting.
+   */
+  holdsOrder(merchantId: string, orderId: string): Promise<boolean>;
+
   /** Asks to be reminded of something once, `afterMs` from now. */
   remind(reminder: Reminder, afterMs: number): Promise<void>;
 

@@ -46,17 +46,26 @@ import type {
 /**
  * Where this store puts an envelope that has to be written with an order.
  *
- * It is the queue's `publish` and nothing more, taken as a function so that the
- * store depends on the one thing it needs rather than on a queue. In a
- * deployment the two live in one database and the atomicity is a transaction;
- * here they are two maps in one process, and what stands in for the transaction
- * is that nothing about the order is written until this has returned.
+ * It is in two halves for the same reason the Postgres adapter's is. Taking the
+ * envelope can refuse, and it does so here, before anything about the order is
+ * written; putting it where a worker can reach it happens in the call this
+ * hands back, after the order is written. In a deployment the two halves are
+ * one transaction and the database provides both properties at once. Here they
+ * are two maps in one process, and the ordering is what stands in for it.
+ *
+ * One half without the other is a real failure rather than a nicety. Taking it
+ * after the order is written leaves a record saying something happened when
+ * nothing did. Making it visible before means a worker can be handed an
+ * envelope for a change to an order that is not written down yet — and while an
+ * order envelope is safe there, because acting on one comes back through the
+ * store's own hold, a merchant event is not: the poll hands one over without
+ * touching the order at all.
  */
 export type Envelopes = (
   merchantId: string,
   envelope: WorkerEnvelope,
   afterMs?: number,
-) => Promise<void>;
+) => Promise<() => void>;
 
 /**
  * The answer for a store that was built without one.
@@ -322,23 +331,33 @@ export class MemoryStore implements Store {
 
       const decided = await change(found);
 
-      // What has to go with the order goes first, and the order is not written
-      // at all if any of it refuses. There the Postgres adapter has a
-      // transaction and this has an ordering, and the ordering is enough for
-      // the same reason: everything that could act on the envelope has to come
-      // back through this very lock to do it, so nobody can see the stream and
-      // the order disagree. The other order — writing the order first — is the
-      // one that leaves a record saying something happened when nothing did.
+      // Three steps, and the Postgres adapter gets all three from one
+      // transaction. Everything that has to go with the order is taken first,
+      // so anything that would refuse refuses before a word about the order is
+      // written; then the order is written; then what was taken becomes visible
+      // to anybody else. Both other orderings are wrong, and differently: doing
+      // it all after the order leaves a record saying something happened when
+      // nothing did, and making it visible before the order lets a worker be
+      // handed an envelope for a change that is not written down.
       //
-      // Where this is weaker than a transaction, said out loud rather than
-      // left to be found: a list whose second write refuses does not take the
-      // first one back, and there Postgres would. It costs nothing today
-      // because no transition asks for two of these at once — a receipt is
-      // issued when goods are released and an envelope goes out when they are
-      // asked for, and the machine never emits both — and it would cost
-      // something the day one does.
-      for (const write of decided.alongside ?? []) {
-        await this.#writeWithTheOrder(write);
+      // That last one is why this is three steps and not two. An order envelope
+      // would have been safe either way, because acting on one comes back
+      // through this very hold; a merchant event would not, because the poll
+      // hands one over without touching the order at all.
+      // The envelopes are taken before the receipts, and the order is the whole
+      // of what makes a half-written list impossible here. Taking an envelope
+      // is the step that can refuse; writing a receipt is a map that cannot. So
+      // with the envelopes first, anything that refuses does so while nothing
+      // at all has been written, and a list is either wholly taken or wholly
+      // not. Reversed, a receipt would already be written when the envelope
+      // beside it refused, and this adapter would keep a promise the Postgres
+      // one keeps and the port makes.
+      const alongside = [...(decided.alongside ?? [])].sort(
+        (one, other) => rankOf(one) - rankOf(other),
+      );
+      const arrivals: (() => void)[] = [];
+      for (const write of alongside) {
+        arrivals.push(await this.#takeWithTheOrder(write));
       }
 
       if (decided.save !== undefined) {
@@ -350,6 +369,12 @@ export class MemoryStore implements Store {
         // about whose order it is; here it would simply change hands. Neither
         // is a thing a decision about an order gets to do.
         this.#orders.set(id, Object.freeze({ ...decided.save, merchantId: found.merchantId }));
+      }
+
+      // Written down: what was taken above is now somebody else's to see. None
+      // of these can refuse, which is what makes the order safe to have written.
+      for (const arrive of arrivals) {
+        arrive();
       }
       return { found: true, result: decided.result };
     });
@@ -374,16 +399,21 @@ export class MemoryStore implements Store {
   }
 
   /**
-   * One write that goes with an order. The receipt goes through the store's own
-   * method rather than into the map behind its back, so there is one place a
-   * receipt is written and one rule about whose it is.
+   * Takes one write that goes with an order, and hands back the call that makes
+   * it visible.
+   *
+   * A receipt is visible the moment it is written and there is nothing to hold
+   * back: nothing reads a receipt except by asking for it, and an order that
+   * has one before it says `delivered` claims nothing on its own. It goes
+   * through the store's own method rather than into the map behind its back, so
+   * there is one place a receipt is written and one rule about whose it is.
    */
-  async #writeWithTheOrder(write: WithTheOrder): Promise<void> {
+  async #takeWithTheOrder(write: WithTheOrder): Promise<() => void> {
     if (write.kind === "receipt") {
       await this.putReceipt(write.merchantId, write.receipt);
-      return;
+      return () => {};
     }
-    await this.#envelopes(write.merchantId, write.envelope, write.afterMs);
+    return this.#envelopes(write.merchantId, write.envelope, write.afterMs);
   }
 
   // --- payments -------------------------------------------------------------
@@ -457,6 +487,14 @@ export class MemoryStore implements Store {
     }
     return row.selling;
   }
+}
+
+/**
+ * Which of the writes that go with an order is taken first: the ones that can
+ * refuse, before the ones that cannot.
+ */
+function rankOf(write: WithTheOrder): number {
+  return write.kind === "envelope" ? 0 : 1;
 }
 
 /** A merchant's own identifier for a product, inside the merchant it belongs to. */

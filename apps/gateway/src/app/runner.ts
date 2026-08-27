@@ -164,10 +164,15 @@ export interface Swept {
  * The list is exhaustive rather than a set of names, so an effect added to the
  * machine cannot quietly fall into the wrong half: the compiler asks for it
  * here. What belongs on the written-down side is an effect that cannot be
- * re-driven once the order has moved past the transition that asked for it, and
- * whose receiver tolerates it arriving twice — because the sweep re-drives
- * exactly those. An effect that tolerates neither belongs in neither half and
- * is a decision somebody has to take rather than a case to be added.
+ * re-driven once the order has moved past the transition that asked for it —
+ * that, and nothing else, is what this line decides.
+ *
+ * Whether the sweep may write one again is a second question with a different
+ * answer, and the two are easy to run together. Of the four written down here,
+ * three have receivers that are promised a repeat and one does not: a merchant
+ * event is delivered at most once, so it is written where the state is and is
+ * never re-sent. `sweep` carries that distinction, and no arm may be added
+ * there for an effect whose receiver was not promised a repeat.
  */
 function carriedOutAfterwards(effect: Effect): boolean {
   switch (effect.kind) {
@@ -212,11 +217,23 @@ export class OrderRunner {
     // reminder for an order that was never written finds nothing and says so,
     // while an order written with no clock on it is one nothing will ever close.
     await this.#arm([], deadlines(record.order), record.order.id);
-    await this.#runtime.store.addOrder(record);
+
     // Nothing the birth of an order asks for has to be written down with it:
     // the machine's effects here are a price question and a request to verify a
-    // payment, and neither leaves a record. An effect that must not be lost
-    // reaching this point would be refused by `#run`, loudly.
+    // payment, and neither leaves a record. That is checked rather than
+    // assumed, and checked here rather than after the order is written, because
+    // this is the one path with no unit of work to put such an effect in —
+    // `addOrder` takes no writes to go alongside. An effect that must not be
+    // lost reaching creation is a change nobody has thought through, and it
+    // stops before the order exists rather than after.
+    const written = this.#writesWithTheOrder(record, record.order, effects, at);
+    if (written.length > 0) {
+      throw new Error(
+        `creating ${record.order.id} asked for ${written.length} thing(s) to be written down with it, and the birth of an order has nowhere to write them`,
+      );
+    }
+
+    await this.#runtime.store.addOrder(record);
     await this.#run(record, effects, at);
     return record;
   }
@@ -404,19 +421,23 @@ export class OrderRunner {
    * stream, a delivered order with no receipt gets one, and an open order whose
    * clock ran out has the clock started again so that the machine can end it.
    *
-   * It is safe to run twice because it will be, and two of the three are no-ops
-   * on a second run for a reason that is in the orders rather than in a memory
-   * of having run: the receipt is there, so the order is no longer one without
-   * a receipt; the reminder ended the order, so the order is no longer open.
+   * It is safe to run twice because it will be, and each of the three is a
+   * no-op on a second run for a reason that is in the world rather than in a
+   * memory of having run: the receipt is there, so the order is no longer one
+   * without a receipt; the reminder ended the order, so the order is no longer
+   * open; the envelope the first run wrote is still on the stream, so the order
+   * is no longer one that has reached nobody. Two runs beside each other come
+   * to the same thing for the same reasons.
    *
-   * The third is not a no-op and is not pretended to be. An order still sitting
-   * in `paid` after the first envelope went out is, from here, an order that
-   * has reached nobody — which is exactly the case this exists for — so it goes
-   * out again. What makes that safe is what makes the whole sweep safe: a
-   * merchant is already promised the same order can reach him twice, and his
-   * handler is already told to survive it. An effect whose receiver could not
-   * survive a repeat cannot be swept, and would have to say so where it is
-   * defined.
+   * What may not be swept, which is the part ADR-0013 asks every future effect
+   * to be measured against. An arm here may only re-drive an effect whose
+   * receiver is promised it can arrive more than once. The order is: a merchant
+   * is told his handler will see the same order again, so a hand-over may be
+   * re-driven. The receipt is: it is one row keyed by its order, so writing it
+   * again writes the same row. The merchant events are not, and the contract is
+   * explicit about it — an order is delivered at least once and an event at
+   * most once — so there is no arm for them here and there must not be one. A
+   * debt announced twice is a second refund somebody may act on.
    */
   async sweep(): Promise<Swept> {
     const now = this.#runtime.clock();
@@ -461,13 +482,27 @@ export class OrderRunner {
    * An order that is paid for and has reached nobody, put on its merchant's
    * stream again.
    *
-   * The grace is what keeps this off the ordinary case. An order is in `paid`
-   * from the moment the money is in until a worker draws its envelope, and that
-   * gap is a normal part of every sale; only an order that has sat there longer
-   * than any worker would have taken looks like one whose envelope went
-   * nowhere. Nothing here can tell that apart from a merchant who is simply not
-   * polling, and it does not try to: it sends the order again, which is what
-   * the merchant is already promised can happen.
+   * Two guards, and they cover different halves of the same question, because
+   * "the merchant has not taken it" and "there is nothing for him to take" are
+   * not the same fact and only the second one is a lost envelope.
+   *
+   * The stream is asked first, and it is the one that matters. A second
+   * envelope for one order is ordinary on the wire — the merchant's handler is
+   * told to expect exactly that — but it is not ordinary for the order. The
+   * machine counts every hand-over, the count is what its attempt cap reads,
+   * and the closure at the cap is a refund. So an order whose envelope is still
+   * sitting there unclaimed is left alone: sending it again would spend a
+   * delivery the merchant never failed.
+   *
+   * The patience covers what the stream cannot answer. An envelope somebody has
+   * already drawn is on no stream, and from out here that is indistinguishable
+   * from one that was never written — the order stays `paid` until the
+   * hand-over is recorded either way. A worker part-way through a batch is the
+   * ordinary version of that, and the patience is what keeps this off him.
+   *
+   * What is left after both is an order that has been paid for longer than any
+   * worker would have taken, with nothing on the stream for it. That one really
+   * does look like an envelope that went nowhere, and it goes out again.
    */
   async #sweepTheDispatch(record: StoredOrder, now: number): Promise<number> {
     const paidAt = record.order.timestamps.paidAt;
@@ -475,6 +510,9 @@ export class OrderRunner {
       return 0;
     }
     if (paidAt + this.#runtime.config.sweepDispatchGraceMs > now) {
+      return 0;
+    }
+    if (await this.#runtime.queue.holdsOrder(record.merchantId, record.order.id)) {
       return 0;
     }
 
@@ -553,11 +591,19 @@ export class OrderRunner {
    * The writes that go into the same hold as the order, out of the effects one
    * transition asked for.
    *
-   * Everything here is at least once and every receiver of it already tolerates
-   * a repeat: the wire promises a merchant the same order can reach him twice,
-   * and a receipt is keyed by its order, so writing it again writes the same
-   * row. That is not incidental — the sweep re-drives exactly these, so an
-   * effect that could not survive arriving twice could not be one of them.
+   * What every one of these has in common is that it cannot be re-driven once
+   * the order has moved past the transition that asked for it, which is why it
+   * is written where the state is.
+   *
+   * What they do not have in common is whether the sweep may write one again
+   * afterwards, and the difference is a promise on the wire rather than a
+   * detail here. A merchant's handler is told the same order can reach it more
+   * than once, and a receipt is one row keyed by its order, so those two may be
+   * re-driven. A merchant event may not: an order is delivered at least once
+   * and an event at most once, and re-sending a debt is a second refund
+   * somebody may act on. So the sweep has an arm for the first two and none for
+   * the third, and an effect added here has to be placed in one of those two
+   * groups before it has an arm.
    */
   #writesWithTheOrder(
     record: StoredOrder,

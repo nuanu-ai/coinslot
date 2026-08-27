@@ -12,15 +12,19 @@
  * checked is that the order did not move without it. That is the same fact from
  * the other side — either both landed or neither did.
  *
- * The second is that the sweep is safe to run twice, because it will be. Two of
- * its three arms are no-ops on a second run and are checked to be exactly that:
- * the receipt it wrote is the receipt that is still there, and an order its
- * reminder closed is no longer open. The third arm — the envelope for an order
- * that is paid and has reached nobody — is not a no-op when the first envelope
- * still has not been picked up, and it is not pretended to be. What is checked
- * for that one is the thing that actually matters: after the merchant's worker
- * has turned, an order swept twice ends exactly where an order swept once ends,
- * with one delivery kept and one receipt.
+ * The second is that the sweep is safe to run twice, because it will be, and
+ * every one of its three arms is checked to do nothing at all on a second run.
+ * Each is a no-op for a reason that is in the world rather than in a memory of
+ * having run: the receipt it wrote is still there, the order its reminder
+ * closed is no longer open, and the envelope it put on the stream is still
+ * waiting on it.
+ *
+ * That last one is checked harder than the other two, because the cost of
+ * getting it wrong lands on the order rather than on the merchant. A second
+ * envelope is ordinary on the wire and the handler is told to expect one; what
+ * it is not is free, because the machine counts every hand-over and the count
+ * is what its attempt cap reads. So the tests here follow the count as well as
+ * the stream.
  */
 
 import type { Card } from "@coinslot/contracts";
@@ -92,7 +96,7 @@ describe("an effect that could not be written down", () => {
     const harnessed = await started();
     const orderId = await quoted(harnessed, asyncCard);
 
-    harnessed.queue.publish = async () => {
+    harnessed.queue.stage = async () => {
       throw new Error("the queue would not take the envelope");
     };
 
