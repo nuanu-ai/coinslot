@@ -699,11 +699,12 @@ describe("the worker's calls over HTTP", () => {
     expect(answered.body).toStrictEqual({ ok: true, result: "delivered" });
   });
 
-  it("does not answer a recorded acceptance under a status meaning the call failed", async () => {
-    // The body says ok:false because the contract has no word for a successful
-    // acceptance. An SDK branching on the status as well would turn a landed
-    // acceptance into a retry loop, which is what the message inside is trying
-    // to talk it out of.
+  it("answers a recorded acceptance as a success, in the body and in the status", async () => {
+    // Both halves matter and they have to agree. An SDK reads the body and
+    // reports anything but a success to the merchant; a client library reads
+    // the status and retries what looks like a failure. A landed acceptance
+    // that says no in either place turns an order going through into a problem
+    // in the merchant's log, or into a retry loop.
     const { served, harnessed } = await started();
     const itemId = await publish(served, {
       ...syncCard,
@@ -721,10 +722,7 @@ describe("the worker's calls over HTTP", () => {
     });
 
     expect(answered.status).toBe(200);
-    expect(answered.body).toMatchObject({
-      ok: false,
-      error: { code: "acceptance_has_no_word_in_this_contract" },
-    });
+    expect(answered.body).toStrictEqual({ ok: true, result: "accepted" });
     expect((await harnessed.store.orderById(orderId))?.order.dispatch.accepted).toBe(true);
   });
 

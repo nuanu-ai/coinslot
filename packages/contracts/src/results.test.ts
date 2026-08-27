@@ -94,12 +94,25 @@ describe("what delivering or refusing an order answers with", () => {
 
   it("names every way the call can succeed", () => {
     expect([...ORDER_CALL_RESULTS]).toStrictEqual([
+      "accepted",
       "delivered",
       "already_delivered",
       "debt_closed_by_delivery",
       "refused",
       "purchase_already_closed",
     ]);
+  });
+
+  it("names a successful acceptance among them, and not among the failures", () => {
+    // The promise: a merchant who takes an order on is not told that something
+    // went wrong. Every handler answer is posted to the answer route, whose
+    // success has to name one of these words; without one for an acceptance
+    // the route can only answer ok:false, and a merchant's integration writes
+    // that down as a problem with an order that is going through perfectly
+    // well. The word being a success rather than an error code is the whole of
+    // what makes the difference.
+    expect(ORDER_CALL_RESULTS).toContain("accepted");
+    expect(ORDER_CALL_ERROR_CODES).not.toContain("accepted");
   });
 
   it("accepts each of them and nothing else", () => {

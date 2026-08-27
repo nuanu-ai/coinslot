@@ -157,7 +157,9 @@ describe("one eSIM, bought and provisioned, with the provisioner down at first",
     const accepted = step(again.order, { kind: "handler_accepted", at: NOON + 8 * SECOND });
 
     expect(accepted.order.dispatch.accepted).toBe(true);
-    expect(accepted.effects).toStrictEqual([]);
+    expect(accepted.effects).toStrictEqual([
+      { kind: "answer_merchant", answer: { ok: true, result: "accepted" } },
+    ]);
     expect(outcomeFor(accepted.order)).toBe("in_progress");
 
     // Twenty minutes later the profile exists and the merchant says so. Well

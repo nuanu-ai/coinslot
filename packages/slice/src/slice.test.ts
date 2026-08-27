@@ -20,7 +20,6 @@
 
 import { deliveryCheckFor, ReceiptSchema } from "@coinslot/contracts";
 import { ScriptedFacilitator } from "@coinslot/gateway";
-import { WORKER_PROBLEM_KINDS } from "@coinslot/sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { makeBuyer } from "./buyer.js";
 import { EUROPE_ESIM, RENTED_NUMBER } from "./cards.js";
@@ -194,29 +193,16 @@ describe("the stage-one gate: a sandbox purchase, green from catalog to receipt"
     // happened here.
     expect(merchant.events).toStrictEqual([]);
 
-    // One report is expected, and it is not this purchase failing. Accepting
-    // from inside the handler is answered by the gateway's answer route with
-    // "acceptance has no word in this contract" — the route's success can name
-    // one of five delivery results and none is a successful acceptance, so the
-    // gateway records the acceptance and says, in words, that it has nowhere to
-    // put its yes. The SDK worker relays that as a problem all the same, even
-    // though the acceptance plainly took (the delivered order above is the
-    // proof). This is drift the slice is here to catch, between the gateway's
-    // answer route and the worker that reads it; it is reported out of band and
-    // not patched here. What must hold is that nothing else went wrong and
-    // nothing was fatal — a fatal problem stops the worker.
-    const KNOWN_ACCEPT_REPORT = "acceptance_has_no_word_in_this_contract";
-    const acceptReports = merchant.problems.filter((p) => p.message.includes(KNOWN_ACCEPT_REPORT));
-    const otherProblems = merchant.problems.filter((p) => !p.message.includes(KNOWN_ACCEPT_REPORT));
-    // Nothing else went wrong, and the known report is pinned to exactly the one
-    // instance it should be — this one order, once, not fatal — so a bug that
-    // produced a flood of them, or hung one on a different order, could not hide
-    // behind the tolerance.
-    expect(otherProblems).toStrictEqual([]);
-    expect(acceptReports).toHaveLength(1);
-    expect(acceptReports[0]?.kind).toBe(WORKER_PROBLEM_KINDS.ANSWER_REFUSED);
-    expect(acceptReports[0]?.subject).toBe(orderId);
-    expect(acceptReports[0]?.fatal).toBe(false);
+    // And a clean run: the merchant's worker reported nothing at all. This is
+    // the assertion the seam between the gateway and the SDK is checked at.
+    // Accepting from inside the handler posts the acceptance to the answer
+    // route like any other answer, and the worker reports to the merchant
+    // anything that route does not call a success — so a route with no word
+    // for a successful acceptance writes a problem against every asynchronous
+    // order that goes through perfectly well. An empty list is the only
+    // assertion that keeps saying so; a tolerated entry would let the next one
+    // through with it.
+    expect(merchant.problems).toStrictEqual([]);
   }, 20_000);
 
   it("a refused payment moves no money and hands over no goods: the synchronous refusal is free", async () => {
