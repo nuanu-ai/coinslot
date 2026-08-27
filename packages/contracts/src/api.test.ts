@@ -326,9 +326,12 @@ describe("what answering for an order comes back as", () => {
     expect(OrderCallResponseSchema.safeParse({ ok: true }).success).toBe(false);
   });
 
-  it("refuses a success word that is not one of the five", () => {
-    expect(OrderCallResponseSchema.safeParse({ ok: true, result: "accepted" }).success).toBe(false);
+  it("refuses a success word the vocabulary does not carry", () => {
+    // The published list is the whole of it. A merchant branching on a word we
+    // never promised is branching on something the next release can rename.
     expect(OrderCallResponseSchema.safeParse({ ok: true, result: "ok" }).success).toBe(false);
+    expect(OrderCallResponseSchema.safeParse({ ok: true, result: "taken_on" }).success).toBe(false);
+    expect(OrderCallResponseSchema.safeParse({ ok: true, result: "" }).success).toBe(false);
   });
 
   it("refuses a failure with no flag about retrying", () => {
@@ -342,11 +345,11 @@ describe("what answering for an order comes back as", () => {
 
 describe("what taking an order on comes back as", () => {
   it("succeeds without a word for what happened", () => {
-    // None of the five published results names a successful acceptance, and
-    // adding one would change a vocabulary the order machine is held to as
-    // well — a decision, not a detail of a route table. An answer with no word
-    // in it also has nothing to get wrong when the same order is redelivered
-    // and taken on again, which is ordinary here.
+    // This route succeeds in only one way, so a word would have nothing to
+    // tell apart; the answer route, which carries whichever of the three
+    // things a handler returned, is where the word earns its place. An answer
+    // with no word in it also has nothing to get wrong when the same order is
+    // redelivered and taken on again, which is ordinary here.
     expect(OrderAcceptResponseSchema.parse({ ok: true })).toStrictEqual({ ok: true });
   });
 

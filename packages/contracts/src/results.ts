@@ -31,23 +31,32 @@ import { IdentifierSchema } from "./primitives.js";
 /**
  * How answering for an order can succeed.
  *
- * "Answering" rather than "delivering or refusing", because the last of the
- * five belongs to a third surface: a synchronous handler's own return, where
- * neither `deliver` nor `refuse` exists at all — as the error code
- * `not_applicable_in_mode` says from the other direction.
+ * "Answering" rather than "delivering or refusing", because two of these
+ * belong to a third surface: a handler's own return, where neither `deliver`
+ * nor `refuse` exists at all — as the error code `not_applicable_in_mode` says
+ * from the other direction.
  *
- * Five and not fewer, because each one is a different thing for the merchant
- * to do next. `delivered` is the sale closing. `already_delivered` is their
- * own retry landing twice — safe, and no second delivery is wanted.
+ * Six and not fewer, because each one is a different thing for the merchant to
+ * do next. `accepted` is an asynchronous handler taking the order on: the
+ * goods are owed and will follow through the separate `deliver` call, and the
+ * merchant's own record of the order should say it is under way. It is a
+ * success and belongs among these rather than among the error codes, and that
+ * placement is the whole of what it does for a merchant: every handler answer
+ * is posted to the answer route by the SDK without being asked to, and an
+ * integration that reads anything but a success as trouble would otherwise
+ * open a case on every asynchronous order it sells.
  *
- * That second one is worth a warning, because the merchant-facing pages say a
+ * `delivered` is the sale closing. `already_delivered` is their own retry
+ * landing twice — safe, and no second delivery is wanted.
+ *
+ * That one is worth a warning, because the merchant-facing pages say a
  * repeated call returns "the same success" and this returns a different word
  * for it. Both are true of the effect — nothing is delivered twice and nothing
  * is charged twice — but a merchant who reads that sentence and writes
  * `if (result === "delivered")` turns their own safe retry into a failure
  * branch. The answer these words travel in is built so that nobody has to: a
  * consumer branches on `ok` and records the word, which stays right when this
- * list grows a sixth entry.
+ * list grows another entry.
  * `debt_closed_by_delivery` says the delivery deadline had already passed and
  * the goods went out anyway, closing a debt instead of completing a sale; the
  * merchant may want to know that happened. `refused` is the refusal taking
@@ -57,6 +66,7 @@ import { IdentifierSchema } from "./primitives.js";
  * do is write the case down.
  */
 export const ORDER_CALL_RESULTS = Object.freeze([
+  "accepted",
   "delivered",
   "already_delivered",
   "debt_closed_by_delivery",

@@ -353,8 +353,16 @@ export type MerchantEvent = (typeof MERCHANT_EVENTS)[number];
 /**
  * What the merchant's own call gets back. Errors here are returned, never
  * thrown, and they say whether repeating the call could change anything.
+ *
+ * These are the wire's words, and `wire-alignment.test.ts` holds the two lists
+ * to each other so the gateway can hand one straight across as the other. An
+ * acceptance is among them because it is one of the three things a handler can
+ * answer, and the one whose answer used to have no word: taking an order on is
+ * a success, and anything short of saying so reaches the merchant as a fault
+ * in an order that is going through.
  */
 export const MERCHANT_ANSWER_RESULTS = [
+  "accepted",
   "delivered",
   "already_delivered",
   "debt_closed_by_delivery",

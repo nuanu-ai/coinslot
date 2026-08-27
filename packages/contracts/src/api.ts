@@ -216,14 +216,14 @@ export const OrderCallResponseSchema = z.discriminatedUnion("ok", [
 /**
  * What taking an order on comes back as.
  *
- * The success carries no word, and that is an admission rather than an
- * omission. The five results this contract publishes are about delivering and
- * refusing; none of them names a successful acceptance, and adding one would
- * be a change to a vocabulary the order machine holds in step with this one —
- * a decision, not a detail of a route table. Until it is taken, `ok: true` is
- * the whole of what we can say honestly, and it is at least a whole sentence:
- * true is true in every language, and a word can be added beside it later
- * without the answer changing shape.
+ * The success carries no word, and that is a choice rather than a gap. The
+ * published results include `accepted`, so there is a word to carry; this
+ * route just has nothing for it to tell apart. It is asked one question and
+ * answers it, where the answer route carries whichever of the three things a
+ * handler returned and its success has to name which — that is what the word
+ * is for. `ok: true` here is a whole sentence on its own: true is true in
+ * every language, and the shape leaves room to add a word beside it if this
+ * route ever succeeds in more than one way.
  *
  * Repeats are ordinary here. Delivery is at least once, so an order already
  * taken on is taken on again every time it is redelivered, and an answer with
@@ -500,7 +500,7 @@ export const API_ROUTES = Object.freeze({
     path: "/v0/orders/:order_id/answer",
     auth: "merchant_key",
     description:
-      "What the merchant's handler returned for an order it was given: the goods, a refusal, or an acceptance. The SDK sends this itself, in every mode, and it is the only way a synchronous answer reaches us at all — there the handler's return is the delivery and the refusal, and the explicit deliver and refuse calls do not apply. A synchronous answer that arrives after its deadline is not an error: the work exists and a repeat purchase collects it, and the answer says so in the word purchase_already_closed.",
+      "What the merchant's handler returned for an order it was given: the goods, a refusal, or an acceptance. The SDK sends this itself, in every mode, and it is the only way a synchronous answer reaches us at all — there the handler's return is the delivery and the refusal, and the explicit deliver and refuse calls do not apply. An acceptance is answered with the word accepted — the order is taken on, and the goods follow through the deliver call. A synchronous answer that arrives after its deadline is not an error: the work exists and a repeat purchase collects it, and the answer says so in the word purchase_already_closed.",
     request: HandlerAnswerSchema,
     response: { document: OrderCallResponseSchema },
   },
@@ -530,7 +530,7 @@ export const API_ROUTES = Object.freeze({
     path: "/v0/orders/:order_id/accept",
     auth: "merchant_key",
     description:
-      "Takes an order on: the merchant will deliver, and says how long they expect it to take when they know. An empty body is a complete answer. The same order is taken on again every time it is redelivered, which is why the success carries no word — none of the published results names a successful acceptance, and inventing one would be a wire value no decision stands behind.",
+      "Takes an order on: the merchant will deliver, and says how long they expect it to take when they know. An empty body is a complete answer. The same order is taken on again every time it is redelivered, and the success carries no word because this route succeeds in only one way — the answer route, which carries whichever of the three things a handler returned, names that one accepted.",
     request: AcceptanceSchema,
     response: { document: OrderAcceptResponseSchema },
   },

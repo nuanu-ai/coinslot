@@ -174,6 +174,20 @@ function answer(order: Order, merchantAnswer: MerchantAnswer): TransitionResult 
   return ok(order, [{ kind: "answer_merchant", answer: merchantAnswer }]);
 }
 
+/**
+ * The merchant is told his acceptance landed.
+ *
+ * Written once and used from both states an order can be taken on in, because
+ * the two are the same fact about him — he said he will fulfill it — and a
+ * merchant reading two different answers to his one answer would be reading a
+ * difference that is not there. It rides alongside the other effects rather
+ * than through `answer`, which replaces them.
+ */
+const ACCEPTANCE_LANDED: Effect = {
+  kind: "answer_merchant",
+  answer: { ok: true, result: "accepted" },
+};
+
 function closedToMerchant(order: Order): TransitionResult {
   return answer(order, { ok: false, error: "order_already_closed", retryable: false });
 }
@@ -533,7 +547,11 @@ function fromAwaitingConfirmation(order: Order, event: StateEvent): TransitionRe
           state: "confirmed",
           timestamps: { ...order.timestamps, confirmedAt: event.at },
         },
-        [{ kind: "invite_payment" }],
+        // The agent is invited to pay, and the merchant is told his "I will"
+        // landed. His refusal below is answered too, by the same word the
+        // asynchronous mode uses: what the answer names is which of the three
+        // things he said, not what the machine did about it.
+        [{ kind: "invite_payment" }, ACCEPTANCE_LANDED],
       );
     case "handler_refused":
       return ok(
@@ -747,7 +765,10 @@ function handedOver(order: Order): Order {
 function fromDispatched(order: Order, event: StateEvent): TransitionResult {
   switch (event.kind) {
     case "handler_accepted":
-      return ok({ ...order, dispatch: { ...order.dispatch, accepted: true } });
+      // The order is his, and he is told so. Delivery is at least once, so the
+      // same acceptance arrives again on every redelivery and is answered the
+      // same way each time — there is nothing here for a repeat to get wrong.
+      return ok({ ...order, dispatch: { ...order.dispatch, accepted: true } }, [ACCEPTANCE_LANDED]);
     case "handler_delivered":
       return deliverGoods(order, event.at);
     case "handler_refused":
