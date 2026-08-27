@@ -32,12 +32,19 @@
  * a second vocabulary for documents the export names once. A test holds the two
  * in step.
  *
- * What the envelope does not carry is a handle for acking. Delivery is at least
- * once with redelivery on a visibility timeout, and the acknowledgement of each
- * kind is something that already exists: an order is acked by its outcome call
- * against the order's own identifier, a price question by the reply against
- * `price_id`, and an event wants no acknowledgement at all. A handle here would
- * be a fourth way to name a message that three surfaces already name.
+ * What the envelope does not carry is a handle for acking, because the
+ * acknowledgement of each kind is something that already exists: an order is
+ * acked by its outcome call against the order's own identifier, a price question
+ * by the reply against `price_id`, and an event by nothing at all. A handle here
+ * would be a fourth way to name a message that three surfaces already name.
+ *
+ * That third one is a gap and not a design, and it decides how far each kind
+ * travels. Nothing takes a drawn envelope back after a visibility window: an
+ * order arrives again because the order machine decided there should be another
+ * attempt, and an event, which no machine is watching for a reply, does not
+ * arrive again at all. So an order is delivered at least once and an event at
+ * most once, and a consumer that guards one of them the way it guards the other
+ * has the wrong guard on both.
  *
  * The merchant never sees any of this. The SDK hands a handler an order, not
  * the envelope it arrived in (ADR-0004 §5); the envelope is the format between
@@ -76,11 +83,13 @@ export const WORKER_ENVELOPE_KINDS = Object.freeze(
 /**
  * The fields every envelope carries, whatever it is holding.
  *
- * `id` names the message and does not change when the same message is
- * delivered again; `sent_at` names this delivery of it and does. The pair is
- * how a worker tells a repeat from a new message without looking inside the
- * payload — which matters most for an event, the one kind with no outcome call
- * behind it to make a repeat harmless.
+ * `id` names this message and `sent_at` names when it went out. What the pair is
+ * not is a way to recognise a repeat, and reading it as one costs a merchant
+ * goods: the gateway builds a fresh envelope, with a fresh `id`, around the same
+ * order every time it decides on another attempt. What holds still across a
+ * repeat is the order's own identifier inside the payload, which is what its
+ * handler answers from and what the portal tells a merchant to key on. An event
+ * needs neither, having no repeat to recognise.
  */
 const envelopeOf = <Kind extends WorkerEnvelopeKind, Payload extends z.ZodType>(
   kind: Kind,

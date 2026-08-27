@@ -74,9 +74,11 @@ export const ReceiptSchema = z.strictObject({
   price_id: IdentifierSchema.optional(),
 
   /**
-   * When the payment executed — which is not when the purchase happened. In
-   * the synchronous mode the payment is the last step, after the delivery, so
-   * folding the two moments together would misdate one of them.
+   * When the payment executed — which is neither of the moments in `price`. In
+   * the synchronous mode the payment is the last step, after the delivery, and
+   * on a card with a price check the agent can spend as long as it likes
+   * between the price being struck and paying it, so folding any two of the
+   * three together would misdate one of them.
    */
   paid_at: TimestampSchema,
 

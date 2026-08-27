@@ -288,10 +288,13 @@ describe("a card that names no delivery deadline", () => {
     const orderId = offered.order.order.id;
     await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
 
-    await vi.waitFor(async () => expect((await state(harnessed, orderId))?.state).toBe("refund_due"), {
-      timeout: 2_000,
-      interval: 5,
-    });
+    await vi.waitFor(
+      async () => expect((await state(harnessed, orderId))?.state).toBe("refund_due"),
+      {
+        timeout: 2_000,
+        interval: 5,
+      },
+    );
     expect((await state(harnessed, orderId))?.closure).toStrictEqual({
       cause: "deadline_expired",
       deadline: "async_fulfillment",

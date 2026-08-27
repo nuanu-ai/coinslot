@@ -223,7 +223,11 @@ export const ordersScreen = (
     </div>
   </div>
 ${table(
-  ["Order", "Product", "Amount", "State", "Bought"],
+  // "Price set" and not "Bought": the moment in the row is when we fixed the
+  // price for this sale, and on a card whose price is checked at the purchase
+  // the buyer may pay well after it. A column headed "Bought" would have a
+  // merchant reconciling money against a minute nothing happened in.
+  ["Order", "Product", "Amount", "State", "Price set"],
   rows,
   open ? "Nothing is open. Every order you have is finished." : "No orders yet.",
 )}
@@ -320,7 +324,7 @@ export const receiptsScreen = (
   <div class="lede">
     <div>
       <h1>Receipts</h1>
-      <p>A receipt is written when the goods for an order are released: the amount, the moment the money moved, the moment of purchase, and the instant the price behind it was true.</p>
+      <p>A receipt is written when the goods for an order are released: the amount, the moment the money moved, the moment we set that price for the sale, and the instant the price behind it was true. Those three are three different moments, and on a product whose price is asked for at the purchase they can be minutes apart.</p>
       <p>This is not the whole of the money. A purchase whose goods have not gone out has no receipt yet, and in the mode where the money moves at the purchase that means a payment you have already been sent is not on this page. Neither is a refund you owe. Both are on Orders, and until they end there the list below is short of them. A purchase that ended before any payment leaves no receipt at all, and none is written while it is unknown whether the buyer was charged.</p>
       ${testWarning(receipts)}
     </div>
@@ -344,7 +348,7 @@ export const receiptsScreen = (
     </div>
   </div>
 ${table(
-  ["Receipt", "Order", "Product", "Amount", "Outcome", "Paid", "Bought", "Price true as of"],
+  ["Receipt", "Order", "Product", "Amount", "Outcome", "Paid", "Price set", "Price true as of"],
   rows,
   "No receipts yet. One is written when the goods for an order are released — a purchase that has been paid for and not delivered is on Orders, not here.",
 )}

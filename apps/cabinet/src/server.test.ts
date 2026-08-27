@@ -1110,11 +1110,14 @@ describe("the receipts screen", () => {
     expect(text).toContain("80.00 USD");
     expect(text).toContain("delivered");
     // Both moments, which is the whole reason a receipt carries two of them.
-    expect(text).toContain("Bought");
+    // "Price set" and not "Bought": the moment is when we fixed the price for
+    // the sale, and on a card whose price is checked at the purchase the buyer
+    // pays some time after that.
+    expect(text).toContain("Price set");
     expect(text).toContain("Price true as of");
     expect(text).toMatch(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC/);
-    // And the moment the money actually moved, which is not when the purchase
-    // happened and is the column a merchant matches wallet transfers against.
+    // And the moment the money actually moved, which is neither of those two
+    // and is the column a merchant matches wallet transfers against.
     // Counted rather than named, because a header with no cell under it would
     // satisfy a check that only looked for the word: a receipt row carries
     // three moments, and dropping one leaves two.
