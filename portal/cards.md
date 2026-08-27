@@ -142,18 +142,14 @@ result: {
 Выставлять наружу нечего — ни адреса, ни открытых портов.
 
 ```ts
-coinslot.pricing.onQuote(async (q) => {
+coinslot.on('quote', async (q) => {
   const item = await lookupItem(q.merchant_item_id)
 
   if (!item.in_stock) {
-    return { available: false, as_of: item.checked_at }
+    return q.unavailable(item.checked_at)
   }
 
-  return {
-    available: true,
-    price: { amount: item.price, currency: 'USD' },
-    as_of: item.checked_at,
-  }
+  return q.available({ amount: item.price, currency: 'USD' }, item.checked_at)
 })
 ```
 

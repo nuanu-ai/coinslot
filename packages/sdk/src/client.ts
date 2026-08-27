@@ -1,6 +1,6 @@
 /**
- * The client a merchant's engineer holds: a catalog, an order desk and a price
- * desk, built once from a key and an address.
+ * The client a merchant's engineer holds: a catalog, an order desk, and one
+ * place to say what this process answers.
  *
  * The shape of it is the portal's, not this file's. Every method here exists
  * because a page of the documentation tells a merchant to call it, with the
@@ -8,14 +8,38 @@
  * examples on those pages are compiled against these types by a test, so the
  * code a merchant copies out of the documentation is code that builds.
  *
+ * Three kinds travel one stream, so there is one way to register a handler for
+ * one of them — `on(kind, handler)` — and one lifecycle, `start` and `stop`,
+ * for the loop that carries all three. What a handler receives carries the
+ * calls that answer it, and that is the part worth reading before changing
+ * anything here, because two things that look alike are deliberately not.
+ *
+ * `order.delivered(...)`, `order.refused(...)` and `order.accepted(...)`
+ * build the answer and send nothing; the handler still returns it. A bot
+ * library lets a handler reply and forget, and forgetting there costs a
+ * message; forgetting here is an order nobody answered — redelivered, a
+ * delivery attempt spent, and in the asynchronous mode a debt to a buyer at
+ * the end of it. Returning the answer is what makes forgetting impossible and
+ * answering twice impossible.
+ *
+ * `order.deliver(...)`, `order.refuse(...)` and `order.accept(...)` are the
+ * other thing: they send. They are the asynchronous merchant's closure verbs,
+ * made hours later and from anywhere in their code, and they exist on the
+ * order rather than beside it so that a merchant never holds an identifier of
+ * ours. The same calls are on every order this client hands back — off the
+ * stream, off `orders.get`, off `orders.list` — because a process that
+ * restarted has no object left to hold, and that is exactly the moment
+ * juggling identifiers would come back.
+ *
  * One rule runs through the whole surface and it is worth stating once. What
  * the contract gives a call a failure branch for is returned, never thrown: a
  * card that was not accepted comes back as its findings, and an order call
  * that did not go through comes back as an error with a flag saying whether
  * repeating it could help. A merchant's integration code is expected to read
  * those and branch on them. What is thrown is what has no branch to be read
- * on: a client built wrong, and a call that produced no answer of the kind the
- * route promises where the route has nowhere to put one.
+ * on: a client built wrong, a handler registered twice, and a call that
+ * produced no answer of the kind the route promises where the route has
+ * nowhere to put one.
  *
  * The one place that rule needed a decision rather than a reading is a
  * `deliver` or a `refuse` whose answer never arrived, or arrived in words this
@@ -30,12 +54,16 @@ import type {
   Acceptance,
   Card,
   Delivery,
+  HandlerAnswer,
+  Money,
+  Order,
   OrderAcceptResponse,
   OrderCallError,
   OrderCallResponse,
-  OrderList,
   OrderWithStatus,
   PublishResult,
+  QuoteRequest,
+  QuoteResponse,
   Refusal,
 } from "@coinslot/contracts";
 import {
@@ -49,11 +77,8 @@ import {
 import {
   type EventHandler,
   type HandlerRegistry,
-  type OrderHandler,
   type ProblemReporter,
-  type QuoteHandler,
   type RunningWorker,
-  type Subscription,
   startWorker,
   type WorkerProblem,
 } from "./worker.js";
@@ -92,23 +117,130 @@ export interface ClientOptions {
   readonly baseUrl?: string | undefined;
 }
 
-export interface SubscribeOptions {
-  /**
-   * Things that happened to an order without the merchant doing anything.
-   * They arrive on the same subscription and want no answer.
-   */
-  readonly onEvent?: EventHandler;
+/**
+ * The calls every order carries, wherever the merchant got it from.
+ *
+ * The first three build an answer and send nothing: they are what a handler
+ * returns, and the return is what this SDK posts. The last three send, and
+ * they are the calls an asynchronous merchant makes later — after the supplier
+ * answered, from another part of their code, from another process life.
+ *
+ * There are three of each because the two halves are not the same set of
+ * choices seen twice. A synchronous handler chooses between delivering and
+ * refusing on the spot; an asynchronous one accepts and then, eventually,
+ * delivers or refuses. Accepting from outside a handler exists for the
+ * merchant who decides later, in another part of their code.
+ */
+export interface OrderCalls {
+  /** The goods, as the handler's answer. Building one sends nothing. */
+  delivered(delivery: Delivery): HandlerAnswer;
+
+  /** A final "this cannot be delivered", as the handler's answer. */
+  refused(refusal: Refusal): HandlerAnswer;
 
   /**
-   * Everything the worker could not get through: a gateway that did not
-   * answer, a handler that threw, an answer the gateway would not take.
-   *
-   * Left out, the problems are written to the error console, because a worker
-   * that stopped in silence is the failure a merchant finds out about from
-   * their buyers.
+   * Taking the order on without delivering yet, as the handler's answer. An
+   * empty acceptance is a complete answer; the expected time is said where it
+   * is known.
    */
-  readonly onProblem?: ProblemReporter;
+  accepted(acceptance?: Acceptance): HandlerAnswer;
+
+  /**
+   * The goods for an order taken on earlier. Idempotent by the order's own
+   * identifier, so repeating it after a dropped connection does no work twice.
+   */
+  deliver(delivery: Delivery): Promise<OrderCallResponse>;
+
+  /** A final "this cannot be delivered" for an order already taken on. */
+  refuse(refusal: Refusal): Promise<OrderCallResponse>;
+
+  /** Takes the order on from outside a handler. Repeats are ordinary. */
+  accept(acceptance?: Acceptance): Promise<OrderAcceptResponse>;
 }
+
+/**
+ * The least an order can be and still be answerable: its identifier, and the
+ * calls that close it.
+ *
+ * It is what `orders.forId` hands back, and it is the shape a merchant's own
+ * function should take when all it does is close an order — every richer order
+ * below satisfies it.
+ */
+export type OrderHandle = { readonly id: string } & OrderCalls;
+
+/**
+ * An order off the stream, with the calls that close it.
+ *
+ * "Live" is the whole of the difference from the plain document: this object
+ * holds the client that produced it, so it can call home on its own and the
+ * merchant never writes an identifier of ours as an argument.
+ */
+export type LiveOrder = Order & OrderCalls;
+
+/** The same, read back from our record, so it also says where the order stands. */
+export type LiveOrderWithStatus = OrderWithStatus & OrderCalls;
+
+/**
+ * The two answers a price question has, built from the question itself.
+ *
+ * `as_of` is what separates "I went and looked" from "here is what was in the
+ * cache", and the gateway reads it to decide how far it trusts the answer. Left
+ * out, it is the moment the answer is built — which is the truth for a price
+ * computed on the spot, and is why a merchant answering from a cache passes the
+ * moment that cache was filled instead.
+ */
+export interface QuoteCalls {
+  available(price: Money, asOf?: string): QuoteResponse;
+  unavailable(asOf?: string): QuoteResponse;
+}
+
+/** A price question, with the two answers it can be given. */
+export type LiveQuoteRequest = QuoteRequest & QuoteCalls;
+
+/** What the merchant's code does with one paid order. */
+export type OrderHandler = (order: LiveOrder) => HandlerAnswer | Promise<HandlerAnswer>;
+
+/** What the merchant's code answers to "how much is this and is it there". */
+export type QuoteHandler = (question: LiveQuoteRequest) => QuoteResponse | Promise<QuoteResponse>;
+
+/**
+ * Everything a merchant's process can be asked to answer, by the word they
+ * register it under.
+ *
+ * A map rather than four methods, because the stream is one stream and this is
+ * the list of what travels on it. The day the contract carries a fourth kind —
+ * the confirmation request, whose shape it does not carry yet — that kind is
+ * an entry here and an arm in the worker's dispatch, and nothing else about
+ * this surface moves.
+ *
+ * `problem` is on the same list although nothing on the wire carries it. It is
+ * one registration per process, exactly like the other three, and a second
+ * place to register one of four things would put back the split this surface
+ * exists to remove.
+ */
+export interface Handlers {
+  order: OrderHandler;
+  quote: QuoteHandler;
+  event: EventHandler;
+  problem: ProblemReporter;
+}
+
+export type HandlerKind = keyof Handlers;
+
+/**
+ * The words `on` accepts, as a map over the handlers themselves.
+ *
+ * A merchant working outside TypeScript, or one who wrote `orders`, would
+ * otherwise register a handler that is never called and hear nothing about it.
+ * Written as a mapped type so that a kind added to `Handlers` and forgotten
+ * here stops this file compiling.
+ */
+const HANDLER_KINDS: { readonly [Kind in HandlerKind]: true } = Object.freeze({
+  order: true,
+  quote: true,
+  event: true,
+  problem: true,
+});
 
 export interface CatalogNamespace {
   /**
@@ -123,62 +255,86 @@ export interface CatalogNamespace {
 
 export interface OrdersNamespace {
   /**
-   * Receives paid orders and answers each one with what the handler returns:
-   * the goods, a refusal, or an acceptance to deliver later.
+   * The calls for an order named by its identifier, without asking us
+   * anything.
    *
-   * The subscription is outgoing — the merchant opens it, and nothing of
-   * theirs has to be reachable from outside. It carries the price questions
-   * and the order events too, so a process needs one of these and not three.
+   * This is the one place an identifier of ours is written by a merchant, and
+   * it is here for the process that kept nothing else: a job queued against
+   * our identifier, a row in their own database. It reaches no gateway, which
+   * is the point — `get` below would tell them more about the order, and
+   * during an outage it cannot tell them anything at all, while a delivery
+   * that comes back as "the network failed, call again" is exactly the answer
+   * they need to keep retrying.
    */
-  subscribe(handler: OrderHandler, options?: SubscribeOptions): Subscription;
-
-  /** The goods for an order taken on earlier. Idempotent by the order's identifier. */
-  deliver(orderId: string, delivery: Delivery): Promise<OrderCallResponse>;
-
-  /** A final "this cannot be delivered" for an order already taken on. */
-  refuse(orderId: string, refusal: Refusal): Promise<OrderCallResponse>;
+  forId(orderId: string): OrderHandle;
 
   /**
-   * Takes an order on without delivering yet, from outside a handler.
+   * One order and the state it is in, with the calls that close it.
    *
-   * Inside a handler the same thing is said by returning `{ accepted }`, which
-   * is what the portal's examples do; this is here for the merchant who
-   * decides later, in another part of their code.
+   * A round trip, and what it buys is the order itself: its parameters, what
+   * it was sold for, and where it stands.
    */
-  accept(orderId: string, acceptance?: Acceptance): Promise<OrderAcceptResponse>;
+  get(orderId: string): Promise<LiveOrderWithStatus>;
 
-  /** One order and the state it is in. */
-  get(orderId: string): Promise<OrderWithStatus>;
-
-  /** Orders and the states they are in; with `open`, only those still owed something. */
-  list(query?: { readonly open?: boolean }): Promise<OrderList>;
-}
-
-/**
- * What a process that answers only price questions can still ask for.
- *
- * The order subscription is where the events live, so there is nothing here
- * about them; what is here is the one thing such a process would otherwise
- * have no way to set, and would then be given the error console whether it
- * wanted it or not.
- */
-export type QuoteOptions = Pick<SubscribeOptions, "onProblem">;
-
-export interface PricingNamespace {
   /**
-   * Answers "how much is this and is it there" for the cards whose price is
-   * computed at the moment of purchase.
+   * Orders and the states they are in; with `open`, only those still owed
+   * something.
    *
-   * It runs on the same subscription as the orders, so a merchant answering
-   * price questions this way hosts nothing.
+   * The list is what a process reads after a restart: every order it still
+   * owes a delivery for, each one able to be delivered or refused on the spot.
    */
-  onQuote(handler: QuoteHandler, options?: QuoteOptions): Subscription;
+  list(query?: { readonly open?: boolean }): Promise<readonly LiveOrderWithStatus[]>;
 }
 
 export interface CoinslotClient {
   readonly catalog: CatalogNamespace;
   readonly orders: OrdersNamespace;
-  readonly pricing: PricingNamespace;
+
+  /**
+   * Registers what this process answers for one kind.
+   *
+   * Once per kind: a second registration is refused rather than replacing the
+   * first, because one message goes to one handler and a silently replaced
+   * handler is a process that has stopped answering without saying so.
+   *
+   * Handlers may be registered before or after `start`; the loop reads them
+   * when an envelope arrives, not when it begins.
+   */
+  on<Kind extends HandlerKind>(kind: Kind, handler: Handlers[Kind]): void;
+
+  /**
+   * Opens the subscription and returns once it is running.
+   *
+   * The subscription is outgoing — this side opens it, and nothing of the
+   * merchant's has to be reachable from outside. It carries the orders, the
+   * price questions and the order events together, so a process needs one of
+   * these and not three.
+   */
+  start(): Promise<void>;
+
+  /**
+   * Stops the subscription and waits for it to finish. Safe to call twice, and
+   * safe to call on a client that was never started.
+   *
+   * Two things are abandoned rather than finished, and they are not abandoned
+   * on the same terms. A poll parked at the gateway is dropped, and whatever
+   * it would have carried was never handed to anybody, so it is redelivered.
+   * An answer already on its way — a delivery the handler produced a moment
+   * ago — is dropped too, and there the honest thing to say is that nobody on
+   * this side knows whether it arrived first: the order may already be closed
+   * by it, or may come back. The merchant is told which of their orders that
+   * happened to, because on their side the work happened.
+   *
+   * Stopping does not drain. The contract has a word for a poll that asks for
+   * whatever is queued right now and comes straight back, and it is not what a
+   * worker shutting down wants: draining pulls more work into a process that
+   * is going away.
+   *
+   * The handlers survive it. A supervisor that stops a client and starts it
+   * again is running the same process, and having to register everything a
+   * second time would be a second place for the two to disagree.
+   */
+  stop(): Promise<void>;
 }
 
 /**
@@ -228,7 +384,7 @@ const failedCall = (repeatIsSafe: boolean, failure: TransportFailure): OrderCall
 });
 
 /**
- * The reporter a subscription gets when the merchant passed none.
+ * The reporter a client gets when the merchant registered none.
  *
  * A library writing to the console is a small rudeness. A worker that stopped
  * on a contract mismatch and said nothing to anybody is a merchant learning
@@ -285,6 +441,11 @@ const addressOf = (baseUrl: string | undefined): string => {
   return baseUrl;
 };
 
+/** Refuses to compile if a kind is added to `Handlers` and not registered here. */
+const assertEveryKindIsRegistered = (kind: never): never => {
+  throw new TypeError(`on() has no place to put a handler for ${JSON.stringify(kind)}`);
+};
+
 export const createClient = (options: ClientOptions): CoinslotClient => {
   const gateway: Gateway = {
     apiKey: keyOf(options.apiKey),
@@ -300,84 +461,20 @@ export const createClient = (options: ClientOptions): CoinslotClient => {
   };
 
   /**
-   * One subscription, with the loop behind it and the handlers it dispatches
-   * to.
+   * The handlers, and the loop that dispatches to them.
    *
-   * Each subscription owns its own registry rather than sharing one with the
-   * client, and that is the point rather than tidiness. A shared registry
-   * means the reporter a merchant passed is one field that every loop reads at
-   * the moment it reports — so the problems of a subscription that is winding
-   * down arrive at the reporter of the one that replaced it, describing orders
-   * that subscription never saw, while the merchant who asked to hear about
-   * them hears nothing.
+   * The registry belongs to the client and not to any one loop, which is what
+   * lets a merchant stop and start again on the handlers they already
+   * registered. `worker` is the loop currently running, if one is; it also
+   * ends on its own when the gateway turns out to speak another dialect, which
+   * is why every reader asks it whether it is still running rather than
+   * assuming that a worker that exists is a worker that polls.
    */
-  interface Live {
-    readonly registry: HandlerRegistry;
-    /**
-     * The loop, which is the one part of a subscription that can be replaced
-     * under it. A loop ends on its own when the gateway turns out to speak
-     * another dialect; if a later registration built a whole new subscription
-     * around a new loop, the handle the merchant is already holding would stop
-     * naming anything — their stop() would return having stopped a loop that
-     * was already over while the replacement polled on, and the handlers and
-     * the reporter they registered would have been left behind with it.
-     */
-    worker: RunningWorker;
-    readonly subscription: Subscription;
-    /** Set once stopping begins, and shared by every caller of stop(). */
-    stopping?: Promise<void>;
-  }
-
-  let live: Live | undefined;
-
-  const beginStopping = (owned: Live): Promise<void> => {
-    // One promise for every caller, so a shutdown routine and a signal handler
-    // that both call stop() both wait for the same ending rather than the
-    // second one returning at once and letting the process exit with a
-    // delivery still in flight.
-    owned.stopping ??= owned.worker.stop().then(() => {
-      // Only now, and this order is the whole of the fix: the loop reports its
-      // last problems — an answer that did not get through, a batch it left
-      // unread — while it is stopping, and those go to the reporter this
-      // subscription was given. Torn down first, they would go to the console
-      // and the merchant would never learn that a delivery went unanswered.
-      if (live === owned) live = undefined;
-    });
-
-    return owned.stopping;
-  };
-
-  const startedSubscription = (): Live => {
-    reachable();
-
-    if (live?.stopping !== undefined) {
-      throw new TypeError(
-        "this client's subscription is being stopped: await that stop() before registering a handler again, or the handler would be registered on a loop that is going away",
-      );
-    }
-
-    if (live !== undefined) {
-      // The subscription is still the merchant's; only its loop ended, and it
-      // ended for a reason that has not gone away — a gateway of another
-      // dialect is still of another dialect. Starting a loop over the same
-      // handlers reports that again, where handing back the dead one would
-      // register a handler on something that will never poll and say nothing.
-      if (!live.worker.running()) live.worker = startWorker(gateway, live.registry);
-
-      return live;
-    }
-
-    const registry: HandlerRegistry = { problem: reportToConsole };
-    const started: Live = {
-      registry,
-      worker: startWorker(gateway, registry),
-      subscription: { stop: () => beginStopping(started) },
-    };
-
-    live = started;
-
-    return started;
-  };
+  const registry: HandlerRegistry = { problem: reportToConsole };
+  const registered = new Set<HandlerKind>();
+  let worker: RunningWorker | undefined;
+  /** Set while a stop is in flight, and shared by every caller of stop(). */
+  let stopping: Promise<void> | undefined;
 
   const orderCall = async (
     route: "deliver_order" | "refuse_order",
@@ -392,6 +489,58 @@ export const createClient = (options: ClientOptions): CoinslotClient => {
       ? answer.document
       : { ok: false, error: failedCall(route === "deliver_order", answer.failure) };
   };
+
+  const acceptCall = async (
+    orderId: string,
+    acceptance: Acceptance | undefined,
+  ): Promise<OrderAcceptResponse> => {
+    reachable();
+
+    const answer = await callRoute(gateway, "accept_order", {
+      path: { order_id: orderId },
+      body: acceptance ?? {},
+    });
+
+    // Accepting the same order again is ordinary: an order is taken on afresh
+    // on every redelivery, so a repeat does no work twice.
+    return answer.ok ? answer.document : { ok: false, error: failedCall(true, answer.failure) };
+  };
+
+  /**
+   * The calls one order answers to, closed over that order's identifier and
+   * over this client.
+   *
+   * This closure is the whole mechanism. The identifier is captured here, once,
+   * at the moment the order was read — off the stream or out of our record —
+   * and never travels back through a merchant's hands, where it could be the
+   * wrong string. What holds the client is the same closure: `orderCall` and
+   * `acceptCall` above are this client's, so an order kept in a merchant's map
+   * for four hours still knows which gateway to call and with whose key.
+   */
+  const callsFor = (orderId: string): OrderCalls => ({
+    delivered: (delivery) => ({ delivered: delivery }),
+    refused: (refusal) => ({ refused: refusal }),
+    accepted: (acceptance) => ({ accepted: acceptance ?? {} }),
+    deliver: (delivery) => orderCall("deliver_order", orderId, delivery),
+    refuse: (refusal) => orderCall("refuse_order", orderId, refusal),
+    accept: (acceptance) => acceptCall(orderId, acceptance),
+  });
+
+  const withCalls = <Shape extends Order>(order: Shape): Shape & OrderCalls =>
+    Object.assign({}, order, callsFor(order.id));
+
+  const askedWithAnswers = (question: QuoteRequest): LiveQuoteRequest =>
+    Object.assign({}, question, {
+      available: (price: Money, asOf?: string): QuoteResponse => ({
+        available: true,
+        price,
+        as_of: asOf ?? new Date().toISOString(),
+      }),
+      unavailable: (asOf?: string): QuoteResponse => ({
+        available: false,
+        as_of: asOf ?? new Date().toISOString(),
+      }),
+    });
 
   const document = async <Name extends "publish_card" | "get_order" | "list_orders">(
     route: Name,
@@ -412,72 +561,123 @@ export const createClient = (options: ClientOptions): CoinslotClient => {
     },
 
     orders: {
-      subscribe: (handler, subscribeOptions) => {
-        // Everything that can refuse this call happens before anything is
-        // written down, so a call that threw leaves no trace and the same call
-        // made again once the address is there succeeds. Registering first and
-        // refusing afterwards would tell the second attempt that it had
-        // already registered.
-        const owned = startedSubscription();
+      forId: (orderId) => ({ id: orderId, ...callsFor(orderId) }),
 
-        if (owned.registry.order !== undefined) {
-          throw new TypeError(
-            "orders.subscribe was called twice on one client: the second handler would silently replace the first, and one order goes to one handler",
-          );
-        }
+      get: async (orderId) =>
+        withCalls(await document("get_order", { path: { order_id: orderId } })),
 
-        owned.registry.order = handler;
-        if (subscribeOptions?.onEvent !== undefined)
-          owned.registry.event = subscribeOptions.onEvent;
-        if (subscribeOptions?.onProblem !== undefined)
-          owned.registry.problem = subscribeOptions.onProblem;
-
-        return owned.subscription;
-      },
-
-      deliver: (orderId, delivery) => orderCall("deliver_order", orderId, delivery),
-
-      refuse: (orderId, refusal) => orderCall("refuse_order", orderId, refusal),
-
-      accept: async (orderId, acceptance) => {
-        reachable();
-
-        const answer = await callRoute(gateway, "accept_order", {
-          path: { order_id: orderId },
-          body: acceptance ?? {},
-        });
-
-        // Accepting the same order again is ordinary: an order is taken on
-        // afresh on every redelivery, so a repeat does no work twice.
-        return answer.ok ? answer.document : { ok: false, error: failedCall(true, answer.failure) };
-      },
-
-      get: (orderId) => document("get_order", { path: { order_id: orderId } }),
-
-      list: (query) =>
-        document("list_orders", {
+      list: async (query) => {
+        const listed = await document("list_orders", {
           // The wire carries the two words rather than a boolean, because a
           // query string carries text. The merchant writes the boolean their
           // language has and this is where the two meet.
           query: query?.open === undefined ? {} : { open: query.open ? "true" : "false" },
-        }),
+        });
+
+        return listed.orders.map((order) => withCalls(order));
+      },
     },
 
-    pricing: {
-      onQuote: (handler, quoteOptions) => {
-        const owned = startedSubscription();
+    on(kind, handler) {
+      if (!Object.hasOwn(HANDLER_KINDS, kind)) {
+        throw new TypeError(
+          `on() was given ${JSON.stringify(kind)}, which is not a kind this stream carries: the kinds are ${Object.keys(
+            HANDLER_KINDS,
+          )
+            .map((known) => `'${known}'`)
+            .join(", ")}`,
+        );
+      }
 
-        if (owned.registry.quote !== undefined) {
-          throw new TypeError(
-            "pricing.onQuote was called twice on one client: the second handler would silently replace the first",
-          );
+      if (registered.has(kind)) {
+        throw new TypeError(
+          `on('${kind}') was called twice on one client: the second handler would silently replace the first, and one message goes to one handler`,
+        );
+      }
+
+      // Narrowed off the generic so that the switch below is exhaustive over
+      // the kinds rather than over whatever this call was instantiated with.
+      const which: HandlerKind = kind;
+
+      switch (which) {
+        case "order": {
+          // The merchant's handler is wrapped rather than registered as it
+          // stands: the loop reads a plain order off the envelope, and the
+          // calls that close it are this client's to attach.
+          const answering = handler as Handlers["order"];
+
+          registry.order = (arrived) => answering(withCalls(arrived));
+          break;
         }
+        case "quote": {
+          const answering = handler as Handlers["quote"];
 
-        owned.registry.quote = handler;
-        if (quoteOptions?.onProblem !== undefined) owned.registry.problem = quoteOptions.onProblem;
+          registry.quote = (asked) => answering(askedWithAnswers(asked));
+          break;
+        }
+        case "event": {
+          registry.event = handler as Handlers["event"];
+          break;
+        }
+        case "problem": {
+          registry.problem = handler as Handlers["problem"];
+          break;
+        }
+        default:
+          return assertEveryKindIsRegistered(which);
+      }
 
-        return owned.subscription;
-      },
+      // Written down only once everything that could refuse this call has
+      // passed, so a call that threw leaves no trace and the same call made
+      // again succeeds.
+      registered.add(which);
+    },
+
+    start: async () => {
+      reachable();
+
+      if (stopping !== undefined) {
+        throw new TypeError(
+          "this client is being stopped: await that stop() before starting it again, or the loop being started would be racing the one going away",
+        );
+      }
+
+      if (worker?.running() === true) {
+        throw new TypeError(
+          "this client is already started: a second loop would open a second long poll for one merchant, and an envelope handed to one of them is not handed to the other",
+        );
+      }
+
+      if (
+        registry.order === undefined &&
+        registry.quote === undefined &&
+        registry.event === undefined
+      ) {
+        throw new TypeError(
+          "this client has nothing registered to answer with: register at least one of on('order'), on('quote') or on('event') before start(), or the loop would take work off the queue that nobody answers",
+        );
+      }
+
+      worker = startWorker(gateway, registry);
+    },
+
+    stop: async () => {
+      const owned = worker;
+
+      // A client that was never started has nothing to stop, and saying so by
+      // returning is what lets a shutdown routine call this unconditionally.
+      if (owned === undefined) return;
+
+      // One promise for every caller, so a shutdown routine and a signal
+      // handler that both call stop() both wait for the same ending rather
+      // than the second one returning at once and letting the process exit
+      // with a delivery still in flight.
+      stopping ??= owned.stop().finally(() => {
+        if (worker === owned) worker = undefined;
+        stopping = undefined;
+      });
+
+      await stopping;
     },
   };
 };

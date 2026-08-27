@@ -174,6 +174,7 @@ async function main(): Promise<void> {
 
   const booted = await bootGateway(realFacilitator, env);
   const merchant = startMerchant(booted.baseUrl, env.MERCHANT_API_KEY ?? "");
+  await merchant.start();
   const buyer = makeBuyer({ baseUrl: booted.baseUrl, privateKey: buyerKey, maxUsd });
 
   // A cheap asynchronous eSIM: the money moves at the purchase in one

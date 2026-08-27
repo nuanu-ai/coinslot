@@ -108,11 +108,12 @@
 ## Подтвердить выдачу отдельным вызовом
 
 Заказ, принятый к исполнению, вы закрываете вызовом `deliver`, когда выдача
-закончилась. Второй аргумент — результат по схеме из карточки; агенту он
-уходит как есть.
+закончилась. Вызов делается на самом заказе — на том объекте, который пришёл в
+обработчик или который вы перечитали у нас, — а аргумент у него один: результат
+по схеме из карточки, и агенту он уходит как есть.
 
 ```ts
-await coinslot.orders.deliver(order.id, { access_url: url, expires_at: until })
+await order.deliver({ access_url: url, expires_at: until })
 ```
 
 В выдаче есть каждое поле, которое схема результата в карточке обещает
@@ -143,7 +144,7 @@ await coinslot.orders.deliver(order.id, { access_url: url, expires_at: until })
 можно отказаться отдельным вызовом.
 
 ```ts
-await coinslot.orders.refuse(order.id, {
+await order.refuse({
   code: 'out_of_stock',
   message: 'Поставщик не подтвердил номер',
 })
@@ -165,12 +166,22 @@ await coinslot.orders.refuse(order.id, {
 ```ts
 const order = await coinslot.orders.get(orderId)
 const open = await coinslot.orders.list({ open: true })
+
+for (const waiting of open) {
+  if (waiting.merchant_item_id === 'access-monthly') {
+    await waiting.deliver({ access_url: url })
+  }
+}
 ```
 
 Первый вызов возвращает один заказ, второй — все незакрытые. Нужны они там,
 где ваш процесс перезапустился и своей записи о заказе не осталось: список
 незакрытых показывает, что ещё ждёт выдачи, и восстанавливать эту картину по
 одной своей базе не приходится.
+
+Заказы отсюда — те же самые объекты, что приходят в обработчик: `deliver` и
+`refuse` вызываются прямо на них. После перезапуска процесс проходит по списку
+и закрывает то, что готово, не собирая идентификаторы.
 
 ## События по той же подписке
 

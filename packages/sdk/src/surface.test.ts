@@ -441,32 +441,37 @@ describe("a price question that carries its own answer", () => {
 
   it("stamps an answer the merchant did not date with the moment they gave it", async () => {
     // A merchant who computed the price just now has looked just now, and the
-    // gateway reads `as_of` to decide how fresh the answer is. What must not
-    // happen is a moment invented out of nothing, so this is checked against a
-    // clock the test controls rather than against a range.
+    // gateway reads `as_of` to decide how fresh the answer is — so the one
+    // thing that must not happen is a moment taken from somewhere else. It is
+    // bracketed by real time rather than compared to a constant: what is being
+    // promised is "when you answered", and only the bracket says that.
     const bodies: Record<string, unknown>[] = [];
 
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-08-26T10:21:30.000Z"));
+    const coinslot = await clientOver({
+      poll_worker: polling(batch(envelopes.quote)),
+      answer_quote: (call) => {
+        bodies.push(call.body as Record<string, unknown>);
+        return { body: { used: true } };
+      },
+    });
 
-    try {
-      const coinslot = await clientOver({
-        poll_worker: polling(batch(envelopes.quote)),
-        answer_quote: (call) => {
-          bodies.push(call.body as Record<string, unknown>);
-          return { body: { used: true } };
-        },
-      });
+    coinslot.on("quote", (asked) => asked.available({ amount: "3.50", currency: "USD" }));
+    running = coinslot;
 
-      coinslot.on("quote", (asked) => asked.available({ amount: "3.50", currency: "USD" }));
-      running = coinslot;
-      await coinslot.start();
+    const before = Date.now();
+    await coinslot.start();
+    await waitUntil(() => bodies.length === 1, "the price to reach the gateway");
+    const after = Date.now();
 
-      await vi.waitUntil(() => bodies.length === 1, { timeout: 5_000, interval: 1 });
-      expect(bodies[0]?.as_of).toBe("2026-08-26T10:21:30.000Z");
-    } finally {
-      vi.useRealTimers();
-    }
+    const stamped = Date.parse(String(bodies[0]?.as_of));
+
+    expect(Number.isNaN(stamped)).toBe(false);
+    expect(stamped).toBeGreaterThanOrEqual(before);
+    expect(stamped).toBeLessThanOrEqual(after);
+
+    // And not the one moment the question itself was carrying, which is the
+    // nearest wrong answer there is.
+    expect(bodies[0]?.as_of).not.toBe(question.expires_at);
   });
 
   it("answers that there is none, and carries no price when it does", async () => {

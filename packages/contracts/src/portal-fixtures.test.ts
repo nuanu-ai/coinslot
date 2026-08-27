@@ -105,12 +105,24 @@ const escaped = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\
 /** Where in a TypeScript or JSON example a token of each kind has to appear. */
 const occursIn = (fence: string, token: Token): boolean => {
   switch (token.kind) {
-    // `email:` or `"email":` — a name in the position of a name.
+    // A name in the position of a name. There are two such positions on the
+    // portal's pages.
     case "key":
-      // The left boundary is what stops `code:` matching inside
-      // `reason_code:`. Without it a renamed field passed the guard, and a
-      // rename is the most consequential drift a portal edit can carry.
-      return new RegExp(`(?<![\\w$])["']?${escaped(token.text)}["']?\\s*:`).test(fence);
+      // `email:` or `"email":`. The left boundary is what stops `code:`
+      // matching inside `reason_code:`. Without it a renamed field passed the
+      // guard, and a rename is the most consequential drift a portal edit can
+      // carry.
+      //
+      // And `.delivered(` — the call that builds the answer. The SDK's own
+      // examples write `order.delivered({ … })` rather than the object
+      // literal, so the wrapper the wire calls `delivered` reaches the page as
+      // a method of that name and nowhere else. The dot in front is what keeps
+      // the boundary: a call renamed to `.handedOver(` fails here exactly as a
+      // renamed field does, and `.unavailable(` is not `.available(`.
+      return (
+        new RegExp(`(?<![\\w$])["']?${escaped(token.text)}["']?\\s*:`).test(fence) ||
+        new RegExp(`\\.${escaped(token.text)}\\s*\\(`).test(fence)
+      );
     // `'sync'` or `"sync"` — a string, quotes and all, so one value cannot
     // pass as the tail of a longer one.
     case "text":
@@ -199,6 +211,25 @@ type Fixture =
        * quietly grow into a way of switching the drift check off.
        */
       computed?: string[];
+      /**
+       * Names of the document that the page does not write at all, because the
+       * SDK supplies them.
+       *
+       * `q.available(price, asOf)` sends `{ available, price, as_of }`, and of
+       * those three names only the first is on the page — as the call. The
+       * other two are the call's arguments, and their names live in the SDK's
+       * signature rather than in the merchant's code.
+       *
+       * What still holds them is not this file: the fence is compiled against
+       * the real SDK types, so an argument that changed shape stops the page
+       * compiling, and the SDK's own tests assert which document each of these
+       * calls puts on the wire. This list is the place where that hand-over is
+       * written down rather than left as an unexplained gap.
+       *
+       * It verifies itself the same way `computed` does: a name listed here
+       * that the page does write fails the test.
+       */
+      suppliedBySdk?: string[];
     });
 
 /**
@@ -285,7 +316,10 @@ const fixtures: Fixture[] = [
     // own fixture still occurring, in the other branch. The reverse check is
     // what closes that, and this branch is the one whose names cover the fence.
     completeKeys: true,
-    computed: ["amount", "as_of"],
+    // `available` is the call the page makes, so its name is checked and its
+    // value — the branch marker — is the SDK's to write.
+    computed: ["available", "amount", "as_of"],
+    suppliedBySdk: ["price", "as_of"],
     value: {
       available: true,
       price: { amount: "5.00", currency: "USD" },
@@ -297,7 +331,8 @@ const fixtures: Fixture[] = [
     what: "the same price handler, answering that it is not",
     fence: { file: "portal/cards.md", language: "ts", index: 1 },
     schema: QuoteResponseSchema,
-    computed: ["as_of"],
+    computed: ["available", "as_of"],
+    suppliedBySdk: ["as_of"],
     value: { available: false, as_of: "2026-08-26T10:15:00Z" },
   },
   {
@@ -329,7 +364,8 @@ const fixtures: Fixture[] = [
     // The available branch names every field the fence writes on a line of
     // its own, so it can be held to the example in both directions.
     completeKeys: true,
-    computed: ["amount", "as_of"],
+    computed: ["available", "amount", "as_of"],
+    suppliedBySdk: ["price", "as_of"],
     value: {
       available: true,
       price: { amount: "5.00", currency: "USD" },
@@ -344,7 +380,8 @@ const fixtures: Fixture[] = [
     // No `completeKeys` here: one fence carries both answers, and `price`
     // belongs to the other one. Asking this fixture to account for every name
     // on the page would be asking it about a payload that is not its own.
-    computed: ["as_of"],
+    computed: ["available", "as_of"],
+    suppliedBySdk: ["as_of"],
     value: { available: false, as_of: "2026-08-26T10:15:00Z" },
   },
 ];
@@ -390,6 +427,31 @@ describe("the drift check itself", () => {
     expect(occursIn("const email = order.params.email", token("key", "email"))).toBe(false);
     expect(occursIn("  email: { type: 'string' }", token("key", "email"))).toBe(true);
     expect(occursIn('  "email": "buyer@example.com"', token("key", "email"))).toBe(true);
+  });
+
+  it("counts the call that builds an answer as writing that answer's name", () => {
+    // The examples stopped writing `{ delivered: … }` when the SDK grew the
+    // calls that build it. The wrapper's name is still on the page, as the
+    // call, and it is still the thing a rename would break.
+    expect(occursIn("return order.delivered({ access_url: url })", token("key", "delivered"))).toBe(
+      true,
+    );
+    expect(
+      occursIn("return order.handedOver({ access_url: url })", token("key", "delivered")),
+    ).toBe(false);
+
+    // And the negative branch is not the positive one: a page that only ever
+    // says "there is none" must not satisfy a fixture about a price.
+    expect(occursIn("return q.unavailable(item.checked_at)", token("key", "available"))).toBe(
+      false,
+    );
+    expect(occursIn("return q.available(price, item.checked_at)", token("key", "available"))).toBe(
+      true,
+    );
+
+    // A property read is not a call, so `item.price` still does not count as
+    // writing the name `price`.
+    expect(occursIn("{ amount: item.price }", token("key", "price"))).toBe(false);
   });
 
   it("does not let a renamed field pass as the one it was renamed from", () => {
@@ -483,9 +545,22 @@ describe("the portal's examples pass the schemas", () => {
 
       if (fixture.kind === "transcribed") {
         const computed = new Set(fixture.computed ?? []);
+        const suppliedBySdk = new Set(fixture.suppliedBySdk ?? []);
+
+        // A name the SDK supplies must be one the page really does not write,
+        // or the list has gone stale and is switching the check off for a
+        // field the page could be holding.
+        for (const name of suppliedBySdk) {
+          expect(
+            occursIn(text, { kind: "key", text: name, key: name }),
+            `the example writes "${name}" after all, so it no longer belongs in this fixture's suppliedBySdk list`,
+          ).toBe(false);
+        }
 
         // The transcription is only worth as much as its likeness to the page.
         for (const token of tokensOf(fixture.value)) {
+          if (token.kind === "key" && suppliedBySdk.has(token.text)) continue;
+
           const verdict = driftVerdictOf(text, token, computed);
           const complaint =
             verdict === "missing"

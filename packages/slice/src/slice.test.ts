@@ -5,8 +5,8 @@
  * between them. The gateway is the real gateway, booted in this process on the
  * real HTTP surface with its own in-memory store and queue and a scripted
  * facilitator, so the suite stays free, offline and the same every time. The
- * merchant is the real SDK — `createClient`, `orders.subscribe`,
- * `pricing.onQuote` — answering as a merchant's own process would. The buyer is
+ * merchant is the real SDK — `createClient`, `on('order')`, `on('quote')` and
+ * `start` — answering as a merchant's own process would. The buyer is
  * the official x402 client, signing with a throwaway key and walking the
  * offer → pay → settle exchange against the surface an agent actually calls.
  *
@@ -66,6 +66,7 @@ describe("the stage-one gate: a sandbox purchase, green from catalog to receipt"
     facilitator = new ScriptedFacilitator();
     booted = await bootGateway(() => facilitator);
     merchant = startMerchant(booted.baseUrl, SLICE_MERCHANT_KEY);
+    await merchant.start();
     await merchant.publishCatalog();
     buyer = makeBuyer({ baseUrl: booted.baseUrl, privateKey: TEST_BUYER_KEY, maxUsd: 50 });
   });

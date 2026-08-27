@@ -56,6 +56,7 @@ import {
   type QuoteResponse,
   QuoteResponseSchema,
   type WorkerEnvelope,
+  type WorkerEnvelopeKind,
 } from "@coinslot/contracts";
 import { retryDelayMs } from "./backoff.js";
 import { contractVersion, speaksContract } from "./contract.js";
@@ -78,11 +79,19 @@ const andSoTheOrder = (failure: TransportFailure): string =>
     ? ", so the order will be delivered again"
     : ", so whether the order is delivered again is not something this side can say";
 
-/** What the merchant's code does with one paid order. */
-export type OrderHandler = (order: Order) => HandlerAnswer | Promise<HandlerAnswer>;
+/**
+ * What this loop calls with one paid order off the stream.
+ *
+ * It is not what a merchant writes. The order a merchant's handler receives
+ * carries the calls that close it, and putting those on it is `client.ts`'s
+ * job: this loop reads the envelope and knows nothing about a gateway address
+ * or an API key beyond the one it polls with. So the client registers a
+ * function of this shape which wraps the merchant's own.
+ */
+export type OrderDispatch = (order: Order) => HandlerAnswer | Promise<HandlerAnswer>;
 
-/** What the merchant's code answers to "how much is this and is it there". */
-export type QuoteHandler = (question: QuoteRequest) => QuoteResponse | Promise<QuoteResponse>;
+/** The same, for "how much is this and is it there". */
+export type QuoteDispatch = (question: QuoteRequest) => QuoteResponse | Promise<QuoteResponse>;
 
 /**
  * How this delivery of a message is named, for the one kind that needs it.
@@ -167,17 +176,33 @@ export type ProblemReporter = (problem: WorkerProblem) => void;
  * The handlers the loop dispatches to, read at the moment an envelope is
  * handled rather than captured when the loop starts.
  *
- * That is what lets a merchant write `orders.subscribe(...)` and
- * `pricing.onQuote(...)` on two consecutive lines: the second registration is
- * in place before the first envelope can be dispatched, and the loop does not
- * have to be built twice or started twice.
+ * The registry belongs to the client and outlives any one loop. A merchant
+ * registers what their process answers, starts, stops, and starts again on the
+ * same handlers — and a handler registered while a loop is already running is
+ * in place for the next envelope rather than for the next loop.
  */
 export interface HandlerRegistry {
-  order?: OrderHandler | undefined;
-  quote?: QuoteHandler | undefined;
+  order?: OrderDispatch | undefined;
+  quote?: QuoteDispatch | undefined;
   event?: EventHandler | undefined;
   problem: ProblemReporter;
 }
+
+/**
+ * Which registration each kind on the stream is answered by, in the word a
+ * merchant passes to `on`.
+ *
+ * Written as a map over the contract's own kinds rather than as sentences
+ * inside the three messages, so that a fourth kind added to the envelope — the
+ * confirmation request, whose shape the contract does not carry yet — stops
+ * this file compiling until it has a registration of its own. The `switch` in
+ * `dispatch` below is the second half of the same guard.
+ */
+export const REGISTERED_AS: { readonly [Kind in WorkerEnvelopeKind]: string } = {
+  order: "order",
+  quote_request: "quote",
+  order_event: "event",
+};
 
 /**
  * Time, as the loop sees it.
@@ -289,7 +314,8 @@ export const POLL_WAIT_SECONDS = 25;
  */
 export const POLL_DEADLINE_MS = POLL_WAIT_SECONDS * 2 * 1_000;
 
-export interface Subscription {
+/** What `startWorker` hands its caller, which is the client and never a merchant. */
+export interface RunningWorker {
   /**
    * Stops the loop and waits for it to finish. Safe to call twice.
    *
@@ -308,10 +334,6 @@ export interface Subscription {
    * is going away.
    */
   stop(): Promise<void>;
-}
-
-/** What `startWorker` hands its caller, which is a little more than a merchant sees. */
-export interface RunningWorker extends Subscription {
   /** Whether the loop is still going. False once it has stopped for any reason. */
   running(): boolean;
 }
@@ -427,7 +449,7 @@ export const startWorker = (
         kind: WORKER_PROBLEM_KINDS.NO_HANDLER,
         fatal: false,
         subject: order.id,
-        message: `order ${order.id} arrived and no handler was registered with orders.subscribe, so it was left unanswered and will be delivered again`,
+        message: `order ${order.id} arrived and no handler was registered with on('${REGISTERED_AS.order}'), so it was left unanswered and will be delivered again`,
       });
       return;
     }
@@ -472,7 +494,7 @@ export const startWorker = (
         kind: WORKER_PROBLEM_KINDS.NO_HANDLER,
         fatal: false,
         subject: question.price_id,
-        message: `a price question for ${question.merchant_item_id} arrived and no handler was registered with pricing.onQuote, so it was left unanswered`,
+        message: `a price question for ${question.merchant_item_id} arrived and no handler was registered with on('${REGISTERED_AS.quote_request}'), so it was left unanswered`,
       });
       return;
     }
@@ -548,7 +570,7 @@ export const startWorker = (
         kind: WORKER_PROBLEM_KINDS.NO_HANDLER,
         fatal: false,
         subject: event.order_id,
-        message: `${event.type} arrived for order ${event.order_id} and nothing is listening for events; pass onEvent to orders.subscribe to receive them`,
+        message: `${event.type} arrived for order ${event.order_id} and nothing is listening for events; register one with on('${REGISTERED_AS.order_event}') to receive them`,
       });
       return;
     }

@@ -31,9 +31,10 @@ three on one subscription.
    lag — the long poll is parked server-side, so the latency-critical case
    (the quote question of a synchronous purchase, where the agent is waiting)
    is bounded by the network, not by a poll interval.
-5. The SDK hides the transport entirely: `orders.subscribe(handler)` and
-   `pricing.onQuote(handler)` are loops over the poll call. Switching
-   transport later must not change merchant code.
+5. The SDK hides the transport entirely: a merchant registers what their
+   process answers with `on(kind, handler)` — one call per kind the stream
+   carries — and opens the channel with `start()`, which is the loop over the
+   poll call. Switching transport later must not change merchant code.
 
 ## Rejected alternatives
 

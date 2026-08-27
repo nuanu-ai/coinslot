@@ -137,35 +137,50 @@ if ('errors' in published) {
 подпиской. Принимать входящие соединения у себя не нужно: подписку открывает
 ваша сторона, так что ни публичного адреса, ни открытых портов не потребуется.
 
+Вы объявляете, на что ваш процесс отвечает, вызовом `on` — по одному на каждый
+вид сообщения, — и затем открываете подписку вызовом `start`. Одним видом
+приходят заказы, другим вопросы о цене, третьим события по заказам; все они
+идут одним соединением, поэтому подписка нужна одна.
+
 В синхронном режиме обработчик возвращает результат сразу — либо выдачу, либо
-отказ:
+отказ. Оба ответа собираются на самом заказе:
 
 ```ts
-coinslot.orders.subscribe(async (order) => {
+coinslot.on('order', async (order) => {
   const access = await grantAccess(order.params.email, {
     idempotencyKey: order.id,
   })
 
   if (!access.ok) {
-    return { refused: { code: 'out_of_stock', message: 'Мест на тарифе нет' } }
+    return order.refused({ code: 'out_of_stock', message: 'Мест на тарифе нет' })
   }
 
-  return { delivered: { access_url: access.url } }
+  return order.delivered({ access_url: access.url })
 })
+
+await coinslot.start()
 ```
 
+Ответ — это то, что обработчик вернул. Отправляем его мы сами, и отдельного
+вызова «ответить» нет: забытый ответ означал бы неотданный заказ, а
+возвращённое значение забыть нельзя.
+
 В асинхронном режиме обработчик отвечает сразу, что заказ принят, а саму
-выдачу подтверждает отдельным вызовом — позже и из любого места вашего кода:
+выдачу подтверждает отдельным вызовом — позже и из любого места вашего кода.
+Вызов делается на сохранённом заказе, поэтому идентификатор наш вам нигде
+передавать не приходится:
 
 ```ts
-coinslot.orders.subscribe(async (order) => {
+coinslot.on('order', async (order) => {
   await startProvisioning(order.params.email, { idempotencyKey: order.id })
 
-  return { accepted: { eta_seconds: 60 } }
+  return order.accepted({ eta_seconds: 60 })
 })
 
-// позже, когда выдача закончилась, — по сохранённому идентификатору заказа:
-await coinslot.orders.deliver(order.id, { access_url: url })
+await coinslot.start()
+
+// позже, когда выдача закончилась, — по сохранённому заказу:
+await order.deliver({ access_url: url })
 ```
 
 В `accepted` можно назвать ожидаемое время выдачи, если оно вам известно;
@@ -173,6 +188,10 @@ await coinslot.orders.deliver(order.id, { access_url: url })
 принятым, и на нём идёт срок выдачи, названный в вашей карточке. У синхронного
 режима такого поля в карточке нет: сколько ждать синхронного ответа, назначаем
 мы, одним числом для всех.
+
+Если ваш процесс успел перезапуститься, сохранённого объекта у вас уже нет.
+Тогда незакрытые заказы перечитываются у нас, и выдача делается на них же —
+[«Узнать состояние заказа»](/orders).
 
 Вызов `deliver` идемпотентен по идентификатору заказа: позовёте его дважды —
 получите тот же успех, второй выдачи не появится. Повторять его после обрыва
@@ -182,7 +201,7 @@ await coinslot.orders.deliver(order.id, { access_url: url })
 дожидаясь своего срока:
 
 ```ts
-await coinslot.orders.refuse(order.id, {
+await order.refuse({
   code: 'out_of_stock',
   message: 'Поставщик не подтвердил номер',
 })
@@ -230,23 +249,27 @@ await coinslot.orders.refuse(order.id, {
 Обработчик цены вы ставите рядом с обработчиком заказов, в том же процессе:
 
 ```ts
-coinslot.pricing.onQuote(async (q) => {
+coinslot.on('quote', async (q) => {
   const current = await currentPriceOf(q.merchant_item_id)
 
   if (current === null) {
-    return { available: false, as_of: new Date().toISOString() }
+    return q.unavailable()
   }
 
-  return {
-    available: true,
-    price: { amount: current.amount, currency: 'USD' },
-    as_of: current.checked_at,
-  }
+  return q.available(
+    { amount: current.amount, currency: 'USD' },
+    current.checked_at,
+  )
 })
 ```
 
 Ответ «нет в наличии» цены не несёт — по такому ответу мы покупку не
 начинаем.
+
+Вторым аргументом идёт `as_of` — момент, на который цена верна. Он отличает
+«сходил и посмотрел» от «взял из кеша», и по нему мы решаем, насколько ответу
+доверять. Не назвали — подставится момент самого ответа; отвечаете из кеша —
+называйте момент, когда этот кеш наполнялся.
 
 Это путь по умолчанию: канал тот же, что у заказов, выставлять наружу ничего
 не нужно. Второй транспорт, хук цены, — HTTP-адрес на вашей стороне; он для
