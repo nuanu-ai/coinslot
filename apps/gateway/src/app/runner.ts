@@ -607,6 +607,18 @@ export class OrderRunner {
           break;
 
         default:
+          // Everything else is carried out after the order is written, and
+          // `carriedOutAfterwards` is asked rather than assumed. The two lists
+          // have to name the same effects, and the way they could come apart is
+          // silent in the direction that costs the most: an effect taken out of
+          // what runs afterwards but never added here would be filtered out of
+          // one half and never written by the other, and a merchant would
+          // simply never be handed the work.
+          if (!carriedOutAfterwards(effect)) {
+            throw new Error(
+              `${effect.kind} on ${record.order.id} is written down with the order and this does not know how to write it`,
+            );
+          }
           break;
       }
     }
