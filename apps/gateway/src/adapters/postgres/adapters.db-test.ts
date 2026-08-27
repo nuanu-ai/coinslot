@@ -33,8 +33,10 @@ import { PgBoss } from "pg-boss";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { Gateway } from "../../app/gateway.js";
 import type { Runtime } from "../../app/runtime.js";
+import type { OrderChange, Store } from "../../ports/store.js";
 import { countedIds, testConfig, workUntilStopped } from "../../testing/harness.js";
 import { ScriptedFacilitator } from "../memory/facilitator.js";
+import { MemoryStore } from "../memory/store.js";
 import { PgBossQueue } from "../pgboss/queue.js";
 import { connect, PostgresStore } from "./store.js";
 
@@ -230,6 +232,95 @@ if (databaseUrl === undefined || databaseUrl === "") {
       expect((await store.orderById(orderId))?.order.dispatch.attempts).toBe(3);
     });
 
+    it("lets one of two separate database clients take an order, and makes the other wait to find out", async () => {
+      // The ownership rule, against two clients that share nothing in this
+      // process. The test above races three calls through one store, and a
+      // chain of promises in the adapter would pass it just as well as a row
+      // lock; the in-memory adapter passes its own version of it for exactly
+      // that reason. Here there are two pools and two connections, so the only
+      // thing that can make the second wait for the first is the database.
+      //
+      // What is being decided is the rule the gateway decides inside this same
+      // hold: an order is taken by the first verified payment, and a second
+      // buyer is turned away. Both callers read the order before either writes,
+      // if nothing holds them apart — and then both are its owner, both are
+      // sent to a merchant, and one of the two charges fails on a merchant who
+      // has already handed over the goods.
+      const published = await store.publishCard(
+        { ...syncCard, merchant_item_id: "contested" },
+        now,
+      );
+      const offered = await gateway.beginPurchase(published.id, {});
+      if (offered.step !== "pay") throw new Error("no price was offered");
+      const orderId = offered.order.order.id;
+
+      const alice = connect(databaseUrl);
+      const bob = connect(databaseUrl);
+      const reads: string[] = [];
+      let bobWasBlocked = false;
+
+      try {
+        let letBobIn: () => void = () => undefined;
+        const bobMayStart = new Promise<void>((resolve) => {
+          letBobIn = resolve;
+        });
+
+        /** What one client came away with: the order, or the name of whoever has it. */
+        type Taken = { readonly took: true } | { readonly took: false; readonly heldBy: string };
+
+        const take = (client: PostgresStore, who: string) =>
+          client.withOrder(orderId, async (found): Promise<OrderChange<Taken>> => {
+            reads.push(who);
+            if (who === "alice") {
+              letBobIn();
+              // Waited for rather than slept through: what is wanted is the
+              // moment bob's transaction is actually stuck on this row, which
+              // is the row lock seen from outside the two clients holding it.
+              // It gives up rather than throwing, so that a lock that never
+              // took shows up below as two owners — the defect itself — and
+              // not as a timeout in the plumbing.
+              const until = Date.now() + 5_000;
+              while (Date.now() < until && !bobWasBlocked) {
+                const { rows } = await pool.query<{ blocked: number }>(
+                  "select count(*)::int as blocked from pg_stat_activity" +
+                    " where datname = current_database() and wait_event_type = 'Lock'" +
+                    " and pid <> pg_backend_pid()",
+                );
+                bobWasBlocked = (rows[0]?.blocked ?? 0) > 0;
+                if (!bobWasBlocked) {
+                  await new Promise((resolve) => setTimeout(resolve, 50));
+                }
+              }
+            }
+
+            if (found.paidBy !== null && found.paidBy !== who) {
+              return { result: { took: false, heldBy: found.paidBy } };
+            }
+            return { save: { ...found, paidBy: who }, result: { took: true } };
+          });
+
+        const aliceTaking = take(new PostgresStore(alice.db, countedIds()), "alice");
+        await bobMayStart;
+        const bobTaking = take(new PostgresStore(bob.db, countedIds()), "bob");
+        const [first, second] = await Promise.all([aliceTaking, bobTaking]);
+
+        const decided = [first, second].map((lookup) => (lookup.found ? lookup.result : null));
+        // Exactly one, and the other told whose it is. Without the hold both
+        // read an order nobody owns and both take it.
+        expect(decided).toStrictEqual([{ took: true }, { took: false, heldBy: "alice" }]);
+        // Bob really was made to wait by the database, rather than merely
+        // having been started late.
+        expect(bobWasBlocked).toBe(true);
+        // And he read the order only after alice's write was committed, which
+        // is the whole of what the hold is for.
+        expect(reads).toStrictEqual(["alice", "bob"]);
+        expect((await store.orderById(orderId))?.paidBy).toBe("alice");
+      } finally {
+        await alice.pool.end();
+        await bob.pool.end();
+      }
+    }, 30_000);
+
     it("gives one payment to one order, in one statement, and refuses it to any other", async () => {
       // The replay guard, against the primary key that actually enforces it.
       // Two requests presenting the same payment at the same instant both reach
@@ -251,6 +342,41 @@ if (databaseUrl === undefined || databaseUrl === "") {
 
       const won = [first, second].filter((claim) => claim.claimed);
       expect(won).toHaveLength(1);
+    });
+
+    it("claims a payment the same way in memory and in the database", async () => {
+      // The whole of the application logic is tested against the in-memory
+      // store, so every promise the flows rely on is really a promise about
+      // both adapters. The replay guard is the one where the two are least
+      // alike: a map and a check in memory, one insert and a primary key here.
+      // The same script is run through each and the answers have to match, or
+      // a purchase that the offline suite says is refused is a purchase that
+      // goes through in production.
+      const script = async (subject: Store) => ({
+        first: await subject.claimPayment("fp-parity", "ord_one"),
+        anotherOrder: await subject.claimPayment("fp-parity", "ord_two"),
+        // The retry the portal promises is safe.
+        ownRetry: await subject.claimPayment("fp-parity", "ord_one"),
+        // The sweep runs against a table this suite shares, so what is compared
+        // is that something went and not how many — the count is not the same
+        // question in a table other tests have written to.
+        sweptSomething: (await subject.forgetClaimsBefore(Date.now() + 60_000)) > 0,
+        afterTheSweep: await subject.claimPayment("fp-parity", "ord_two"),
+      });
+
+      const inTheDatabase = await script(store);
+      const inMemory = await script(new MemoryStore(countedIds()));
+
+      expect(inTheDatabase).toStrictEqual(inMemory);
+      // Said outright as well as compared, so a day when both adapters are
+      // wrong in the same way is not a day this test passes.
+      expect(inTheDatabase).toStrictEqual({
+        first: { claimed: true },
+        anotherOrder: { claimed: false, heldBy: "ord_one" },
+        ownRetry: { claimed: true },
+        sweptSomething: true,
+        afterTheSweep: { claimed: true },
+      });
     });
 
     it("forgets claims older than an instant, and says how many went", async () => {
