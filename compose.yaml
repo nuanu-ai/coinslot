@@ -190,6 +190,21 @@ services:
         condition: service_completed_successfully
       gateway:
         condition: service_started
+    healthcheck:
+      # The cabinet answers a probe at the bare root as well as under its mount
+      # point, and this is the thing that was supposed to be asking. Without it
+      # the code carried a route for a caller that did not exist, and Caddy went
+      # up in front of a process that had not finished starting.
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3001/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 3s
+      timeout: 3s
+      retries: 20
 
   # A merchant on the other side, so the surface has something to show. It is
   # the mock merchant of the offline gate — the same two cards, the same price
@@ -222,7 +237,7 @@ services:
       gateway:
         condition: service_started
       cabinet:
-        condition: service_started
+        condition: service_healthy
 
 volumes:
   coinslot-postgres:
