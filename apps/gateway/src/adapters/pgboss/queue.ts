@@ -91,10 +91,21 @@ export const REMINDERS = "coinslot_reminders";
  * queue with no reader, and they are not moved by any migration. Those orders
  * are not lost sight of: the deadline reminders that would close them live on
  * `coinslot_reminders`, which is untouched, so each one still reaches its
- * ending and its refund. But the merchant is never handed the work. Draining
- * the old queue before the upgrade — bring the gateway down, let the workers
- * finish what they hold — is what avoids it, and there is nothing in code that
- * can do it afterwards.
+ * ending, and the refund message it owes is published to the merchant's new
+ * stream. But the work itself is never handed over.
+ *
+ * Emptying that queue first is what avoids it, and the order of the steps is
+ * the whole of the advice. A worker holds nothing: a drawn envelope is finished
+ * in the same pass it was drawn in, so bringing the gateway down does not let
+ * anybody finish anything — it stops the only thing that was draining the
+ * queue. Keep the old gateway running and polling, stop new purchases reaching
+ * it, and wait until `select count(*) from pgboss.job where name =
+ * 'coinslot_envelopes'` is zero.
+ *
+ * Two of the three kinds are published with a delay, and polling cannot reach
+ * those before their time however long it runs. The wait is bounded by the
+ * longest redelivery delay the configuration allows, and short of waiting it
+ * out there is nothing that recovers them.
  */
 export const streamOf = (merchantId: string): string => {
   if (!A_NAME_PG_BOSS_ACCEPTS.test(merchantId)) {

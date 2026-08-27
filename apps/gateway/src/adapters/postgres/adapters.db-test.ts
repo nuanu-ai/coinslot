@@ -644,6 +644,29 @@ if (databaseUrl === null) {
       ).rejects.toThrow();
     });
 
+    it("does not let a decision about an order move it to another merchant", async () => {
+      // The column is left out of the update on purpose, which is a rule
+      // expressed by omission and therefore one nothing else would catch. What
+      // it guards is the two readers agreeing: a merchant's own lists filter on
+      // the column, and the interpreter publishes an order's envelopes to the
+      // merchant inside the document. A save that moved one and not the other
+      // would put an order in one merchant's list and its work on another's
+      // stream, and nothing would say so.
+      const published = await store.publishCard(A, { ...syncCard, merchant_item_id: "kept" }, now);
+      const offered = await gateway.beginPurchase(published.id, {});
+      if (offered.step !== "pay") throw new Error("no price was offered");
+      const orderId = offered.order.order.id;
+
+      await store.withOrder(orderId, (found) => ({
+        save: { ...found, merchantId: B },
+        result: null,
+      }));
+
+      expect((await store.orderById(orderId))?.merchantId).toBe(A);
+      expect((await store.merchantOrder(A, orderId))?.order.id).toBe(orderId);
+      expect(await store.merchantOrder(B, orderId)).toBeNull();
+    });
+
     it("gives each merchant their own cards, orders and receipts and nobody else's", async () => {
       // The scoping, in SQL. Every one of these reads is a predicate rather
       // than a filter over what came back, so a row of somebody else's is never

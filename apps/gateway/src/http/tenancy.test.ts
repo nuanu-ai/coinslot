@@ -364,20 +364,30 @@ describe("what a key can do", () => {
 
 describe("whose envelope a worker draws", () => {
   it("never hands one merchant's order to the other's worker", async () => {
+    // Nobody answers the purchase, which is the point: an order delivered
+    // before the other merchant polls leaves an empty stream either way, and
+    // an empty draw off an empty stream proves nothing. So the card is one
+    // whose goods come later, the money moves at the purchase, and the envelope
+    // is still sitting there unanswered when A turns.
     const { served, harnessed } = await started();
-    const { a, b, cardB } = await twoMerchants(served, harnessed);
-
-    // The purchase is left unpaid-for by nobody: it is priced and paid, which is
-    // what puts an envelope on B's stream. A's worker turns first.
-    const bought = buyOverHttp(harnessed, served, cardB, {
-      merchantId: b.id,
-      onOrder: () => ({ delivered: { access_code: "let-me-in" } }),
+    const a = await harnessed.addMerchant("Merchant A");
+    const b = await harnessed.addMerchant("Merchant B");
+    const cardB = await publish(served, b, laterCardFor("b-later", "B's eSIM"));
+    // The worker turning through the purchase is A's, and it draws nothing —
+    // its own stream is empty. B's worker never runs, so B's envelope is still
+    // waiting when the assertions below are made.
+    await buyOverHttp(harnessed, served, cardB, {
+      merchantId: a.id,
+      onOrder: () => ({ refused: { code: "out_of_stock", message: "not mine" } }),
     });
-    await bought;
 
     const drawnByA = await harnessed.gateway.poll(a.id, 10, 1);
+    const drawnByB = await harnessed.gateway.poll(b.id, 10, 1_000);
 
     expect(drawnByA.envelopes).toStrictEqual([]);
+    // And it was there to be drawn the whole time, so A came back empty from a
+    // stream that was not.
+    expect(drawnByB.envelopes.map((envelope) => envelope.kind)).toStrictEqual(["order"]);
   });
 
   it("holds an envelope for its own merchant while another's worker polls", async () => {

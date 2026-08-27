@@ -384,6 +384,29 @@ describe("MemoryStore orders", () => {
     expect((await store.orderById("ord_1"))?.order.state).toBe("created");
   });
 
+  it("does not let a decision about an order move it to another merchant", async () => {
+    // A sale belongs to whoever made it, settled at the birth of the order and
+    // never again. The Postgres adapter writes the merchant from the row and
+    // leaves the column out of its update, so a save carrying a different one
+    // would put the new merchant in the document and the old one in the column
+    // — an order in one merchant's list whose envelopes go on another's stream.
+    // Nothing reaches this today; the two adapters agreeing is what keeps it
+    // that way.
+    const store = await twoMerchants();
+    await store.addOrder(order("ord_1", "created", A));
+
+    await store.withOrder("ord_1", (found) => ({
+      save: { ...found, merchantId: B, order: { ...found.order, state: "quoted" as const } },
+      result: null,
+    }));
+
+    expect((await store.orderById("ord_1"))?.merchantId).toBe(A);
+    expect((await store.orders(A)).map((held) => held.order.id)).toStrictEqual(["ord_1"]);
+    expect(await store.orders(B)).toStrictEqual([]);
+    // And the change the decision was actually making did land.
+    expect((await store.orderById("ord_1"))?.order.state).toBe("quoted");
+  });
+
   it("hands one merchant their own order and calls another's not found", async () => {
     const store = await twoMerchants();
     await store.addOrder(order("ord_mine", "created", A));

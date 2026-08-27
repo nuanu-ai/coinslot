@@ -275,7 +275,14 @@ export class MemoryStore implements Store {
 
       const decided = await change(found);
       if (decided.save !== undefined) {
-        this.#orders.set(id, Object.freeze({ ...decided.save }));
+        // The merchant comes from the order that was read and not from the
+        // save, exactly as the Postgres adapter takes it from the row: a sale
+        // belongs to whoever made it, settled at the birth of the order and
+        // never again. There the column would have kept the old merchant while
+        // the document took the new one, and the two readers would disagree
+        // about whose order it is; here it would simply change hands. Neither
+        // is a thing a decision about an order gets to do.
+        this.#orders.set(id, Object.freeze({ ...decided.save, merchantId: found.merchantId }));
       }
       return { found: true, result: decided.result };
     });

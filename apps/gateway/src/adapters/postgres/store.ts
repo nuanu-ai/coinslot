@@ -320,7 +320,15 @@ export class PostgresStore implements Store {
 
       const decided = await change(row.record);
       if (decided.save !== undefined) {
-        const next = rowFor(decided.save);
+        // The merchant is taken from the row rather than from what came back.
+        // It is settled at the birth of an order and never again, and this is
+        // where that is actually kept: a save carrying a different one would
+        // otherwise write the new merchant into the document while the column
+        // — which every one of a merchant's own reads filters on — kept the
+        // old. The two readers would then disagree, and the split is exactly
+        // the one that puts an order in one merchant's list while its envelopes
+        // go on another's stream.
+        const next = rowFor({ ...decided.save, merchantId: row.merchantId });
         await tx
           .update(orders)
           .set({

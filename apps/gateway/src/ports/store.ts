@@ -18,6 +18,8 @@
  * across the whole gateway, for the reason written beside the first of them.
  * The rest are the merchants and their keys, whose caller is somebody at a
  * terminal or the door itself, and none of them is reachable from a request.
+ * `withOrder` is in none of the three: it takes the merchant when there is one
+ * to take and says in its own place what leaving it out means.
  *
  * One method is not an accessor and is the reason this is an interface rather
  * than three maps. `withOrder` holds an order still while a decision is made
@@ -303,10 +305,13 @@ export interface Store {
    *
    * It names a key and no merchant, and that is safe only because nothing
    * reachable from a request calls it — the callers are the command somebody
-   * types and the test harness. The cabinet's screens for making and revoking
-   * keys are the step after this one (ADR-0010), and whatever serves them has
-   * to hold the caller's merchant against the key's own before calling this, or
-   * add the merchant here: an identifier alone is not permission to revoke.
+   * types, where one identifier already names the row, and the test harness.
+   * The cabinet's screens for making and revoking keys are the step after this
+   * one (ADR-0010), and what serves them wants a second method that takes the
+   * merchant, the way every other scoped write here does. Checking the caller's
+   * merchant against the key's own before calling this would work — nothing
+   * ever moves a key between merchants — but it is a fact a reader has to go
+   * and establish, and it is the shape this change removed everywhere else.
    */
   disableKey(id: string, at: number): Promise<StoredKey | null>;
 

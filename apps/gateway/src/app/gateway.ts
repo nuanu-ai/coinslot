@@ -656,6 +656,18 @@ export class Gateway {
       }
 
       if (applied.outcome !== "moved") {
+        if (applied.outcome === "no_such_order") {
+          // Orders are never deleted, so inside this loop that answer has one
+          // meaning: the scope above refused an envelope whose order is not
+          // this merchant's. It cannot happen while an envelope only ever
+          // reaches the stream of the merchant on its own order — which is why
+          // it is said out loud rather than counted as an ordinary ending. A
+          // silence here is the one way the belt could catch something and
+          // nobody find out.
+          console.error(
+            `[gateway] ${merchantId} drew an envelope for ${orderId}, which is not their order`,
+          );
+        }
         // The machine will not record the hand-over, so nobody is given the
         // order. Not every ending refuses it — an order that is delivered or
         // owes a refund is handed over again and answered from where it stands,
