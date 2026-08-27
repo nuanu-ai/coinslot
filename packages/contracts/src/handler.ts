@@ -73,8 +73,9 @@ export const RefusalSchema = z.strictObject({
  *
  * The portal promises that a delivery reaches the agent as the merchant wrote
  * it. There is one exception, and it is the one written down at
- * `PROTOTYPE_KEY_IS_DROPPED` in `param-spec.ts` — of the four places that
- * share it, this is where the loss would actually reach the agent.
+ * `PROTOTYPE_KEY_IS_DROPPED` in `param-spec.ts` — of the five places that
+ * share it, this is the one where the loss lands in what the agent is handed
+ * rather than in what they sent.
  *
  * It is named and exported rather than left inside the answer below because
  * two surfaces carry it: what a synchronous handler returns, and the body of

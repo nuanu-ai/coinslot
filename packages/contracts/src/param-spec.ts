@@ -61,14 +61,17 @@ export const FieldSpecSchema = z.strictObject({
 });
 
 /**
- * The one silent loss in this contract, written down once because four places
+ * The one silent loss in this contract, written down once because five places
  * have it and a note on one of them was worse than none.
  *
  * A key named `__proto__` is removed by zod while a record is parsed, before
  * any check of ours runs — so it is neither carried nor refused, and nobody is
- * told. It applies wherever this contract parses a record of free-form names:
- * a card's `params` and `result` here, the compiled check below, an order's
- * `params`, a price question's `params`, and a delivery.
+ * told. It applies wherever this contract parses a record of free-form names,
+ * and there are five of those: a card's `params` and `result` here, an order's
+ * `params`, a purchase's `params`, a price question's `params`, and a delivery.
+ * The check compiled below is not a sixth. It is built from a spec that has
+ * already been through the record above, so a name that would have been
+ * dropped is gone before the compiler ever sees it.
  *
  * Every one of those is a place the portal promises to pass values through
  * unchanged, so the loss is worth knowing about even though nothing can
