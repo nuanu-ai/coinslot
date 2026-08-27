@@ -13,6 +13,7 @@
  */
 
 import type {
+  AgentOrderStatus,
   OrderListQuery,
   OrderWithStatus,
   PurchaseRequest,
@@ -21,7 +22,7 @@ import type {
 } from "@coinslot/contracts";
 import { outcomeFor } from "@coinslot/core";
 import type { Gateway, PurchaseAttempt } from "../app/gateway.js";
-import { orderDocumentOf } from "../app/runner.js";
+import { orderDocumentOf, salePriceOf } from "../app/runner.js";
 import type { MountedRoute, RouteAnswer, RouteCall } from "./server.js";
 import { refusal } from "./server.js";
 import {
@@ -248,7 +249,58 @@ export function handlersFor(gateway: Gateway): Partial<Record<RouteName, Mounted
     },
 
     purchase_item: { serve: (call) => purchase(gateway, edge, call) },
+
+    get_order_status: { serve: (call) => orderStatus(gateway, call) },
   };
+}
+
+/**
+ * What became of one purchase, for the agent that made it.
+ *
+ * The one route here that is the agent's rather than the merchant's. Knowing
+ * the order's identifier is what stands in for a key (ADR-0011), so nothing
+ * about a merchant enters into it: the read is across the whole gateway,
+ * because the caller has no merchant to be scoped to and the order belongs to
+ * whichever merchant sold it.
+ *
+ * That makes the shape of the answer the whole of the protection, and it is
+ * built field by field rather than taken from the order and trimmed. The
+ * merchant's own document for this order carries their key for the product and
+ * the buyer's parameters back; assembled by subtraction, a field added to it
+ * later would arrive here too, and nobody would be told. Assembled by
+ * addition, the same field arrives nowhere until somebody writes it down.
+ *
+ * An identifier that names no order is answered in the words the merchant's
+ * own read of a stranger's order gets — there is no such order, and nothing
+ * about whether the string was ever one.
+ */
+async function orderStatus(
+  gateway: Gateway,
+  { params, response }: RouteCall,
+): Promise<RouteAnswer> {
+  const record = await gateway.orderById(params.order_id ?? "");
+  if (record === null) {
+    return written(response, NOT_FOUND, refusal("no_such_order", "there is no such order"));
+  }
+
+  const status = outcomeFor(record.order);
+  const document: AgentOrderStatus = {
+    order_id: record.order.id,
+    status,
+    // Null where nobody named a price rather than the card's own number: an
+    // order that closed before it was priced was never sold at anything, and
+    // standing the catalogue's figure in for it would be a claim about a sale
+    // that did not happen.
+    price: salePriceOf(record),
+    // The goods only once they are the buyer's, which is narrower than once
+    // the merchant handed them over. A synchronous delivery whose charge did
+    // not go through leaves goods on an order nothing was paid for; the
+    // purchase itself refuses to hand those over until a repeat carries the
+    // payment home, and a door that answered with them anyway would be a way
+    // of collecting for free whatever a failed charge left behind.
+    delivered: status === "delivered" ? (record.delivery ?? null) : null,
+  };
+  return { status: OK, document };
 }
 
 /**

@@ -31,7 +31,12 @@
  * same order.
  */
 
-import type { Delivery, Order as OrderDocument, WorkerEnvelope } from "@coinslot/contracts";
+import type {
+  Delivery,
+  Order as OrderDocument,
+  SalePrice,
+  WorkerEnvelope,
+} from "@coinslot/contracts";
 import type {
   Deadline,
   Effect,
@@ -636,9 +641,32 @@ export class OrderRunner {
   }
 }
 
+/**
+ * What this order sold for, or nothing where nobody ever named a price.
+ *
+ * Two readers ask: the merchant, through the order they are handed, and the
+ * buyer, through the status of their own purchase. It is one function because
+ * they have to be told the same number — a sale priced twice is a sale the two
+ * sides can disagree about, and neither of them would have any way to tell
+ * which figure was the real one.
+ */
+export function salePriceOf(record: StoredOrder): SalePrice | null {
+  const price = record.order.price;
+  if (price === null) {
+    return null;
+  }
+
+  return {
+    amount: price.amount,
+    currency: price.currency,
+    at: asTimestamp(record.order.timestamps.quotedAt ?? record.order.timestamps.createdAt),
+    as_of: asTimestamp(price.asOf),
+  };
+}
+
 /** The order as the merchant's worker reads it. */
 export function orderDocumentOf(record: StoredOrder): OrderDocument {
-  const price = record.order.price;
+  const price = salePriceOf(record);
   if (price === null) {
     throw new Error(`the order ${record.order.id} was sent to a merchant with no price on it`);
   }
@@ -647,12 +675,7 @@ export function orderDocumentOf(record: StoredOrder): OrderDocument {
     id: record.order.id,
     merchant_item_id: record.merchantItemId,
     params: { ...record.params },
-    price: {
-      amount: price.amount,
-      currency: price.currency,
-      at: asTimestamp(record.order.timestamps.quotedAt ?? record.order.timestamps.createdAt),
-      as_of: asTimestamp(price.asOf),
-    },
+    price,
     ...(record.priceId === null ? {} : { price_id: record.priceId }),
     test: record.order.test,
   };
