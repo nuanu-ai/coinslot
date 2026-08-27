@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Coinslot gateway — the 402 edge, the order queue, receipts",
+  "description": "Coinslot gateway \u2014 the 402 edge, the order queue, receipts",
   "exports": {
     ".": "./src/index.ts",
     "./testing": "./src/testing/harness.ts",
@@ -14,7 +14,8 @@
     "start": "tsx src/main.ts",
     "merchant": "tsx src/merchant.ts",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "tsx src/migrate.ts"
+    "db:migrate": "tsx src/migrate.ts",
+    "listing": "tsx src/listing.ts"
   },
   "dependencies": {
     "@coinslot/contracts": "workspace:*",
