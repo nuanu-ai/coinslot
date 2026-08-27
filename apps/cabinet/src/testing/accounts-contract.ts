@@ -218,6 +218,25 @@ export function describeAccounts(name: string, open: () => Promise<Accounts>): v
 
         await expect(accounts.endEveryFor("nobody@example.com")).resolves.toBe(0);
       });
+
+      it("does not let an address decide which rows are deleted", async () => {
+        // This is the one query written as SQL rather than assembled by the
+        // query builder, and an address is a string somebody chose. Written
+        // with the value pasted into the text instead of bound to it, an
+        // address shaped like the one below would end every session in the
+        // table — including the sessions of people it names nothing about.
+        const accounts = await fresh();
+        const at = new Date("2026-08-27T09:00:00.000Z");
+        const until = new Date(+at + 12 * HOUR);
+        const person = await accounts.add("dmitry@example.com", "hash-one", at);
+        await accounts.open("theirs", person?.id ?? "", at, until);
+
+        const crafted = "' or '1'='1";
+        await expect(accounts.endEveryFor(crafted)).resolves.toBe(0);
+        await expect(accounts.endEveryFor("x'; delete from cabinet_sessions; --")).resolves.toBe(0);
+
+        await expect(accounts.whose("theirs", at)).resolves.not.toBeNull();
+      });
     });
 
     describe("a new password", () => {
