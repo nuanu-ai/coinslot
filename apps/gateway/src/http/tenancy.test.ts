@@ -235,6 +235,23 @@ describe("what a key can do", () => {
     // And the goods A tried to hand over are nowhere on B's order.
     const stillB = await served.call("GET", `/v0/orders/${orderId}`, { headers: keyOf(b) });
     expect(JSON.stringify(stillB.body)).not.toContain("not-yours");
+
+    // The same call with goods that do not fit B's card is answered exactly
+    // the same way, and this is the half that has to be said out loud. The
+    // goods are now weighed against the card that sold the order, and the
+    // card is B's — so a check that ran before the order was found to be
+    // somebody else's would answer 409 and quote B's own declaration back to
+    // A: the order exists, and here is what it was sold as. Whose the order is
+    // is settled first, and A learns nothing either way.
+    const probed = await served.call("POST", `/v0/orders/${orderId}/deliver`, {
+      body: { nothing_bs_card_declares: "x" },
+      headers: keyOf(a),
+    });
+
+    expect(probed.status).toBe(404);
+    expect((probed.body as { error: { code: string } }).error.code).toBe("no_such_order");
+    expect(JSON.stringify(probed.body)).not.toContain("access_code");
+    expect(JSON.stringify(probed.body)).not.toContain("b-later");
   });
 
   it("will not let one merchant refuse or accept the other's order", async () => {

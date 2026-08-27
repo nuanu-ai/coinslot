@@ -58,9 +58,12 @@ import { purchaseOf, Waiting } from "./waiting.js";
 
 /**
  * What is written down about the purchase alongside the machine's own order.
- * It is applied before the transition, so the event and the fact it is about
- * land together — the goods are stored and then the machine is told the handler
- * delivered, never the other way round.
+ * Every one of these lands in the same write as the order the event moved, so
+ * a fact and the event it is about are never stored one without the other.
+ *
+ * The goods are the one fact with a condition on them, and it lives in
+ * `goodsToKeep` below rather than here because part of it is about what became
+ * of the event, which is not known until the machine has seen it.
  */
 export interface OrderFacts {
   readonly delivery?: Delivery;
@@ -168,7 +171,6 @@ export class OrderRunner {
       async (found): Promise<OrderChange<Decided>> => {
         const known: StoredOrder = {
           ...found,
-          ...(facts.delivery === undefined ? {} : { delivery: facts.delivery }),
           ...(facts.settlement === undefined ? {} : { settlement: facts.settlement }),
           ...(facts.paymentWord === undefined ? {} : this.#alsoSaid(found, facts.paymentWord)),
           ...(facts.priceId === undefined ? {} : { priceId: facts.priceId }),
@@ -184,7 +186,11 @@ export class OrderRunner {
         }
 
         refuseToWriteAnImpossibleOrder(moved.order);
-        const next: StoredOrder = { ...known, order: moved.order };
+        const next: StoredOrder = {
+          ...known,
+          order: moved.order,
+          ...goodsToKeep(found, facts.delivery, moved.effects),
+        };
 
         // The clocks the order will be waiting on are started before the change
         // to it is committed, because of which way the two failures fall.
@@ -712,6 +718,49 @@ function refundReasonOf(order: Order): "refused" | "deadline_passed" | "merchant
     default:
       return assertNever(closure, "closure cause");
   }
+}
+
+/**
+ * The goods to write down, out of the ones this call carried.
+ *
+ * Two conditions, and each is one way the stored order could come to claim
+ * something that did not happen.
+ *
+ * The first delivery is what the buyer keeps. Delivery is at least once by
+ * design, so one order is answered with goods more than once as a matter of
+ * course: a worker restarting, a redelivery going out beside an answer already
+ * on its way, a merchant's own retry after a dropped connection. The machine
+ * answers all of those `already_delivered` — a successful transition — so goods
+ * riding on a repeat would otherwise be written straight over the ones the
+ * agent has already been handed and read, and nothing in the answer would show
+ * it: a repeat looks the same whether it carried the same goods or different
+ * ones.
+ *
+ * And goods the machine turned away are not kept either. Some of its refusals
+ * to a merchant are successful transitions carrying a failure for him rather
+ * than rejections of the event — an order that has closed, or one whose refund
+ * is already paid out, answers his delivery call that way while the order
+ * itself does not move at all. Told to his face that the call did not go
+ * through, he would have had what he sent written down behind it, and the order
+ * of a buyer who has his money back would carry goods nobody ever gave him.
+ *
+ * Nothing here second-guesses the machine: what it answered the merchant is
+ * what decides this, and a call it answered with a failure delivered nothing.
+ */
+function goodsToKeep(
+  found: StoredOrder,
+  delivery: Delivery | undefined,
+  effects: readonly Effect[],
+): { readonly delivery?: Delivery } {
+  if (delivery === undefined || found.delivery !== null) {
+    return {};
+  }
+
+  const turnedAway = effects.some(
+    (effect) => effect.kind === "answer_merchant" && !effect.answer.ok,
+  );
+
+  return turnedAway ? {} : { delivery };
 }
 
 /**

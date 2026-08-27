@@ -53,8 +53,30 @@ describe("the wire vocabulary and the machine speak one language", () => {
     expect(asSet(MERCHANT_ANSWER_RESULTS)).toStrictEqual(asSet(ORDER_CALL_RESULTS));
   });
 
-  it("deliver/refuse errors use the wire's error codes, exactly", () => {
-    expect(asSet(MERCHANT_ANSWER_ERRORS)).toStrictEqual(asSet(ORDER_CALL_ERROR_CODES));
+  it("every error the machine answers with is one the wire knows", () => {
+    // A subset and not an equality, which is a real difference and is checked
+    // rather than waved at below. The direction that matters is unchanged: a
+    // word the machine says and the wire does not know is the gateway
+    // translating between two dialects, which is what this file exists to
+    // catch. The other direction opened when the machine stopped being the
+    // only place a merchant's call is refused — the goods are held to the
+    // card that sold them before any event reaches the machine, and the
+    // machine knows nothing about cards.
+    for (const code of MERCHANT_ANSWER_ERRORS) {
+      expect(asSet(ORDER_CALL_ERROR_CODES)).toContain(code);
+    }
+  });
+
+  it("names the wire's error codes that no arm of the machine can produce", () => {
+    // The half the subset above gives up, put back as a list. A code added to
+    // the wire that the machine ought to be speaking and is not would
+    // otherwise pass unnoticed; here it lands in this list and has to be
+    // argued for.
+    const machineless = ORDER_CALL_ERROR_CODES.filter(
+      (code) => !asSet(MERCHANT_ANSWER_ERRORS).has(code),
+    );
+
+    expect(machineless).toStrictEqual(["delivery_does_not_match_card"]);
   });
 
   it("fulfillment modes match the card's enum, exactly", () => {

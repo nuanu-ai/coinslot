@@ -220,6 +220,45 @@ describe("the compiler from a spec to a validator", () => {
     expect(Object.keys(delivered as object)).toStrictEqual(["access_url"]);
   });
 
+  it("refuses a delivered string with nothing in it, and says which field", () => {
+    // The promise this holds: a card declaring an access code and a delivery
+    // carrying `""` are the same outcome for the buyer as a delivery carrying
+    // nothing at all. Caught in one case and not the other, the check would
+    // read as enforcing a promise it does not enforce.
+    const validator = paramSpecToValidator({ access_code: { type: "string" } }, "delivery");
+
+    for (const nothing of ["", " ", "\t\n "]) {
+      const refused = validator.safeParse({ access_code: nothing });
+      expect(refused.success, JSON.stringify(nothing)).toBe(false);
+      if (refused.success) throw new Error("a blank delivery was accepted");
+      expect(refused.error.issues[0]?.path).toStrictEqual(["access_code"]);
+      expect(refused.error.issues[0]?.message).toContain("blank");
+    }
+
+    expect(validator.safeParse({ access_code: "4417" }).success).toBe(true);
+  });
+
+  it("holds a delivered field that may be absent to the same rule when it is there", () => {
+    // `required: false` says the field may not arrive, not that it may arrive
+    // empty. Left out is a complete delivery; present and blank is a field
+    // that claims to be there and is not.
+    const validator = paramSpecToValidator(
+      { note: { type: "string", required: false } },
+      "delivery",
+    );
+
+    expect(validator.safeParse({}).success).toBe(true);
+    expect(validator.safeParse({ note: "" }).success).toBe(false);
+  });
+
+  it("lets a purchase parameter be an empty string, because that is the agent's to choose", () => {
+    // The other half of the asymmetry, and the reason it is not a bug. Input
+    // the agent left blank is input; refusing it would be this package
+    // inventing a requirement no card asked for.
+    const validator = paramSpecToValidator({ note: { type: "string" } }, "purchase");
+    expect(validator.safeParse({ note: "" }).success).toBe(true);
+  });
+
   it("compiles an empty spec into a check that accepts only an empty object", () => {
     const validator = paramSpecToValidator({}, "purchase");
     expect(validator.safeParse({}).success).toBe(true);
