@@ -812,3 +812,30 @@ describe("the tags a card may carry, against the listing's own rules", () => {
     expect(document.description).toContain("case");
   });
 });
+
+describe("the description a listing carries", () => {
+  // The promise: what a merchant writes here is what a discovery catalog
+  // shows, whole. It is the one field of prose that goes out, no sanitiser
+  // anywhere touches it, and the catalog's own documentation puts a ceiling on
+  // it — so the ceiling is here, where a merchant meets it while they are still
+  // writing, rather than there, where nobody would be told.
+  const withDescription = (description: string) =>
+    CardSchema.safeParse({ ...syncCard, description });
+
+  it("takes a description up to the length the catalog documents", () => {
+    expect(withDescription("d".repeat(500)).success).toBe(true);
+  });
+
+  it("refuses one longer than that rather than letting it be cut", () => {
+    expect(errorOf(CardSchema, { ...syncCard, description: "d".repeat(501) })).toContain("500");
+  });
+
+  it("still refuses an empty description and a blank one", () => {
+    expect(withDescription("").success).toBe(false);
+    expect(withDescription("   ").success).toBe(false);
+  });
+
+  it("says the ceiling in the document, for the reader who has only that", () => {
+    expect(toJsonSchemas().card.properties?.description).toMatchObject({ maxLength: 500 });
+  });
+});
