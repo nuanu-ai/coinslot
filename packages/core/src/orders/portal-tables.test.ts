@@ -444,7 +444,12 @@ describe("portal/failures.md", () => {
 
     expect(accepted.order.state).toBe("delivered");
     expect(kinds(again.effects)).toStrictEqual([]);
-    expect(kinds(accepted.effects)).toStrictEqual([]);
+    // The row promises no second fulfillment and no second charge, not that
+    // the merchant hears nothing back: he is answered, and answered with the
+    // state the order is already in.
+    expect(accepted.effects).toStrictEqual([
+      { kind: "answer_merchant", answer: { ok: true, result: "already_delivered" } },
+    ]);
   });
 
   it(`${FAILURES[5]}: the repeat gets what is already there`, () => {

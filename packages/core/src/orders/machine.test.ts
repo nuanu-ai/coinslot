@@ -269,10 +269,16 @@ describe("the asynchronous mode: the money moves first", () => {
       { kind: "payment_settled", at: T0 + 2 },
       { kind: "order_dispatched", at: T0 + 3 },
     ]);
-    const { order } = must(dispatched, { kind: "handler_accepted", at: T0 + 4 });
+    const { order, effects } = must(dispatched, { kind: "handler_accepted", at: T0 + 4 });
 
     expect(order.state).toBe("dispatched");
     expect(order.dispatch.accepted).toBe(true);
+    // And he is told his answer landed, in the word for it. An acceptance is a
+    // merchant's answer like the other two, and a machine that stayed silent
+    // here would leave whoever answers him with nothing to say but no.
+    expect(effects).toStrictEqual([
+      { kind: "answer_merchant", answer: { ok: true, result: "accepted" } },
+    ]);
   });
 
   it("closes the order with the separate deliver call", () => {
@@ -344,7 +350,13 @@ describe("the mode with confirmation: the question comes before the money", () =
 
     expect(order.state).toBe("confirmed");
     expect(order.payment).toBe("none");
-    expect(kinds(effects)).toStrictEqual(["invite_payment"]);
+    // The agent is invited to pay and the merchant is told his "I will"
+    // landed. He answered a question, and an answer with no reply to it is
+    // indistinguishable on his side from one that never arrived.
+    expect(effects).toStrictEqual([
+      { kind: "invite_payment" },
+      { kind: "answer_merchant", answer: { ok: true, result: "accepted" } },
+    ]);
   });
 
   it("closes the purchase for nothing when the merchant says he will not", () => {
@@ -639,7 +651,11 @@ describe("the same order delivered to the handler twice", () => {
 
     expect(accepted.order.state).toBe("delivered");
     expect(kinds(redispatched.effects)).toStrictEqual([]);
-    expect(kinds(accepted.effects)).toStrictEqual([]);
+    // The answer is the current state, and it is the only thing that happens:
+    // no goods released, no receipt written, no second charge.
+    expect(accepted.effects).toStrictEqual([
+      { kind: "answer_merchant", answer: { ok: true, result: "already_delivered" } },
+    ]);
   });
 
   it("counts the deliveries so the backoff has something to count from", () => {

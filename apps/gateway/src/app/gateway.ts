@@ -44,7 +44,7 @@ import { createOrder, fulfillmentDeadline, isOpen, outcomeFor } from "@coinslot/
 import { asTimestamp } from "../ports/clock.js";
 import type { Reminder } from "../ports/queue.js";
 import type { StoredCard, StoredOrder } from "../ports/store.js";
-import { ACCEPTANCE_HAS_NO_WORD, orderCallResponseOf } from "./answers.js";
+import { orderCallResponseOf } from "./answers.js";
 import { OrderRunner, orderDocumentOf } from "./runner.js";
 import {
   modeForCard,
@@ -620,11 +620,7 @@ export class Gateway {
       return this.refuseOrder(orderId, answer.refused, "handler");
     }
 
-    const taken = await this.acceptOrder(orderId, answer.accepted);
-    if (taken === null) {
-      return null;
-    }
-    return taken.ok ? { ok: false, error: ACCEPTANCE_HAS_NO_WORD } : taken;
+    return this.#takeOrderOn(orderId, answer.accepted);
   }
 
   async deliverOrder(
@@ -658,12 +654,33 @@ export class Gateway {
   }
 
   /**
-   * Takes an order on. The success carries no word, which is the contract's own
-   * admission: nothing published names a successful acceptance, and the same
-   * order is taken on again every time it is redelivered, so an answer with no
-   * word in it has nothing to get wrong on the second pass.
+   * Takes an order on, through the route written for it. Its answer is the
+   * same one the answer route gives with the word taken out, because the shape
+   * this route publishes has nowhere to put a word.
+   *
+   * That is thinner than it looks and is worth knowing rather than discovering.
+   * The word is not always `accepted`: an acceptance of an order already
+   * delivered is answered `already_delivered`, and a merchant who called this
+   * route rather than answering his handler does not hear it. He is not told
+   * anything untrue — a bare success is what this route promises — but he is
+   * told less, and widening the shape is a change to a published document
+   * rather than something to do here.
    */
-  async acceptOrder(orderId: string, _acceptance: Acceptance): Promise<OrderAcceptResponse | null> {
+  async acceptOrder(orderId: string, acceptance: Acceptance): Promise<OrderAcceptResponse | null> {
+    const taken = await this.#takeOrderOn(orderId, acceptance);
+    return taken === null || !taken.ok ? taken : { ok: true };
+  }
+
+  /**
+   * Taking an order on, once, for both the routes that do it.
+   *
+   * The full answer with the word in it, because the caller that needs it is
+   * the one that cannot say anything else: the SDK posts every handler answer
+   * to the answer route without the merchant asking and reports anything short
+   * of a success to him, so an acceptance that came back as a failure wrote a
+   * problem into his log for every asynchronous order that went through.
+   */
+  async #takeOrderOn(orderId: string, _acceptance: Acceptance): Promise<OrderCallResponse | null> {
     // The expected time to deliver is the merchant's estimate and not a
     // commitment: what he is held to is the deadline on his card, which the
     // order already carries. Writing his guess down beside it would put two
@@ -675,17 +692,7 @@ export class Gateway {
       { openDeliveryId: null },
     );
 
-    if (applied.outcome === "no_such_order") {
-      return null;
-    }
-    if (applied.outcome === "refused") {
-      return { ok: false, error: refusedCall(applied.rejection) };
-    }
-    if (applied.answer !== null && !applied.answer.ok) {
-      const answered = orderCallResponseOf(applied.answer);
-      return answered.ok ? { ok: true } : answered;
-    }
-    return { ok: true };
+    return this.#answerFor(applied, "accepted");
   }
 
   async orders(open: boolean | undefined): Promise<readonly StoredOrder[]> {
@@ -795,14 +802,20 @@ export class Gateway {
    * The document one of the merchant's calls is answered with.
    *
    * Where the machine had a word for him it is his; where it had none, the
-   * answer is that his own answer landed — and which of the five that is
-   * depends on what he answered, not on what the machine happened to do next.
-   * A refusal answered with "delivered" because the machine went quiet would be
-   * a receipt for goods that do not exist.
+   * answer is that his own answer landed — and which word that is depends on
+   * what he answered, not on what the machine happened to do next. A refusal
+   * answered with "delivered" because the machine went quiet would be a receipt
+   * for goods that do not exist.
+   *
+   * The machine is quiet wherever it settles the order itself and has nothing
+   * left to add — a handler's own delivery or refusal is the common case, and
+   * an acceptance of an order already owed a refund is another. What the
+   * merchant is owed then is the news that his answer landed, in his own word
+   * for it.
    */
   #answerFor(
     applied: Awaited<ReturnType<OrderRunner["apply"]>>,
-    landed: "delivered" | "refused",
+    landed: "delivered" | "refused" | "accepted",
   ): OrderCallResponse | null {
     if (applied.outcome === "no_such_order") {
       return null;
@@ -811,10 +824,7 @@ export class Gateway {
       return { ok: false, error: refusedCall(applied.rejection) };
     }
     if (applied.answer === null) {
-      // The machine took the event and had nothing to say back about it, which
-      // is what a handler's own answer looks like in the synchronous mode: the
-      // goods go to the agent, or the order is closed on the refusal, and
-      // either way what the merchant is owed is the news that it landed.
+      // The machine took the event and had nothing to say back about it.
       return { ok: true, result: landed };
     }
     return orderCallResponseOf(applied.answer);
