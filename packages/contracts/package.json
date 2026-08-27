@@ -1,13 +1,34 @@
 {
   "name": "@coinslot/contracts",
   "version": "0.0.0",
-  "private": true,
   "type": "module",
   "description": "Coinslot public contract schemas — card, order, price hook, receipt",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nuanu-ai/coinslot.git",
+    "directory": "packages/contracts"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "files": [
+    "dist"
+  ],
   "exports": {
     ".": "./src/index.ts"
   },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    }
+  },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepack": "pnpm run build",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {

@@ -168,9 +168,9 @@ const NOTHING_TO_CHECK = [
   "    and it returns published cards whole — but a card reaches that list by",
   "    being accepted at publish, which runs this same check, so what comes back",
   "    is cards that passed this check on the day they went out",
-  "  - nothing in this package or in the contract says where a merchant keeps",
-  "    the cards they publish from, and looking for a file name or a directory",
-  "    would invent a convention nobody agreed to",
+  "  - neither this command nor the contract says where you keep the cards you",
+  "    publish from, and looking for a file name or a directory would invent a",
+  "    convention nobody agreed to",
   "Name the card files instead. The file is what your next publish carries,",
   "whether the card is new or an edit to one already out.",
 ].join("\n");

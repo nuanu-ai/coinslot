@@ -314,6 +314,35 @@ describe("a purchase from the outside", () => {
         { id: orderId, status: "in_progress" },
       ]);
 
+      // A delivery that is not what the card declares closes nothing. The card
+      // above promises an activation code, and a merchant whose handler had a
+      // bad day sends an empty object; without this check the order would be
+      // marked delivered, a receipt written, and the buyer handed nothing.
+      const empty = await gateway.call(
+        "POST",
+        `/v0/orders/${encodeURIComponent(orderId)}/deliver`,
+        { body: {}, headers: { authorization: `Bearer ${MERCHANT_KEY}` } },
+      );
+      expect(empty.status).toBe(409);
+      expect(empty.body).toMatchObject({
+        ok: false,
+        error: { code: "delivery_does_not_match_card", retryable: true },
+      });
+      expect((empty.body as { error: { message: string } }).error.message).toContain(
+        "activation_code",
+      );
+      expect(await gateway.store.receiptForOrder(orderId)).toBeNull();
+
+      // And the order is still one of the merchant's open ones: he can fix his
+      // handler and deliver, which is the whole reason that refusal is not an
+      // ending.
+      const stillOpen = await gateway.call("GET", "/v0/orders?open=true", {
+        headers: { authorization: `Bearer ${MERCHANT_KEY}` },
+      });
+      expect((stillOpen.body as { orders: { id: string }[] }).orders).toMatchObject([
+        { id: orderId },
+      ]);
+
       // Later, they deliver by the call the asynchronous mode is closed with.
       const delivered = await gateway.call(
         "POST",
@@ -326,17 +355,23 @@ describe("a purchase from the outside", () => {
       expect(delivered.status).toBe(200);
       expect(delivered.body).toStrictEqual({ ok: true, result: "delivered" });
 
-      // A repeat of that call is safe, and charges nothing a second time.
+      // A repeat of that call is safe, and charges nothing a second time. This
+      // one carries a different code from the first, which is the case the
+      // buyer's copy of the goods depends on: the answer is the same either
+      // way, so nothing but the stored order can tell whether it was honoured.
       const again = await gateway.call(
         "POST",
         `/v0/orders/${encodeURIComponent(orderId)}/deliver`,
         {
-          body: { activation_code: "LPA:1$rsp.example$AB12" },
+          body: { activation_code: "LPA:1$rsp.example$SOMETHINGELSE" },
           headers: { authorization: `Bearer ${MERCHANT_KEY}` },
         },
       );
       expect(again.body).toStrictEqual({ ok: true, result: "already_delivered" });
       expect(gateway.facilitator.settles).toHaveLength(1);
+      expect((await gateway.store.orderById(orderId))?.delivery).toStrictEqual({
+        activation_code: "LPA:1$rsp.example$AB12",
+      });
 
       // The receipt is written and the order is closed.
       const receipt = await gateway.store.receiptForOrder(orderId);

@@ -458,8 +458,8 @@ describe("the discovery declaration a challenge carries", () => {
 
     expect(info.input.method).toBe("POST");
     expect(info.input.bodyType).toBe("json");
-    expect(info.input.body).toStrictEqual({ params: { email: "" } });
-    expect(info.output?.example).toStrictEqual({ access_url: "" });
+    expect(info.input.body).toStrictEqual({ params: { email: "string" } });
+    expect(info.output?.example).toStrictEqual({ access_url: "string" });
   });
 
   it("describes the probe a crawler makes as the probe it is", () => {

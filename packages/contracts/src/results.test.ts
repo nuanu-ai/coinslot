@@ -126,25 +126,29 @@ describe("what delivering or refusing an order answers with", () => {
 });
 
 describe("the error codes those calls answer with", () => {
-  it("names the three the merchant is expected to branch on", () => {
+  it("names the ones the merchant is expected to branch on", () => {
     expect([...ORDER_CALL_ERROR_CODES]).toStrictEqual([
       "refund_already_settled",
       "order_already_closed",
       "not_applicable_in_mode",
+      "delivery_does_not_match_card",
     ]);
   });
 
-  it("carries each of them in an error a merchant can act on", () => {
+  it("says in the dictionary what each of them means", () => {
+    // The description is the only thing a client generated outside TypeScript
+    // ever reads about these codes; a code promised in the list and missing
+    // from the dictionary is a promise made to nobody.
+    const dictionary = OrderCallErrorSchema.shape.code.meta()?.description ?? "";
     for (const code of ORDER_CALL_ERROR_CODES) {
-      const error = { code, message: "…", retryable: false };
-      expect(OrderCallErrorSchema.safeParse(error).success, code).toBe(true);
+      expect(dictionary, code).toContain(code);
     }
   });
 
-  it("still accepts a code outside the three", () => {
+  it("still accepts a code outside the promised ones", () => {
     // The list is what we promise to mean the same way, not a gate. An error
     // we have not anticipated has to be able to reach the merchant in words
-    // rather than be flattened into the nearest of three.
+    // rather than be flattened into the nearest of them.
     expect(
       OrderCallErrorSchema.safeParse({
         code: "gateway_unavailable",
@@ -152,6 +156,13 @@ describe("the error codes those calls answer with", () => {
         retryable: true,
       }).success,
     ).toBe(true);
+  });
+
+  it("carries each of them in an error a merchant can act on", () => {
+    for (const code of ORDER_CALL_ERROR_CODES) {
+      const error = { code, message: "…", retryable: false };
+      expect(OrderCallErrorSchema.safeParse(error).success, code).toBe(true);
+    }
   });
 });
 

@@ -90,10 +90,28 @@ export type ParamType = z.infer<typeof ParamTypeSchema>;
 export type FieldSpec = z.infer<typeof FieldSpecSchema>;
 export type ParamSpec = z.infer<typeof ParamSpecSchema>;
 
-const checkFor = (type: ParamType): z.ZodType => {
+const checkFor = (type: ParamType, direction: ParamSpecDirection): z.ZodType => {
   switch (type) {
     case "string":
-      return z.string();
+      // A delivered string carries something. This is the one place the two
+      // directions hold the same declared type to different rules, and the
+      // asymmetry is the point rather than an oversight.
+      //
+      // In a purchase, an empty string is input the agent chose to give: a
+      // note left blank, a name it does not have. Refusing it would be this
+      // package inventing a requirement no card asked for.
+      //
+      // In a delivery the field is a promise about what the buyer receives,
+      // and an empty access code is not a shorter access code — it is nothing,
+      // arriving under the name of something. Without this the check refuses
+      // `{}` and accepts `{access_code: ""}`, which are the same outcome for
+      // the buyer, and only one of them would be caught. Every other string on
+      // this wire is already held this way — a title, a description, a refusal
+      // code and its message all refuse to be blank — and the one the buyer
+      // actually paid for was the exception.
+      return direction === "delivery"
+        ? z.string().regex(/\S/, "a delivered field carries something, and this one is blank")
+        : z.string();
     case "number":
       return z.number();
     case "integer":
@@ -106,15 +124,20 @@ const checkFor = (type: ParamType): z.ZodType => {
 /**
  * Which of a card's two declarations is being compiled.
  *
- * It decides one thing: what silence about `required` means. In a purchase the
- * agent is being asked for input, and the portal writes `required: true` only
- * where it means it, so a field with no flag is one the agent may leave out.
- * In a delivery the card is making a promise about what the agent receives
- * before it pays, so a declared field is one that arrives — a flag-less field
- * treated as optional would make the promise unenforceable, and a merchant
- * could deliver an empty object against a card that advertised three fields.
+ * It decides two things, and both come from the same difference: a purchase is
+ * input the agent is being asked for, and a delivery is a promise the card
+ * made to it before it paid.
  *
- * A delivery field that genuinely may be absent says so with `required: false`.
+ * What silence about `required` means. In a purchase the portal writes
+ * `required: true` only where it means it, so a field with no flag is one the
+ * agent may leave out. In a delivery a declared field is one that arrives — a
+ * flag-less field treated as optional would make the promise unenforceable,
+ * and a merchant could deliver an empty object against a card that advertised
+ * three fields. A delivery field that genuinely may be absent says so with
+ * `required: false`.
+ *
+ * And whether a string may be empty. It may in a purchase and may not in a
+ * delivery, for the reason written beside the check itself.
  */
 export type ParamSpecDirection = "purchase" | "delivery";
 
@@ -138,7 +161,7 @@ export const paramSpecToValidator = (spec: ParamSpec, direction: ParamSpecDirect
   const shape: Record<string, z.ZodType> = {};
 
   for (const [name, field] of Object.entries(spec)) {
-    const check = checkFor(field.type);
+    const check = checkFor(field.type, direction);
     const required = field.required ?? direction === "delivery";
     shape[name] = required ? check : check.optional();
   }

@@ -149,7 +149,10 @@ by then, the call returns an error — there is nothing left to deliver against.
 Errors from `deliver` and `refuse` are returned rather than thrown, and they
 carry a flag saying whether repeating is worth anything. The network let you
 down, or our side was slow to answer — repeat with the same call, which is
-idempotent by the order's identifier, and the error it hands back says so.
+idempotent by the order's identifier, and the error it hands back says so. One
+of them is worth repeating and not with the same call: goods that do not match
+the card are refused with the fields named, and the repeat that helps is the
+one carrying the goods the card declared.
 `refuse` carries no such promise, so a refusal that failed is worth checking on
 with `get` before it is sent again. Where the error is marked final — the
 refund already paid out, for one — repeating changes nothing, and the case is
@@ -190,7 +193,7 @@ for (const waiting of open) {
   const issued = await accessFor(waiting.id)
 
   if (issued !== null) {
-    await waiting.deliver({ access_url: issued.url })
+    await waiting.deliver({ access_url: issued.url, expires_at: issued.expiresAt })
   }
 }
 ```
@@ -218,7 +221,7 @@ in a queue, a row in your database — the order can be assembled from it withou
 asking us anything:
 
 ```ts
-await coinslot.orders.forId(savedId).deliver({ access_url: url })
+await coinslot.orders.forId(savedId).deliver({ access_url: url, expires_at: expiresAt })
 ```
 
 That call asks nothing, and so it works even when we cannot be reached: `get`

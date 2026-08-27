@@ -342,6 +342,11 @@ unremarked. That one is yours to catch.
 npx coinslot verify card.json
 ```
 
+Run it from the project you installed into. The bare name `coinslot` belongs to
+somebody else's package on npm, so `npx` in a directory without our package
+fetches theirs; once `@coinslot/sdk` is installed beside you, `npx` finds ours
+first and the stranger's never enters it.
+
 Name the card files. The command does not go looking for them: it takes no key
 and no address, so it cannot ask us what you have published, and nothing says
 where you keep the files you publish from — called bare, it refuses and prints

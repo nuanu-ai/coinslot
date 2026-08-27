@@ -1,0 +1,33 @@
+/*
+ * What gets compiled for the registry, as opposed to what gets type-checked.
+ *
+ * `tsconfig.json` beside this one checks the whole package and emits nothing;
+ * this one emits and checks less. The two differ in exactly one thing that
+ * matters — what is in scope — and the exclusions are the published surface:
+ * the tests and the fake gateway are ours, they are not part of what a merchant
+ * installs, and compiling them would put them in `dist` where `files` would
+ * then ship them.
+ *
+ * The build tool is `tsc` and there is no bundler, because there is nothing for
+ * a bundler to do here. The sources already import each other with the `.js`
+ * specifiers Node wants, `tsc` copies those through untouched, and it writes
+ * the type declarations in the same pass. A bundler would add a dependency, a
+ * configuration file and a second opinion about module resolution in exchange
+ * for output this package does not need.
+ *
+ * No source maps, and that is a decision rather than an omission. A map is only
+ * worth shipping next to the sources it points into, and `files` ships `dist`
+ * alone; maps without them would be dead references in someone else's
+ * `node_modules`. What is lost is small, because `tsc` output is the source with
+ * the types taken out — a stack trace through `dist` reads like the file it came
+ * from. Shipping `src` is the decision to take if that ever stops being true.
+ */
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "dist",
+    "declaration": true
+  },
+  "exclude": ["src/**/*.test.ts", "src/testing"]
+}

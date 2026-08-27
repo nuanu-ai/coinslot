@@ -519,11 +519,11 @@ export const publicCardOf = (
  *
  * The examples are shapes rather than facts. A card declares the types of what
  * it takes and what it returns and carries no example values, so what goes out
- * is every declared field at the empty value of its type. That is a claim we
- * can keep — a test holds the input example to this card's own purchase check
- * and the output example to its own delivery check, so what we publish is
- * something our door would accept — and it is not a claim about anybody's real
- * data, which we do not have and will not invent.
+ * is every declared field holding a value that stands for its type and nothing
+ * more. That is a claim we can keep — a test holds the input example to this
+ * card's own purchase check and the output example to its own delivery check,
+ * so what we publish is something our own door would accept — and it is not a
+ * claim about anybody's real data, which we do not have and will not invent.
  */
 export interface BazaarDeclaration {
   /** The resource block: what is being paid for, and who is selling it. */
@@ -543,11 +543,19 @@ export interface BazaarDeclaration {
   readonly output: { readonly example: Record<string, unknown> };
 }
 
-/** One declared field at the empty value of its own type. */
-const emptyValueOf = (type: ParamType): unknown => {
+/**
+ * One declared field as a value standing for its own type.
+ *
+ * A string is the word `string` rather than an empty one, and that is not a
+ * flourish: a delivered string has to carry something, so an example built out
+ * of empty strings would be an example this system's own delivery check
+ * refuses — published to strangers as what they will receive. The word says
+ * what goes there, which is more than an empty string said anyway.
+ */
+const standInFor = (type: ParamType): unknown => {
   switch (type) {
     case "string":
-      return "";
+      return "string";
     case "number":
     case "integer":
       return 0;
@@ -556,9 +564,9 @@ const emptyValueOf = (type: ParamType): unknown => {
   }
 };
 
-/** A whole declaration as an example: every field, each one empty. */
+/** A whole declaration as an example: every field, each one standing for a type. */
 const exampleOf = (spec: ParamSpec): Record<string, unknown> =>
-  Object.fromEntries(Object.entries(spec).map(([name, field]) => [name, emptyValueOf(field.type)]));
+  Object.fromEntries(Object.entries(spec).map(([name, field]) => [name, standInFor(field.type)]));
 
 /**
  * The JSON Schema a purchase body is held to.

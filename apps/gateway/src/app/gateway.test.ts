@@ -574,6 +574,369 @@ describe("an asynchronous purchase", () => {
   });
 });
 
+describe("the goods against the card that sold them", () => {
+  // Every assertion here reads the order back out of the store rather than
+  // believing the answer the call gave. The two failures this describes were
+  // both invisible from the answer alone: an order marked delivered with
+  // nothing behind it answered "delivered", and goods quietly replaced by a
+  // later call answered "already_delivered" exactly as they should have.
+
+  it("does not close an order on goods the card never promised", async () => {
+    const harnessed = await started();
+    const itemId = await published(harnessed, asyncCard);
+    const offered = await harnessed.gateway.beginPurchase(itemId, {});
+    if (offered.step !== "pay") throw new Error("no price was offered");
+    const orderId = offered.order.order.id;
+    await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
+
+    const answered = await harnessed.gateway.deliverOrder(harnessed.merchant.id, orderId, {});
+
+    if (answered?.ok !== false) throw new Error("an empty delivery closed the order");
+    expect(answered.error.code).toBe("delivery_does_not_match_card");
+    expect(answered.error.message).toContain("activation_code");
+    // He can fix his handler and call again; the order is still his to finish.
+    expect(answered.error.retryable).toBe(true);
+
+    // And the order itself is untouched: no goods written, no receipt, and the
+    // buyer's purchase still under way rather than closed against nothing.
+    const record = await harnessed.store.orderById(orderId);
+    expect(record?.delivery).toBeNull();
+    expect(record?.order.state).not.toBe("delivered");
+    expect(await harnessed.store.receiptForOrder(orderId)).toBeNull();
+  });
+
+  it("names the first few misfits and counts the rest, rather than writing a paragraph", async () => {
+    // A card may declare a dozen fields and a broken handler can miss all of
+    // them. The answer has one line for the reason, so the ones it does not
+    // name have to be counted: a merchant reading a log needs to tell "these
+    // are the problems" from "these are some of them".
+    const harnessed = await started();
+    const wide: Card = {
+      ...asyncCard,
+      merchant_item_id: "esim-wide",
+      result: Object.fromEntries(
+        Array.from({ length: 9 }, (_, index) => [`field_${index}`, { type: "string" }] as const),
+      ),
+    };
+    const itemId = await published(harnessed, wide);
+    const offered = await harnessed.gateway.beginPurchase(itemId, {});
+    if (offered.step !== "pay") throw new Error("no price was offered");
+    await harnessed.gateway.payPurchase(offered.order.order.id, "PAYMENT", "PAYMENT");
+
+    const answered = await harnessed.gateway.deliverOrder(
+      harnessed.merchant.id,
+      offered.order.order.id,
+      {},
+    );
+
+    if (answered?.ok !== false) throw new Error("an empty delivery closed the order");
+    const named = Array.from({ length: 9 }, (_, index) => `field_${index}`).filter((field) =>
+      answered.error.message.includes(field),
+    );
+    expect(named).toHaveLength(5);
+    expect(answered.error.message).toContain("and 4 more");
+  });
+
+  it("stays a line a person can read however much the merchant sends", async () => {
+    // Counting the findings is not enough, and this is the case that shows it.
+    // Every field the card never declared arrives as one finding whose own text
+    // lists all of them, so a cap on the number of findings never fires and the
+    // length of what the merchant is told is set by what the merchant sent. A
+    // handler looping over the wrong object put fourteen thousand characters
+    // into the one line somebody has to read in a log.
+    const harnessed = await started();
+    const itemId = await published(harnessed, asyncCard);
+    const offered = await harnessed.gateway.beginPurchase(itemId, {});
+    if (offered.step !== "pay") throw new Error("no price was offered");
+    await harnessed.gateway.payPurchase(offered.order.order.id, "PAYMENT", "PAYMENT");
+
+    const flooded: Record<string, unknown> = { activation_code: "LPA:1$OK" };
+    for (let index = 0; index < 300; index += 1) {
+      flooded[`undeclared_field_number_${index}`] = "x";
+    }
+    const answered = await harnessed.gateway.deliverOrder(
+      harnessed.merchant.id,
+      offered.order.order.id,
+      flooded,
+    );
+
+    if (answered?.ok !== false) throw new Error("three hundred undeclared fields were delivered");
+    // The bound the constants actually promise is five findings of a hundred
+    // and sixty letters each, plus a bounded card name and the fixed prose —
+    // about twelve hundred. This case makes one enormous finding rather than
+    // five, so it lands far inside that; the number to read as the guarantee
+    // is the wider one, and it is asserted at the end.
+    expect(answered.error.message.length).toBeLessThan(400);
+    // Cut short, and saying so — a reader must not mistake what is left for
+    // the whole of the complaint.
+    expect(answered.error.message).toContain("cut short");
+    // And still useful: the first of the offending names is in there.
+    expect(answered.error.message).toContain("undeclared_field_number_0");
+  });
+
+  it("does not carry a card's own identifier into the answer at whatever length it is", async () => {
+    // The card names itself in that message, and the contract puts no maximum
+    // on what a merchant may call his own product — so the one bounded thing
+    // was quoting an unbounded one. His own card, his own refusal, but the
+    // line still has to be readable.
+    const harnessed = await started();
+    const itemId = await published(harnessed, {
+      ...asyncCard,
+      merchant_item_id: `esim-${"7".repeat(5_000)}`,
+    });
+    const offered = await harnessed.gateway.beginPurchase(itemId, {});
+    if (offered.step !== "pay") throw new Error("no price was offered");
+    await harnessed.gateway.payPurchase(offered.order.order.id, "PAYMENT", "PAYMENT");
+
+    const answered = await harnessed.gateway.deliverOrder(
+      harnessed.merchant.id,
+      offered.order.order.id,
+      {},
+    );
+
+    if (answered?.ok !== false) throw new Error("an empty delivery closed the order");
+    expect(answered.error.message.length).toBeLessThan(400);
+    expect(answered.error.message).toContain("activation_code");
+  });
+
+  it("stays inside its bound with every long thing at once", async () => {
+    // The three things a refusal quotes that have no length of their own, all
+    // at their worst in one message: a card naming itself at five thousand
+    // characters, nine declared fields every one of them missing, and three
+    // hundred undeclared ones arriving. This is the number to read as the
+    // promise — the other two tests are cases that land well inside it.
+    const harnessed = await started();
+    const itemId = await published(harnessed, {
+      ...asyncCard,
+      merchant_item_id: `esim-${"7".repeat(5_000)}`,
+      result: Object.fromEntries(
+        Array.from(
+          { length: 9 },
+          (_, index) => [`declared_field_with_a_long_name_${index}`, { type: "string" }] as const,
+        ),
+      ),
+    });
+    const offered = await harnessed.gateway.beginPurchase(itemId, {});
+    if (offered.step !== "pay") throw new Error("no price was offered");
+    await harnessed.gateway.payPurchase(offered.order.order.id, "PAYMENT", "PAYMENT");
+
+    const everything: Record<string, unknown> = {};
+    for (let index = 0; index < 300; index += 1) {
+      everything[`undeclared_field_with_a_long_name_${index}`] = "x";
+    }
+    const answered = await harnessed.gateway.deliverOrder(
+      harnessed.merchant.id,
+      offered.order.order.id,
+      everything,
+    );
+
+    if (answered?.ok !== false) throw new Error("the worst delivery was taken");
+    expect(answered.error.message.length).toBeLessThan(1_400);
+    expect(answered.error.message).toContain("declared_field_with_a_long_name_0");
+  });
+
+  it("refuses a declared field of the wrong type, and a field the card never declared", async () => {
+    const harnessed = await started();
+    const itemId = await published(harnessed, asyncCard);
+
+    const wrongType = await harnessed.gateway.beginPurchase(itemId, {});
+    if (wrongType.step !== "pay") throw new Error("no price was offered");
+    await harnessed.gateway.payPurchase(wrongType.order.order.id, "ONE", "ONE");
+    const numeric = await harnessed.gateway.deliverOrder(
+      harnessed.merchant.id,
+      wrongType.order.order.id,
+      { activation_code: 7 },
+    );
+    if (numeric?.ok !== false) throw new Error("a number passed for a declared string");
+    expect(numeric.error.code).toBe("delivery_does_not_match_card");
+    expect(numeric.error.message).toContain("activation_code");
+    expect((await harnessed.store.orderById(wrongType.order.order.id))?.delivery).toBeNull();
+
+    // An undeclared field is refused too. The agent read this card before it
+    // paid, and a delivery carrying something the card never described is a
+    // delivery it cannot have been expecting.
+    const extra = await harnessed.gateway.beginPurchase(itemId, {});
+    if (extra.step !== "pay") throw new Error("no price was offered");
+    await harnessed.gateway.payPurchase(extra.order.order.id, "TWO", "TWO");
+    const surprised = await harnessed.gateway.deliverOrder(
+      harnessed.merchant.id,
+      extra.order.order.id,
+      { activation_code: "A", puk: "9999" },
+    );
+    if (surprised?.ok !== false) throw new Error("an undeclared field was delivered");
+    expect(surprised.error.code).toBe("delivery_does_not_match_card");
+    expect(surprised.error.message).toContain("puk");
+    expect((await harnessed.store.orderById(extra.order.order.id))?.delivery).toBeNull();
+  });
+
+  it("holds a synchronous handler's own answer to the same card", async () => {
+    // The handler's return is the delivery in this mode, so the check has to
+    // stand on that road too — otherwise the whole promise is one call away
+    // from being unenforced.
+    const harnessed = await started();
+    const itemId = await published(harnessed, syncCard);
+    const offered = await harnessed.gateway.beginPurchase(itemId, { nights: 1 });
+    if (offered.step !== "pay") throw new Error("no price was offered");
+    const orderId = offered.order.order.id;
+
+    const buying = harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
+    expect((await harnessed.gateway.poll(harnessed.merchant.id, 10, 200)).envelopes).toHaveLength(
+      1,
+    );
+
+    const answered = await harnessed.gateway.answerOrder(harnessed.merchant.id, orderId, {
+      delivered: {},
+    });
+
+    if (answered?.ok !== false) throw new Error("an empty handler answer closed the purchase");
+    expect(answered.error.code).toBe("delivery_does_not_match_card");
+    expect(answered.error.message).toContain("access_code");
+
+    // Nothing was written and nothing was charged. The goods can still arrive.
+    expect((await harnessed.store.orderById(orderId))?.delivery).toBeNull();
+    expect(harnessed.facilitator.settles).toHaveLength(0);
+
+    await harnessed.gateway.answerOrder(harnessed.merchant.id, orderId, {
+      delivered: { access_code: "X" },
+    });
+    const bought = await buying;
+    expect(bought.step).toBe("settled");
+    expect((await harnessed.store.orderById(orderId))?.delivery).toStrictEqual({
+      access_code: "X",
+    });
+
+    // And what the buyer was handed is the same thing — measured at his own
+    // door rather than in the record, because that is where it matters.
+    if (bought.step !== "settled") throw new Error("the purchase did not settle");
+    expect(bought.delivery).toStrictEqual({ access_code: "X" });
+
+    // A later answer to the same order, carrying something else, leaves what he
+    // holds exactly as it is.
+    const again = await harnessed.gateway.answerOrder(harnessed.merchant.id, orderId, {
+      delivered: { access_code: "SOMETHING ELSE" },
+    });
+    expect(again).toStrictEqual({ ok: true, result: "already_delivered" });
+    expect((await harnessed.store.orderById(orderId))?.delivery).toStrictEqual({
+      access_code: "X",
+    });
+  });
+
+  it("keeps the goods the buyer was first given, whatever a later call carries", async () => {
+    // Delivery is at least once by design: a worker restarting, a redelivery
+    // and a merchant's own retry all land the same order twice. The repeat is
+    // answered as a repeat and must change nothing — a second call carrying
+    // different goods used to replace what the agent had already been handed,
+    // and the answer looked exactly the same either way.
+    const harnessed = await started();
+    const itemId = await published(harnessed, asyncCard);
+    const offered = await harnessed.gateway.beginPurchase(itemId, {});
+    if (offered.step !== "pay") throw new Error("no price was offered");
+    const orderId = offered.order.order.id;
+    await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
+
+    const first = await harnessed.gateway.deliverOrder(harnessed.merchant.id, orderId, {
+      activation_code: "LPA:1$FIRST",
+    });
+    const again = await harnessed.gateway.deliverOrder(harnessed.merchant.id, orderId, {
+      activation_code: "LPA:1$SECOND",
+    });
+
+    expect(first).toStrictEqual({ ok: true, result: "delivered" });
+    expect(again).toStrictEqual({ ok: true, result: "already_delivered" });
+
+    const kept = await harnessed.store.orderById(orderId);
+    expect(kept?.delivery).toStrictEqual({ activation_code: "LPA:1$FIRST" });
+    expect(harnessed.facilitator.settles).toHaveLength(1);
+  });
+
+  it("answers a repeat as a repeat even when what it carries is nothing like the card", async () => {
+    // The order already has its goods, so this call could not have written
+    // anything whatever it carried, and that is what the merchant is told. A
+    // refusal here would be marked worth calling again — on an order that can
+    // never take another delivery — and would turn a retry the system asks him
+    // to make into a failure against a sale that went through.
+    const harnessed = await started();
+    const itemId = await published(harnessed, asyncCard);
+    const offered = await harnessed.gateway.beginPurchase(itemId, {});
+    if (offered.step !== "pay") throw new Error("no price was offered");
+    const orderId = offered.order.order.id;
+    await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
+    await harnessed.gateway.deliverOrder(harnessed.merchant.id, orderId, {
+      activation_code: "LPA:1$FIRST",
+    });
+
+    const junk = await harnessed.gateway.deliverOrder(harnessed.merchant.id, orderId, {
+      nothing_the_card_declared: true,
+    });
+
+    expect(junk).toStrictEqual({ ok: true, result: "already_delivered" });
+    expect((await harnessed.store.orderById(orderId))?.delivery).toStrictEqual({
+      activation_code: "LPA:1$FIRST",
+    });
+  });
+
+  it("tells a merchant about his goods before it tells him the order is over", async () => {
+    // The order of two true things, pinned because it is a choice. This order
+    // is closed and its refund is paid out, and the goods do not fit the card
+    // either. The card is what he is told about, because that is the fault in
+    // his code; the state of the order arrives on his next call, under the
+    // code the contract promises for it. Asking the machine first would mean
+    // keeping a copy of its table of what a delivery does in each state.
+    const harnessed = await started();
+    const itemId = await published(harnessed, asyncCard);
+    const offered = await harnessed.gateway.beginPurchase(itemId, {});
+    if (offered.step !== "pay") throw new Error("no price was offered");
+    const orderId = offered.order.order.id;
+    await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
+    await harnessed.gateway.refuseOrder(harnessed.merchant.id, orderId, {
+      code: "out_of_stock",
+      message: "none",
+    });
+    await harnessed.gateway.runner.apply(orderId, { kind: "refund_settled", at: harnessed.now() });
+
+    const wrongGoods = await harnessed.gateway.deliverOrder(harnessed.merchant.id, orderId, {});
+    if (wrongGoods?.ok !== false) throw new Error("an empty delivery was taken");
+    expect(wrongGoods.error.code).toBe("delivery_does_not_match_card");
+
+    // And once his handler is fixed, the order's own answer reaches him.
+    const rightGoods = await harnessed.gateway.deliverOrder(harnessed.merchant.id, orderId, {
+      activation_code: "LPA:1$LATE",
+    });
+    if (rightGoods?.ok !== false) throw new Error("a settled refund took a delivery");
+    expect(rightGoods.error.code).toBe("refund_already_settled");
+    expect(rightGoods.error.retryable).toBe(false);
+    expect((await harnessed.store.orderById(orderId))?.delivery).toBeNull();
+  });
+
+  it("leaves a delivered order alone when the repeat is the merchant's handler", async () => {
+    // The other road into the same order: the worker takes it on again after
+    // it closed, and its handler produces goods a second time.
+    const harnessed = await started();
+    const itemId = await published(harnessed, asyncCard);
+    const offered = await harnessed.gateway.beginPurchase(itemId, {});
+    if (offered.step !== "pay") throw new Error("no price was offered");
+    const orderId = offered.order.order.id;
+    await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
+    await harnessed.gateway.deliverOrder(harnessed.merchant.id, orderId, {
+      activation_code: "LPA:1$FIRST",
+    });
+    const delivered = await harnessed.store.orderById(orderId);
+    const receipt = await harnessed.store.receiptForOrder(orderId);
+
+    const again = await harnessed.gateway.answerOrder(harnessed.merchant.id, orderId, {
+      delivered: { activation_code: "LPA:1$SECOND" },
+    });
+
+    expect(again).toStrictEqual({ ok: true, result: "already_delivered" });
+    const kept = await harnessed.store.orderById(orderId);
+    expect(kept?.delivery).toStrictEqual({ activation_code: "LPA:1$FIRST" });
+    // Nothing else moved either — not the state, not the instants on it, and
+    // not the receipt the buyer already holds.
+    expect(kept?.order).toStrictEqual(delivered?.order);
+    expect(await harnessed.store.receiptForOrder(orderId)).toStrictEqual(receipt);
+  });
+});
+
 describe("two payments racing one order", () => {
   it("gives a losing buyer their authorisation back, so it can buy something else", async () => {
     // The promise: an agent that lost a race for an order still holds a usable

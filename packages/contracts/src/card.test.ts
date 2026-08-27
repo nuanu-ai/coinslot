@@ -710,7 +710,7 @@ describe("a card as a discovery channel reads it", () => {
     const { input, inputSchema } = declared(syncCard, at);
 
     // The shape of a purchase on this gateway: the parameters under `params`.
-    expect(input).toStrictEqual({ params: { email: "" } });
+    expect(input).toStrictEqual({ params: { email: "string" } });
     expect(inputSchema.type).toBe("object");
     const properties = inputSchema.properties as Record<string, Record<string, unknown>>;
     const params = properties.params ?? {};
@@ -758,12 +758,19 @@ describe("a card as a discovery channel reads it", () => {
     const { output } = bazaarDeclarationOf(parsed, at);
 
     expect(output.example).toStrictEqual({
-      access_url: "",
+      access_url: "string",
       seats: 0,
       active: false,
       credit: 0,
     });
+    // The claim this example makes to a stranger: a delivery of this shape is
+    // one the merchant could actually send. A string that is empty is not —
+    // the delivery check refuses it — so the example would advertise goods
+    // this system would turn away.
     expect(deliveryCheckFor(parsed).safeParse(output.example).success).toBe(true);
+    expect(deliveryCheckFor(parsed).safeParse({ ...output.example, access_url: "" }).success).toBe(
+      false,
+    );
   });
 
   it("gives the same declaration for the same card twice", () => {

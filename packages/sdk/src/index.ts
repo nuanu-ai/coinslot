@@ -9,8 +9,8 @@
  * closes orders they took on earlier off the orders themselves. Beside it,
  * `checkCard` and `runVerify` are the check a merchant runs on their own cards
  * before publishing them — the same check the documentation calls
- * `npx coinslot verify`, which is not yet a command that can start: this
- * workspace has no build step, and `src/cli.ts` explains what that costs.
+ * `npx coinslot verify`, which the published package installs as a command of
+ * that name.
  *
  * The runtime dependency tree is minimal and listed in full: our own
  * `@coinslot/contracts`, and zod underneath it, and nothing else. A merchant
