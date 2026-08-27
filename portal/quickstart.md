@@ -211,7 +211,7 @@ to branch on. Repeating the call after a dropped connection is therefore safe,
 and you do not have to keep a note of what you have already sent.
 
 If the delivery did not work out and you have already taken the order on, say
-so at once rather than waiting for your deadline:
+so at once, without waiting for your deadline:
 
 ```ts
 await order.refuse({
@@ -291,8 +291,8 @@ record of the sale. In the example above it is named where the price came from
 a lookup that carries its own timestamp, and left out where the handler has
 just been and confirmed there is none: an `as_of` left out is the moment of
 the answer itself. So if you take the price from a cache, name the moment that
-cache was filled rather than relying on the default — otherwise the answer
-claims more freshness than you have.
+cache was filled; left to the default, the answer claims more freshness than
+you have.
 
 This is the default path: the same channel the orders use, and nothing of
 yours facing outward. The second transport, the price hook, is an HTTP address
@@ -317,7 +317,7 @@ npx coinslot verify
 The check's orders travel the ordinary path: against your card, published and
 not yet visible in the catalogues, through the same live subscription, with
 the `test` flag on. There is no separate environment for it, so your handler
-has to be running. If it is not, the check says so in words rather than
+has to be running. If it is not, the check says so in words instead of
 reporting a failed check for repeats.
 
 The check compares the effect and not the bytes of the answers. Two different

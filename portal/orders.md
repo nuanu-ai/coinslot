@@ -54,7 +54,7 @@ prices and payments that failed their check never reach your handler.
 | `merchant_item_id` | your own key for the product, the one it has in your database |
 | `params` | the purchase parameters, already checked against the card's declaration |
 | `price` | the sale price: the amount, the currency, the moment of purchase, and the `as_of` of the price it was worked out from |
-| `price_id` | the identifier of the price question — the same one that arrived at the price check |
+| `price_id` | the identifier of the price question this sale came out of, absent where the card has no price check |
 | `test` | the mark of a test order |
 
 Say an agent buys a month of access. What reaches your handler is your own
@@ -128,12 +128,12 @@ delivery missing one does not go through
 ([Delivery result](/cards#delivery-result)).
 
 The call is idempotent by the order's identifier. Call it a second time with
-the same `order.id` and you get a success marked as already delivered: a
-positive answer rather than an error, with no second delivery and no second
-charge. There is nothing to branch on inside that success — the flag for
-success is the same one in both cases. Repeating the call after a dropped
-connection is therefore safe, and you do not have to keep a note of what you
-have already sent.
+the same `order.id` and it succeeds again, marked as already delivered: no
+second delivery happened and no second charge. There is nothing here for your
+code to treat as a failure, and nothing to branch on inside the success — the
+flag for success is the same one in both cases. Repeating the call after a
+dropped connection is therefore safe, and you do not have to keep a note of
+what you have already sent.
 
 A late call is accepted. If your delivery deadline has passed, the order is
 already marked as needing a refund and the refund has not yet gone out,
@@ -169,7 +169,7 @@ separate call there at all.
 The buyer has already been charged for an order you took on, so a refusal
 marks the order as needing a refund straight away. There is nothing to gain by
 waiting out your delivery deadline and arriving at the same result through
-silence: the buyer hears about the debt the minute you do, rather than a day
+silence: the buyer hears about the debt the minute you do, instead of a day
 later.
 
 ## Finding out where an order stands
@@ -219,9 +219,9 @@ in it, only the calls that close an order.
 
 Besides orders, the same subscription carries events: messages about something
 that happened to an order without you. A handler for them is declared the way
-one is for orders, with `coinslot.on('event', ...)`. They need no answer — an
-event notifies rather than asking for work, and the subscription sends nothing
-back for one.
+one is for orders, with `coinslot.on('event', ...)`. They need no answer: an
+event tells you something happened and asks nothing of you, and the
+subscription sends nothing back for one.
 
 | Event | What happened |
 | --- | --- |
@@ -299,8 +299,8 @@ general ceiling on how long an agent waits, and no card carries it.
 
 By the order's identifier: it is the same across every repeat, and your side
 answers with the earlier result under it instead of delivering a second time.
-Orders are delivered at least once, which makes a repeat an ordinary event
-rather than a sign of something broken.
+Orders are delivered at least once, so a repeat is ordinary traffic; it does
+not mean that anything broke.
 
 On the agent's side a repeat works differently in different modes. In the
 synchronous mode the order itself is the key: the receipt appears together
@@ -373,8 +373,8 @@ a repeat.
 ## The price changed while the agent was thinking
 
 A payment at a stale price does not go through: the agent is given a fresh
-price and decides again. This is the expected course of events rather than a
-failure, and your side never hears about it — no order appears at all.
+price and decides again. That is the expected course of events, nothing has
+failed, and your side never hears about it — no order appears at all.
 
 ## What is not settled yet
 
