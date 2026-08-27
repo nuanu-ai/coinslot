@@ -136,6 +136,10 @@ declared. A mismatch does not reach the agent — we refuse the delivery, name
 the fields that are wrong and leave the order where it was, so your handler can
 send the right thing. It is the merchant who finds out, not the buyer.
 
+Where that order has already ended — its deadline ran out while the handler was
+being fixed — the refusal names the ending as well as the fields, rather than
+inviting another attempt at a sale there is nothing left to deliver against.
+
 Where a handler has got everything wrong at once, the refusal is held to a
 single line rather than allowed to grow into a paragraph nobody reads. A field
 your card declares and your handler got wrong is one item in that line, and
