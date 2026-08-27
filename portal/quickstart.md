@@ -250,8 +250,8 @@ that, ours is the one to give it.
 
 One order goes to one instance of the handler. Run three processes and three
 subscriptions divide the stream between them, and no order lands in two
-processes at once. How many orders one instance takes at a time is a parameter
-of the subscription.
+processes at once. Within one instance the orders are worked through one at a
+time; a parameter for taking several at once is among the things not settled.
 
 We remember where the orders stand as well, so after a restart you do not have
 to rebuild the picture from your own database alone: the open orders can be
@@ -369,8 +369,8 @@ code.
   defaults for the confirmation and delivery deadlines.
 - The subscription's network coordinates: where it connects and what to open
   for it in your outbound rules.
-- The name of the parameter that sets how many orders a subscription takes at
-  once, and its default.
+- The parameter that lets one subscription work on several orders at once: its
+  name and its default.
 - How to take orders outside Node. We document the subscription's wire
   protocol by the pilot; the ready-made tools are for Node only.
 - The surface of the other order transports: the request to an address of

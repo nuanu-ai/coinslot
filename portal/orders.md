@@ -332,8 +332,9 @@ leaves the order to go out again, possibly to another instance. That is
 ordinary behaviour, and it is what the handler's idempotency by the order's
 identifier is for.
 
-How many orders one instance takes at a time is a parameter of the
-subscription.
+Within one instance the orders are worked through one at a time. A parameter
+for taking several at once is among the things
+[not settled](/quickstart).
 
 ## Test orders
 
