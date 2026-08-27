@@ -22,15 +22,17 @@
  */
 
 import { HTTPFacilitatorClient } from "@x402/core/server";
+import { ScriptedFacilitator } from "./adapters/memory/facilitator.js";
 import { queueOn } from "./adapters/pgboss/queue.js";
 import { connect, PostgresStore } from "./adapters/postgres/store.js";
 import { X402Facilitator } from "./adapters/x402/facilitator.js";
 import { Gateway } from "./app/gateway.js";
 import type { Runtime } from "./app/runtime.js";
-import { loadConfig } from "./config.js";
+import { isSandboxFacilitator, loadConfig } from "./config.js";
 import { buildApp } from "./http/server.js";
 import { PaymentEdge } from "./http/x402.js";
 import { randomIds, systemClock } from "./ports/clock.js";
+import type { Facilitator } from "./ports/facilitator.js";
 
 const config = loadConfig(process.env);
 const { db, pool } = connect(config.databaseUrl);
@@ -52,11 +54,26 @@ const queue = queueOn(config.databaseUrl, {
   },
 });
 
-const runtime: Runtime = {
-  config,
-  store: new PostgresStore(db, randomIds),
-  queue,
-  facilitator: new X402Facilitator(
+/**
+ * The payment layer, real or none at all (ADR-0008).
+ *
+ * The sandbox is a value of the facilitator's address rather than a flag beside
+ * it, so this is a fork between two addresses and not between two modes. A
+ * gateway told to talk to a facilitator talks to it; a gateway told
+ * `sandbox:scripted` verifies and settles against nothing, and says so at the
+ * top of its log rather than leaving it to be inferred from a quiet purchase
+ * that worked with no wallet.
+ */
+function paymentLayer(): Facilitator {
+  if (isSandboxFacilitator(config.payment.facilitatorUrl)) {
+    console.warn(
+      "[gateway] SANDBOX: no chain behind this process — every payment it accepts is pretend, " +
+        "nothing arrives at the address in a challenge, and no receipt it writes points at a transfer",
+    );
+    return new ScriptedFacilitator();
+  }
+
+  return new X402Facilitator(
     new HTTPFacilitatorClient({
       url: config.payment.facilitatorUrl,
       ...(config.payment.cdpApiKeyId === null || config.payment.cdpApiKeySecret === null
@@ -75,7 +92,14 @@ const runtime: Runtime = {
           }),
     }),
     edge,
-  ),
+  );
+}
+
+const runtime: Runtime = {
+  config,
+  store: new PostgresStore(db, randomIds),
+  queue,
+  facilitator: paymentLayer(),
   clock: systemClock,
   ids: randomIds,
 };

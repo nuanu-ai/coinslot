@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { loadConfig } from "./config.js";
+import { isSandboxFacilitator, loadConfig, SANDBOX_FACILITATOR } from "./config.js";
 
 const database = "postgres://coinslot:secret@localhost:5432/coinslot";
 
@@ -116,6 +116,44 @@ describe("loadConfig", () => {
       cdpApiKeyId: "key-id",
       cdpApiKeySecret: "key-secret",
     });
+  });
+
+  it("takes one address that means the sandbox, and tells it from a real one", () => {
+    // The promise: a local stack completes a purchase with no chain behind it,
+    // and a deployment that names a real facilitator cannot also be pretending.
+    // One field holds one value, so the two cannot be held at once — there is
+    // no flag beside the address to be left set from yesterday (ADR-0008).
+    expect(isSandboxFacilitator(loadConfig(required).payment.facilitatorUrl)).toBe(false);
+
+    const sandbox = loadConfig({ ...required, FACILITATOR_URL: SANDBOX_FACILITATOR });
+    expect(sandbox.payment.facilitatorUrl).toBe(SANDBOX_FACILITATOR);
+    expect(isSandboxFacilitator(sandbox.payment.facilitatorUrl)).toBe(true);
+
+    // A near miss is a refusal at startup rather than a real address that
+    // quietly does not exist.
+    expect(() => loadConfig({ ...required, FACILITATOR_URL: "sandbox:scripted-ish" })).toThrowError(
+      /FACILITATOR_URL/,
+    );
+  });
+
+  it("refuses the sandbox beside a real facilitator's credentials", () => {
+    // The mistake this catches is a production environment file copied onto a
+    // sandbox. Those credentials exist only to talk to a real facilitator, so
+    // beside an address that settles against nothing they are somebody's
+    // leftovers rather than a choice (ADR-0008).
+    const sandbox = { ...required, FACILITATOR_URL: SANDBOX_FACILITATOR };
+
+    expect(() => loadConfig({ ...sandbox, CDP_API_KEY_ID: "key-id" })).toThrowError(/CDP_API_KEY/);
+    expect(() => loadConfig({ ...sandbox, CDP_API_KEY_SECRET: "secret" })).toThrowError(
+      /CDP_API_KEY/,
+    );
+
+    // An address to be paid at is not the same signal and is not refused: the
+    // challenge cannot be built without one, so a sandbox that rejected it
+    // could not sell anything at all. Nothing ever arrives there.
+    expect(() =>
+      loadConfig({ ...sandbox, PAY_TO_ADDRESS: "0x0000000000000000000000000000000000000001" }),
+    ).not.toThrow();
   });
 
   it("does not let it start, names every problem at once and tells absent from wrong", () => {

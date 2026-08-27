@@ -40,10 +40,18 @@ and nothing to forget to unset. The field is already validated, so a typo is a
 refusal at startup rather than a surprise at the first payment.
 
 Two things say so out loud. The gateway prints one line at startup naming the
-sandbox, and it refuses to start in sandbox when `PAY_TO_ADDRESS` is set —
-an address to receive money is the mark of a configuration that means to move
-some, and a sandbox that quietly ignores it would be a gateway that looks paid
-and is not.
+sandbox and saying that no payment it accepts is real, and it refuses to start
+when a facilitator's own credentials — `CDP_API_KEY_ID`, `CDP_API_KEY_SECRET` —
+are set beside the sandbox address. Those credentials exist only to talk to a
+real facilitator, so beside an address that settles against nothing they are
+somebody's leftovers rather than a choice, and the mistake they mark is a
+production environment file copied onto a sandbox.
+
+`PAY_TO_ADDRESS` is deliberately not one of those doors, though the first draft
+of this decision made it one. The payment challenge cannot be built without an
+address (`apps/gateway/src/http/x402.ts` refuses rather than inventing one), so
+a sandbox that rejected it could not sell anything, which is the whole reason
+the sandbox exists.
 
 ## Consequences
 
@@ -61,6 +69,11 @@ promise. A gateway in sandbox on a machine an agent can reach will take
 payments that never happened; the protection against that is that nobody
 deploys it, not that it refuses to run.
 
+The address in a challenge issued by a sandbox receives nothing, ever. It has
+to be there for the challenge to have a shape at all, and it is the one field
+on that document a reader is most likely to misread — a real address, in a real
+challenge, that no transfer will ever reach.
+
 The number the sandbox cannot produce is a settlement identifier from a chain.
 What it hands back is its own, and a receipt from a sandbox therefore points at
 nothing an explorer can show. That is correct — there is nothing to point at —
@@ -73,6 +86,12 @@ know which gateway wrote it.
 facilitator.** Honest and needs no code, but it costs the network, a funded
 wallet and a faucet, and "one command" stops being true. The first person to
 try it on a plane finds out.
+
+**Refuse `PAY_TO_ADDRESS` in the sandbox.** This is what this decision said
+first, and it was wrong for a reason worth leaving here: the edge refuses to
+build a challenge without an address, so the door would have shut the sandbox
+rather than guarded it. The check that replaced it names the mistake it is
+actually for.
 
 **A boolean beside the address — `PAYMENT_SANDBOX=1`.** The same behaviour and
 a worse shape: two fields that can disagree, one of which can survive a copied

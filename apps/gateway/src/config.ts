@@ -10,6 +10,29 @@ function absentOrWrong(whenWrong: string) {
     issue.input === undefined ? "the variable is not set" : whenWrong;
 }
 
+/**
+ * The address that selects the scripted facilitator: the gateway verifies and
+ * settles against nothing, and every payment it accepts is pretend.
+ *
+ * It is a value of `FACILITATOR_URL` rather than a flag beside it, so a
+ * configuration cannot hold a real facilitator and the sandbox at once
+ * (ADR-0008). The scheme is one nobody can reach, which is what makes a typo a
+ * refusal at startup instead of an address that quietly does not answer.
+ */
+export const SANDBOX_FACILITATOR = "sandbox:scripted";
+
+/** Whether this gateway settles against nothing. */
+export const isSandboxFacilitator = (facilitatorUrl: string): boolean =>
+  facilitatorUrl === SANDBOX_FACILITATOR;
+
+function isHttpUrl(value: string): boolean {
+  if (!URL.canParse(value)) {
+    return false;
+  }
+  const { protocol } = new URL(value);
+  return protocol === "http:" || protocol === "https:";
+}
+
 function isPostgresUrl(value: string): boolean {
   if (!URL.canParse(value)) {
     return false;
@@ -167,7 +190,19 @@ const environmentSchema = z.object({
    */
   PUBLIC_BASE_URL: z.url().default("http://localhost:3000"),
 
-  FACILITATOR_URL: z.url().default("https://x402.org/facilitator"),
+  /**
+   * The facilitator, or the one address that means there is no chain behind
+   * this gateway at all (ADR-0008). It is one field with one value on purpose:
+   * a deployment that names a real facilitator cannot also be in the sandbox,
+   * because there is no second flag to disagree with the first.
+   */
+  FACILITATOR_URL: z
+    .string({ error: absentOrWrong("must be a string") })
+    .refine(
+      (value) => value === SANDBOX_FACILITATOR || isHttpUrl(value),
+      `must be an http address of a facilitator, or "${SANDBOX_FACILITATOR}" for a gateway with no chain behind it`,
+    )
+    .default("https://x402.org/facilitator"),
   /**
    * The chain, written the way x402 version two writes one: a CAIP-2
    * identifier. The default is Base Sepolia, the test network — a gateway that
@@ -329,6 +364,26 @@ export function loadConfig(environment: Record<string, string | undefined>): Gat
   // this file is held to its shape; the address the money actually goes to was
   // held to "not empty", which starts the gateway on a truncated paste and puts
   // it in front of every agent that asks what a product costs.
+  // The mistake worth catching here is a production environment file copied
+  // onto a sandbox. A facilitator's credentials exist only to talk to a real
+  // facilitator, so beside an address that settles against nothing they are
+  // somebody's leftovers and not a choice (ADR-0008).
+  //
+  // PAY_TO_ADDRESS is deliberately not part of this: the payment challenge
+  // cannot be built without one (`http/x402.ts`), so a sandbox that refused it
+  // could not sell anything, which is the whole reason the sandbox exists.
+  if (
+    isSandboxFacilitator(environmentValues.FACILITATOR_URL) &&
+    (environmentValues.CDP_API_KEY_ID !== undefined ||
+      environmentValues.CDP_API_KEY_SECRET !== undefined)
+  ) {
+    problems.push(
+      `FACILITATOR_URL is ${JSON.stringify(SANDBOX_FACILITATOR)}, which settles against nothing, ` +
+        "and CDP_API_KEY_ID or CDP_API_KEY_SECRET is set — those talk to a real facilitator, " +
+        "so one of the two is left over from somewhere else",
+    );
+  }
+
   if (payTo !== null && network.startsWith("eip155:") && !/^0x[0-9a-fA-F]{40}$/.test(payTo)) {
     problems.push(
       `PAY_TO_ADDRESS is ${JSON.stringify(payTo)}, which is not an address on ${network}`,
