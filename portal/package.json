@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Документация мерчанта Coinslot",
+  "description": "Coinslot seller documentation",
   "scripts": {
     "docs:dev": "vitepress dev",
     "docs:build": "vitepress build",
