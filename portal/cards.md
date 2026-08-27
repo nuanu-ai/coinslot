@@ -1,145 +1,157 @@
-# Карточка товара
+# The product card
 
-*Предварительная версия контракта — до пилота формулировки могут уточняться.*
+*A preliminary contract: the wording can still change before the pilot.*
 
-Карточку вы заводите и правите сами — тогда этот справочник ваш. По умолчанию
-карточки пишем мы, а владелец бизнеса их утверждает; путь целиком, от пустого
-проекта до тестовой продажи, — на странице
-[«Первая тестовая продажа»](/quickstart).
+You create and edit the cards yourself, which is what makes this reference
+yours. By default we write the cards and the owner of the business approves
+them; the whole path, from an empty project to a test sale, is on
+[The first test sale](/quickstart).
 
-Карточка — описание одного товара в каталоге: всё, что агент видит до покупки,
-и всё, на основании чего он решает покупать. Отсюда сквозное требование ко
-всем полям сразу: по карточке агент должен суметь купить — составить
-корректную покупку и получить ожидаемое.
+A card is the description of one product in a catalogue: everything the agent
+sees before buying, and everything it decides to buy from. From that follows
+the requirement that runs through every field at once — an agent has to be
+able to buy from the card, which means assembling a correct purchase and
+getting back what it expected.
 
-::: warning Имена полей предварительные
-Зафиксирована модель, а не сигнатуры. Из машинных имён окончательны `id`,
-`merchant_item_id` и `as_of`; остальные имена в этом справочнике — рабочие и
-до пилота могут измениться.
+::: warning The field names are preliminary
+What is fixed is the model and not the signatures. Of the machine names `id`,
+`merchant_item_id` and `as_of` are final; the other names in this reference
+are working names and can still change before the pilot.
 :::
 
-## Поля
+## Fields
 
-| Поле | Тип | Обязательность | Пример |
+| Field | Type | Required | Example |
 | --- | --- | --- | --- |
-| `id` | строка | не заполняете: выдаём мы при публикации | `itm_9f2c4a` |
-| `merchant_item_id` | строка | обязательно | `access-monthly` |
-| `title` | строка | обязательно | `Доступ к сервису на один месяц` |
-| `description` | строка | обязательно | `Доступ на 30 дней с момента выдачи, продление не входит` |
-| `price` | сумма строкой и валюта | обязательно | `{ amount: '5.00', currency: 'USD' }` |
-| `price_check` | чем спрашивать цену и наличие: обработчиком или по адресу | необязательно | `'handler'` |
-| `params` | схема параметров покупки | обязательно, если выдача требует ввода | `{ email: { type: 'string', required: true } }` |
-| `result` | схема того, что агент получит при выдаче | обязательно | `{ access_url: { type: 'string' } }` |
-| `fulfillment` | одно из `'sync'`, `'async'`, `'confirm'` | обязательно | `'sync'` |
+| `id` | string | not yours to fill in: we issue it at publication | `itm_9f2c4a` |
+| `merchant_item_id` | string | required | `access-monthly` |
+| `title` | string | required | `One month of access to the service` |
+| `description` | string | required | `Access for 30 days from delivery, renewal not included` |
+| `price` | an amount as a string, and a currency | required | `{ amount: '5.00', currency: 'USD' }` |
+| `price_check` | what to ask the price and availability with: a handler, or an address | optional | `'handler'` |
+| `params` | the shape of the purchase parameters | required where the delivery needs input | `{ email: { type: 'string', required: true } }` |
+| `result` | the shape of what the agent receives on delivery | required | `{ access_url: { type: 'string' } }` |
+| `fulfillment` | `'sync'` or `'async'`; `'confirm'` is not published during the pilot | required | `'sync'` |
 
-В карточке вы задаёте ещё два своих срока: на ответ подтверждением и на
-асинхронную выдачу. Оба видны агенту до покупки, а что происходит, когда они
-выходят, — в разделе [«Время вышло»](/orders). Сколько времени отведено на
-синхронный ответ, вы не задаёте: это наш общий потолок ожидания агента,
-одинаковый для всех товаров.
+An asynchronous card carries one deadline of your own: how long you may take
+to deliver an order you have accepted. The agent sees it before it buys, and
+what happens when it runs out is in [Time ran out](/orders). A synchronous
+card has no such field, because how long to wait for a synchronous answer is
+our own ceiling on how long an agent waits, and it is the same for every
+product. The confirmation mode has a deadline of its own and it arrives
+together with the mode.
 
-### Два идентификатора
+### Two identifiers
 
-Ключа у товара два, и они появляются одновременно. Наш каталожный `id` мы
-выдаём при публикации: он живёт в каталогах, в заказах и в квитанциях. Ваш
-`merchant_item_id` вы задаёте сами — это тот идентификатор, под которым товар
-лежит у вас в базе.
+A product has two keys, and they appear at the same moment. Our catalogue `id`
+is issued when the card is published, and it is what lives in the catalogues,
+in the orders and in the receipts. Your `merchant_item_id` is set by you: it
+is the identifier the product already has in your database.
 
-Второй ключ избавляет вас от таблицы соответствий: заказ приходит к вам с
-вашим же ключом, и переводить наши номера в свои не приходится. При
-перезаливке каталога ваш ключ остаётся точкой связи.
+The second key saves you a lookup table. An order arrives carrying your own
+key, so there is nothing to translate from our numbering into yours. It is
+also the point of connection that survives a catalogue being republished.
 
-### Название
+### Title
 
-Короткая строка, по которой товар отличается от соседних в выдаче каталога;
-ограничения длины и допустимых символов у каталогов свои, и при публикации мы
-приводим название к ним.
+A short line by which the product is told apart from its neighbours in a
+catalogue's listing. Catalogues have their own limits on length and on the
+characters allowed, and we fit the title to them at publication.
 
-### Описание
+### Description
 
-Описание читает программа-покупатель, и пишете вы его поэтому иначе, чем для
-человека. Программе нужны различающие факты: что именно покупатель получает,
-для какой задачи это годится, чего в это не входит, какие есть ограничения.
-Фраза «лучшее предложение на рынке» для машины пустая, а строка «только
-входящие сообщения» решает вопрос, подходит товар или нет.
+The description is read by the buying program, so you write it differently
+from one meant for a person. A program needs facts that distinguish: what
+exactly the buyer receives, what task it is good for, what is not included,
+what the limits are. "The best offer on the market" is empty to a machine,
+while "incoming messages only" settles whether the product fits.
 
-### Цена
+### Price
 
-Цена в карточке обязательна всегда: её агент видит в каталоге при выборе, она
-же попадает в квитанцию, если продажа прошла по ней. Для статичных товаров
-этим всё и заканчивается — цена верна, пока вы её не поменяли.
+A price in the card is required in every case: it is what the agent sees in a
+catalogue while it is choosing, and it is what ends up in the receipt when the
+sale went through at it. For a product with a fixed price that is the whole
+story — the price is true until you change it.
 
-Если цена у вас считается на лету, к карточке добавляется проверка цены и
-наличия, и работают обе. Ответ проверки сильнее цены в карточке: ответила —
-продажа идёт по названной ею цене; молчит — мы берём цену из карточки, и
-дальнейшее зависит от режима выдачи
-([«Что может пойти не так»](/failures)).
+If your price is worked out on the fly, you add a price check to the card and
+the two work together. The check's answer is stronger than the card's price:
+when it answers, the sale goes at the price it named; when it is silent, we
+take the price from the card, and what follows depends on the fulfillment mode
+([What can go wrong](/failures)).
 
-У асинхронного товара с проверкой цена в карточке нужна ровно для одного —
-показать агенту, во что примерно обойдётся покупка при выборе в каталоге.
-Продажа такого товара идёт только по ответу проверки: деньги здесь списываются
-в момент покупки, поэтому молчащая проверка покупку не начинает, и запасным
-вариантом цена в карточке не работает. Ставьте туда обычную цену товара, а не
-ноль и не заглушку: по ней агент решает, смотреть ли дальше.
+On an asynchronous product with a check, the card's price is there for exactly
+one purpose: to show the agent roughly what the purchase will cost while it is
+choosing in the catalogue. The sale itself goes only at the price the check
+named, because the buyer is charged at the moment of purchase, so a silent
+check starts no purchase and the card's price is not a fallback. Put the
+ordinary price of the product there rather than a zero or a placeholder: the
+agent decides from it whether to look any further.
 
-### Параметры покупки
+### Purchase parameters
 
-Перечень того, что агент должен указать при покупке: адрес почты, страна,
-период, любой другой ввод, без которого выдача невозможна. У каждого
-параметра есть тип, признак обязательности и человекочитаемое пояснение,
-зачем он нужен.
+The list of what the agent has to give at purchase: an email address, a
+country, a period, any other input without which the delivery is impossible.
+Each parameter has a type, a mark saying whether it is required, and an
+explanation a person can read of what it is for.
 
-Проверяется это поле строже прочих, потому что здесь ломается главное
-требование карточки. Параметр, обязательный для вашей выдачи, но
-отсутствующий в карточке, даёт покупку, которую вы не сможете исполнить, — и
-вместо продажи получается отказ.
+This field is checked more strictly than the others, because it is where the
+card's main requirement breaks. A parameter your delivery needs and the card
+does not name produces a purchase you cannot fulfil — and instead of a sale
+you get a refusal.
 
-### Результат выдачи
+### Delivery result
 
-Схема того, что агент получит, когда выдача пройдёт: ссылка, ключ, номер,
-набор полей. Она стоит в карточке рядом с параметрами покупки, и по ней агент
-до оплаты видит, что именно покупает.
+The shape of what the agent receives once the delivery has gone through: a
+link, a key, a number, a set of fields. It sits in the card next to the
+purchase parameters, and it is how the agent sees before paying what it is
+actually buying.
 
-Выдачу мы передаём агенту как есть: обработчик возвращает JSON по этой схеме,
-мы его не переписываем и поля в нём не переименовываем. Поэтому схема должна
-совпадать с тем, что обработчик действительно отдаёт; расхождение агент
-увидит уже после оплаты.
+We pass the delivery to the agent as it is: the handler returns JSON to this
+shape, and we neither rewrite it nor rename anything in it. So the declaration
+has to match what the handler really sends; a mismatch is something the agent
+discovers after it has paid.
 
-Каждое поле результата обязательно, пока вы прямо не пометили его
-`required: false`: схема результата — обещание, и выдача без обещанного
-поля не проходит как выдача. У параметров покупки правило обратное — поле
-обязательно, только когда помечено `required: true`.
+Every field of the result is required until you mark it `required: false`. The
+result is a promise, and a delivery missing a promised field does not go
+through as a delivery. Purchase parameters run the other way round: a
+parameter is required only where it is marked `required: true`.
 
 ```ts
 result: {
-  access_url: { type: 'string', title: 'Ссылка для входа' },
-  expires_at: { type: 'string', title: 'До какого момента действует' },
+  access_url: { type: 'string', title: 'The link to sign in with' },
+  expires_at: { type: 'string', title: 'When it stops working' },
 }
 ```
 
-### Режим выдачи
+### Fulfillment mode
 
-Значение `fulfillment` объявляет режим и видно агенту до оплаты: `'sync'` —
-товар уходит в ответ на покупку, `'async'` — товар уходит позже, `'confirm'`
-— выдаче предшествует ваше подтверждение. От режима зависит момент списания
-денег и поведение при сбоях.
+The value of `fulfillment` declares the mode, and the agent sees it before it
+pays. With `'sync'` the goods leave in the answer to the purchase; with
+`'async'` they leave later. The mode decides when the buyer is charged and how
+the sale behaves when something fails.
 
-Режим определяется товаром. Канал только ограничивает выбор: заказ, пришедший
-сообщением, синхронным не бывает, а подключённый API выдаёт и синхронно, и
-асинхронно. Что происходит внутри каждого режима, описано на странице
-[«Заказы и режимы выдачи»](/orders).
+A third mode, `'confirm'`, puts your confirmation before the delivery: you are
+asked whether you will deliver, and the buyer is charged after your yes. A
+card cannot be published in it during the pilot — the request that asks you
+has no shape on the wire yet, so a handler could not tell one from a paid
+order, and publishing such a card would sell you a mode we cannot serve.
 
-## Проверка цены и наличия
+The mode is decided by the product. The channel only narrows the choice: an
+order that came as a message is never synchronous, while a connected API
+delivers both synchronously and asynchronously. What happens inside each mode
+is on [Orders and fulfillment modes](/orders).
 
-Проверка отвечает на один вопрос: сколько товар стоит и есть ли он прямо
-сейчас. Спрашиваем мы в двух случаях — в момент покупки и плановым опросом
-между покупками. Транспорта у проверки два, и поля вопроса и ответа у них
-одинаковые; отличается только то, где стоит ваш код. Формы ниже рабочие, до
-пилота они могут измениться.
+## Asking the price and availability
 
-По умолчанию вопрос о цене идёт тем же каналом, что и заказы: рядом с
-обработчиком заказов вы ставите обработчик цены, в том же процессе.
-Выставлять наружу нечего — ни адреса, ни открытых портов.
+The check answers one question: what the product costs and whether it is there
+right now. We ask in two cases — at the moment of purchase, and on a scheduled
+poll between purchases. It has two transports, the fields of the question and
+of the answer are the same for both, and what differs is only where your code
+stands. The forms below are working ones and can change before the pilot.
+
+By default the question travels the same channel as the orders: you put a
+price handler beside the order handler, in the same process. Nothing of yours
+faces outward — no address, no open ports.
 
 ```ts
 coinslot.on('quote', async (q) => {
@@ -153,13 +165,13 @@ coinslot.on('quote', async (q) => {
 })
 ```
 
-Канал подписки аутентифицирован при подключении, поэтому проверять, что
-вопрос о цене пришёл именно от нас, вашей стороне не нужно.
+The subscription channel is authenticated when it connects, so your side does
+not have to check that a price question really came from us.
 
-Второй транспорт — хук цены: адрес на вашей стороне, куда мы приходим
-HTTP-запросом. Он для тех, у кого цену считает отдельный сервис прайсинга и
-обработчик заказов до него не дотягивается. Адрес объявляется в карточке,
-вопрос и ответ — те же самые.
+The second transport is the price hook: an address on your side that we reach
+over HTTP. It is for a business whose price is worked out by a separate
+pricing service that the order handler cannot reach. The address is declared
+in the card, and the question and the answer are the same ones.
 
 ```http
 POST https://api.example.com/quote
@@ -173,32 +185,35 @@ POST https://api.example.com/quote
 }
 ```
 
-Поле `purpose` говорит, зачем мы спрашиваем. Значение `"purchase"` означает,
-что за вопросом стоит агент, покупающий прямо сейчас; `"poll"` — что мы
-обновляем цену и наличие плановым опросом и покупки за этим нет. Дорогую
-проверку остатка есть смысл делать на первом и не делать на втором.
+The field `purpose` says why we are asking. The value `"purchase"` means there
+is an agent behind the question buying right now; `"poll"` means we are
+refreshing the price and availability on a schedule and no purchase is behind
+it. An expensive stock lookup is worth doing on the first and worth skipping
+on the second.
 
-Ответ «нет в наличии» на плановом опросе убирает карточку из выдачи каталога
-до следующего опроса. Продавать по ответу опроса мы при этом не станем: когда
-за вопросом стоят деньги, цену и наличие спрашиваем заново.
+An answer of "there is none" on a scheduled poll takes the card out of the
+catalogue's listing until the next poll. We will not sell on the strength of a
+poll's answer, though: where there is money behind the question, we ask for
+the price and the availability again.
 
-Поле `price_id` — идентификатор этого вопроса о цене, и он одноразовый: под
-одним `price_id` проходит не больше одного заказа. Тот же `price_id` приходит
-потом вместе с заказом, и по нему вы связываете свой ответ с продажей. Рядом
-идёт `expires_at` — момент, до которого названная вами цена действует: если
-под неё отложен остаток, держать его дольше не нужно, а отдельного сообщения
-об истечении мы не шлём. Резервировать никто не обязан: без резерва проверка
-остаётся ответом на вопрос, а не обязательством.
+The field `price_id` identifies this one price question, and it is good once —
+no more than one order goes through under a single `price_id`. The same
+`price_id` arrives later with the order, so you can tie your own answer to the
+sale. Beside it comes `expires_at`, the moment up to which the price you name
+will be honoured: if you have set stock aside against it, there is no need to
+hold that stock any longer, and we send no separate message when the moment
+passes. Nobody is obliged to reserve anything — without a reservation the
+check stays an answer to a question rather than a commitment.
 
-В ответе три части:
+The answer has three parts:
 
-| Поле ответа | Тип | Обязательность | Пример |
+| Field of the answer | Type | Required | Example |
 | --- | --- | --- | --- |
-| `available` | булево | обязательно | `true` |
-| `price` | сумма и валюта | обязательно, если `available` | `{ "amount": "5.00", "currency": "USD" }` |
-| `as_of` | отметка времени, ISO 8601 | обязательно | `"2026-08-26T10:15:00Z"` |
+| `available` | boolean | required | `true` |
+| `price` | an amount and a currency | required where `available` | `{ "amount": "5.00", "currency": "USD" }` |
+| `as_of` | a timestamp, ISO 8601 | required | `"2026-08-26T10:15:00Z"` |
 
-Целиком ответ выглядит так:
+In full it looks like this:
 
 ```json
 {
@@ -208,77 +223,85 @@ POST https://api.example.com/quote
 }
 ```
 
-Отметка `as_of` говорит, на какой момент верен ответ, и отличает «сходил и
-проверил сейчас» от «отдал то, что лежало в кеше». По ней мы решаем,
-насколько ответу можно доверять, и она же попадает в записи о продаже.
-Обработчику цены её передают последним аргументом; вызов, сделанный без неё,
-проставит момент самого ответа, и это верно ровно тогда, когда вы в этот
-момент действительно смотрели. Ответ из кеша датируется тем моментом, когда
-кеш наполнялся, — как в примере выше.
+The mark `as_of` says which moment the answer is true for, and it separates
+"went and checked just now" from "handed over what was in the cache". We
+decide from it how far the answer can be trusted, and the same moment ends up
+in the record of the sale. A price handler is given it as the last argument; a
+call made without it stamps the moment of the answer itself, which is correct
+exactly when you were looking at that moment. An answer out of a cache is
+dated by the moment that cache was filled, as in the example above.
 
-Ответ `available: false` на вопрос о покупке закрывает её до всяких денег, и
-заказа у вас не появляется. Цена из ответа живёт до `expires_at`: срок жизни
-цены общий для системы и назначаем его мы, а что происходит по его
-истечении — в разделе [«Время вышло»](/orders).
+An `available: false` answer to a purchase closes it before any money moves,
+and no order appears on your side. The price from an answer lives until
+`expires_at`: how long a price holds is set by us and is the same across the
+system, and what happens once it has passed is in [Time ran out](/orders).
 
-Нагрузку на вашу сторону держим мы: частоту вопросов ограничиваем сами и
-плановым опросом обходим только те позиции, у которых есть признаки дефицита.
+We hold down the load on your side ourselves: we limit how often the questions
+go out, and the scheduled poll only walks the positions that show signs of
+running short.
 
-Остатков Coinslot не ведёт: сколько чего есть, знаете только вы. Отсюда и
-правило, по которому решается, нужна ли товару проверка: товар, который может
-кончиться, стоит выставлять с ней, потому что без неё мы продаём по цене в
-карточке и узнаём об исчерпании только от вашего отказа при выдаче.
+Coinslot keeps no stock counts — how much of anything there is, only you know.
+Which is where the rule for deciding whether a product needs a check comes
+from: a product that can run out is worth listing with one, because without it
+we sell at the card's price and hear that it has run out only from your
+refusal at delivery.
 
-## Коды отказа
+## Refusal codes
 
-Отказ обработчика несёт короткий код и человекочитаемую причину. Код читаем
-мы и агент, причину читает человек, который потом с этим случаем работает. Что
-происходит с заказом после отказа — на странице
-[«Заказы и режимы выдачи»](/orders); здесь — словарь кодов.
+A handler's refusal carries a short code and a reason a person can read. The
+code is read by us and by the agent; the reason is read by the person who
+works on the case afterwards. What happens to the order after a refusal is on
+[Orders and fulfillment modes](/orders); here is the vocabulary of codes.
 
-Набор открытый: свой код допустим, когда ни один общий не подходит. Три кода
-мы понимаем одинаково, и их стоит предпочитать своим.
+The set is open, and a code of your own is fine where none of the common ones
+fits. Three we understand the same way every time, and those are the ones to
+prefer.
 
-| Код | Когда его отдавать |
+| Code | When to send it |
 | --- | --- |
-| `out_of_stock` | товара нет: кончился, мест не осталось, поставщик не отдал |
-| `invalid_params` | параметры покупки не годятся для выдачи |
-| `cannot_fulfill` | выдать нельзя по другой причине |
+| `out_of_stock` | there is none: sold out, no places left, the supplier did not hand it over |
+| `invalid_params` | the purchase parameters are no good for the delivery |
+| `cannot_fulfill` | it cannot be delivered, for some other reason |
 
-Отдельно мы считаем `out_of_stock`: он питает метрику наличия — долю покупок,
-упёршихся в отсутствие товара, которую мы держим ниже предела
-([зачем](/failures)). Отказ «нет товара», отданный своим кодом, в эту метрику
-не попадёт, и картина наличия по вашему каталогу у нас выйдет неверной. Ответ
-проверки `available: false` в ту же метрику попадает и без кода.
+We count `out_of_stock` separately, because it feeds the availability measure —
+the share of purchases that ran into missing goods, which we hold below a
+limit ([why](/failures)). A "there is none" refusal sent under a code of your
+own does not reach that measure, and the picture we hold of your catalogue's
+availability comes out wrong. An `available: false` from the check reaches the
+same measure without a code at all.
 
-## Кто проверяет карточку до публикации
+## Who checks a card before it is published
 
-Проверяющих двое: команда `coinslot verify` на вашей стороне и мы перед тем,
-как отдать карточку в каталоги. Смотрят обе стороны на одно и то же — сможет
-ли агент по этой карточке составить корректную покупку.
+Two of us: the `coinslot verify` command on your side, and we ourselves before
+the card goes into the catalogues. Both sides look at the same thing — whether
+an agent can assemble a correct purchase from this card.
 
-## Обновить или снять карточку
+## Updating or withdrawing a card
 
-Теми же инструментами, которыми она заведена. Повторная публикация с тем же
-`merchant_item_id` обновляет прежнюю карточку, а не заводит вторую: ключ ваш,
-и мы находим по нему то, что уже опубликовано. Поэтому заливать карточку
-можно из скрипта, не проверяя заранее, есть она у нас или нет.
+With the same tools it was created with. Publishing again under the same
+`merchant_item_id` updates the card that is there rather than creating a
+second one: the key is yours, and we find what is already published by it. So
+a card can be uploaded from a script without checking first whether we have it.
 
-Снятая карточка перестаёт быть видимой в каталогах, а незакрытые заказы по ней
-доигрываются обычным порядком.
+A withdrawn card stops being visible in the catalogues, and the orders still
+open against it play out in the ordinary way.
 
-## Что ещё не решено
+## What is not settled yet
 
-- Предельная длина названия и допустимые в нём символы.
-- Ограничения на описание: длина, язык, запрет обращений и инструкций,
-  адресованных программе-покупателю.
-- Точная схема, которой описываются параметры покупки и результат выдачи.
-- Имена полей, в которых задаются ваши сроки на подтверждение и на выдачу.
-- Форма поля, которым карточка объявляет проверку цены и выбирает транспорт.
-- Расширится ли словарь рекомендованных кодов сверх трёх: решаем по тому,
-  какие отказы встретятся на пилоте.
-- Пороги ограничения частоты вопросов о цене и таймаут ожидания ответа.
-- Как ваша сторона убеждается, что запрос к хуку цены пришёл от нас: подписи
-  наших HTTP-запросов. У обработчика цены этого вопроса нет — канал подписки
-  аутентифицирован.
-- Процедура снятия карточки и её сроки.
+- The maximum length of a title and the characters allowed in one.
+- The limits on a description: length, language, and the ban on addressing the
+  buying program or instructing it.
+- The exact shape that describes the purchase parameters and the delivery
+  result.
+- The names of the fields a card sets your deadlines in, for confirming and
+  for delivering.
+- The shape of the field a card declares a price check in and chooses a
+  transport with.
+- Whether the vocabulary of recommended codes grows beyond three: we decide
+  that from the refusals the pilot actually turns up.
+- The thresholds that limit how often price questions go out, and how long we
+  wait for an answer.
+- How your side satisfies itself that a request to a price hook came from us:
+  signatures on our HTTP requests. A price handler has no such question — the
+  subscription channel is authenticated.
+- The procedure for withdrawing a card, and its timings.

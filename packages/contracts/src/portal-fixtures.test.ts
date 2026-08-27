@@ -252,8 +252,8 @@ type Fixture =
  * cross-page test further down that holds the orders page's delivery to it.
  */
 const declaredResult = {
-  access_url: { type: "string", title: "Ссылка для входа" },
-  expires_at: { type: "string", title: "До какого момента действует" },
+  access_url: { type: "string", title: "The link to sign in with" },
+  expires_at: { type: "string", title: "When it stops working" },
 };
 
 /**
