@@ -53,6 +53,12 @@ export const REMINDERS = "coinslot_reminders";
  * and a hyphen are not — pg-boss's own internal queue is called
  * `__pgboss__send-it`. `pgboss/queue.db-test.ts` asks the real library whether
  * this still agrees with it.
+ *
+ * Nothing here checks a name against it at run time, and that is on purpose:
+ * pg-boss does its own checking and says why in a sentence worth reading, so a
+ * check in front of it would only be a second way to say the same no. This
+ * exists so that the two names above can be checked without a database, and it
+ * is read by the tests alone.
  */
 export const A_NAME_PG_BOSS_ACCEPTS = /^[\w.\-/]+$/;
 
@@ -166,6 +172,18 @@ export class PgBossQueue implements Queue {
     }
 
     await this.#boss.start();
+    // Both queues run on pg-boss's own defaults, and the important one is the
+    // fifteen minutes a delivery may be held before it is taken back. That is
+    // deliberate for envelopes, where the machine rather than the queue decides
+    // whether anything is repeated, and it has never been thought about for
+    // reminders.
+    //
+    // Whoever thinks about it should know that these calls cannot be the place
+    // it is changed. pg-boss writes a queue's settings when the queue is first
+    // made and its `create_queue` ends in `on conflict do nothing`, so options
+    // added here would apply to a database that has never run this and be
+    // silently ignored by every database that has. Changing them on a live
+    // installation is `updateQueue`, or a migration.
     await this.#boss.createQueue(ENVELOPES);
     await this.#boss.createQueue(REMINDERS);
 

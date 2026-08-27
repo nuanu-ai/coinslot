@@ -118,7 +118,18 @@ export interface Queue {
 
 /** How patient a queue is with a reminder whose handler threw. */
 export interface ReminderPatience {
-  /** How many deliveries in all, the first one included. */
+  /**
+   * How many deliveries in all, the first one included.
+   *
+   * It buys two things and only one of them is obvious. The obvious one is the
+   * handler that throws. The other is the gateway that took a reminder and died
+   * before answering it: a queue takes such a delivery back once its window has
+   * run out and then hands it over again, which is the same mechanism counted
+   * against the same number. So setting this to one does not merely stop
+   * retrying a failing handler — it also means a deadline is lost for good if
+   * the process carrying it goes down, and the order it belonged to is never
+   * declared overdue by anybody.
+   */
   readonly attempts: number;
   readonly retryDelayMs: number;
 }
