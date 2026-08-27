@@ -37,6 +37,12 @@ page for a person, so the shape of that is a decision rather than a detail.
    show something, the API is missing it, and the merchant would have hit the
    same wall.
 
+   Narrowed by ADR-0009: the cabinet owns two tables of its own, accounts and
+   sessions, which are the people who sign into it and hold nothing about a
+   merchant's data. Everything on every screen still comes from the public API,
+   and no query in the cabinet can reach the gateway's tables — that is the
+   part of this section the dogfooding argument is about, and it is unchanged.
+
 4. **Server-rendered HTML, no client-side framework and no client build step.**
    The cabinet v0 shows three lists and offers one real action. A single-page
    application would add a build pipeline, a dependency tree and a second
