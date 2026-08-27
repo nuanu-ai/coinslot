@@ -42,7 +42,7 @@ import { HTTPFacilitatorClient } from "@x402/core/server";
 import { getDefaultAsset } from "@x402/evm";
 import { makeBuyer } from "./buyer.js";
 import { EUROPE_ESIM } from "./cards.js";
-import { bootGateway, sliceEnv } from "./gateway-harness.js";
+import { bootGateway, SLICE_MERCHANT_KEY, sliceEnv } from "./gateway-harness.js";
 import { startMerchant } from "./merchant.js";
 
 /** Networks where the money is not real. Everything else is treated as mainnet. */
@@ -173,7 +173,11 @@ async function main(): Promise<void> {
   });
 
   const booted = await bootGateway(realFacilitator, env);
-  const merchant = startMerchant(booted.baseUrl, env.MERCHANT_API_KEY ?? "");
+  // The key the harness seeded into the gateway, named rather than read back
+  // out of the environment: the variable that carries it is the gateway's
+  // own, and reading a name this file does not control is how the merchant
+  // ends up presenting an empty key and being turned away at the door.
+  const merchant = startMerchant(booted.baseUrl, SLICE_MERCHANT_KEY);
   await merchant.start();
   const buyer = makeBuyer({ baseUrl: booted.baseUrl, privateKey: buyerKey, maxUsd });
 
