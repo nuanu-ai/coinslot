@@ -1,0 +1,27 @@
+/*
+ * What gets compiled for the registry, as opposed to what gets type-checked.
+ *
+ * The reasoning is the same as in the contracts package next door, and the one
+ * line worth repeating is why `tsc` is the whole build. This package's entry
+ * point and its command import their neighbours with `.js` specifiers already,
+ * which is what Node resolves and what `tsc` emits unchanged; the declarations
+ * come out of the same pass. Nothing here needs bundling, and a bundler would
+ * be a dependency, a config file and a second opinion on module resolution
+ * bought for nothing.
+ *
+ * `src/cli.ts` is deliberately in scope. It is the file the published `bin`
+ * points at, so leaving it out would ship a package whose command is missing.
+ *
+ * No source maps, for the reason written out in the contracts package: `files`
+ * ships `dist` alone, and a map without the sources it points into is a dead
+ * reference in someone else's `node_modules`.
+ */
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "dist",
+    "declaration": true
+  },
+  "exclude": ["src/**/*.test.ts", "src/testing"]
+}

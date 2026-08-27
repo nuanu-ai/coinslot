@@ -16,13 +16,18 @@
     "worktrees": "./scripts/worktrees.sh list",
     "worktrees:clean": "./scripts/worktrees.sh clean",
     "typecheck": "tsc --noEmit -p tsconfig.json && pnpm -r run typecheck",
+    "build": "pnpm -r run build",
     "test": "vitest run",
     "test:db": "vitest run --config vitest.db.config.ts",
     "smoke": "pnpm --filter @coinslot/slice run smoke",
-    "buy": "pnpm --filter @coinslot/slice run buy"
+    "outside": "./scripts/outside.sh",
+    "buy": "pnpm --filter @coinslot/slice run buy",
+    "changeset": "changeset",
+    "release": "pnpm build && changeset publish"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.10",
+    "@changesets/cli": "^3.0.1",
     "@types/node": "^26.3.0",
     "typescript": "7.0.2",
     "vitest": "^4.1.11"
