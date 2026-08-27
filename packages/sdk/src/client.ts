@@ -76,11 +76,13 @@ import {
   whatIsKnown,
 } from "./transport.js";
 import {
+  droppedFieldWarning,
   type EventHandler,
   type HandlerRegistry,
   type ProblemReporter,
   REGISTERED_AS,
   type RunningWorker,
+  reportSafely,
   type StreamHandlerKind,
   startWorker,
   type WorkerProblem,
@@ -527,6 +529,18 @@ export const createClient = (options: ClientOptions): CoinslotClient => {
     body: unknown,
   ): Promise<OrderCallResponse> => {
     reachable();
+
+    if (route === "deliver_order") {
+      // The road the worker's own warning does not cover, and the one a
+      // merchant delivering asynchronously takes. See `droppedFieldWarning`:
+      // the field goes no further than the gateway's parse, and without this
+      // the merchant's handler had no way to learn that what it sent is not
+      // what went out. A warning and not a refusal — the rest of the delivery
+      // is good, and the call is the merchant's to make.
+      const dropped = droppedFieldWarning(orderId, body as Delivery);
+
+      if (dropped !== null) reportSafely(registry.problem, dropped);
+    }
 
     const answer = await callRoute(gateway, route, { path: { order_id: orderId }, body });
 
