@@ -101,11 +101,13 @@ const LISTED_TAGS_MAX = 5;
 /**
  * A word the discovery channel can render, held to the channel's own rule.
  *
- * Printable ASCII and nothing else, because the channel measures length in
- * bytes and drops anything outside that range. The restriction is real and it
- * costs something worth saying out loud: a seller whose name is written in
- * Cyrillic, Greek or Arabic cannot be listed under it, and this refuses the
- * name rather than listing them under a mangled one.
+ * Printable ASCII and nothing else, because that is what the channel's own
+ * check tests for before it drops a value: a pattern over the printable range
+ * and a length counted in the units a JavaScript string counts in, which is
+ * why the same word measures the same on every side that implements this. The
+ * restriction is real and it costs something worth saying out loud: a seller
+ * whose name is written in Cyrillic, Greek or Arabic cannot be listed under
+ * it, and this refuses the name rather than listing them under a mangled one.
  */
 const listedText = (what: string) =>
   z
@@ -143,9 +145,11 @@ export const ServiceNameSchema = listedText("service name").meta({
  */
 export const TagsSchema = z
   .array(listedText("tag"))
-  // Not an empty list. A card that names no tags leaves the field out; an
-  // empty list is a value a catalog renders, and the two would be one thing
-  // written two ways with nothing to tell them apart.
+  // Not an empty list. To the catalog an empty list and no tags at all are the
+  // same thing — it drops the field either way — so accepting both would give
+  // one meaning two spellings, and the merchant who wrote the brackets could
+  // reasonably think they had said something. One way to say it, and it is
+  // leaving the field out.
   .min(1, "a card that names no tags leaves the field out rather than sending an empty list")
   .max(LISTED_TAGS_MAX, `a card carries at most ${LISTED_TAGS_MAX} tags`)
   .refine(
@@ -166,10 +170,40 @@ export const TagsSchema = z
   });
 
 /**
+ * The longest a description may be before a discovery catalog stops carrying
+ * all of it.
+ *
+ * This number is weaker evidence than the other two on this page and the
+ * difference matters. The length and the alphabet a listing name and a tag are
+ * held to were read out of the catalog's own code, which we run here; this one
+ * is read out of the catalog's written documentation, recorded in
+ * `docs/research/04-spike-bazaar-listing.md`, and no code of theirs that we can
+ * run enforces it — their sanitiser touches the listing name, the tags and the
+ * icon, and never the description. A hundred entries walked out of the live
+ * catalog are consistent with it and prove nothing: the longest was 468
+ * characters and none sat at the boundary, which is what a hard cut would have
+ * left behind. So the ceiling is honoured rather than verified.
+ */
+const LISTED_DESCRIPTION_MAX = 500;
+
+/**
  * What the buyer gets, what it is good for and what it does not include. Read
  * by a program, so distinguishing facts do the work here.
+ *
+ * It is also the one field of prose that goes out to a discovery catalog, and
+ * the only one of the three merchant-written fields that reaches a listing with
+ * nothing of the catalog's own checking it on arrival. Whatever a catalog does
+ * with a description past its limit — cut it, refuse the record, keep it whole
+ * — a merchant would learn of it from a listing rather than from us. So the
+ * limit is here, at the publish, where somebody is reading the answer.
  */
-const DescriptionSchema = z.string().regex(/\S/, "a description must not be empty or blank");
+const DescriptionSchema = z
+  .string()
+  .regex(/\S/, "a description must not be empty or blank")
+  .max(
+    LISTED_DESCRIPTION_MAX,
+    `a description is at most ${LISTED_DESCRIPTION_MAX} characters, which is what a listing carries`,
+  );
 
 /**
  * What the agent receives when the delivery goes through. Never empty: a

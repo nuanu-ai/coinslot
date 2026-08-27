@@ -782,9 +782,15 @@ describe("a card as a discovery channel reads it", () => {
 });
 
 describe("the tags a card may carry, against the listing's own rules", () => {
-  // The negative control this pair of schemas most needed: values our schema
-  // takes, put through the catalog's own function, to see whether anything of
-  // the merchant's disappears on the way in. Two of these used to.
+  // Each of these is a value our schema used to take and the catalog then made
+  // something else of — a duplicate folded away, an empty list dropped so that
+  // it says exactly what no tags at all says, padding kept so that one word has
+  // two spellings. Nothing here runs the catalog's
+  // own code: this package depends on zod and nothing else, deliberately. What
+  // runs it is `apps/gateway/src/http/x402.test.ts`, which puts the longest
+  // name and the most tags these schemas allow through the catalog's own
+  // sanitiser and checks that it hands all of them back. These say what our side refuses; that one
+  // says their side keeps what our side sends.
   const tagged = (tags: unknown) => CardSchema.safeParse({ ...syncCard, tags });
 
   it("refuses two tags the listing would fold into one", () => {
@@ -810,5 +816,32 @@ describe("the tags a card may carry, against the listing's own rules", () => {
     expect(document.minItems).toBe(1);
     expect(document.uniqueItems).toBe(true);
     expect(document.description).toContain("case");
+  });
+});
+
+describe("the description a listing carries", () => {
+  // The promise: what a merchant writes here is what a discovery catalog
+  // shows, whole. It is the one field of prose that goes out, no sanitiser
+  // anywhere touches it, and the catalog's own documentation puts a ceiling on
+  // it — so the ceiling is here, where a merchant meets it while they are still
+  // writing, rather than there, where nobody would be told.
+  const withDescription = (description: string) =>
+    CardSchema.safeParse({ ...syncCard, description });
+
+  it("takes a description up to the length the catalog documents", () => {
+    expect(withDescription("d".repeat(500)).success).toBe(true);
+  });
+
+  it("refuses one longer than that rather than letting it be cut", () => {
+    expect(errorOf(CardSchema, { ...syncCard, description: "d".repeat(501) })).toContain("500");
+  });
+
+  it("still refuses an empty description and a blank one", () => {
+    expect(withDescription("").success).toBe(false);
+    expect(withDescription("   ").success).toBe(false);
+  });
+
+  it("says the ceiling in the document, for the reader who has only that", () => {
+    expect(toJsonSchemas().card.properties?.description).toMatchObject({ maxLength: 500 });
   });
 });

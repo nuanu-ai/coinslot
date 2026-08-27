@@ -202,19 +202,59 @@ const environmentSchema = z.object({
 
   /**
    * Where this gateway answers from, which is what a payment challenge names as
-   * the thing being paid for. Behind a terminator the address the process sees
-   * is not the address an agent called, so it is configuration rather than
-   * something read off the request.
+   * the thing being paid for. Behind a reverse proxy — the process that ends the
+   * agent's TLS connection and passes the request on to us — the address this
+   * process sees is not the address the agent called, so it is configuration
+   * rather than something read off the request.
    *
-   * The trailing slash is taken off here, once, and the reason is not tidiness.
-   * A path is joined onto this string, so a base written with a slash produces
-   * an address with two in the middle of it — a second spelling of one product,
-   * which a discovery catalog reads as a second resource. Whoever wrote the
-   * variable cannot be expected to know that, and the two spellings are one
-   * deployment: the one place that can settle it is here.
+   * A path is joined onto this string, and everything below follows from that.
+   *
+   * The trailing slash is taken off here, once. A base written with one
+   * produces an address with two slashes in the middle of it — a second
+   * spelling of one product, which a discovery catalog reads as a second
+   * resource. Whoever wrote the variable cannot be expected to know that, and
+   * the two spellings are one deployment: the one place that can settle it is
+   * here.
+   *
+   * Everything else about this value is refused rather than repaired, and the
+   * difference from the slash is that none of it has a reading that was meant.
+   * A trim would be us deciding somebody did not mean what they typed; a
+   * refusal at start-up is the same news in front of the person who typed it.
+   *
+   * A query or a fragment lands in the middle of every resource address, which
+   * then answers nothing and is still what a listing would be keyed on. So does
+   * a space. A scheme written in capitals is kept exactly as written and costs
+   * the listing itself: the validation endpoint this repository talks to
+   * answers 400 to any resource that does not begin with a lower-case `https`,
+   * so such a gateway is absent from the catalog with nothing anywhere saying
+   * why. And a user name and password in front of the host would be handed to
+   * every agent that asks what a product costs, because this string goes
+   * straight into the challenge.
+   *
+   * Three spellings are left alone and it is worth knowing which: a host in
+   * capitals, a host with a trailing dot, and a host written in a script other
+   * than Latin. Each makes a second spelling of one product the same way, and
+   * each also has a legitimate reading — so settling them is a decision about
+   * how far this variable is normalised, and nobody has taken it.
    */
   PUBLIC_BASE_URL: z
     .url()
+    .refine(
+      (value) => /^https?:\/\//.test(value),
+      "must begin with http:// or https:// in lower case, because this string is used exactly as written",
+    )
+    .refine(
+      (value) => !/[?#]/.test(value),
+      "must not carry a query or a fragment: a path is joined onto this, so either would end up in the middle of every address",
+    )
+    .refine(
+      (value) => !/\s/.test(value),
+      "must not carry a space: this is an address an agent is told to come back to",
+    )
+    .refine(
+      (value) => !/^https?:\/\/[^/@]*@/.test(value),
+      "must not carry a user name and password: this address is published to every agent that asks a price",
+    )
     .default("http://localhost:3000")
     .transform((value) => value.replace(/\/+$/, "")),
 
