@@ -82,6 +82,22 @@ reason it is confined to effects whose receivers tolerate a repeat, and the
 reason it is a decision rather than a detail: any future effect that does not
 tolerate one cannot be swept, and has to say so where it is defined.
 
+**Tolerating a repeat on the wire is not the same as a repeat being free**, and
+this decision read as though it were. A merchant's handler is told to expect the
+same order twice and does survive it — but a second hand-over spends one of that
+order's five redeliveries, and the attempt cap closes a paid order into a debt.
+So the sweep costs the merchant a delivery they never failed, and enough of
+those cost them the sale and the money. Building this is what showed it: the
+sweep now asks the merchant's own stream whether an envelope is still waiting
+and leaves that order alone, and it runs one at a time under a lock, because
+two runs beside each other both saw an empty stream and both published. Neither
+guard follows from "the receiver tolerates a repeat", which is why the sentence
+above is not enough on its own.
+
+The rule that replaces it: an effect may be swept when its receiver tolerates a
+repeat **and** repeating it costs the order nothing that belongs to a real
+failure. The second half is the one that has to be argued each time.
+
 ## Alternatives rejected
 
 **A table of intents drained by a worker — the usual outbox.** It is the
