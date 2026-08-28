@@ -898,9 +898,11 @@ export class Gateway {
       return {
         step: "payment_not_verified",
         why,
-        // "unknown" is the layer not answering — trying again may reach it.
-        // "false" is the layer saying no — the same payment will not pass,
-        // though the order is still open for a corrected one.
+        // "unknown" is nobody having said no: the layer did not answer, or
+        // could not be asked at all because something on our side of the call
+        // was missing. Trying again may reach it, and the words say which of
+        // the two it was. "false" is the layer saying no — the same payment
+        // will not pass, though the order is still open for a corrected one.
         retryable: verified.verified === "unknown",
       };
     }

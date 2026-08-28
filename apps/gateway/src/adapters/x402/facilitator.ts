@@ -37,6 +37,8 @@ import type { PaymentVerificationFailure } from "@coinslot/core";
 import { decodePaymentSignatureHeader } from "@x402/core/http";
 import type { FacilitatorClient } from "@x402/core/server";
 import {
+  type PaymentPayload,
+  type PaymentRequirements,
   SettleError,
   type SettleResponse,
   VerifyError,
@@ -55,8 +57,8 @@ export class X402Facilitator implements Facilitator {
   }
 
   async verify(charge: Charge): Promise<VerifyOutcome> {
-    const asked = this.#asked(charge);
-    if (asked === null) {
+    const payload = decoded(charge.payment);
+    if (payload === null) {
       return {
         verified: false,
         reason: "signature",
@@ -64,7 +66,21 @@ export class X402Facilitator implements Facilitator {
       };
     }
 
-    const mismatch = wrongOffer(asked.payload.accepted, asked.requirements);
+    let requirements: PaymentRequirements;
+    try {
+      requirements = this.#requirements(charge);
+    } catch (thrown) {
+      // Nothing here is a verdict on the payment. What could not be built is
+      // our own side of the question — the address this sale is paid at, the
+      // currency it is priced in — so the facilitator was never asked, nothing
+      // is claimed, and the sentence that travels is the one naming what is
+      // actually missing. Reported as a refusal it would tell a buyer their
+      // payment is bad, which it may not be, and send them looking through it
+      // for a fault that is on our side of the call.
+      return { verified: "unknown", message: describe(thrown) };
+    }
+
+    const mismatch = wrongOffer(payload.accepted, requirements);
     if (mismatch !== null) {
       // The agent paid against something other than what we asked for. It never
       // reaches the facilitator: whatever it would say, this is not a payment
@@ -74,7 +90,7 @@ export class X402Facilitator implements Facilitator {
 
     let answered: VerifyResponse;
     try {
-      answered = await this.#client.verify(asked.payload, asked.requirements);
+      answered = await this.#client.verify(payload, requirements);
     } catch (thrown) {
       // A facilitator that judged the payment and said so with a refusing
       // status has answered, and the answer is the same one it sends with a
@@ -95,16 +111,22 @@ export class X402Facilitator implements Facilitator {
   }
 
   async settle(charge: Charge): Promise<SettleOutcome> {
-    const asked = this.#asked(charge);
-    if (asked === null) {
+    const payload = decoded(charge.payment);
+    if (payload === null) {
       throw new Error(
         `the charge on ${charge.orderId} was to be executed and the payment kept for it cannot be read`,
       );
     }
+    // Whatever stopped the requirements being built is thrown with its own
+    // sentence rather than folded into the one above. Both end the same way —
+    // the charge does not happen and somebody reads about it — and the reader
+    // is being sent either to the payment or to the merchant's settings, which
+    // is the whole of what the words decide.
+    const requirements = this.#requirements(charge);
 
     let answered: SettleResponse;
     try {
-      answered = await this.#client.settle(asked.payload, asked.requirements);
+      answered = await this.#client.settle(payload, requirements);
     } catch (thrown) {
       // A charge the facilitator turned away is a charge that did not happen:
       // it refused the request rather than failing inside one, so no money
@@ -134,15 +156,29 @@ export class X402Facilitator implements Facilitator {
     };
   }
 
-  #asked(charge: Charge) {
-    try {
-      return {
-        payload: decodePaymentSignatureHeader(charge.payment),
-        requirements: this.#edge.requirementsFor(charge, charge.orderId, charge.payTo),
-      };
-    } catch {
-      return null;
-    }
+  /**
+   * What this payment should have been paid against, rebuilt from our own
+   * order.
+   *
+   * It throws rather than answering null, and that is the whole reason it is
+   * apart from the decode above. Everything that can go wrong here is on our
+   * side of the call — a merchant with nowhere to be paid, a price in a
+   * currency this gateway cannot charge in — and each of them arrives with a
+   * sentence saying which. Caught together with the decode, all of it read as
+   * "this is not a payment", which is a claim about the payer's payment that
+   * nobody here is in a position to make.
+   */
+  #requirements(charge: Charge) {
+    return this.#edge.requirementsFor(charge, charge.orderId, charge.payTo);
+  }
+}
+
+/** The payment as the protocol carries it, or nothing where it is not one. */
+function decoded(payment: string): PaymentPayload | null {
+  try {
+    return decodePaymentSignatureHeader(payment);
+  } catch {
+    return null;
   }
 }
 

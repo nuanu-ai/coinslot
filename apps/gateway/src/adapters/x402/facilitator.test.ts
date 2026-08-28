@@ -292,7 +292,9 @@ describe("verifying a payment", () => {
     });
 
     expect(answered.verified).toBe("unknown");
-    expect(answered).toMatchObject({ message: expect.stringContaining("nowhere to send the money") });
+    expect(answered).toMatchObject({
+      message: expect.stringContaining("nowhere to send the money"),
+    });
     // And nothing reached the facilitator, because there was no question to put
     // to it: what is missing is on our side of the call.
     expect(client.asked).toHaveLength(0);
