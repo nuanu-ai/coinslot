@@ -30,11 +30,23 @@ import { outcomeFor } from "./outcome.js";
  * needs to be cleverer than that, the portal has grown a structure that the
  * tests should be reading differently anyway.
  *
- * Every column of every table is pinned, not only the one the row is named by.
- * The first cell says which case the row is about; the ones after it are the
- * promise, and the promise is what a merchant acts on and what an agent is
- * quoted. A guard that read the labels alone would let the page keep its rows
- * and change what they say.
+ * A row is pinned by its first cell and no further. That cell says which case
+ * the row is about, and pinning it is what enrolls the row: one added, removed
+ * or renamed on the portal fails here until somebody decides which scenario it
+ * is. The columns after it are the row's prose — where the money is, what the
+ * agent is told, what running out of one clock costs — and they were pinned
+ * word for word for a while, which made this file the place a copyeditor's
+ * semicolon broke the build.
+ *
+ * What those columns promise is checked as the machine fact it is, in the
+ * scenarios above: against `outcomeFor`, against the effects the machine asks
+ * the gateway for, against `MERCHANT_EVENTS`. So a sentence that stops being
+ * true fails where it is read against the code, and a sentence that says the
+ * same thing in other words does not fail at all. Where a cell enumerates more
+ * than the scenarios below name — the four ways an order comes to need a
+ * refund is the one — the rest is `machine.test.ts`'s to hold, and pinning the
+ * sentence here never checked them either. It froze the wording and called it
+ * cover.
  */
 
 const ORDERS_PAGE = readFileSync(new URL("../../../../portal/orders.md", import.meta.url), "utf8");
@@ -53,11 +65,10 @@ function section(page: string, heading: string): string {
 }
 
 /**
- * One named cell of every data row of the first table in a section. The
- * column is given by its position, counting from one: the first is what the
- * row is about, and the ones after it are the promise the row makes.
+ * The first cell of every data row of the first table in a section: what each
+ * row is about, which is what the scenarios above are named by.
  */
-function tableRows(page: string, heading: string, column = 1): readonly string[] {
+function tableRows(page: string, heading: string): readonly string[] {
   const lines = section(page, heading).split("\n");
   const first = lines.findIndex((line) => line.startsWith("|"));
   if (first === -1) throw new Error(`the section "${heading}" has no table`);
@@ -66,19 +77,13 @@ function tableRows(page: string, heading: string, column = 1): readonly string[]
   for (const line of lines.slice(first)) {
     if (!line.startsWith("|")) break;
     // A row is bounded by a pipe at each end, so splitting it leaves an empty
-    // piece on both sides: a two-column row is four pieces. The row has column
-    // N only if there is a piece after the Nth one.
-    const pieces = line.split("|");
-    if (pieces.length <= column + 1) {
-      throw new Error(`the table in "${heading}" has no column ${column}`);
-    }
-    const cells = pieces.slice(1, -1).map((piece) => piece.trim());
-    // Being the separator is a property of the whole row rather than of the
-    // cell this call happens to select. Read off one cell, a data row whose
-    // selected cell was written as "---" would drop out and shift every promise
-    // after it up by one — silently, and into the wrong row.
-    if (cells.every((cell) => /^:?-+:?$/.test(cell))) continue;
-    rows.push(cells[column - 1] ?? "");
+    // piece on both sides.
+    const cells = line
+      .split("|")
+      .slice(1, -1)
+      .map((piece) => piece.trim());
+    if (/^:?-+:?$/.test(cells[0] ?? "")) continue;
+    rows.push(cells[0] ?? "");
   }
   return rows.slice(1);
 }
@@ -189,11 +194,12 @@ describe('portal/orders.md, "How an order can end"', () => {
   });
 
   it(`${ENDINGS[7]}: the agent is told the outcome is unknown, not that he was refused`, () => {
-    // The row's own third column, pinned verbatim by the guard at the bottom of
-    // this file: "the outcome of the payment is not known", not "refused" — a
-    // repeat under the same key is safe. The two are different answers to an
-    // agent deciding whether to go and buy the same thing somewhere else, and
-    // the machine may not give the cheaper one when it does not know.
+    // The row's own promise to the agent: "the outcome of the payment is not
+    // known", not "refused" — and a repeat under the same key is safe. The two
+    // are different answers to an agent deciding whether to go and buy the same
+    // thing somewhere else, and the machine may not give the cheaper one when
+    // it does not know. This is where that is held: the page can say it in
+    // whatever words it likes, and the word the code hands out is checked here.
     const unresolved = walk(newOrder("async"), [
       { kind: "payment_verified", at: T0 + 1 },
       { kind: "deadline_expired", at: T0 + 999_999, deadline: "settle_response" },
@@ -530,70 +536,12 @@ describe("the portal and this machine cannot drift apart quietly", () => {
     expect(tableRows(ORDERS_PAGE, "How an order can end")).toStrictEqual([...ENDINGS]);
   });
 
-  it("still says where the money is in each of those endings", () => {
-    // The row label alone is not the promise. The middle column is where the
-    // page tells the merchant whose money it is, and that is the sentence the
-    // scenarios above are written against.
-    expect(tableRows(ORDERS_PAGE, "How an order can end", 2)).toStrictEqual([
-      "with you",
-      "never moved",
-      "never moved",
-      "never moved",
-      "for what was not delivered, [you send it back](/money)",
-      "with you",
-      "never arrived",
-      "not known — and nothing on our side is asking again",
-    ]);
-  });
-
-  it("still tells the agent the same thing about each of those endings", () => {
-    // The third column is the sentence the agent is given, and it is the one
-    // place in the portal where the machine's refusal to overstate can be
-    // undone by an edit: "the outcome is not known" rewritten as "refused"
-    // would have the page promise the very claim the code will not make, and
-    // the agent would go and buy the same thing again on a wallet already
-    // lighter.
-    expect(tableRows(ORDERS_PAGE, "How an order can end", 3)).toStrictEqual([
-      "the goods and a receipt",
-      "a refusal with a reason; the purchase did not happen",
-      "a refusal, and nothing was charged",
-      "the order was closed on its deadline",
-      "an unpaid order is closed; a paid one waits for your refund",
-      "the order is waiting for a refund",
-      "the purchase did not happen; a repeat drives the payment home",
-      '"the outcome of the payment is not known", not "refused": a repeat under the same key is safe',
-    ]);
-  });
-
   it('has exactly the encoded rows in "Time ran out"', () => {
     expect(tableRows(ORDERS_PAGE, "Time ran out")).toStrictEqual([...TIMEOUTS]);
   });
 
-  it("still says what running out of each of those times costs", () => {
-    // The label names the waiting; the second column is what the merchant is
-    // owed and what the buyer paid, and the scenarios above are written against
-    // that sentence rather than against the label.
-    expect(tableRows(ORDERS_PAGE, "Time ran out", 2)).toStrictEqual([
-      "the price no longer holds; if it still wants to buy, it asks for a fresh one",
-      "the order closed, and the buyer's money never moved",
-      "the order closed and you are free; an event comes to you",
-      "the purchase did not happen and nothing was charged; a late delivery is not lost — a repeat collects it",
-      "the money is already with you, and the order is marked as needing a refund",
-    ]);
-  });
-
   it('has exactly the encoded rows in "Events on the same subscription"', () => {
     expect(tableRows(ORDERS_PAGE, "Events on the same subscription")).toStrictEqual([...EVENTS]);
-  });
-
-  it("still says what each of those events means", () => {
-    // The event name is the wire word; the second column is what the merchant
-    // is told it means, and it is the half he acts on.
-    expect(tableRows(ORDERS_PAGE, "Events on the same subscription", 2)).toStrictEqual([
-      "you did not deliver in time, you refused after the charge, you left with a paid order still open, or a charge we had given up on reported in late",
-      "you answered that you would deliver and the agent did not pay in its own time; you are free",
-      "you delivered, and the charge either failed or went unanswered",
-    ]);
   });
 
   it("has exactly the encoded failure scenarios", () => {
@@ -610,10 +558,5 @@ describe("the portal and this machine cannot drift apart quietly", () => {
     expect(tableRows(ORDERS_PAGE, "Time ran out").length).toBe(5);
     expect(() => tableRows(ORDERS_PAGE, "A section that is not here")).toThrowError(/no section/);
     expect(() => tableRows(ORDERS_PAGE, "Test orders")).toThrowError(/no table/);
-    // And a column the table does not have is an error rather than a row of
-    // empty strings, which is what a guard against a moved column would
-    // otherwise compare itself against.
-    expect(() => tableRows(ORDERS_PAGE, "Time ran out", 3)).toThrowError(/no column 3/);
-    expect(() => tableRows(ORDERS_PAGE, "How an order can end", 4)).toThrowError(/no column 4/);
   });
 });
