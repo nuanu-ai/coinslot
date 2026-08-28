@@ -158,6 +158,29 @@ describe("the surface is the table", () => {
       buildApp(harnessed.gateway, [["a_call_nobody_serves" as never, API_ROUTES.list_catalog]]),
     ).toThrow(/nothing to serve it with/);
   });
+
+  it("answers the health check while the process is up, with no key on it", async () => {
+    // The one address the surface serves that the contract's table does not
+    // name, and the promise is a deployment's rather than an agent's:
+    // `compose.yaml` puts a container health check on it, and whatever routes
+    // in front of the gateway will too. A key check grown onto it, or an
+    // answer whose shape changed, takes a working gateway out of rotation
+    // without anything about the table looking wrong.
+    //
+    // What is pinned is exactly what the route promises today and no more: the
+    // process is up and answering. It is not a statement that the gateway can
+    // do its work — a gateway whose queue schema has been dropped out from
+    // under it goes on answering this while logging that the relation does not
+    // exist, which is written down at adapters/postgres/adapters.db-test.ts.
+    // Deepening the check into a real readiness probe is a product decision
+    // nobody has taken, so this test does not pretend it was.
+    const { served } = await started();
+
+    const answered = await served.call("GET", "/healthz");
+
+    expect(answered.status).toBe(200);
+    expect(answered.body).toStrictEqual({ ok: true });
+  });
 });
 
 describe("what a call answers with", () => {
