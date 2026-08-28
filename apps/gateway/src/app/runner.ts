@@ -432,16 +432,27 @@ export class OrderRunner {
    * once, which is why only one runs at a time. Every arm reads the world and
    * then acts on what it read, so two runs beside each other both find the
    * envelope missing and both send it — the double hand-over the dispatch arm
-   * exists to prevent, and one of that order's deliveries spent. The overlap is
-   * ordinary rather than theoretical: two gateways would do it, and so does one
-   * gateway handed its own job again after the queue's window ran out. So the
-   * work is taken under a name, and a run that finds the name held does
-   * nothing at all and says so.
+   * exists to prevent, and one of that order's deliveries spent. The overlap
+   * that makes that reachable is a second gateway, and only that: inside one
+   * process the queue's worker waits for this to return before it fetches
+   * anything else. So the work is taken under a name, and a run that finds the
+   * name held does nothing at all and says so.
    *
-   * Nothing is written down about having run. The lock is let go however the
-   * work ends, a process that dies holding it leaves the work free for the next
-   * one, and a run that skipped is not a run that failed — the work it wanted
-   * is already being done.
+   * Nothing is written down about having run, and a run that skipped is not a
+   * run that failed — the work it wanted is already being done. What the name
+   * actually holds is one run per live connection: a lock goes when the session
+   * holding it goes, and a run whose connection died carries on without it. The
+   * port says more about that where the lock is defined.
+   *
+   * Two things this does not make safe, and both are about reading the world
+   * once and acting on it for the length of a run. The orders are a snapshot,
+   * so an order that finished while the sweep was working through the list is
+   * still acted on as it stood; only the stream is asked again, fresh, for each
+   * order. And the receipt arm can write over a receipt the ordinary path wrote
+   * after the snapshot was taken — same order, same outcome, a different
+   * identifier and a document built from the older reading. A receipt is what a
+   * merchant reconciles a wallet against, which is what makes that one worth
+   * knowing about rather than shrugging at.
    *
    * What may not be swept, which is the part ADR-0013 asks every future effect
    * to be measured against. An arm here may only re-drive an effect whose
