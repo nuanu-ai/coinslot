@@ -5,6 +5,7 @@ import {
   API_ROUTES,
   AUTH_MODES,
   CatalogPageSchema,
+  ErrorEnvelopeSchema,
   expandPath,
   HTTP_METHODS,
   MERCHANT_KEY_HEADER,
@@ -772,8 +773,7 @@ describe("the route table", () => {
     return found?.[0] ?? "NOT IN THE REGISTRY";
   };
 
-  const responseOf = (route: RouteDefinition): string =>
-    "document" in route.response ? nameOf(route.response.document) : "not one document";
+  const responseOf = (route: RouteDefinition): string => nameOf(route.response.document);
 
   /**
    * The whole surface as it stands, so a change to any of it is a change here.
@@ -876,7 +876,7 @@ describe("the route table", () => {
       "none",
       "-",
       "purchase_request",
-      "not one document",
+      "agent_order_status",
     ],
     [
       "get_order_status",
@@ -935,7 +935,7 @@ describe("the route table", () => {
       const referenced: [string, ZodType | undefined][] = [
         ["query", route.query],
         ["request", route.request],
-        ["response", "document" in route.response ? route.response.document : undefined],
+        ["response", route.response.document],
       ];
 
       for (const [what, schema] of referenced) {
@@ -946,16 +946,20 @@ describe("the route table", () => {
     expect(unpublished).toStrictEqual([]);
   });
 
-  it("explains itself where a call answers with something other than one document", () => {
-    // The one place the table cannot hold the whole contract is the purchase,
-    // which is a payment exchange before it is a document. An absent field
-    // would be a silence; this is a sentence.
+  it("names the document every call answers with, the purchase included", () => {
+    // The purchase used to be the exception, on the grounds that it is a
+    // payment exchange before it is a document — which left the one call an
+    // agent makes as the only one whose answer nothing holds to a shape. The
+    // exchange is still there and is still not a document; what a paid
+    // purchase comes back with is the state of the order, and that is named
+    // here like everything else.
     for (const [name, route] of Object.entries(API_ROUTES) as [string, RouteDefinition][]) {
-      if ("document" in route.response) continue;
-      expect(route.response.not_one_document.length, name).toBeGreaterThan(0);
+      expect(route.response.document, name).toBeDefined();
     }
 
-    expect("document" in API_ROUTES.purchase_item.response).toBe(false);
+    expect(API_ROUTES.purchase_item.response.document).toBe(
+      API_ROUTES.get_order_status.response.document,
+    );
   });
 
   it("says what every call is for, in words", () => {
@@ -1241,5 +1245,79 @@ describe("the merchant key's header, held in one place so both sides cannot drif
     expect(merchantKeyFrom("Basic abc")).toBeNull(); // another scheme entirely
     expect(merchantKeyFrom("Bearer")).toBeNull(); // the scheme with no token
     expect(merchantKeyFrom("Bearer   ")).toBeNull(); // the scheme and only spaces
+  });
+});
+
+describe("the envelope every call refuses in", () => {
+  const refused = {
+    error: { code: "no_such_order", message: "there is no such order" },
+  };
+
+  it("accepts a refusal with a code and words", () => {
+    expect(ErrorEnvelopeSchema.parse(refused)).toStrictEqual(refused);
+  });
+
+  for (const field of ["code", "message"]) {
+    it(`refuses one with no ${field}, and says which is missing`, () => {
+      // Both are required and both absences are expensive. A refusal with no
+      // code is one nothing can branch on; a refusal with no words is one only
+      // its author can read, and whoever prints it prints an empty space where
+      // the reason belongs.
+      const without = Object.fromEntries(
+        Object.entries(refused.error).filter(([name]) => name !== field),
+      );
+
+      expect(errorOf(ErrorEnvelopeSchema, { error: without })).toContain(field);
+    });
+  }
+
+  it("refuses a code or a sentence that is there and says nothing", () => {
+    // Blank is the absence wearing the field's name, and it reaches a reader
+    // as a refusal whose reason is not there.
+    expect(errorOf(ErrorEnvelopeSchema, { error: { ...refused.error, code: "  " } })).toContain(
+      "code",
+    );
+    expect(errorOf(ErrorEnvelopeSchema, { error: { ...refused.error, message: "" } })).toContain(
+      "explanation",
+    );
+  });
+
+  it("lets a refusal say more about itself, beside the code and the sentence", () => {
+    // Three refusals on this surface do: where an order ended, whether the
+    // payment layer might vouch for a second attempt, which fields of a
+    // document did not fit. A reader that does not recognise the extra field
+    // still reads the two that are always there.
+    for (const detail of [
+      { status: "rejected" },
+      { retryable: true },
+      { problems: [{ path: ["params", "email"], code: "required", message: "missing" }] },
+    ]) {
+      const parsed = ErrorEnvelopeSchema.parse({ error: { ...refused.error, ...detail } });
+
+      expect(parsed.error).toMatchObject(detail);
+      expect(parsed.error.code).toBe(refused.error.code);
+    }
+  });
+
+  it("is not a document that merely mentions an error", () => {
+    // The negative control the recognition rests on. A caller asks every
+    // answer it could not read whether it was a refusal, and an envelope that
+    // matched anything with an `error` in it would turn one of this surface's
+    // own documents — an order call that did not go through says so inside the
+    // shape its route promises — into a call that failed.
+    expect(
+      ErrorEnvelopeSchema.safeParse({ ok: false, error: { code: "x", message: "y" } }).success,
+    ).toBe(false);
+    expect(ErrorEnvelopeSchema.safeParse({ errors: [] }).success).toBe(false);
+    expect(ErrorEnvelopeSchema.safeParse({ order_id: "ord_7c1e05" }).success).toBe(false);
+    expect(ErrorEnvelopeSchema.safeParse("a proxy's error page").success).toBe(false);
+    expect(ErrorEnvelopeSchema.safeParse(null).success).toBe(false);
+  });
+
+  it("is published, because it is the one answer every caller has to be able to read", () => {
+    // The reader furthest from us has the JSON Schema export. A refusal shape
+    // that lived only in TypeScript would leave them with the successes of
+    // every call described and no way at all to find out that a call failed.
+    expect(schemas.error_envelope).toBe(ErrorEnvelopeSchema);
   });
 });

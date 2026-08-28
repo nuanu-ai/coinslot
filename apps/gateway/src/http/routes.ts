@@ -7,13 +7,15 @@
  * gateway, and the status codes are the only judgement it makes, because the
  * contract deliberately carries none.
  *
- * The purchase is the one handler that writes its own response, and it is the
- * only one that has to: its answer is a payment exchange before it is a
- * document, and the challenge travels in a header.
+ * Every refusal here is written straight to the response rather than returned
+ * as a document, and so is the payment challenge, whose whole content is a
+ * header. Everything a call answers with when it works goes back as a document
+ * and is held to the route's own schema on the way out. The purchase is not an
+ * exception to that any more: what it answers a paid call with is the state of
+ * the order it made, in the document the agent's own door answers with.
  */
 
 import type {
-  AgentOrderStatus,
   IssueKeyRequest,
   OrderListQuery,
   OrderWithStatus,
@@ -24,7 +26,7 @@ import type {
 } from "@coinslot/contracts";
 import { outcomeFor } from "@coinslot/core";
 import type { Gateway, PurchaseAttempt } from "../app/gateway.js";
-import { orderDocumentOf, salePriceOf } from "../app/runner.js";
+import { agentOrderStatusOf, orderDocumentOf } from "../app/runner.js";
 import type { MountedRoute, RouteAnswer, RouteCall } from "./server.js";
 import { refusal } from "./server.js";
 import {
@@ -220,15 +222,17 @@ export function handlersFor(gateway: Gateway): Partial<Record<RouteName, Mounted
           // about a purchase that is over.
           const status = outcomeFor(record.order);
           const open = status === "in_progress";
-          return written(response, CONFLICT, {
-            error: {
-              code: open ? "order_not_priced_yet" : "order_closed_before_it_was_priced",
-              message: open
+          return written(
+            response,
+            CONFLICT,
+            refusal(
+              open ? "order_not_priced_yet" : "order_closed_before_it_was_priced",
+              open
                 ? "this order is still waiting for its price, and until it has one there is no sale to describe"
                 : `this order ended as ${status} before anybody named a price for it, so there is no sale to describe`,
-              status,
-            },
-          });
+              { status },
+            ),
+          );
         }
         const document: OrderWithStatus = {
           ...orderDocumentOf(record),
@@ -357,12 +361,9 @@ export function handlersFor(gateway: Gateway): Partial<Record<RouteName, Mounted
  * because the caller has no merchant to be scoped to and the order belongs to
  * whichever merchant sold it.
  *
- * That makes the shape of the answer the whole of the protection, and it is
- * built field by field rather than taken from the order and trimmed. The
- * merchant's own document for this order carries their key for the product and
- * the buyer's parameters back; assembled by subtraction, a field added to it
- * later would arrive here too, and nobody would be told. Assembled by
- * addition, the same field arrives nowhere until somebody writes it down.
+ * The answer is built by `agentOrderStatusOf`, which is also what the purchase
+ * answers with — one document for one question, so an agent that bought and an
+ * agent that came back later are told the same thing in the same shape.
  *
  * An identifier that names no order is answered in the words the merchant's
  * own read of a stranger's order gets — there is no such order, and nothing
@@ -377,34 +378,7 @@ async function orderStatus(
     return written(response, NOT_FOUND, refusal("no_such_order", "there is no such order"));
   }
 
-  const status = outcomeFor(record.order);
-  const document: AgentOrderStatus = {
-    order_id: record.order.id,
-    status,
-    // Null where nobody named a price rather than the card's own number: an
-    // order that closed before it was priced was never sold at anything, and
-    // standing the catalogue's figure in for it would be a claim about a sale
-    // that did not happen.
-    price: salePriceOf(record),
-    // The same word the merchant's receipt carries. Every other field here
-    // reads the same whether the charge was real or not, so a buyer with no
-    // way to ask would be holding what looks like proof of a payment.
-    test: record.order.test,
-    // The goods only once they are the buyer's, which is narrower than once
-    // the merchant handed them over. A synchronous delivery whose charge came
-    // back failed leaves goods on an order nothing was paid for; the purchase
-    // itself refuses to hand those over, and a door that answered with them
-    // anyway would be a way of collecting for free whatever a failed charge
-    // left behind. Where the charge failed outright a repeat purchase carries
-    // the payment home against the goods that already exist. Where it went
-    // silent instead, no repeat is taken either — the machine will not spend a
-    // second authorisation on a guess about the first — and the word this
-    // answers with is `in_progress`, because that is the truth of it: we are
-    // still waiting on the payment layer. That is the one case where goods
-    // exist, the buyer may have been charged, and nothing here hands them over.
-    delivered: status === "delivered" ? (record.delivery ?? null) : null,
-  };
-  return { status: OK, document };
+  return { status: OK, document: agentOrderStatusOf(record) };
 }
 
 /**
@@ -566,9 +540,19 @@ async function answerPurchase(
       return written(response, NOT_FOUND, refusal("no_such_item", "there is no such product"));
 
     case "params_rejected":
-      return written(response, UNPROCESSABLE, {
-        error: { code: "params_do_not_fit", problems: attempt.problems },
-      });
+      // The findings are what the agent fixes, and the sentence is what tells
+      // it that they are findings about its own parameters rather than about
+      // the product or the payment. A refusal that carried the list alone left
+      // whoever printed it an empty space where the reason belongs.
+      return written(
+        response,
+        UNPROCESSABLE,
+        refusal(
+          "params_do_not_fit",
+          "these purchase parameters are not what this product's card asks for, and the problems say which of them and why",
+          { problems: attempt.problems },
+        ),
+      );
 
     case "not_selling":
       return written(response, CONFLICT, refusal("not_selling", attempt.message));
@@ -609,9 +593,11 @@ async function answerPurchase(
       // touched: the order is exactly where it was and ends on its own
       // deadline. The agent is told what the layer said and, where trying again
       // could reach it, that it may.
-      return written(response, CONFLICT, {
-        error: { code: "payment_not_verified", message: attempt.why, retryable: attempt.retryable },
-      });
+      return written(
+        response,
+        CONFLICT,
+        refusal("payment_not_verified", attempt.why, { retryable: attempt.retryable }),
+      );
 
     case "payment_not_taken":
       // The machine would not take a payment on this order and said why. The
@@ -660,37 +646,36 @@ async function answerPurchase(
       return written(response, PAYMENT_REQUIRED, {});
     }
 
-    case "under_way": {
-      if (attempt.order.order.mode.settle === "after_fulfillment") {
-        // A synchronous purchase promises the agent the goods themselves inside
-        // one ceiling. Coming back from that ceiling with no goods is not a
-        // success, however the order is getting on internally — and the one way
-        // to arrive here is the case that most needs saying: a charge that was
-        // sent and never reported back. Answered 200, an agent would read "your
-        // purchase is being worked on" for an order nothing is working on,
-        // while holding nothing and not knowing whether it was charged.
-        return written(response, CONFLICT, {
-          order_id: attempt.order.order.id,
-          status: outcomeFor(attempt.order.order),
-        });
-      }
-
-      // The money moved at the purchase and the goods come later. The receipt
-      // is written when the order reaches an ending, so at this moment there is
-      // none — and the answer says so rather than leaving the field out, which
-      // a reader cannot tell from an oversight.
-      return written(response, OK, {
-        order: orderDocumentOf(attempt.order),
-        receipt: await gateway.runtime.store.receiptForOrder(attempt.order.order.id),
-      });
-    }
+    // Both of the remaining steps answer with where the order stands, in the
+    // one document the agent's own door answers with. The status code is what
+    // separates them, and the contract deliberately carries none of it: 200
+    // where the purchase is going through or has ended in the goods, 409 where
+    // it has not.
+    case "under_way":
+      // A synchronous purchase promises the agent the goods themselves inside
+      // one ceiling. Coming back from that ceiling with no goods is not a
+      // success, however the order is getting on internally — and the one way
+      // to arrive there is the case that most needs saying: a charge that was
+      // sent and never reported back. Answered 200, an agent would read "your
+      // purchase is being worked on" for an order nothing is working on, while
+      // holding nothing and not knowing whether it was charged.
+      //
+      // Where the money moved at the purchase and the goods come later, the
+      // same document under a 200 is the honest answer: the order exists, it
+      // is paid for, and the door that hands the goods over is the one named
+      // in the address the agent already holds.
+      return {
+        status: attempt.order.order.mode.settle === "after_fulfillment" ? CONFLICT : OK,
+        document: agentOrderStatusOf(attempt.order),
+      };
 
     case "settled": {
-      const outcome = outcomeFor(attempt.order.order);
       const settlement = attempt.order.settlement;
       if (settlement !== null) {
         // The payment layer's own receipt, which an agent's x402 client reads
-        // off the answer to its purchase.
+        // off the answer to its purchase. It travels in a header and is the
+        // agent's proof that money moved; our own receipt is the merchant's
+        // record and is read through the merchant's door.
         response.setHeader(
           PAYMENT_RESPONSE_HEADER,
           edge.receiptHeader({
@@ -701,18 +686,10 @@ async function answerPurchase(
         );
       }
 
-      if (outcome === "delivered") {
-        return written(response, OK, {
-          delivered: attempt.delivery,
-          order: orderDocumentOf(attempt.order),
-          receipt: await gateway.runtime.store.receiptForOrder(attempt.order.order.id),
-        });
-      }
-
-      return written(response, CONFLICT, {
-        order_id: attempt.order.order.id,
-        status: outcome,
-      });
+      return {
+        status: outcomeFor(attempt.order.order) === "delivered" ? OK : CONFLICT,
+        document: agentOrderStatusOf(attempt.order),
+      };
     }
   }
 }

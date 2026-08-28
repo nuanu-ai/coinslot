@@ -132,7 +132,7 @@ describe("the surface is the table", () => {
     const bought = await buyOverHttp(harnessed, served, itemId, {
       onOrder: () => ({ accepted: {} }),
     });
-    const orderId = (bought.body as { order: { id: string } }).order.id;
+    const orderId = (bought.body as { order_id: string }).order_id;
 
     const answered = await served.call("GET", `/v0/orders/${orderId}/status`);
 
@@ -1293,7 +1293,7 @@ describe("the merchant's receipts", () => {
     expect(after.status).toBe(200);
     expect(receipts).toHaveLength(1);
     expect(receipts[0]).toMatchObject({
-      order_id: (bought.body as { order: { id: string } }).order.id,
+      order_id: (bought.body as { order_id: string }).order_id,
       outcome: "delivered",
       item_id: itemId,
     });

@@ -230,30 +230,48 @@ describe("a purchase from the outside", () => {
       });
       await worker.stop();
 
-      // The goods themselves come back in the answer to the purchase.
+      // The goods themselves come back in the answer to the purchase, inside
+      // the document the agent's own door answers with — where the order
+      // stands, what it was priced at, and the goods.
       expect(bought.status).toBe(200);
       const answer = bought.body as {
+        order_id: string;
+        status: string;
         delivered: { access_code: string };
-        order: { id: string; price: { amount: string } };
-        receipt: { outcome: string; price: { amount: string } };
+        price: { amount: string };
+        test: boolean;
       };
+      expect(answer.status).toBe("delivered");
       expect(answer.delivered).toStrictEqual({ access_code: "4417" });
-      expect(answer.order.price.amount).toBe("80.00");
-      expect(answer.receipt.outcome).toBe("delivered");
-      expect(answer.receipt.price.amount).toBe("80.00");
+      expect(answer.price.amount).toBe("80.00");
       expect(bought.headers.get("payment-response")).toBeTruthy();
+
+      // The receipt is the merchant's record and is read through the
+      // merchant's own door, which is the only place it exists.
+      const receipts = await gateway.call("GET", "/v0/receipts", {
+        headers: { authorization: `Bearer ${MERCHANT_KEY}` },
+      });
+      expect(receipts.status).toBe(200);
+      const written = (
+        receipts.body as {
+          receipts: { order_id: string; outcome: string; price: { amount: string } }[];
+        }
+      ).receipts;
+      expect(written.map((receipt) => receipt.order_id)).toStrictEqual([answer.order_id]);
+      expect(written[0]?.outcome).toBe("delivered");
+      expect(written[0]?.price.amount).toBe("80.00");
 
       // Verified before the merchant was asked, charged after they answered,
       // and each of those happened exactly once.
       expect(gateway.facilitator.verifies).toHaveLength(1);
       expect(gateway.facilitator.settles).toHaveLength(1);
-      expect(worker.seen).toStrictEqual([answer.order.id]);
+      expect(worker.seen).toStrictEqual([answer.order_id]);
 
       // And the merchant can read it back: one order, closed, nothing open.
-      const read = await gateway.call("GET", `/v0/orders/${encodeURIComponent(answer.order.id)}`, {
+      const read = await gateway.call("GET", `/v0/orders/${encodeURIComponent(answer.order_id)}`, {
         headers: { authorization: `Bearer ${MERCHANT_KEY}` },
       });
-      expect(read.body).toMatchObject({ id: answer.order.id, status: "delivered" });
+      expect(read.body).toMatchObject({ id: answer.order_id, status: "delivered" });
 
       const open = await gateway.call("GET", "/v0/orders?open=true", {
         headers: { authorization: `Bearer ${MERCHANT_KEY}` },
@@ -293,19 +311,20 @@ describe("a purchase from the outside", () => {
       });
       expect(challenged.status).toBe(402);
 
-      // The money moves at the purchase here, so the agent is answered with an
-      // order rather than with goods — and told plainly that there is no
-      // receipt yet, which is not the same as there being no field for one.
+      // The money moves at the purchase here, so the agent is answered with a
+      // running order rather than with goods — and told plainly that there are
+      // none yet, which is not the same as there being no field for them.
       const bought = await gateway.call("POST", `/v0/items/${itemId}/purchase`, {
         body: { params: {} },
         headers: { "payment-signature": payFor(challenged.headers.get("payment-required") ?? "") },
       });
       expect(bought.status).toBe(200);
-      const started = bought.body as { order: { id: string }; receipt: null };
-      expect(started.receipt).toBeNull();
+      const started = bought.body as { order_id: string; status: string; delivered: null };
+      expect(started.status).toBe("in_progress");
+      expect(started.delivered).toBeNull();
       expect(gateway.facilitator.settles).toHaveLength(1);
 
-      const orderId = started.order.id;
+      const orderId = started.order_id;
 
       // The merchant draws the order and takes it on.
       const drawn = await gateway.call("POST", "/v0/worker/poll", {

@@ -29,9 +29,10 @@
  * — "SKU 100/1" is one we accept — and pasted into an address unencoded it
  * becomes two path segments and a different route.
  *
- * One route in the table answers with something that is not a document at all,
- * and it says so in a field rather than by leaving the response out. A missing
- * field is a silence, and a reader cannot tell a silence from an oversight.
+ * What each route names is the document it answers with when the call works.
+ * How it says no is not a per-route question and is not written route by
+ * route: every refusal on this surface, from any call, arrives in the one
+ * envelope `ErrorEnvelopeSchema` describes below.
  *
  * Two ways of answering for an order sit in the table and they are not the
  * same thing, which is worth reading before either is used. What a merchant's
@@ -356,6 +357,15 @@ export const PurchaseRequestSchema = z
  * order's identifier can read it (ADR-0011) and an answer assembled from the
  * merchant's record would hand all of that to whoever guessed one.
  *
+ * Both of the agent's doors answer in it, and that is one concept rather than
+ * two: the purchase and the later read are the same question — where does my
+ * order stand — asked at two moments. Two documents for it would be two
+ * readers for an integrator to write, and the one that came back from the
+ * purchase was the merchant's own, with the merchant's key for the product and
+ * the buyer's own parameters in it. What a purchase answers with beyond this
+ * document is the payment exchange that precedes it, which is a header and not
+ * a document at all.
+ *
  * The two nullable fields are required rather than optional, and that is the
  * fifth gate written into a shape. `price` is null for an order nobody ever
  * named a price for — a product that was gone, a price question that went
@@ -536,17 +546,70 @@ export const merchantKeyFrom = (headerValue: string | undefined): string | null 
 };
 
 /**
- * What a call answers with: one document, or a contract this table cannot
- * hold.
+ * How every call on this surface says no.
  *
- * The second branch exists for the purchase, which is a payment exchange
- * before it is a document. It is a field carrying a sentence rather than an
- * absent `response`, because a reader can tell a sentence from an oversight
- * and cannot tell a silence from one.
+ * One shape, for every refusal of every route, whatever it is about and
+ * whatever status it arrives under: an object whose only field is `error`, and
+ * inside it a machine-readable `code` and a sentence a person can act on. It
+ * is declared here, once, rather than being described route by route — a
+ * refusal shape written down twenty-six times is a refusal shape that is
+ * already twenty-six shapes, and the one thing a caller does with every call
+ * it makes is find out whether the call was refused.
+ *
+ * Both fields are required, and the sentence is the one worth arguing for. A
+ * refusal with a code and no words is a refusal only the code's author can
+ * read: an integrator meeting it for the first time has a string to search our
+ * source for and nothing to act on, and the caller printing it has an empty
+ * space where the reason belongs. That is why this is required rather than
+ * optional, and why a refusal that carries findings — a card's problems, a
+ * body that did not fit — carries them beside the sentence rather than instead
+ * of it.
+ *
+ * Inside `error` the shape is open, and that is deliberate in both directions.
+ * A refusal may say more about itself than these two fields, and several do:
+ * where an order ended, whether the payment layer might vouch for a second
+ * attempt, which fields of a document did not fit. What no refusal may do is
+ * ride beside the envelope rather than inside it, which is why the outer
+ * object is closed: `{ "error": … }` and nothing else is how a reader tells a
+ * refusal from a document that happens to mention an error.
+ *
+ * The set of codes is open, and is not enumerated here. A gateway meets
+ * situations this contract has not named, and a closed list would leave it
+ * choosing between the nearest wrong word and no answer at all. What is
+ * promised is the shape, so that a caller can always find out that it was
+ * refused and always have something to print.
  */
-export type RouteResponse =
-  | { readonly document: z.ZodType }
-  | { readonly not_one_document: string };
+export const ErrorEnvelopeSchema = z
+  .strictObject({
+    error: z.looseObject({
+      /** The name of the refusal, for the code that branches on it. */
+      code: z.string().regex(/\S/, "a refusal carries a code"),
+
+      /** The same refusal in words, for whoever has to do something about it. */
+      message: z.string().regex(/\S/, "a refusal carries an explanation a person can read"),
+    }),
+  })
+  .meta({
+    description:
+      'How every call on this surface says no. One shape for every refusal of every route, whatever it is about and whatever HTTP status it arrives under: an object whose only field is "error", carrying a machine-readable code and a sentence a person can act on. Both are always present — a refusal with a code and no words is one only its author can read. The code is an open set and is not enumerated: a gateway meets situations this contract has not named, and what is promised here is the shape rather than the vocabulary. Inside "error" a refusal may carry more about itself — where an order ended, whether a second attempt could succeed, which fields of a document did not fit — and a reader that does not recognise those must still be able to read the code and the sentence. Nothing rides beside the envelope: a body carrying anything at the top level other than "error" is not a refusal, and reading one as a refusal would turn a document that merely mentions an error into a call that failed.',
+  });
+
+export type ErrorEnvelope = z.infer<typeof ErrorEnvelopeSchema>;
+
+/**
+ * What a call answers with when it works.
+ *
+ * One document per route, always — how a call says no is not written here, it
+ * is {@link ErrorEnvelopeSchema} and it is the same for all of them. The
+ * purchase used to be the exception, on the grounds that it is a payment
+ * exchange before it is a document; it names a document now, and the exchange
+ * that precedes it is described in that route's own words. A route that
+ * genuinely cannot name one is a change to this type, made deliberately,
+ * rather than a field somebody left out.
+ */
+export interface RouteResponse {
+  readonly document: z.ZodType;
+}
 
 export interface RouteDefinition {
   /** The method the call is made with, and the only one that carries the body. */
@@ -781,13 +844,10 @@ export const API_ROUTES = Object.freeze({
     path: "/v0/items/:item_id/purchase",
     auth: "none",
     description:
-      "Buying one product. The payment is what stands in for authorisation, so there is no key on this call. Its answer is not one document: the first is a payment challenge, and what follows a paid purchase depends on the card's mode — the goods themselves where delivery is synchronous, an order and a receipt otherwise. The address also answers the challenge on GET, because the validators and crawlers that list a paid resource ask for it that way; a GET carries no body, so it can produce the challenge and never a completed purchase. A product that is not on sale answers neither method with a challenge: it is refused, so that a catalog built from these challenges never carries a product nobody can buy.",
+      "Buying one product. The payment is what stands in for authorisation, so there is no key on this call. It begins with the payment exchange of the x402 protocol: a call with no payment on it is answered with a challenge, which travels in a header and carries no document. What a paid purchase is answered with is the state of the order it made — the same document the status route answers with, whatever the card's mode and whether the purchase ended in the goods or in something else, so an agent that bought and an agent that came back later read one shape. The address also answers the challenge on GET, because the validators and crawlers that list a paid resource ask for it that way; a GET carries no body, so it can produce the challenge and never a completed purchase. A product that is not on sale answers neither method with a challenge: it is refused, so that a catalog built from these challenges never carries a product nobody can buy.",
     request: PurchaseRequestSchema,
     also_answers_on: ["GET"],
-    response: {
-      not_one_document:
-        "the payment exchange of the x402 protocol, and then either the delivered goods or an order with its receipt, depending on the card's fulfillment mode",
-    },
+    response: { document: AgentOrderStatusSchema },
   },
 
   get_order_status: {

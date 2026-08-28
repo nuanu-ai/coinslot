@@ -29,6 +29,11 @@
  * when the ceiling below runs out, or the reader interrupts it, the order is
  * still the merchant's to finish and the command says where to collect it
  * rather than reporting a sale that ended.
+ *
+ * Both answers it reads are one document — where your order stands — so the
+ * purchase and the wait are read the same way here, and the only thing the
+ * card's mode decides is whether the goods are in the first answer or in a
+ * later one.
  */
 
 import { makeBuyer, type OrderStatus } from "./buyer.js";
@@ -224,22 +229,25 @@ if (bought.status >= 400) {
   process.exit(1);
 }
 
-// What a paid purchase answers with depends on the card's mode: the goods
-// themselves where delivery happens on the call, an order to come back for
-// where it does not. Both were printed above; only the second has anywhere
-// left to go.
-const answered = bought.body as { readonly delivered?: unknown; readonly order?: unknown } | null;
+// A paid purchase answers with where the order stands, in the same document
+// the agent's own door answers with — so what the card's mode changes is which
+// of its fields is filled in, not which shape came back. The goods are there
+// where delivery happened on the call, and null where they come later; either
+// way the identifier is how this command comes back for them.
+const answered = bought.body as {
+  readonly delivered?: unknown;
+  readonly order_id?: unknown;
+} | null;
 
-if (answered?.delivered !== undefined) {
+if (answered?.delivered != null) {
   process.exit(0);
 }
 
-const order = answered?.order;
-const orderId = typeof order === "object" && order !== null ? (order as { id?: unknown }).id : null;
+const orderId = answered?.order_id;
 
 if (typeof orderId !== "string") {
   console.error(
-    "[buyer] the purchase was accepted but carried neither the goods nor an order to come back for, so there is nothing to wait on",
+    "[buyer] the purchase was accepted but named neither the goods nor an order to come back for, so there is nothing to wait on",
   );
   process.exit(1);
 }
@@ -327,10 +335,12 @@ if (seen.state !== "delivered") {
 
 console.log(`[buyer] the goods:`);
 console.log(JSON.stringify(seen.delivered, null, 2));
-// Said because the purchase above printed `receipt: null` and a reader is owed
-// the difference between a receipt that is missing and one that was never this
-// door's to give. The price and the `test` word in the document above are what
-// an agent is handed; the receipt is written into the merchant's own record.
+// Said because a reader who went looking for a receipt is owed the difference
+// between one that is missing and one that was never the agent's to be given.
+// Neither of the agent's doors carries our receipt: the price and the `test`
+// word in the document above are what an agent is handed, the settlement the
+// payment layer signed is what says money moved, and the receipt is written
+// into the merchant's own record.
 console.log(
-  "[buyer] this door carries no receipt: the price and the test word above are the agent's proof, and the receipt is the merchant's record",
+  "[buyer] neither of the agent's doors carries a receipt: the price and the test word above are the agent's proof, and the receipt is the merchant's record",
 );
