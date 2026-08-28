@@ -23,7 +23,7 @@ import type { Card, Receipt, WorkerEnvelope } from "@coinslot/contracts";
 import { isOpen, MERCHANT_SELLING, type MerchantSelling } from "@coinslot/core";
 import { and, eq, exists, isNull, lt, not, sql } from "drizzle-orm";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { Pool } from "pg";
+import { Pool, type PoolConfig } from "pg";
 import type { DrizzleTransactionLike } from "pg-boss";
 import type { Ids } from "../../ports/clock.js";
 import type {
@@ -397,35 +397,38 @@ export class PostgresStore implements Store {
     //
     // The key is hashed from a name of ours under a prefix of ours, and what a
     // collision with somebody else's key would cost is worth having the right
-    // way round. pg-boss takes advisory locks in this same database, and it
-    // takes them by waiting rather than by asking — `pg_advisory_xact_lock`
-    // inside a transaction that sets `lock_timeout` to thirty seconds. So a
-    // collision does not cost us a skipped run: it costs pg-boss, whose
-    // create-queue or migration would sit behind our session for the length of
-    // a sweep and then fail on the timeout. Ours is the session that has to be
-    // considerate, which is why the key carries a prefix nothing else uses.
+    // way round. pg-boss takes advisory locks in this same database, and both
+    // kinds share one key space — a session lock and a transaction lock on the
+    // same number are the same lock — so a collision costs whichever side
+    // arrives second. Reaching a key pg-boss holds, we are told no and skip the
+    // run. Reaching a key we hold, pg-boss waits rather than asks:
+    // `pg_advisory_xact_lock` inside a transaction that sets `lock_timeout` to
+    // thirty seconds, so its create-queue or migration sits behind our session
+    // for the length of a sweep and then fails on the timeout. Both halves are
+    // real and the second is the worse one, which is why ours is the session
+    // that has to be considerate.
+    //
+    // The prefix on the name is not what keeps us apart from pg-boss. It goes
+    // through `hashtext` with everything else, so it reserves no region of a
+    // flat 32-bit key space; what it does is keep our own names from colliding
+    // with each other. Nothing here can rule out a collision with somebody
+    // else's key, and nothing needs to: what a collision costs is written above.
     const client = await this.#db.$client.connect();
     let broken: unknown = null;
 
-    // A checked-out client has no error listener at all. The pool takes its own
-    // off on the way out — pg-pool's `_acquireClient` does it by name — and
-    // hands it back only on release, so between those two moments a fatal on
-    // this connection is an `error` event with nobody listening, which in Node
-    // is an uncaught exception and a dead process. That costs more here than
-    // almost anywhere: every parked purchase and every parked worker lives in
-    // this process's memory, so a backend somebody terminated would drop every
-    // agent mid-purchase. It is the same guard `connect()` puts on the pool,
-    // and this is the first place in the gateway that pins a client and then
-    // sits idle on it, with no query in flight for a fatal to surface through.
+    // Nothing is listened for on this client here, and that is deliberate rather
+    // than an omission. A checked-out client carries no error listener of the
+    // pool's — pg-pool takes its own off on the way out and hands it back only
+    // on release — so a fatal while a client is pinned would be an `error` event
+    // with nobody listening, which in Node is an uncaught exception and a dead
+    // process. `connect()` covers that for every client the pool hands out, on
+    // `acquire` and `release`, because this is not the only place that pins one:
+    // every drizzle transaction does, `withOrder` is a drizzle transaction, and
+    // the payment path got there first. A second listener here would log the
+    // same failure twice and say nothing the first one did not.
     //
-    // What is remembered is that the connection is broken, so that the release
-    // below destroys it rather than returning it to the pool for somebody
-    // else's query to fail on.
-    const noticeTheFailure = (failed: unknown) => {
-      broken = failed;
-      console.error(`[gateway] the connection holding ${name} failed`, failed);
-    };
-    client.on("error", noticeTheFailure);
+    // What this still needs to know is whether the connection can be given back,
+    // and that is answered below by the unlock rather than by an event.
 
     try {
       const taken = await client.query<{ got: boolean }>(
@@ -457,14 +460,13 @@ export class PostgresStore implements Store {
           console.error(`[gateway] could not let go of ${name}`, thrown);
           // And the connection goes with the failure, which is the only thing
           // that actually frees the name. An unlock can fail on a session that
-          // is still perfectly alive — a statement timeout is enough, SQLSTATE
-          // 57014 — and then the lock is still held, by a client about to go
-          // back into the pool holding it. Every sweep after that is told the
-          // name is taken and does nothing, which reads in the log exactly like
-          // a healthy skip, and this is the safety net for effects that went
-          // missing. Marking the connection broken makes the release below end
-          // the session instead, and a session ending is what a session lock is
-          // released by.
+          // is still perfectly alive — a statement timeout is enough — and then
+          // the lock is still held, by a client about to go back into the pool
+          // holding it. Every later run is told the name is taken and does
+          // nothing, which reads in the log exactly like a healthy skip, and
+          // this is the safety net for effects that went missing. Marking the
+          // connection broken makes the release below end the session instead,
+          // and a session ending is what a session lock is released by.
           //
           // Without this it self-heals eventually: the pooled connection is
           // reaped on the idle timeout, about ten seconds on a quiet gateway.
@@ -484,22 +486,16 @@ export class PostgresStore implements Store {
         }
       }
     } finally {
-      // A client that failed is released with its failure, which asks the pool
-      // to end the session rather than hand the client to the next caller.
+      // A client whose lock could not be let go is released with the failure,
+      // which asks the pool to end the session rather than hand the client to
+      // the next caller still holding the name.
       //
       // Said plainly because a probe found it out: for a connection that is
       // already gone the pool would discard the client anyway, since it also
       // drops one that is no longer queryable. What the argument adds is the
       // case that connection cannot cover — a session that is alive, queryable,
       // and holding a lock it refused to release.
-      //
-      // Released first and unlistened after, in that order and not the other:
-      // releasing is what puts the pool's own error listener back on, and it
-      // does that before it decides whether to keep the client or end it. Doing
-      // it the other way round would leave the same gap this opened with, in
-      // the window where a client is being destroyed.
       client.release(broken === null ? undefined : (broken as Error));
-      client.removeListener("error", noticeTheFailure);
     }
   }
 
@@ -791,11 +787,59 @@ function rowFor(record: StoredOrder) {
  * killed it would drop every agent mid-purchase rather than degrading anything.
  * It is logged and the pool goes on; a failure that actually stops the work
  * surfaces on the next query, where somebody is waiting for an answer.
+ *
+ * The connections that are checked out are the other half of that, and they are
+ * the half that is easy to miss. The pool's listener above is on idle
+ * connections only: pg-pool takes it off a client on the way out and puts it
+ * back on release, so for as long as somebody holds a client there is nobody
+ * listening to it. A fatal in that window — an administrator terminating a
+ * backend, a failover, a pooler dropping a session — is an `error` event with no
+ * listener, which is the uncaught exception this whole function exists to avoid,
+ * arrived at down the other road.
+ *
+ * That window is not rare and it is not short. Every drizzle transaction is a
+ * checked-out client, `withOrder` is a drizzle transaction, and the callback
+ * inside it arms the order's deadlines — a round trip on the queue's own pool,
+ * during which this connection is pinned with no query in flight for a fatal to
+ * surface through. The sweep's advisory lock is the same shape and holds for
+ * longer. So the guard is here, on the pool, rather than at either of them: one
+ * listener attached to every client that leaves and taken off every client that
+ * comes back, which covers the two that exist today and whatever pins a client
+ * next.
+ *
+ * The two moments are the right ones and the order in pg-pool is what makes
+ * them safe. `acquire` is emitted before the pool strips its own listener, and
+ * the strip names that listener, so ours is attached first and survives it.
+ * `release` is emitted after the pool has put its own back on, so ours comes off
+ * a client that is already covered again. Neither edge leaves a gap.
+ *
+ * Logged and nothing more. What to do about a broken connection is the
+ * caller's: a query in flight rejects on its own, and the pool discards a client
+ * that is no longer queryable when it is released.
+ *
+ * The pool options are here for the tests, which need pools of one connection to
+ * say anything about which session holds what. They go through this function
+ * rather than building their own, because a pool built any other way is a pool
+ * without these listeners — and a test running unguarded is a test that cannot
+ * see the thing it was written for.
  */
-export function connect(databaseUrl: string): { db: Database; pool: Pool } {
-  const pool = new Pool({ connectionString: databaseUrl });
+export function connect(
+  databaseUrl: string,
+  options: PoolConfig = {},
+): { db: Database; pool: Pool } {
+  const pool = new Pool({ ...options, connectionString: databaseUrl });
   pool.on("error", (error) => {
     console.error("[gateway] an idle database connection failed", error);
   });
+
+  // One function for the whole pool rather than one per checkout: removal is by
+  // identity, so attaching and detaching the same function keeps the count at
+  // one however many clients are out at once.
+  const noticeTheFailure = (failed: unknown) => {
+    console.error("[gateway] a database connection somebody was holding failed", failed);
+  };
+  pool.on("acquire", (client) => client.on("error", noticeTheFailure));
+  pool.on("release", (_failed, client) => client.removeListener("error", noticeTheFailure));
+
   return { db: drizzle(pool), pool };
 }
