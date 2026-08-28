@@ -257,3 +257,82 @@ describe("who an order belongs to", () => {
     expect(after?.paidBy).toBe("alice");
   });
 });
+
+describe("an event held to the hand-over the order is waiting on", () => {
+  /** An async order that has been paid for and handed to its merchant once. */
+  const handedOver = async (harnessed: Harness) => {
+    const published = await harnessed.gateway.publishCard(harnessed.merchant.id, {
+      merchant_item_id: "esim",
+      title: "A seven day eSIM",
+      description: "Seven days of data",
+      price: { amount: "12.00", currency: "USD" },
+      result: { activation_code: { type: "string" } },
+      fulfillment: "async",
+    });
+    if (!("ok" in published)) throw new Error("the card would not publish");
+    const offered = await harnessed.gateway.beginPurchase(published.ok.id, {});
+    if (offered.step !== "pay") throw new Error("no price was offered");
+    const orderId = offered.order.order.id;
+    await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
+
+    // Drawn by a worker that answers nothing, which is what records a hand-over.
+    const drawn = await harnessed.gateway.poll(harnessed.merchant.id, 10, 1_000);
+    if (drawn.envelopes.length !== 1) throw new Error("the order did not reach the stream");
+    const handOver = (await harnessed.store.orderById(orderId))?.openDeliveryId ?? null;
+    if (handOver === null) throw new Error("the hand-over was not recorded");
+    return { orderId, handOver };
+  };
+
+  it("is applied while that is still the hand-over, and clears it", async () => {
+    // The ordinary case: our own clock on the merchant's answer ran out, this
+    // is still the delivery he was given, and the order goes out to him again.
+    open = await harness({ HANDLER_ANSWER_MS: "60000", DEFAULT_ASYNC_FULFILLMENT_MS: "60000" });
+    const { orderId, handOver } = await handedOver(open);
+
+    const applied = await open.gateway.runner.apply(
+      orderId,
+      { kind: "handler_undelivered", at: open.now() },
+      { openDeliveryId: null },
+      undefined,
+      handOver,
+    );
+
+    expect(applied.outcome).toBe("moved");
+    expect(await open.queue.holdsOrder(open.merchant.id, orderId)).toBe(true);
+    expect((await open.store.orderById(orderId))?.openDeliveryId).toBeNull();
+  });
+
+  it("writes nothing at all once the order is waiting on something else", async () => {
+    // The reason the hand-over is read under the same hold that writes the
+    // change rather than by the caller beforehand. Everything that can happen
+    // between a caller's read and its write is a change to the hand-over it
+    // read: the merchant's answer landing, a worker recording one of its own,
+    // another delivery of the same reminder having done all of it already. Any
+    // of those and the event is about a delivery nobody is waiting on — a
+    // redelivery decided on it spends one of the order's five for a silence the
+    // merchant never had, and the closure at that cap on a paid order is a
+    // debt.
+    //
+    // The facts are held back with the event, the cleared hand-over among them.
+    // Writing that one would take away whatever hand-over the order is waiting
+    // on now, and the silence on that one would then be noticed by nobody.
+    open = await harness({ HANDLER_ANSWER_MS: "60000", DEFAULT_ASYNC_FULFILLMENT_MS: "60000" });
+    const { orderId, handOver } = await handedOver(open);
+
+    const applied = await open.gateway.runner.apply(
+      orderId,
+      { kind: "handler_undelivered", at: open.now() },
+      { openDeliveryId: null },
+      undefined,
+      `${handOver}-somebody-else`,
+    );
+
+    expect(applied.outcome).toBe("moved_on");
+    // Nothing on the merchant's stream, and the hand-over the order is actually
+    // waiting on is exactly where it was.
+    expect(await open.queue.holdsOrder(open.merchant.id, orderId)).toBe(false);
+    const after = await open.store.orderById(orderId);
+    expect(after?.openDeliveryId).toBe(handOver);
+    expect(after?.order.dispatch.attempts).toBe(1);
+  });
+});

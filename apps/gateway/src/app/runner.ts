@@ -115,10 +115,14 @@ export type PresentResult =
   | { readonly kind: "no_such_order" };
 
 /** What one hold on an order came to, before its effects are carried out. */
-interface Decided {
-  readonly moved: TransitionResult;
-  readonly known: StoredOrder;
-}
+type Decided =
+  | {
+      readonly kind: "decided";
+      readonly moved: TransitionResult;
+      readonly known: StoredOrder;
+    }
+  /** The caller's `whileWaitingOn` was no longer true; nothing was written. */
+  | { readonly kind: "moved_on" };
 
 /** What the hold in `presentVerifiedPayment` came to, before its effects run. */
 type PresentDecided =
@@ -140,6 +144,11 @@ export type Applied =
       readonly answer: MerchantAnswer | null;
     }
   | { readonly outcome: "refused"; readonly rejection: TransitionRejection }
+  /**
+   * The order had moved on from what the caller was holding it to, and nothing
+   * was written. Only a caller that passed `whileWaitingOn` can be told this.
+   */
+  | { readonly outcome: "moved_on" }
   | { readonly outcome: "no_such_order" };
 
 /** What a parked purchase is woken with: the order as it finally stands. */
@@ -248,16 +257,35 @@ export class OrderRunner {
    * cannot tell "not yours" from "not there". It is left out where the caller
    * has no merchant to be held to: a reminder of ours running out, and a
    * payment presented by an agent that carries no key.
+   *
+   * `whileWaitingOn` is the hand-over the caller decided about, and it is read
+   * here rather than by the caller for the reason the hold exists at all. A
+   * caller that read the order first and then asked for a change has a window
+   * between the two, and everything that can happen in that window is a change
+   * to the very thing it was checking: the merchant's answer landing, a worker
+   * drawing the order and recording a hand-over of its own, another delivery of
+   * the same reminder doing all of it once already. Given one, the event and
+   * the facts are applied only while the order is still waiting on that
+   * hand-over, and the caller is told the order moved on.
    */
   async apply(
     orderId: string,
     event: OrderEvent,
     facts: OrderFacts = {},
     scope?: MerchantScope,
+    whileWaitingOn?: string,
   ): Promise<Applied> {
     const decided = await this.#runtime.store.withOrder(
       orderId,
       async (found): Promise<OrderChange<Decided>> => {
+        if (whileWaitingOn !== undefined && found.openDeliveryId !== whileWaitingOn) {
+          // Somebody else got here first. Nothing is written — not the event
+          // and not the facts, the cleared hand-over included, because writing
+          // that one would take away whatever hand-over the order is waiting on
+          // now and leave the silence on it unnoticed by anybody.
+          return { result: { kind: "moved_on" } };
+        }
+
         const known: StoredOrder = {
           ...found,
           ...(facts.settlement === undefined ? {} : { settlement: facts.settlement }),
@@ -271,7 +299,7 @@ export class OrderRunner {
           // Nothing is written for a refused event, not even the facts that
           // came with it: an event the machine says has no meaning here should
           // leave no trace of having been believed.
-          return { result: { moved, known } };
+          return { result: { kind: "decided", moved, known } };
         }
 
         refuseToWriteAnImpossibleOrder(moved.order);
@@ -296,7 +324,7 @@ export class OrderRunner {
           save: next,
           // The effects that must not be lost go in with the order (ADR-0013).
           alongside: this.#writesWithTheOrder(next, known.order, moved.effects, event.at),
-          result: { moved, known: next },
+          result: { kind: "decided", moved, known: next },
         };
       },
       scope,
@@ -304,6 +332,9 @@ export class OrderRunner {
 
     if (!decided.found) {
       return { outcome: "no_such_order" };
+    }
+    if (decided.result.kind === "moved_on") {
+      return { outcome: "moved_on" };
     }
 
     const { moved, known } = decided.result;
