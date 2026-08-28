@@ -1,12 +1,15 @@
 /**
- * How a merchant comes to exist, and the keys they open the door with.
+ * How a merchant comes to exist, the name their products are sold under, and
+ * the keys they open the door with.
  *
- * These belong together because registering is the act that produces both: one
- * call makes the merchant and issues their first key, and what comes back
- * carries the key's own row as well as the secret. Split across two files, the
- * key document would have to be imported by the registration answer anyway, and
- * a reader looking for "what does a key look like" would have two places to
- * look.
+ * The first two belong together because registering is the act that produces
+ * both: one call makes the merchant and issues their first key, and what comes
+ * back carries the key's own row as well as the secret. Split across two files,
+ * the key document would have to be imported by the registration answer anyway,
+ * and a reader looking for "what does a key look like" would have two places to
+ * look. The name is here for the same reason read the other way round — it is a
+ * fact about the merchant and about none of their cards, and the one question a
+ * reader arrives with is which of the two names a merchant has is which.
  *
  * Two rules run through the file and are worth saying once.
  *
@@ -185,6 +188,37 @@ export const DisabledKeySchema = z
   });
 
 /**
+ * The name a merchant's products are sold under, going either way.
+ *
+ * One shape for the read and for the write, so a cabinet parses back exactly
+ * what it sent and a settings screen has one document to hold rather than two
+ * that must be kept in step.
+ *
+ * Null is a value here and not an absence, and both halves of that matter. It
+ * is how a merchant who has never chosen a name is described, and it is how one
+ * who wants to stop being listed says so — there is no second call for taking a
+ * name away. An absent field would collapse those into the same thing as a
+ * client that forgot to send it, so the field is required and nullable, and a
+ * write that leaves it out is refused rather than read as "none".
+ *
+ * The name is held to the rule of the catalog that carries it, which is where
+ * this name is going: at most thirty-two characters of printable ASCII. That
+ * bound is not ours and is not about our own storage — the catalog drops what
+ * it cannot render and tells nobody, so a name refused here is a name the
+ * merchant is told about, and a name accepted here and dropped there is a
+ * seller trading under something they did not choose.
+ */
+export const SellerNameSchema = z
+  .strictObject({
+    /** What buyers read beside this merchant's products, or nothing. */
+    seller_name: ServiceNameSchema.nullable(),
+  })
+  .meta({
+    description:
+      "The name a merchant's products are sold under: what a discovery catalog lists them under and what a buyer's agent is shown beside the price. Null means nobody has chosen one, and sending null is how a merchant takes their name away again. The field is always present in both directions: an absent one would be indistinguishable from a client that dropped it, and read as \"none\" it would quietly delist a merchant who has a name. What a name may be is the catalog's rule rather than ours — at most 32 characters of printable ASCII — because a name outside it is dropped there in silence, so it is refused here where somebody is told. A merchant with no name cannot publish a card: a card published without one reaches a buyer's agent inside a payment request that names no seller at all.",
+  });
+
+/**
  * What somebody sends to become a merchant.
  *
  * Two fields, and what is not here is the half worth reading. The address and
@@ -236,6 +270,7 @@ export const RegisteredMerchantSchema = z
       "What registering produced: the merchant, the name they are listed under, their first key and that key itself. The key is readable here and nowhere afterwards, so whoever made this call is the only party that can keep it. What this answer does not carry is any notion of an account or a session — registering makes a merchant and a key, and whatever signs a person in is on the other side of this call.",
   });
 
+export type SellerName = z.infer<typeof SellerNameSchema>;
 export type MerchantKey = z.infer<typeof MerchantKeySchema>;
 export type MerchantKeyList = z.infer<typeof MerchantKeyListSchema>;
 export type IssueKeyRequest = z.infer<typeof IssueKeyRequestSchema>;

@@ -20,6 +20,7 @@ import type {
   PurchaseRequest,
   RegistrationRequest,
   RouteName,
+  SellerName,
   WorkerPollRequest,
 } from "@coinslot/contracts";
 import { outcomeFor } from "@coinslot/core";
@@ -147,6 +148,28 @@ export function handlersFor(gateway: Gateway): Partial<Record<RouteName, Mounted
         }
         return { status: OK, document: made };
       },
+    },
+
+    get_seller_name: {
+      serve: async (call) => ({
+        status: OK,
+        document: await gateway.sellerName(merchantOf(call)),
+      }),
+    },
+
+    set_seller_name: {
+      // A name outside the catalog's rule never reaches this handler: the
+      // mounting loop holds the body to the contract's own shape and answers
+      // 400 with the schema's words, which name the rule and the number. That
+      // is the same rule the flow below applies before it writes, and the two
+      // are one schema rather than two copies of a number.
+      serve: async (call) => ({
+        status: OK,
+        document: await gateway.setSellerName(
+          merchantOf(call),
+          (call.body as SellerName).seller_name,
+        ),
+      }),
     },
 
     list_keys: {

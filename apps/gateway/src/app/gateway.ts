@@ -42,6 +42,7 @@ import {
   type ReceiptList,
   type Refusal,
   type RegisteredMerchant,
+  type SellerName,
   type WorkerEnvelope,
   type WorkerPollResponse,
 } from "@coinslot/contracts";
@@ -51,7 +52,13 @@ import { asTimestamp } from "../ports/clock.js";
 import type { Reminder } from "../ports/queue.js";
 import type { StoredCard, StoredKey, StoredOrder } from "../ports/store.js";
 import { orderCallResponseOf } from "./answers.js";
-import { invitationAccepted, issueKey, keyDigest, registerMerchant } from "./merchants.js";
+import {
+  invitationAccepted,
+  issueKey,
+  keyDigest,
+  registerMerchant,
+  setServiceName,
+} from "./merchants.js";
 import { OrderRunner, orderDocumentOf, SWEEP_EFFECTS } from "./runner.js";
 import {
   modeForCard,
@@ -493,6 +500,53 @@ export class Gateway {
       key: merchantKeyOf(key),
       secret,
     };
+  }
+
+  /**
+   * What this merchant's products are sold under, as it stands.
+   *
+   * A merchant who has chosen no name is answered with null rather than with a
+   * refusal: having none is an ordinary state a settings screen has to draw.
+   * The merchant not being there at all is a different matter — every caller of
+   * this is behind the merchant's key, which the door resolved to a merchant a
+   * moment ago, so a merchant missing here is this gateway disagreeing with
+   * itself rather than anything the caller did.
+   */
+  async sellerName(merchantId: string): Promise<SellerName> {
+    const merchant = await this.runtime.store.merchantById(merchantId);
+    if (merchant === null) {
+      throw new Error(
+        `the key on this call resolved to ${merchantId}, and there is no such merchant`,
+      );
+    }
+    return { seller_name: merchant.serviceName };
+  }
+
+  /**
+   * Sets what this merchant's products are sold under, or takes it away.
+   *
+   * The name is checked before it is written, by the one function that checks
+   * it — a name the catalog cannot carry is dropped there in silence, so the
+   * refusal has to happen at the moment somebody can still be told. The route
+   * above holds the same rule on the way in, so a throw from here is a caller
+   * that skipped it rather than a merchant with a bad name.
+   *
+   * What comes back is read off the row that was written, not off the argument.
+   * Echoed, this answer would look identical whether the write landed or not.
+   */
+  async setSellerName(merchantId: string, sellerName: string | null): Promise<SellerName> {
+    const named = await setServiceName(
+      this.runtime.store,
+      merchantId,
+      sellerName,
+      this.runtime.clock(),
+    );
+    if (named === null) {
+      throw new Error(
+        `the key on this call resolved to ${merchantId}, and there is no such merchant`,
+      );
+    }
+    return { seller_name: named.serviceName };
   }
 
   /**
