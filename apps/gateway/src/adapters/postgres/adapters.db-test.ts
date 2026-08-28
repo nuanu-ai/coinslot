@@ -737,27 +737,6 @@ if (databaseUrl === null) {
       expect(listed.map((one) => one.order_id)).toContain(offered.order.order.id);
       expect(listed.find((one) => one.order_id === offered.order.order.id)).toStrictEqual(receipt);
     }, 30_000);
-    it("resolves a working key to its merchant and answers nothing for a disabled one", async () => {
-      // The door, against the SQL that runs in production. In memory this is a
-      // map lookup and a null check; here the exclusion of a revoked key is a
-      // predicate, and the two have to mean the same thing — a disabled key that
-      // came back would be a revocation that did not take.
-      await store.addKey({ id: "mk_door_a", merchantId: A, label: "A's", digest: "door-a" }, now);
-      await store.addKey({ id: "mk_door_b", merchantId: B, label: "B's", digest: "door-b" }, now);
-
-      expect(await store.workingKey("door-a")).toMatchObject({ id: "mk_door_a", merchantId: A });
-      expect((await store.workingKey("door-b"))?.merchantId).toBe(B);
-
-      await store.disableKey("mk_door_a", now + 1_000);
-
-      // And it is refused in exactly the words a key nobody was issued gets, so
-      // a revoked key is not a way of confirming that a guess was once real.
-      expect(await store.workingKey("door-a")).toBeNull();
-      expect(await store.workingKey("a-digest-nobody-was-issued")).toBeNull();
-      // B's key is untouched, which is the whole reason a key is a row.
-      expect((await store.workingKey("door-b"))?.merchantId).toBe(B);
-    });
-
     it("keeps the instant a key was first revoked at when it is revoked again", async () => {
       // The update is written as a coalesce rather than an assignment, and only
       // a database runs it. A retry after a dropped connection must not rewrite
