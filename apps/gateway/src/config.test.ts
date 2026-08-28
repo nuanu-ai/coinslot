@@ -297,7 +297,9 @@ describe("loadConfig", () => {
     // starts as it always did, and so does the one host this gateway does know:
     // a door that refused either would take deployments down rather than
     // protect them.
-    expect(() => loadConfig({ ...required, FACILITATOR_URL: "https://x402.org/facilitator" })).not.toThrow();
+    expect(() =>
+      loadConfig({ ...required, FACILITATOR_URL: "https://x402.org/facilitator" }),
+    ).not.toThrow();
     expect(() =>
       loadConfig({
         ...required,
@@ -307,10 +309,19 @@ describe("loadConfig", () => {
       }),
     ).not.toThrow();
     // And a look-alike registered by somebody else is not Coinbase's at all: it
-    // is refused nothing and handed nothing.
-    expect(() =>
-      loadConfig({ ...required, FACILITATOR_URL: "https://coinbase.com.evil.example/x402" }),
-    ).not.toThrow();
+    // is refused nothing and handed nothing. Both shapes of look-alike are here
+    // because the rule is a name boundary rather than a run of letters — one
+    // hangs the name off a domain of their own, the other is a domain of their
+    // own that merely ends in those letters, and anybody can register the
+    // second.
+    for (const url of [
+      "https://coinbase.com.evil.example/x402",
+      "https://api.cdp.coinbase.com.evil.example/x402",
+      "https://notcoinbase.com/x402",
+      "https://theircdp.coinbase.example/x402",
+    ]) {
+      expect(() => loadConfig({ ...required, FACILITATOR_URL: url })).not.toThrow();
+    }
   });
 
   it("does not let it start, names every problem at once and tells absent from wrong", () => {
