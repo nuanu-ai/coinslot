@@ -132,6 +132,53 @@ export class PostgresStore implements Store {
     return row === undefined ? null : storedMerchantOf(row);
   }
 
+  async registerMerchant(
+    merchant: { readonly id: string; readonly name: string; readonly serviceName: string },
+    key: { readonly id: string; readonly label: string; readonly digest: string },
+    at: number,
+  ): Promise<{ merchant: StoredMerchant; key: StoredKey } | null> {
+    // One transaction, so the two rows commit together or neither does
+    // (ADR-0014 §1). Written as two statements outside one, a failure between
+    // them leaves a merchant with no key, a generated identifier nobody holds,
+    // and foreign keys on it that stop anything sweeping it away.
+    return this.#db.transaction(async (tx) => {
+      const [merchantRow] = await tx
+        .insert(merchants)
+        .values({
+          id: merchant.id,
+          name: merchant.name,
+          serviceName: merchant.serviceName,
+          selling: "open",
+          createdAt: new Date(at),
+          updatedAt: new Date(at),
+        })
+        .onConflictDoNothing({ target: merchants.id })
+        .returning();
+
+      if (merchantRow === undefined) {
+        // The identifier is taken and nothing was written over what is there.
+        // Answered rather than thrown, the way `addMerchant` answers it.
+        return null;
+      }
+
+      const [keyRow] = await tx
+        .insert(merchantKeys)
+        .values({
+          id: key.id,
+          merchantId: merchant.id,
+          label: key.label,
+          digest: key.digest,
+          createdAt: new Date(at),
+        })
+        .returning();
+
+      if (keyRow === undefined) {
+        throw new Error(`registering ${merchant.id} wrote a merchant and no key`);
+      }
+      return { merchant: storedMerchantOf(merchantRow), key: storedKeyOf(keyRow) };
+    });
+  }
+
   async merchantById(id: string): Promise<StoredMerchant | null> {
     const [row] = await this.#db.select().from(merchants).where(eq(merchants.id, id)).limit(1);
     return row === undefined ? null : storedMerchantOf(row);
@@ -212,16 +259,16 @@ export class PostgresStore implements Store {
     return storedKeyOf(row);
   }
 
-  async merchantForKey(digest: string): Promise<string | null> {
+  async workingKey(digest: string): Promise<StoredKey | null> {
     // The disabled ones are excluded in the predicate rather than read back and
     // checked, so there is one answer and one shape of answer for every key
     // that does not open the door — never issued and revoked alike.
     const [row] = await this.#db
-      .select({ merchantId: merchantKeys.merchantId })
+      .select()
       .from(merchantKeys)
       .where(and(eq(merchantKeys.digest, digest), isNull(merchantKeys.disabledAt)))
       .limit(1);
-    return row?.merchantId ?? null;
+    return row === undefined ? null : storedKeyOf(row);
   }
 
   async keyByDigest(digest: string): Promise<StoredKey | null> {
@@ -234,11 +281,17 @@ export class PostgresStore implements Store {
   }
 
   async keysOf(merchantId: string): Promise<readonly StoredKey[]> {
+    // Oldest first, and the identifier settles a tie. Without the second column
+    // two keys stamped in the same millisecond come back in whatever order the
+    // planner chose that time, which is a merchant's list of keys reordering
+    // itself between two visits with nothing having changed — and it is what
+    // makes an assertion about this list pass in memory and fail against a
+    // database.
     const rows = await this.#db
       .select()
       .from(merchantKeys)
       .where(eq(merchantKeys.merchantId, merchantId))
-      .orderBy(merchantKeys.createdAt);
+      .orderBy(merchantKeys.createdAt, merchantKeys.id);
     return rows.map(storedKeyOf);
   }
 
@@ -248,8 +301,21 @@ export class PostgresStore implements Store {
       // The first revocation is the true one. Written as a plain assignment, a
       // second run of the command would move the instant somebody is
       // reconstructing an incident from.
-      .set({ disabledAt: sql`coalesce(${merchantKeys.disabledAt}, ${new Date(at)})` })
+      .set({ disabledAt: revokedAt(at) })
       .where(eq(merchantKeys.id, id))
+      .returning();
+    return row === undefined ? null : storedKeyOf(row);
+  }
+
+  async disableKeyOf(merchantId: string, id: string, at: number): Promise<StoredKey | null> {
+    // The merchant is in the predicate, so another merchant's key is never
+    // selected rather than selected and then refused — which is what makes
+    // "not yours" and "not there" one answer from where the caller stands, and
+    // leaves no window between finding out whose the key is and writing to it.
+    const [row] = await this.#db
+      .update(merchantKeys)
+      .set({ disabledAt: revokedAt(at) })
+      .where(and(eq(merchantKeys.id, id), eq(merchantKeys.merchantId, merchantId)))
       .returning();
     return row === undefined ? null : storedKeyOf(row);
   }
@@ -849,6 +915,17 @@ function storedMerchantOf(row: {
 }
 
 /** One key row as the rest of the gateway reads it. The digest stays behind. */
+/**
+ * What a revocation writes into `disabled_at`: this instant, unless something
+ * is already there.
+ *
+ * A coalesce rather than an assignment, in both of the calls that revoke, so
+ * that a second one does not move the instant somebody reconstructing an
+ * incident is working from. It is one expression rather than two because the
+ * two calls differ in who may make them and not in what they write.
+ */
+const revokedAt = (at: number) => sql`coalesce(${merchantKeys.disabledAt}, ${new Date(at)})`;
+
 function storedKeyOf(row: {
   id: string;
   merchantId: string;

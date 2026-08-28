@@ -14,9 +14,11 @@
 
 import type {
   AgentOrderStatus,
+  IssueKeyRequest,
   OrderListQuery,
   OrderWithStatus,
   PurchaseRequest,
+  RegistrationRequest,
   RouteName,
   WorkerPollRequest,
 } from "@coinslot/contracts";
@@ -46,6 +48,7 @@ import {
  */
 const OK = 200;
 const PAYMENT_REQUIRED = 402;
+const FORBIDDEN = 403;
 const NOT_FOUND = 404;
 const CONFLICT = 409;
 const UNPROCESSABLE = 422;
@@ -67,6 +70,23 @@ function merchantOf({ merchantId }: RouteCall): string {
     );
   }
   return merchantId;
+}
+
+/**
+ * The key this call was made with, on a route behind the merchant's key.
+ *
+ * Null cannot arrive here for the reason it cannot arrive above — the door
+ * resolves a key and a merchant together or refuses — and the three routes that
+ * ask are the three about keys, where a wrong answer is the merchant locking
+ * themselves out rather than a page failing to draw.
+ */
+function callersKey({ keyId }: RouteCall): string {
+  if (keyId === null) {
+    throw new Error(
+      "this call was served as one of the merchant's and reached its handler with no key behind it",
+    );
+  }
+  return keyId;
 }
 
 export function handlersFor(gateway: Gateway): Partial<Record<RouteName, MountedRoute>> {
@@ -104,6 +124,80 @@ export function handlersFor(gateway: Gateway): Partial<Record<RouteName, Mounted
 
     list_receipts: {
       serve: async (call) => ({ status: OK, document: await gateway.receipts(merchantOf(call)) }),
+    },
+
+    register_merchant: {
+      serve: async (call) => {
+        const asked = call.body as RegistrationRequest;
+        const made = await gateway.registerMerchant(asked.name, asked.invitation);
+        if (made === null) {
+          // One answer for a wrong code and for a gateway that takes no
+          // registrations. Two answers would make this form a way of asking
+          // which deployment is open, which is what the code in the door exists
+          // to stop being findable (ADR-0014 §3). The words say what is needed
+          // to get in and nothing about whether anything would.
+          return written(
+            call.response,
+            FORBIDDEN,
+            refusal(
+              "not_invited",
+              "registering here needs an invitation this gateway accepts, and this is not one",
+            ),
+          );
+        }
+        return { status: OK, document: made };
+      },
+    },
+
+    list_keys: {
+      serve: async (call) => ({
+        status: OK,
+        document: await gateway.merchantKeys(merchantOf(call), callersKey(call)),
+      }),
+    },
+
+    issue_key: {
+      serve: async (call) => ({
+        status: OK,
+        document: await gateway.issueMerchantKey(
+          merchantOf(call),
+          (call.body as IssueKeyRequest).label,
+        ),
+      }),
+    },
+
+    disable_key: {
+      serve: async (call) => {
+        const disabled = await gateway.disableMerchantKey(
+          merchantOf(call),
+          call.params.key_id ?? "",
+          callersKey(call),
+        );
+
+        if (disabled === "locked_out") {
+          // A refusal that protects the caller from themselves rather than from
+          // anybody else. A merchant whose cabinet holds this key and disabled
+          // it would meet "the gateway will not take this key" on every page
+          // afterwards, with no terminal to undo it from (ADR-0014 §5). It
+          // reaches only the key on this call; the flow above says what that
+          // leaves open.
+          return written(
+            call.response,
+            CONFLICT,
+            refusal(
+              "key_opened_this_call",
+              "this is the key this call was made with, and disabling it would leave the caller with nothing to reach the gateway",
+            ),
+          );
+        }
+        if (disabled === null) {
+          // A key of another merchant's is refused in the words a key that is
+          // not there gets. Disabling is not a way of counting somebody else's
+          // keys.
+          return written(call.response, NOT_FOUND, refusal("no_such_key", "there is no such key"));
+        }
+        return { status: OK, document: disabled };
+      },
     },
 
     get_order: {

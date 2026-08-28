@@ -21,6 +21,22 @@
  * holds the promises both of them keep, and runs against both.
  */
 
+/**
+ * The merchant an account belongs to, and the key it reaches the gateway with.
+ *
+ * The key is the secret exactly as the gateway issued it, which makes this
+ * column a secret at rest. ADR-0014 §2 argues why that is accepted and what it
+ * does not buy, and the short of it is that it is the same secret that used to
+ * sit in the cabinet's environment, moved from a file into a row so that it can
+ * be revoked one merchant at a time. What follows from it is a rule for
+ * everything above this file: this value never reaches a page, a log or the
+ * text of an error.
+ */
+export interface AccountMerchant {
+  readonly id: string;
+  readonly key: string;
+}
+
 /** A person who can sign in. */
 export interface Account {
   readonly id: string;
@@ -29,6 +45,15 @@ export interface Account {
   /** Opaque here: what is inside it is `credentials.ts`'s business. */
   readonly passwordHash: string;
   readonly createdAt: Date;
+  /**
+   * Whose cabinet this is, or null for an account made before there were any.
+   *
+   * Null is not a state anybody can sign in from — there is no key to draw a
+   * single screen with — and the sign-in says so in a sentence naming what to
+   * run instead. It exists because the column was added to a table that already
+   * had a row in it, which a NOT NULL column cannot be.
+   */
+  readonly merchant: AccountMerchant | null;
 }
 
 /** A session that has not expired, and whose it is. */
@@ -44,6 +69,14 @@ export interface AccountSummary {
   readonly createdAt: Date;
   /** How many of that person's sessions have not expired. */
   readonly sessions: number;
+  /**
+   * The identifier of the merchant this account's screens show, or null.
+   *
+   * The identifier and not the key. One is the answer to "which catalogue is
+   * this person looking at", which is the question somebody reading the listing
+   * has; the other is a secret, and this listing is printed to a terminal.
+   */
+  readonly merchant: string | null;
 }
 
 export interface Accounts {
@@ -52,9 +85,20 @@ export interface Accounts {
    *
    * Null rather than an overwrite: the command that makes accounts is run by
    * hand, and running it twice by mistake must not replace somebody's password
-   * with one they have not been told.
+   * with one they have not been told, nor point their cabinet at a merchant
+   * that is not theirs.
+   *
+   * The merchant is a parameter rather than something added afterwards, and it
+   * is allowed to be null rather than left off: an account with nobody's key on
+   * it is a real thing on a deployed server, and a caller passing null is
+   * saying so out loud instead of forgetting.
    */
-  add(email: string, passwordHash: string, at: Date): Promise<Account | null>;
+  add(
+    email: string,
+    passwordHash: string,
+    at: Date,
+    merchant: AccountMerchant | null,
+  ): Promise<Account | null>;
   byEmail(email: string): Promise<Account | null>;
   /**
    * Sets a new password and ends every session that person had, or answers
@@ -128,7 +172,7 @@ export function memoryAccounts(): Accounts {
   };
 
   return {
-    async add(email, passwordHash, at) {
+    async add(email, passwordHash, at, merchant) {
       const address = emailAs(email);
       if (byAddress.has(address)) {
         return null;
@@ -139,6 +183,7 @@ export function memoryAccounts(): Accounts {
         email: address,
         passwordHash,
         createdAt: new Date(at),
+        merchant: merchant === null ? null : { ...merchant },
       };
       byId.set(account.id, account);
       byAddress.set(address, account.id);
@@ -169,6 +214,9 @@ export function memoryAccounts(): Accounts {
           sessions: [...sessions.values()].filter(
             (session) => session.accountId === account.id && session.expiresAt > now,
           ).length,
+          // The identifier alone. Spreading the account here instead would put
+          // the key on a summary that is printed to a terminal.
+          merchant: account.merchant?.id ?? null,
         }))
         .sort((one, other) => one.email.localeCompare(other.email));
     },

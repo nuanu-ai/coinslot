@@ -35,6 +35,29 @@ export const accounts = pgTable("cabinet_accounts", {
   /** `credentials.ts` decides what is in here; this table never looks. */
   passwordHash: text("password_hash").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull(),
+  /**
+   * The merchant whose cards, orders and receipts this account's screens show.
+   *
+   * Nullable, which is a decision rather than laziness. There is an account on
+   * a deployed server that was made before merchants had accounts at all, and a
+   * NOT NULL column cannot be added to a table that already has a row in it. An
+   * account with nothing here cannot sign in — there is no key to draw a screen
+   * with — and the sign-in says exactly that rather than serving an empty
+   * cabinet.
+   */
+  merchantId: text("merchant_id"),
+  /**
+   * The key that merchant reaches the gateway with, as the gateway issued it.
+   *
+   * This is a secret at rest, and ADR-0014 §2 is where the argument for keeping
+   * it this way lives: it is the same secret that used to sit in plain text in
+   * the cabinet's environment, moved from a file into a row so it can be
+   * revoked one merchant at a time instead of by a deployment. Unlike the
+   * password beside it, which is a derivation, this column hands over what it
+   * holds — so nothing above this table may put it on a page, in a log or in
+   * the text of an error.
+   */
+  merchantKey: text("merchant_key"),
 });
 
 /**

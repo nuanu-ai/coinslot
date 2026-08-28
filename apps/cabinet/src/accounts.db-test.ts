@@ -89,15 +89,26 @@ if (databaseUrl === null) {
       // one during a password change put the new derivation there — the two
       // values this whole arrangement exists to keep out of a log, on a path
       // nobody reading the call site would think about.
+      //
+      // There is a third value on the row now and it is the worst of them: the
+      // merchant's own key, which unlike a derivation and unlike a fingerprint
+      // is the live secret itself (ADR-0014 §2). A registration that failed on
+      // its last statement would otherwise write it into whatever collects the
+      // log, at the one moment somebody is certainly reading.
       const store = await broken();
       const fingerprint = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
       const stored = "scrypt$32768$8$1$c2FsdHNhbHRzYWx0c2E$VEhJUy1JUy1USEUtREVSSVZFRC1LRVk";
+      const merchantKey = "sk-the-merchants-own-live-key";
 
       const said = await Promise.all(
         [
           () => store.whose([fingerprint], new Date()),
           () => store.setPassword("dmitry@example.com", stored),
-          () => store.add("dmitry@example.com", stored, new Date()),
+          () =>
+            store.add("dmitry@example.com", stored, new Date(), {
+              id: "mer_the_merchant",
+              key: merchantKey,
+            }),
           () => store.open(fingerprint, "acc_1", new Date(), new Date()),
           () => store.end(fingerprint),
           () => store.byEmail("dmitry@example.com"),
@@ -115,6 +126,12 @@ if (databaseUrl === null) {
 
       for (const line of said) {
         expect(line, line).not.toBe("");
+        // The merchant's key first of the three, which is an order rather than
+        // an accident: an assertion after another that fires on the same line
+        // is an assertion a mutation probe never reaches, and this is the one
+        // of the three that hands over what it holds rather than a derivation
+        // of it.
+        expect(line, line).not.toContain(merchantKey);
         expect(line, line).not.toContain(fingerprint);
         expect(line, line).not.toContain(stored);
         expect(line, line).not.toContain("VEhJUy1JUy1USEUtREVSSVZFRC1LRVk");

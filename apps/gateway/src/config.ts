@@ -131,6 +131,44 @@ const environmentSchema = z.object({
     .nullable()
     .default(null),
 
+  /**
+   * The code that stands in the door of registration, or nothing at all.
+   *
+   * Registration takes no key, because nobody registering has one yet, and this
+   * is what stands there instead: one value a person is given along with the
+   * address of the site (ADR-0014 §3). Absent, the gateway takes no
+   * registrations — and it says so in exactly the words and the status a wrong
+   * code gets, so the form is not a way of asking whether registration is open
+   * here at all.
+   *
+   * Set to nothing reads the same as never set, and that spelling is the one
+   * that matters to whoever closes registration: a deployment does it by
+   * handing the process `REGISTRATION_INVITATION=` in a file rather than by
+   * deleting a line, and there is no reading in which nothing is a code
+   * somebody could present.
+   *
+   * Blank and padded values are refused rather than trimmed. The code is
+   * compared exactly as written, so a space at either end is a door nobody can
+   * open while the configuration reads as though registration were on —
+   * repairing it would be us deciding what somebody meant to type, and refusing
+   * at start-up is the same news in front of the person who typed it.
+   *
+   * There is no length floor here, unlike the sandbox key below, and the
+   * omission is deliberate: this is a door rather than a lock (ADR-0014 §3),
+   * and a number would be a claim about strength that the decision does not
+   * make. What it buys is that the pilot's sandbox cannot be filled with a
+   * stranger's cards by whoever finds the hostname.
+   */
+  REGISTRATION_INVITATION: z
+    .string({ error: absentOrWrong("must be a string") })
+    .transform((value) => (value === "" ? null : value))
+    .refine(
+      (value) => value === null || /^\S(?:[\s\S]*\S)?$/u.test(value),
+      "must not be blank or padded with spaces, because it is compared exactly as written; set it to nothing to take no registrations",
+    )
+    .nullable()
+    .default(null),
+
   /** How long we wait for the merchant to say what the goods cost. */
   QUOTE_RESPONSE_MS: durationMs(5_000),
   /** How long a price the merchant has named stays good. */
@@ -364,6 +402,8 @@ export interface GatewayConfig {
   readonly port: number;
   /** A key the sandbox is seeded with at start-up, or nothing at all. */
   readonly sandboxMerchantKey: string | null;
+  /** The code registration is behind, or nothing at all, which closes it. */
+  readonly registrationInvitation: string | null;
   readonly publicBaseUrl: string;
   /** How many times a reminder that failed is delivered again. */
   readonly reminderAttempts: number;
@@ -493,6 +533,7 @@ export function loadConfig(environment: Record<string, string | undefined>): Gat
     databaseUrl: environmentValues.DATABASE_URL,
     port: environmentValues.PORT,
     sandboxMerchantKey: environmentValues.SANDBOX_MERCHANT_KEY,
+    registrationInvitation: environmentValues.REGISTRATION_INVITATION,
     publicBaseUrl: environmentValues.PUBLIC_BASE_URL,
     reminderAttempts: environmentValues.REMINDER_ATTEMPTS,
     reminderRetryDelayMs: environmentValues.REMINDER_RETRY_DELAY_MS,

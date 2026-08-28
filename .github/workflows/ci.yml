@@ -12,99 +12,52 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # A main run may already be replacing containers. Let it finish, then deliver
+  # the newer commit; pull-request feedback may still discard an obsolete run.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # The jobs run on the org's own comino build pool: GitHub-hosted runners are
 # unavailable on this org's Actions billing. The repo is private, so
 # pull_request jobs only ever run code from people who already have write
 # access to this repository.
 jobs:
-  # The monorepo checks walk the same install path, so they are described once
-  # as a matrix: there is simply nowhere here for the Node versions or the
-  # order of steps to drift apart between them. In the interface these are
-  # still separate jobs — check, typecheck, test and build.
-  #
-  # `build` is here because `typecheck` does not cover it. The two compile
-  # different sets of files: `typecheck` reads everything including the tests,
-  # emits nothing and never looks at what would be shipped, while `build` uses
-  # the narrower `tsconfig.build.json` that decides what lands in a tarball.
-  # `pnpm outside`, which installs those tarballs and runs the command, needs
-  # the registry, so it stays out of here for the same reason `pnpm smoke`
-  # does.
-  monorepo:
-    name: ${{ matrix.task }}
+  # These checks share one checkout and one install. Four matrix jobs used to
+  # spend almost nine minutes contending over the same self-hosted tool cache
+  # while the checks themselves took seconds, and setup-node could ask pnpm for
+  # its store before Corepack had made pnpm available. One gate has one answer:
+  # this exact commit is fit to release, or it is not.
+  gate:
+    name: gate
     runs-on: [self-hosted, comino]
-    strategy:
-      fail-fast: false
-      matrix:
-        task: [check, typecheck, test, build]
     steps:
       - uses: actions/checkout@v5
 
       - uses: actions/setup-node@v5
         with:
           node-version: 24
+          # setup-node v5 otherwise infers pnpm from packageManager and tries to
+          # cache it before the next step has enabled Corepack. That race made
+          # unchanged commits alternate between a green gate and "Unable to
+          # locate executable file: pnpm".
+          package-manager-cache: false
 
-      # pnpm arrives through corepack, the version is taken from packageManager
+      # pnpm arrives through Corepack; its version is taken from packageManager
       # in the root package.json — the same one the developer has on the machine.
       - run: corepack enable
 
-      # The second setup-node pass turns on the pnpm cache: it cannot be turned
-      # on earlier, the cache needs pnpm to be installed already.
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 24
-          cache: pnpm
-
       - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - run: pnpm typecheck
+      - run: pnpm test
+      # `build` and `typecheck` compile different sets of files. The former uses
+      # the package tsconfig that decides what ships; the latter reads the whole
+      # source tree including tests and emits nothing.
+      - run: pnpm build
 
-      - run: pnpm ${{ matrix.task }}
-
-  # The tests that need a real Postgres, run by hand.
-  #
-  # They are `workflow_dispatch` rather than part of every push, and the reason
-  # is a fact nobody has been able to check: the jobs above run on the org's own
-  # self-hosted pool, and whether that pool supports service containers depends
-  # on whether its runners have a Docker daemon. A job wired to run on every
-  # push and failing on every push because the service never starts would be a
-  # red build that says nothing. Somebody who can answer that question turns
-  # this into an ordinary job by moving it under `push` and deleting this
-  # paragraph.
-  database:
-    name: test:db
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: [self-hosted, comino]
-    services:
-      postgres:
-        image: postgres:17-alpine
-        env:
-          POSTGRES_USER: coinslot
-          POSTGRES_PASSWORD: coinslot
-          POSTGRES_DB: coinslot
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U coinslot -d coinslot"
-          --health-interval 2s
-          --health-timeout 3s
-          --health-retries 15
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 24
-      - run: corepack enable
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 24
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      # No DATABASE_URL and no migration step. The suite runs against
-      # `coinslot_test` on the service above, makes that database if it is not
-      # there, and applies the checked-in migrations itself before the first
-      # test — which is the same code path a developer's run takes, so this job
-      # is not exercising a second way of arriving at a schema.
-      - run: pnpm test:db
+      # test:db runs before activation on the deployment host, against its own
+      # `coinslot_test` database. The Comino runners have no Docker executable,
+      # so a service container here fails before the first step and proves
+      # nothing about a migration.
 
   # The decision log needs neither Node nor dependencies — only bash and files.
   decisions:
@@ -113,3 +66,32 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: ./scripts/check-decisions.sh
+
+  deploy:
+    name: deploy coinslot.nuanu.ai
+    needs: [gate, decisions]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, comino]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Deliver the green commit
+        env:
+          DEPLOY_KEY: ${{ secrets.COINSLOT_PREVIEW_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          key="${RUNNER_TEMP}/coinslot-preview-key"
+          known_hosts="${RUNNER_TEMP}/coinslot-known-hosts"
+          install -m 600 /dev/null "${key}"
+          printf '%s\n' "${DEPLOY_KEY}" > "${key}"
+          unset DEPLOY_KEY
+          printf '%s\n' '10.20.10.20 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEQIT814RTQJApGFR91u2TyN5o9WMePvqREYgOjNWSsO' > "${known_hosts}"
+          trap 'rm -f "${key}" "${known_hosts}"' EXIT
+          ssh_options=(-i "${key}" -o BatchMode=yes -o ConnectTimeout=10 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=${known_hosts}")
+
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          # The green SHA intentionally expands here; the server receives only
+          # the resulting `release <sha>` forced command.
+          # shellcheck disable=SC2029
+          git archive --format=tar HEAD | \
+            ssh "${ssh_options[@]}" dmitry@10.20.10.20 "release ${GITHUB_SHA}"

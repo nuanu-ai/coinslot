@@ -18,9 +18,21 @@
  */
 
 import { afterEach, describe, expect, it } from "vitest";
-import type { Account, Accounts } from "../accounts.js";
+import type { Account, AccountMerchant, Accounts } from "../accounts.js";
 
 const HOUR = 60 * 60 * 1_000;
+
+/**
+ * The merchant an account in this suite belongs to.
+ *
+ * The key here is a plain readable word rather than something that looks like a
+ * real one, because the store never reads it: it is a secret to the store in
+ * the same way a password derivation is, which is to say an opaque string it
+ * writes down and hands back. What must not happen to it is tested where it can
+ * be — in the store that talks to a real database, whose exceptions carry the
+ * parameters of the query that failed.
+ */
+const THE_MERCHANT: AccountMerchant = { id: "mer_the_merchant", key: "the-merchant-key" };
 
 /**
  * The one session behind one identifier, or null.
@@ -57,13 +69,44 @@ export function describeAccounts(name: string, open: () => Promise<Accounts>): v
         const accounts = await fresh();
         const at = new Date("2026-08-27T09:00:00.000Z");
 
-        const made = await accounts.add("dmitry@example.com", "hash-one", at);
+        const made = await accounts.add("dmitry@example.com", "hash-one", at, THE_MERCHANT);
         const found = await accounts.byEmail("dmitry@example.com");
 
         expect(made?.email).toBe("dmitry@example.com");
         expect(found?.id).toBe(made?.id);
         expect(found?.passwordHash).toBe("hash-one");
         expect(found?.createdAt.toISOString()).toBe(at.toISOString());
+      });
+
+      it("names the merchant it belongs to and holds that merchant's key", async () => {
+        // ADR-0014 §2. Without these two on the row the cabinet has no key to
+        // reach the gateway with per request, and every account signed in would
+        // be looking at whichever merchant the process was configured for —
+        // which is a second person reading the first merchant's money.
+        const accounts = await fresh();
+        const at = new Date("2026-08-27T09:00:00.000Z");
+
+        const made = await accounts.add("dmitry@example.com", "hash-one", at, THE_MERCHANT);
+
+        expect(made?.merchant).toStrictEqual(THE_MERCHANT);
+        expect((await accounts.byEmail("dmitry@example.com"))?.merchant).toStrictEqual(
+          THE_MERCHANT,
+        );
+      });
+
+      it("can have no merchant at all, which is what the accounts made before them are", async () => {
+        // The two columns are nullable because there is a row on a deployed
+        // server that was written before merchants had accounts, and a NOT NULL
+        // column cannot be added to a table that already has rows in it. What
+        // such an account means is decided above this store: it cannot sign in,
+        // because there is no key to draw a single screen with.
+        const accounts = await fresh();
+        const at = new Date("2026-08-27T09:00:00.000Z");
+
+        const made = await accounts.add("dmitry@example.com", "hash-one", at, null);
+
+        expect(made?.merchant).toBeNull();
+        expect((await accounts.byEmail("dmitry@example.com"))?.merchant).toBeNull();
       });
 
       it("answers nothing for an address nobody has", async () => {
@@ -75,15 +118,20 @@ export function describeAccounts(name: string, open: () => Promise<Accounts>): v
       it("is one per address, and a second attempt does not overwrite the first", async () => {
         // The command that makes accounts is run by hand, and running it twice
         // by mistake must not replace somebody's password with a new one they
-        // have not been told.
+        // have not been told — nor point their cabinet at a different merchant.
         const accounts = await fresh();
         const at = new Date("2026-08-27T09:00:00.000Z");
-        await accounts.add("dmitry@example.com", "hash-one", at);
+        await accounts.add("dmitry@example.com", "hash-one", at, THE_MERCHANT);
 
-        const again = await accounts.add("dmitry@example.com", "hash-two", at);
+        const again = await accounts.add("dmitry@example.com", "hash-two", at, {
+          id: "mer_somebody_else",
+          key: "somebody-elses-key",
+        });
 
         expect(again).toBeNull();
-        expect((await accounts.byEmail("dmitry@example.com"))?.passwordHash).toBe("hash-one");
+        const kept = await accounts.byEmail("dmitry@example.com");
+        expect(kept?.passwordHash).toBe("hash-one");
+        expect(kept?.merchant).toStrictEqual(THE_MERCHANT);
       });
 
       it("is the same account however the address is typed", async () => {
@@ -92,12 +140,12 @@ export function describeAccounts(name: string, open: () => Promise<Accounts>): v
         // otherwise would let two accounts exist for one person.
         const accounts = await fresh();
         const at = new Date("2026-08-27T09:00:00.000Z");
-        await accounts.add("  Dmitry@Example.COM  ", "hash-one", at);
+        await accounts.add("  Dmitry@Example.COM  ", "hash-one", at, THE_MERCHANT);
 
         const found = await accounts.byEmail("dmitry@example.com");
 
         expect(found?.email).toBe("dmitry@example.com");
-        expect(await accounts.add("DMITRY@example.com", "hash-two", at)).toBeNull();
+        expect(await accounts.add("DMITRY@example.com", "hash-two", at, THE_MERCHANT)).toBeNull();
         expect((await accounts.byEmail(" dmitry@EXAMPLE.com "))?.id).toBe(found?.id);
       });
     });
@@ -106,7 +154,7 @@ export function describeAccounts(name: string, open: () => Promise<Accounts>): v
       it("names the person it belongs to", async () => {
         const accounts = await fresh();
         const at = new Date("2026-08-27T09:00:00.000Z");
-        const person = await accounts.add("dmitry@example.com", "hash-one", at);
+        const person = await accounts.add("dmitry@example.com", "hash-one", at, THE_MERCHANT);
 
         await accounts.open("fingerprint-one", person?.id ?? "", at, new Date(+at + 12 * HOUR));
         const whose = await sessionFor(accounts, "fingerprint-one", new Date(+at + HOUR));
@@ -118,7 +166,7 @@ export function describeAccounts(name: string, open: () => Promise<Accounts>): v
       it("is nobody's once its time is up", async () => {
         const accounts = await fresh();
         const at = new Date("2026-08-27T09:00:00.000Z");
-        const person = await accounts.add("dmitry@example.com", "hash-one", at);
+        const person = await accounts.add("dmitry@example.com", "hash-one", at, THE_MERCHANT);
         const until = new Date(+at + 12 * HOUR);
         await accounts.open("fingerprint-one", person?.id ?? "", at, until);
 
@@ -140,7 +188,7 @@ export function describeAccounts(name: string, open: () => Promise<Accounts>): v
         // them is the case the twelve hours exist to catch.
         const accounts = await fresh();
         const at = new Date("2026-08-27T09:00:00.000Z");
-        const person = await accounts.add("dmitry@example.com", "hash-one", at);
+        const person = await accounts.add("dmitry@example.com", "hash-one", at, THE_MERCHANT);
         const until = new Date(+at + HOUR);
         await accounts.open("laptop", person?.id ?? "", at, until);
 
@@ -158,7 +206,7 @@ export function describeAccounts(name: string, open: () => Promise<Accounts>): v
       it("is nobody's once it has been ended", async () => {
         const accounts = await fresh();
         const at = new Date("2026-08-27T09:00:00.000Z");
-        const person = await accounts.add("dmitry@example.com", "hash-one", at);
+        const person = await accounts.add("dmitry@example.com", "hash-one", at, THE_MERCHANT);
         await accounts.open("fingerprint-one", person?.id ?? "", at, new Date(+at + 12 * HOUR));
 
         await accounts.end("fingerprint-one");
@@ -169,7 +217,7 @@ export function describeAccounts(name: string, open: () => Promise<Accounts>): v
       it("is ended one at a time, which is the whole reason it is a row", async () => {
         const accounts = await fresh();
         const at = new Date("2026-08-27T09:00:00.000Z");
-        const person = await accounts.add("dmitry@example.com", "hash-one", at);
+        const person = await accounts.add("dmitry@example.com", "hash-one", at, THE_MERCHANT);
         const until = new Date(+at + 12 * HOUR);
         await accounts.open("laptop", person?.id ?? "", at, until);
         await accounts.open("telephone", person?.id ?? "", at, until);
@@ -199,8 +247,8 @@ export function describeAccounts(name: string, open: () => Promise<Accounts>): v
         const accounts = await fresh();
         const at = new Date("2026-08-27T09:00:00.000Z");
         const until = new Date(+at + 12 * HOUR);
-        const one = await accounts.add("dmitry@example.com", "hash-one", at);
-        const other = await accounts.add("someone@example.com", "hash-two", at);
+        const one = await accounts.add("dmitry@example.com", "hash-one", at, THE_MERCHANT);
+        const other = await accounts.add("someone@example.com", "hash-two", at, THE_MERCHANT);
         await accounts.open("laptop", one?.id ?? "", at, until);
         await accounts.open("telephone", one?.id ?? "", at, until);
         await accounts.open("theirs", other?.id ?? "", at, until);
@@ -220,7 +268,7 @@ export function describeAccounts(name: string, open: () => Promise<Accounts>): v
         // from the others: they are one answer to whoever is asking.
         const accounts = await fresh();
         const at = new Date("2026-08-27T09:00:00.000Z");
-        const person = await accounts.add("dmitry@example.com", "hash-one", at);
+        const person = await accounts.add("dmitry@example.com", "hash-one", at, THE_MERCHANT);
         await accounts.open("laptop", person?.id ?? "", at, new Date(+at + 12 * HOUR));
         await accounts.open("telephone", person?.id ?? "", at, new Date(+at + HOUR));
         await accounts.open("ended", person?.id ?? "", at, new Date(+at + 12 * HOUR));
@@ -240,7 +288,7 @@ export function describeAccounts(name: string, open: () => Promise<Accounts>): v
         // choose between.
         const accounts = await fresh();
         const at = new Date("2026-08-27T09:00:00.000Z");
-        const person = await accounts.add("dmitry@example.com", "hash-one", at);
+        const person = await accounts.add("dmitry@example.com", "hash-one", at, THE_MERCHANT);
         await accounts.open("laptop", person?.id ?? "", at, new Date(+at + 12 * HOUR));
 
         const live = await accounts.whose(["laptop", "laptop", "laptop"], at);
@@ -276,8 +324,8 @@ export function describeAccounts(name: string, open: () => Promise<Accounts>): v
         // already holding quietly becoming somebody else's session.
         const accounts = await fresh();
         const at = new Date("2026-08-27T09:00:00.000Z");
-        const one = await accounts.add("dmitry@example.com", "hash-one", at);
-        const other = await accounts.add("someone@example.com", "hash-two", at);
+        const one = await accounts.add("dmitry@example.com", "hash-one", at, THE_MERCHANT);
+        const other = await accounts.add("someone@example.com", "hash-two", at, THE_MERCHANT);
         await accounts.open("laptop", one?.id ?? "", at, new Date(+at + 12 * HOUR));
 
         await expect(
@@ -292,7 +340,7 @@ export function describeAccounts(name: string, open: () => Promise<Accounts>): v
         // the life of the deployment.
         const accounts = await fresh();
         const at = new Date("2026-08-27T09:00:00.000Z");
-        const person = await accounts.add("dmitry@example.com", "hash-one", at);
+        const person = await accounts.add("dmitry@example.com", "hash-one", at, THE_MERCHANT);
         await accounts.open("yesterday", person?.id ?? "", at, new Date(+at + HOUR));
 
         const later = new Date(+at + 48 * HOUR);
@@ -313,8 +361,8 @@ export function describeAccounts(name: string, open: () => Promise<Accounts>): v
         const accounts = await fresh();
         const at = new Date("2026-08-27T09:00:00.000Z");
         const until = new Date(+at + 12 * HOUR);
-        const one = await accounts.add("dmitry@example.com", "hash-one", at);
-        const other = await accounts.add("someone@example.com", "hash-two", at);
+        const one = await accounts.add("dmitry@example.com", "hash-one", at, THE_MERCHANT);
+        const other = await accounts.add("someone@example.com", "hash-two", at, THE_MERCHANT);
         await accounts.open("laptop", one?.id ?? "", at, until);
         await accounts.open("telephone", one?.id ?? "", at, until);
         await accounts.open("theirs", other?.id ?? "", at, until);
@@ -342,7 +390,7 @@ export function describeAccounts(name: string, open: () => Promise<Accounts>): v
         const accounts = await fresh();
         const at = new Date("2026-08-27T09:00:00.000Z");
         const until = new Date(+at + 12 * HOUR);
-        const person = await accounts.add("dmitry@example.com", "hash-one", at);
+        const person = await accounts.add("dmitry@example.com", "hash-one", at, THE_MERCHANT);
         await accounts.open("theirs", person?.id ?? "", at, until);
 
         const crafted = "' or '1'='1";
@@ -359,8 +407,8 @@ export function describeAccounts(name: string, open: () => Promise<Accounts>): v
         // Sessions opened with it are exactly the thing that must not survive.
         const accounts = await fresh();
         const at = new Date("2026-08-27T09:00:00.000Z");
-        const person = await accounts.add("dmitry@example.com", "hash-one", at);
-        const other = await accounts.add("someone@example.com", "hash-two", at);
+        const person = await accounts.add("dmitry@example.com", "hash-one", at, THE_MERCHANT);
+        const other = await accounts.add("someone@example.com", "hash-two", at, THE_MERCHANT);
         await accounts.open("laptop", person?.id ?? "", at, new Date(+at + 12 * HOUR));
         await accounts.open("theirs", other?.id ?? "", at, new Date(+at + 12 * HOUR));
 
@@ -383,8 +431,8 @@ export function describeAccounts(name: string, open: () => Promise<Accounts>): v
       it("names each one and counts only the sessions that are still alive", async () => {
         const accounts = await fresh();
         const at = new Date("2026-08-27T09:00:00.000Z");
-        const one = await accounts.add("dmitry@example.com", "hash-one", at);
-        await accounts.add("someone@example.com", "hash-two", at);
+        const one = await accounts.add("dmitry@example.com", "hash-one", at, THE_MERCHANT);
+        await accounts.add("someone@example.com", "hash-two", at, THE_MERCHANT);
         await accounts.open("live", one?.id ?? "", at, new Date(+at + 12 * HOUR));
         await accounts.open("dead", one?.id ?? "", at, new Date(+at + HOUR));
 
@@ -414,7 +462,7 @@ export function describeAccounts(name: string, open: () => Promise<Accounts>): v
         const accounts = await fresh();
         const at = new Date("2026-08-27T09:00:00.000Z");
         for (const address of ["renz@example.com", "renée@example.com", "dmitry@example.com"]) {
-          await accounts.add(address, "hash", at);
+          await accounts.add(address, "hash", at, THE_MERCHANT);
         }
 
         const listed = await accounts.list(at);
@@ -432,16 +480,25 @@ export function describeAccounts(name: string, open: () => Promise<Accounts>): v
         await expect(accounts.list(new Date())).resolves.toStrictEqual([]);
       });
 
-      it("never hands out what it holds of a password", async () => {
-        // This is what gets printed to a terminal. A summary carrying the
-        // stored hash would put it in a scrollback and in whatever collects it.
+      it("never hands out what it holds of a password, nor the merchant's key", async () => {
+        // This is what gets printed to a terminal. A summary carrying either of
+        // the two secrets on the row would put it in a scrollback and in
+        // whatever collects it. The merchant's identifier is not a secret and
+        // is on the summary on purpose: it is how somebody reading the list
+        // tells which of two accounts is looking at which catalogue.
         const accounts = await fresh();
         const at = new Date("2026-08-27T09:00:00.000Z");
-        await accounts.add("dmitry@example.com", "the-stored-hash", at);
+        await accounts.add("dmitry@example.com", "the-stored-hash", at, {
+          id: "mer_the_merchant",
+          key: "the-merchants-own-key",
+        });
+        await accounts.add("nobody@example.com", "another-stored-hash", at, null);
 
         const listed = await accounts.list(at);
 
         expect(JSON.stringify(listed)).not.toContain("the-stored-hash");
+        expect(JSON.stringify(listed)).not.toContain("the-merchants-own-key");
+        expect(listed.map((row) => row.merchant)).toStrictEqual(["mer_the_merchant", null]);
       });
     });
   });
