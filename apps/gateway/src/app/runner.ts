@@ -380,6 +380,7 @@ export class OrderRunner {
     orderId: string,
     owner: string,
     payment: string,
+    payTo: string | null,
     at: number,
   ): Promise<PresentResult> {
     const word: PaymentWord = { at, about: "verify", said: `checked out, paid by ${owner}` };
@@ -417,6 +418,12 @@ export class OrderRunner {
           ...found,
           order,
           payment,
+          // The address this payment was checked against, kept with it. The
+          // charge is executed later — after the merchant has fulfilled, in the
+          // synchronous mode — and reading the merchant again then would send
+          // it to whatever their wallet says at that moment rather than to what
+          // the payer signed for.
+          payTo,
           paidBy: owner,
           ...this.#alsoSaid(found, word),
         };
@@ -869,11 +876,13 @@ export class OrderRunner {
       amount: price.amount,
       currency: price.currency,
       payment,
-      // The address this sale's own merchant is paid at, read from the order's
-      // own merchant. The charge goes to the seller and to nobody else, and
-      // reading it from anywhere but the order that is being settled would be
-      // one merchant's sale paid into another merchant's wallet.
-      payTo: (await this.#runtime.store.merchantById(record.merchantId))?.payoutWallet ?? null,
+      // The address this payment was verified against, carried on the order
+      // since that moment rather than read from the merchant again here. It is
+      // this sale's own merchant's — that is what the verification checked —
+      // and it is what the buyer's authorisation names, so a merchant who has
+      // moved their wallet since is paid at the new one on their next sale and
+      // not on this one, which would be refused after the goods went out.
+      payTo: record.payTo,
     });
 
     if (outcome.settled === true) {

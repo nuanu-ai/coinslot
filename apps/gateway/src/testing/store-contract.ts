@@ -131,6 +131,7 @@ const anOrder = (
   priceId: null,
   delivery: null,
   payment: null,
+  payTo: null,
   paidBy: null,
   settlement: null,
   paymentWords: [],
@@ -341,6 +342,24 @@ export function describeStore(name: string, open: () => Promise<Store>): void {
         expect(entries).toHaveLength(2);
         expect(entries.find((entry) => entry.card.merchantId === A)?.merchant).toBe("paused");
         expect(entries.find((entry) => entry.card.merchantId === B)?.merchant).toBe("open");
+      });
+
+      it("carries where each card's merchant is paid, and nothing where none is set", async () => {
+        // Whether a card may be offered at all turns on this: a merchant with no
+        // address has nothing that can be sold where the money is real, so a
+        // catalog read that lost the address would go on listing cards no
+        // purchase can complete. It is per merchant like the word beside it.
+        const store = await twoMerchants();
+        await store.publishCard(A, card("sku-1", "A's room"), 10_000);
+        await store.publishCard(B, card("sku-1", "B's room"), 20_000);
+        await store.setPayoutWallet(A, "0x0000000000000000000000000000000000000009", 30_000);
+
+        const entries = await store.catalogEntries();
+
+        expect(entries.find((entry) => entry.card.merchantId === A)?.payoutWallet).toBe(
+          "0x0000000000000000000000000000000000000009",
+        );
+        expect(entries.find((entry) => entry.card.merchantId === B)?.payoutWallet).toBeNull();
       });
     });
 

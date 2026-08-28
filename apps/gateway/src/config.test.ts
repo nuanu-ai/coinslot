@@ -246,6 +246,84 @@ describe("loadConfig", () => {
     ).not.toThrow();
   });
 
+  it("reads a host written down to the root as the host it is", () => {
+    // `api.cdp.coinbase.com.` is the fully qualified spelling of the same name,
+    // and it is a spelling deployments genuinely use — it is what a resolver is
+    // handed to stop a search domain being appended. Read as a different host it
+    // would be sent no credentials at all: the gateway would come up looking
+    // healthy against a facilitator that answers nothing unsigned, and every
+    // verify and every settle would come back refused, in front of a buyer.
+    const rooted = "https://api.cdp.coinbase.com./platform/v2/x402";
+
+    expect(refusalFor({ ...required, FACILITATOR_URL: rooted })).toContain("CDP_API_KEY_ID");
+    expect(() =>
+      loadConfig({
+        ...required,
+        FACILITATOR_URL: rooted,
+        CDP_API_KEY_ID: "key-id",
+        CDP_API_KEY_SECRET: "secret",
+      }),
+    ).not.toThrow();
+  });
+
+  it("will not start unauthenticated against a Coinbase host it does not know", () => {
+    // The door fails closed. Coinbase answers on more than one host, and this
+    // gateway knows how to authenticate against exactly one of them; pointed at
+    // any other of theirs it would build a client with no credentials on it and
+    // discover that at the first charge. A refusal at startup is the same news
+    // in front of the person who typed the address.
+    for (const url of [
+      "https://coinbase.com/x402",
+      "https://api.coinbase.com/platform/v2/x402",
+      "https://x402.coinbase.com./verify",
+    ]) {
+      const refused = refusalFor({
+        ...required,
+        FACILITATOR_URL: url,
+        CDP_API_KEY_ID: "key-id",
+        CDP_API_KEY_SECRET: "secret",
+      });
+      expect(refused).toContain("FACILITATOR_URL");
+      expect(refused).toContain("cdp.coinbase.com");
+    }
+
+    // Credentials are not what the rule is about, so the refusal does not go
+    // away by taking them out: what is refused is the address.
+    expect(refusalFor({ ...required, FACILITATOR_URL: "https://api.coinbase.com/x402" })).toContain(
+      "FACILITATOR_URL",
+    );
+
+    // The safe direction, twice over. A facilitator that is nobody's Coinbase
+    // starts as it always did, and so does the one host this gateway does know:
+    // a door that refused either would take deployments down rather than
+    // protect them.
+    expect(() =>
+      loadConfig({ ...required, FACILITATOR_URL: "https://x402.org/facilitator" }),
+    ).not.toThrow();
+    expect(() =>
+      loadConfig({
+        ...required,
+        FACILITATOR_URL: "https://api.cdp.coinbase.com/platform/v2/x402",
+        CDP_API_KEY_ID: "key-id",
+        CDP_API_KEY_SECRET: "secret",
+      }),
+    ).not.toThrow();
+    // And a look-alike registered by somebody else is not Coinbase's at all: it
+    // is refused nothing and handed nothing. Both shapes of look-alike are here
+    // because the rule is a name boundary rather than a run of letters — one
+    // hangs the name off a domain of their own, the other is a domain of their
+    // own that merely ends in those letters, and anybody can register the
+    // second.
+    for (const url of [
+      "https://coinbase.com.evil.example/x402",
+      "https://api.cdp.coinbase.com.evil.example/x402",
+      "https://notcoinbase.com/x402",
+      "https://theircdp.coinbase.example/x402",
+    ]) {
+      expect(() => loadConfig({ ...required, FACILITATOR_URL: url })).not.toThrow();
+    }
+  });
+
   it("does not let it start, names every problem at once and tells absent from wrong", () => {
     // The promise to the engineer: the whole list of what is missing arrives in
     // one go rather than one variable per restart, and "not set" sounds

@@ -42,11 +42,21 @@ export interface Charge {
    * this, and the facilitator signs off on the pair. Left out, every real
    * payment would be checked against an address nobody was ever offered.
    *
-   * It is read at the moment of the charge rather than kept from the challenge,
-   * so a merchant who has moved their wallet since the challenge was issued has
-   * the payment to the old address refused rather than executed — which is the
-   * safe reading of a wallet that moved, since the likeliest reason to move one
-   * is that it is no longer the merchant's to spend from.
+   * It is read once, at the verification, and then kept on the order for the
+   * charge — and the two halves of that are one rule read at two moments.
+   *
+   * Before the verification nothing of ours is in flight, so the address is the
+   * merchant's current one: a payment made out to an address they have moved
+   * off since the challenge was issued is refused rather than executed, which
+   * is the safe reading of a wallet that moved, since the likeliest reason to
+   * move one is that it is no longer the merchant's to spend from.
+   *
+   * After it, a sale is under way. The buyer has authorised money to one
+   * address and the merchant may be fulfilling against that promise, so reading
+   * the wallet again at the charge would send it somewhere the buyer never
+   * signed for — refused by the payment layer with the goods already gone out,
+   * which is the merchant delivering for nothing. A move in that window governs
+   * their next sale instead.
    */
   readonly payTo: string | null;
 }

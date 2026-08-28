@@ -19,6 +19,13 @@ import { type Harness, harness } from "../testing/harness.js";
  * yet.
  */
 
+/**
+ * The address the payments below were checked against, carried onto the order
+ * with them. Nothing in this file turns on which address it is; what matters
+ * elsewhere is that the charge is sent to the one the payer signed for.
+ */
+const PAID_AT = "0x0000000000000000000000000000000000000009";
+
 const impossible = (): StoredOrder => {
   const order: Order = {
     id: "ord_impossible",
@@ -66,6 +73,7 @@ const impossible = (): StoredOrder => {
     priceId: null,
     delivery: null,
     payment: null,
+    payTo: null,
     paidBy: null,
     settlement: null,
     paymentWords: [],
@@ -218,6 +226,7 @@ describe("who an order belongs to", () => {
       orderId,
       "alice",
       "PAY-A",
+      PAID_AT,
       open.now(),
     );
     expect(first.kind).toBe("took");
@@ -226,6 +235,7 @@ describe("who an order belongs to", () => {
       orderId,
       "bob",
       "PAY-B",
+      PAID_AT,
       open.now(),
     );
     expect(stranger.kind).toBe("not_owner");
@@ -233,6 +243,10 @@ describe("who an order belongs to", () => {
     const after = await open.store.orderById(orderId);
     expect(after?.paidBy).toBe("alice");
     expect(after?.payment).toBe("PAY-A");
+    // And with the payment, the address it was checked against: the charge that
+    // runs later is the one this buyer authorised, not whatever the merchant's
+    // wallet says by then.
+    expect(after?.payTo).toBe(PAID_AT);
   });
 
   it("tells the owner asking again where it stands, and changes nothing", async () => {
@@ -242,12 +256,19 @@ describe("who an order belongs to", () => {
     // still the first one.
     open = await harness();
     const orderId = await waiting(open);
-    await open.gateway.runner.presentVerifiedPayment(orderId, "alice", "PAY-A", open.now());
+    await open.gateway.runner.presentVerifiedPayment(
+      orderId,
+      "alice",
+      "PAY-A",
+      PAID_AT,
+      open.now(),
+    );
 
     const again = await open.gateway.runner.presentVerifiedPayment(
       orderId,
       "alice",
       "PAY-A-AGAIN",
+      PAID_AT,
       open.now(),
     );
     expect(again.kind).toBe("already_yours");

@@ -44,6 +44,35 @@ export const isSandboxFacilitator = (facilitatorUrl: string): boolean =>
  */
 const CDP_FACILITATOR_DOMAIN = "cdp.coinbase.com";
 
+/** Everything Coinbase answers on, of which the facilitator is one host. */
+const COINBASE_DOMAIN = "coinbase.com";
+
+/**
+ * The host of an address, in the one spelling the comparisons below are written
+ * in: lower case, and without the dot that writes a name down to the root.
+ *
+ * `api.cdp.coinbase.com.` is the same host as `api.cdp.coinbase.com` — the
+ * trailing dot is the root label, and it is written by deployments that mean to
+ * stop a resolver appending a search domain to it. The URL parser keeps it and
+ * lower-cases everything else, so this is the one place the two spellings become
+ * one; left apart, the fully qualified spelling would match neither comparison
+ * and be handed no credentials at all.
+ *
+ * Null where the string is not an address, which is a value the callers answer
+ * for rather than a case they can forget: an address that cannot be parsed is
+ * refused elsewhere by `FACILITATOR_URL`'s own rule.
+ */
+function hostOf(url: string): string | null {
+  if (!URL.canParse(url)) {
+    return null;
+  }
+  return new URL(url).hostname.replace(/\.+$/, "");
+}
+
+/** Whether a host is that name or anything under it, and never a look-alike. */
+const isUnder = (host: string, domain: string): boolean =>
+  host === domain || host.endsWith(`.${domain}`);
+
 /**
  * Whether this address is Coinbase's facilitator, which takes no request
  * without credentials.
@@ -55,11 +84,27 @@ const CDP_FACILITATOR_DOMAIN = "cdp.coinbase.com";
  * nothing.
  */
 export const isCdpFacilitator = (facilitatorUrl: string): boolean => {
-  if (!URL.canParse(facilitatorUrl)) {
-    return false;
-  }
-  const { hostname } = new URL(facilitatorUrl);
-  return hostname === CDP_FACILITATOR_DOMAIN || hostname.endsWith(`.${CDP_FACILITATOR_DOMAIN}`);
+  const host = hostOf(facilitatorUrl);
+  return host !== null && isUnder(host, CDP_FACILITATOR_DOMAIN);
+};
+
+/**
+ * Whether this address is Coinbase's and yet not the facilitator above.
+ *
+ * Coinbase answers on more hosts than the one this gateway knows how to sign
+ * for, and the difference between the two is the difference between a
+ * deployment that works and one that refuses every payment. So the door is
+ * written to fail closed: an address under their domain that is not the
+ * facilitator's own host stops the gateway at startup instead of quietly
+ * building a client with nothing on its requests.
+ *
+ * A look-alike somebody else registered — `coinbase.com.evil.example` — is not
+ * under this domain and is not any of this gateway's business: it asks for
+ * nothing, is handed nothing, and starts.
+ */
+const isOtherCoinbaseHost = (facilitatorUrl: string): boolean => {
+  const host = hostOf(facilitatorUrl);
+  return host !== null && isUnder(host, COINBASE_DOMAIN) && !isUnder(host, CDP_FACILITATOR_DOMAIN);
 };
 
 function isHttpUrl(value: string): boolean {
@@ -631,6 +676,20 @@ export function loadConfig(environment: Record<string, string | undefined>): Gat
           "would be settled, and the first to find that out would be a buyer",
       );
     }
+  } else if (isOtherCoinbaseHost(environmentValues.FACILITATOR_URL)) {
+    // The same door, closed from the other side. Credentials are built for one
+    // host and this gateway knows only that one, so any other of Coinbase's is
+    // a deployment that would come up with nothing on its requests and be
+    // refused at the first charge. Which of the two mistakes it is — a host
+    // that moved, or a name typed from memory — is the operator's to tell, and
+    // both are cheaper to find here than at a purchase.
+    problems.push(
+      `FACILITATOR_URL is ${JSON.stringify(environmentValues.FACILITATOR_URL)}, which is a host of ` +
+        `Coinbase's that this gateway cannot sign a request for — the facilitator it knows is at ` +
+        `${CDP_FACILITATOR_DOMAIN}, and credentials go there and nowhere else. Pointed here it would ` +
+        "send none, and a facilitator that takes no request without them refuses every verify and " +
+        "every settle in front of a buyer",
+    );
   }
 
   if (payTo !== null && network.startsWith("eip155:") && !/^0x[0-9a-fA-F]{40}$/.test(payTo)) {

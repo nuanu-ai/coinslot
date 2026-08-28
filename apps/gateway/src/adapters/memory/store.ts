@@ -350,6 +350,7 @@ export class MemoryStore implements Store {
     return [...this.#cards.values()].map((card) => ({
       card,
       merchant: this.#sellingOf(card.merchantId),
+      payoutWallet: this.#merchants.get(card.merchantId)?.payoutWallet ?? null,
     }));
   }
 

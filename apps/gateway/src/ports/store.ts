@@ -98,6 +98,25 @@ export interface StoredOrder {
   /** What the agent presented to pay with, verbatim, until the charge is done. */
   readonly payment: string | null;
   /**
+   * The address that payment was checked against, kept beside it from the
+   * moment it was verified.
+   *
+   * It is written here rather than read again at the charge because a payment
+   * is an authorisation to send money to one address, and the two happen at
+   * different times: in the synchronous mode the whole of the merchant's
+   * fulfilment sits between them. A merchant who moves their wallet in that
+   * window — which they may, and for the best of reasons (ADR-0019) — would
+   * have the charge sent against an address the buyer never signed for, refused
+   * by the payment layer after the goods had already gone out. Carried, the
+   * charge is the one the payer agreed to, and the new address governs the next
+   * sale rather than this one.
+   *
+   * Null until a payment has been verified for this order, and null on a
+   * deployment that asks for no address at all — the sandbox, which settles
+   * against nothing (ADR-0008).
+   */
+  readonly payTo: string | null;
+  /**
    * Who this order belongs to: the payer the payment layer named when it
    * verified the first payment presented for it.
    *
@@ -337,6 +356,16 @@ export interface CatalogEntry {
   readonly card: StoredCard;
   /** The card's own merchant's word, which is not every merchant's word. */
   readonly merchant: MerchantSelling;
+  /**
+   * Where that merchant is paid, or nothing where they have set none.
+   *
+   * It travels with the entry because whether a card may be offered at all
+   * depends on it: a payment request names the seller's own address, so a card
+   * whose merchant has none cannot be sold where the money is real, and a
+   * catalog that listed one would be making an offer every purchase of which
+   * comes back refused.
+   */
+  readonly payoutWallet: string | null;
 }
 
 /** Which merchant an order belongs to, where a read is one merchant's alone. */
@@ -412,10 +441,12 @@ export interface Store {
    * out before it is stored.
    *
    * There is no clearing it, and the absence of a null is the difference from
-   * the listing name beside it. A merchant whose address was taken away keeps
-   * every card they published on sale, and a payment request for one of them
-   * cannot be written at all — so the products would stop being buyable with
-   * nothing anywhere saying why.
+   * the listing name beside it. A payment request cannot be written without an
+   * address, so a merchant whose address was taken away would have every card
+   * of theirs go off sale at once — the selling word folds that in — and what
+   * somebody reaching for this wants is either a different address, which is
+   * this same call, or an end to selling, which is the pause and says so in its
+   * own name.
    */
   setPayoutWallet(id: string, payoutWallet: string, at: number): Promise<StoredMerchant | null>;
 

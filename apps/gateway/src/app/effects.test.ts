@@ -33,6 +33,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { type Harness, harness, workOnce } from "../testing/harness.js";
 import { SWEEP_EFFECTS, type Swept } from "./runner.js";
 
+/**
+ * The address the payments below were checked against, carried onto the order
+ * with them. Nothing in this file turns on which address it is; what matters
+ * elsewhere is that the charge is sent to the one the payer signed for.
+ */
+const PAID_AT = "0x0000000000000000000000000000000000000009";
+
 const asyncCard: Card = {
   merchant_item_id: "esim-7d",
   title: "A seven day eSIM",
@@ -108,7 +115,13 @@ describe("an effect that could not be written down", () => {
     };
 
     await expect(
-      harnessed.gateway.runner.presentVerifiedPayment(orderId, "alice", "PAY-A", harnessed.now()),
+      harnessed.gateway.runner.presentVerifiedPayment(
+        orderId,
+        "alice",
+        "PAY-A",
+        PAID_AT,
+        harnessed.now(),
+      ),
     ).rejects.toThrow("the queue would not take the envelope");
 
     const after = await harnessed.store.orderById(orderId);
@@ -125,6 +138,7 @@ describe("an effect that could not be written down", () => {
       orderId,
       "alice",
       "PAY-A",
+      PAID_AT,
       harnessed.now(),
     );
 
@@ -151,6 +165,7 @@ describe("an effect that could not be written down", () => {
       orderId,
       "alice",
       "PAY-A",
+      PAID_AT,
       harnessed.now(),
     );
 
@@ -259,6 +274,7 @@ describe("the sweep of what an order is still owed", () => {
       orderId,
       "alice",
       "PAY-A",
+      PAID_AT,
       harnessed.now(),
     );
 
@@ -286,6 +302,7 @@ describe("the sweep of what an order is still owed", () => {
       orderId,
       "alice",
       "PAY-A",
+      PAID_AT,
       harnessed.now(),
     );
     expect(await harnessed.queue.draw(harnessed.merchant.id, 10, 0)).toHaveLength(1);
@@ -310,6 +327,7 @@ describe("the sweep of what an order is still owed", () => {
       orderId,
       "alice",
       "PAY-A",
+      PAID_AT,
       harnessed.now(),
     );
 
@@ -428,7 +446,13 @@ describe("the sweep of what an order is still owed", () => {
  */
 async function paidWithNothingOnTheStream(harnessed: Harness): Promise<string> {
   const orderId = await quoted(harnessed, asyncCard);
-  await harnessed.gateway.runner.presentVerifiedPayment(orderId, "alice", "PAY-A", harnessed.now());
+  await harnessed.gateway.runner.presentVerifiedPayment(
+    orderId,
+    "alice",
+    "PAY-A",
+    PAID_AT,
+    harnessed.now(),
+  );
   const lost = await harnessed.queue.draw(harnessed.merchant.id, 10, 0);
   expect(lost).toHaveLength(1);
 

@@ -145,6 +145,61 @@ describe("verifying a payment", () => {
     expect(client.asked).toStrictEqual([]);
   });
 
+  it("takes one address in either spelling it may be written in", async () => {
+    // An address on an EVM chain has two spellings and one value: the mixed
+    // case a wallet shows, whose capitals are a checksum, and the same forty
+    // characters in lower case. A merchant's address is stored and offered
+    // checksummed (ADR-0019), and a client that normalises what it echoes back
+    // — or one whose library does — would have every payment it ever made
+    // refused as though it had paid a stranger, with a message saying so. The
+    // checksum's job is catching a typed character at the door, not making the
+    // wire case-sensitive.
+    const checksummed = "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed";
+    const inLowerCase = checksummed.toLowerCase();
+    const client = new Answering();
+
+    const answered = await new X402Facilitator(client, edge).verify({
+      ...charge(
+        encodePaymentSignatureHeader({
+          x402Version: 2,
+          accepted: edge.requirementsFor(
+            { amount: "80.00", currency: "USD" },
+            "ord_1",
+            inLowerCase,
+          ),
+          payload: { signature: "0xsigned" },
+        }),
+      ),
+      payTo: checksummed,
+    });
+
+    expect(answered).toStrictEqual({ verified: true, payer: "0xpayer" });
+    // And what the facilitator is asked about is still our own spelling: the
+    // agent's copy is evidence of nothing, and the requirements are rebuilt.
+    expect(client.asked[0]?.requirements.payTo).toBe(checksummed);
+
+    // The token's address is an address too, and arrives from the same
+    // libraries. A payment echoing it in the other spelling is the same
+    // payment.
+    const ours = edge.requirementsFor({ amount: "80.00", currency: "USD" }, "ord_1", PAY_TO);
+    expect(
+      await new X402Facilitator(new Answering(), edge).verify(
+        charge(honest({ asset: ours.asset.toUpperCase().replace("0X", "0x") })),
+      ),
+    ).toStrictEqual({ verified: true, payer: "0xpayer" });
+    // The rule is one address in two spellings, not "addresses need not match":
+    // another address is still refused, whatever case it is written in.
+    expect(
+      await new X402Facilitator(new Answering(), edge).verify({
+        ...charge(honest({ payTo: "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359" })),
+        payTo: checksummed,
+      }),
+    ).toMatchObject({
+      verified: false,
+      message: "the payment was made out to a different address from the one asked for",
+    });
+  });
+
   it("checks the payment against the merchant's address rather than the gateway's own", async () => {
     // The address in the requirements comes from the charge, which reads it off
     // the order's own merchant, and never from this gateway's configuration.
@@ -274,6 +329,44 @@ describe("verifying a payment", () => {
   it("refuses something that is not a payment at all", async () => {
     const answered = await new X402Facilitator(new Answering(), edge).verify(charge("not base64"));
     expect(answered).toMatchObject({ verified: false, reason: "signature" });
+  });
+
+  it("tells a payment it could not read from a sale it cannot ask about", async () => {
+    // Two different facts, and everything about what happens next turns on
+    // which one it is. A payment that will not decode is the payer's to fix and
+    // is refused for good. A charge this gateway cannot even put a question
+    // about — a merchant with nowhere to be paid, a currency it cannot charge
+    // in — is ours, and the payment presented for it may be perfectly good. Told
+    // it "could not be read as a payment at all", an agent goes looking through
+    // a payment with nothing wrong with it.
+    const client = new Answering();
+
+    const answered = await new X402Facilitator(client, edge).verify({
+      ...charge(honest()),
+      payTo: null,
+    });
+
+    expect(answered.verified).toBe("unknown");
+    expect(answered).toMatchObject({
+      message: expect.stringContaining("nowhere to send the money"),
+    });
+    // And nothing reached the facilitator, because there was no question to put
+    // to it: what is missing is on our side of the call.
+    expect(client.asked).toHaveLength(0);
+  });
+
+  it("says what is actually wrong when a charge cannot be built at all", async () => {
+    // The same seam on the executing side. Whoever reads this out of a log is
+    // looking at an order whose money never moved, and "the payment cannot be
+    // read" would send them to the payment rather than to the merchant's
+    // settings.
+    const facilitator = new X402Facilitator(new Answering(), edge);
+
+    await expect(facilitator.settle({ ...charge(honest()), payTo: null })).rejects.toThrow(
+      /nowhere to send the money/,
+    );
+    // And a payment that really cannot be read still says so.
+    await expect(facilitator.settle(charge("not base64"))).rejects.toThrow(/cannot be read/);
   });
 
   it("reads a verdict the facilitator sent with a refusing status as a verdict", async () => {

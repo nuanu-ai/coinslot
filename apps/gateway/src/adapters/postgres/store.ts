@@ -406,13 +406,18 @@ export class PostgresStore implements Store {
     // catalog is read on every agent's first call, and a query per merchant
     // behind it grows with the number of merchants for no reason.
     const rows = await this.#db
-      .select({ card: cards, selling: merchants.selling })
+      .select({
+        card: cards,
+        selling: merchants.selling,
+        payoutWallet: merchants.payoutWallet,
+      })
       .from(cards)
       .innerJoin(merchants, eq(cards.merchantId, merchants.id))
       .orderBy(cards.asOf);
     return rows.map((row) => ({
       card: storedCardOf(row.card),
       merchant: sellingWordOf(row.selling),
+      payoutWallet: row.payoutWallet,
     }));
   }
 
