@@ -30,6 +30,208 @@ function sampleEvent(kind: OrderEventKind): OrderEvent {
   }
 }
 
+/**
+ * Which events each state answers at all, written down rather than measured.
+ *
+ * A kind is listed for a state when the machine takes it as meaningful there.
+ * That is not the same as taking it: a refusal with a reason of its own —
+ * goods offered before anything was charged, a charge still in flight, a timer
+ * that is not the one running — is an answer to the event, and only
+ * `event_not_applicable` says the event has no meaning in that state at all.
+ *
+ * The list is read against the portal's tables: a row is what a merchant's
+ * call, an agent's move or a redelivery off the queue gets back for an order
+ * sitting in that state.
+ *
+ * Two things the table deliberately does not say. Some of these answers turn
+ * on the card's mode and on where the payment has got to — a settle can only
+ * report back on an order that has one in flight — so what is pinned is the
+ * order `reach` walks to for each state, and where that matters the row says
+ * which order it is. And `deadline_expired` is answered in every state because
+ * it is answered centrally, before any state is consulted; whether the timer
+ * that fired is the one running is `deadlines(order)`'s answer rather than
+ * this table's, and `deadlines.test.ts` is where that is pinned.
+ */
+const ANSWERED: Record<OrderState, readonly OrderEventKind[]> = {
+  // Waiting for the price. The answer and the silence are the two ways that
+  // wait can end.
+  created: [
+    "quote_answered",
+    "quote_silent",
+    "purchase_repeated",
+    "merchant_departed",
+    "deadline_expired",
+  ],
+  // Priced, and nothing charged: a synchronous card, whose money is verified
+  // here and executed after the goods. The settle's own outcomes are not
+  // answered because nothing has been sent for execution yet — on the
+  // asynchronous card, whose charge goes out from this state, they are.
+  quoted: [
+    "payment_verified",
+    "payment_verification_failed",
+    "purchase_repeated",
+    "merchant_departed",
+    "deadline_expired",
+  ],
+  // The merchant has the question and the buyer's money has not been touched.
+  // His goods are refused rather than dismissed: there is nothing charged to
+  // hand them over against, and the refusal is what tells him so.
+  awaiting_confirmation: [
+    "purchase_repeated",
+    "confirmation_dispatched",
+    "handler_accepted",
+    "handler_delivered",
+    "handler_refused",
+    "handler_undelivered",
+    "deliver_called",
+    "refuse_called",
+    "merchant_departed",
+    "deadline_expired",
+  ],
+  // He said he would deliver, and the agent owes the payment. He may still
+  // refuse while nothing is charged.
+  confirmed: [
+    "payment_verified",
+    "payment_verification_failed",
+    "purchase_repeated",
+    "handler_refused",
+    "refuse_called",
+    "merchant_departed",
+    "deadline_expired",
+  ],
+  // Queued for the merchant. Every answer of his is taken here as well as in
+  // `dispatched`: he is plainly holding the order, because he is answering,
+  // and our own record of the hand-over has simply not landed yet.
+  paid: [
+    "purchase_repeated",
+    "order_dispatched",
+    "handler_accepted",
+    "handler_delivered",
+    "handler_refused",
+    "handler_undelivered",
+    "deliver_called",
+    "refuse_called",
+    "merchant_departed",
+    "deadline_expired",
+  ],
+  dispatched: [
+    "purchase_repeated",
+    "order_dispatched",
+    "handler_accepted",
+    "handler_delivered",
+    "handler_refused",
+    "handler_undelivered",
+    "deliver_called",
+    "refuse_called",
+    "merchant_departed",
+    "deadline_expired",
+  ],
+  // The whole row, and not because this state is permissive. Both ways into it
+  // hand the payment over for execution, so an order here is always mid-charge
+  // and the settling guard answers everything the state itself would have
+  // dismissed — with "come back once the charge reports" rather than "this
+  // means nothing here". Which of the two a caller gets is the subject of the
+  // settle-in-flight tests below.
+  fulfilled: [...ORDER_EVENT_KINDS],
+  // Closed as a success. A redelivered order and a redelivered acceptance are
+  // ordinary here and are answered with the state he is in; a refusal is not,
+  // and an order that ended in goods may not take one.
+  delivered: [
+    "purchase_repeated",
+    "order_dispatched",
+    "handler_accepted",
+    "handler_delivered",
+    "deliver_called",
+    "refuse_called",
+    "merchant_departed",
+    "deadline_expired",
+  ],
+  // The goods are made and the money never came. A repeat brings a fresh
+  // payment, which is why the verification's failure is answered here; the
+  // charge this fixture is carrying has already reported, so its outcomes are
+  // not.
+  delivered_unpaid: [
+    "payment_verification_failed",
+    "purchase_repeated",
+    "handler_delivered",
+    "deliver_called",
+    "refuse_called",
+    "merchant_departed",
+    "deadline_expired",
+  ],
+  // A debt, and the widest row in the table. Everything the merchant can say
+  // about the order is heard: late goods close the debt, and the rest are
+  // taken and change nothing rather than being dismissed as meaningless.
+  refund_due: [
+    "purchase_repeated",
+    "order_dispatched",
+    "handler_accepted",
+    "handler_delivered",
+    "handler_refused",
+    "handler_undelivered",
+    "deliver_called",
+    "refuse_called",
+    "refund_settled",
+    "merchant_departed",
+    "deadline_expired",
+  ],
+  // The debt is paid back. There is nothing left to deliver against, and
+  // saying so is the answer.
+  refunded: [
+    "purchase_repeated",
+    "handler_delivered",
+    "deliver_called",
+    "refuse_called",
+    "merchant_departed",
+    "deadline_expired",
+  ],
+  // He refused this order himself. Goods arriving afterwards are not a late
+  // fulfillment of it but a contradiction, which is why `handler_delivered` is
+  // missing from a row that otherwise looks like the three below.
+  failed: [
+    "purchase_repeated",
+    "deliver_called",
+    "refuse_called",
+    "merchant_departed",
+    "deadline_expired",
+  ],
+  // Closed before the handler ever saw the order, and nobody was charged. The
+  // settle's outcomes are answered on one of these — the order closed on the
+  // guess that a silent charge did not move — and this fixture is not that
+  // one: it closed because the goods were gone.
+  rejected: [
+    "purchase_repeated",
+    "deliver_called",
+    "refuse_called",
+    "merchant_departed",
+    "deadline_expired",
+  ],
+  declined: [
+    "purchase_repeated",
+    "deliver_called",
+    "refuse_called",
+    "merchant_departed",
+    "deadline_expired",
+  ],
+  // Out of time. Late goods and the repeat that collects them are answered
+  // only where the purchase was closed by the synchronous budget, and this
+  // fixture ran out of a price instead.
+  expired: [
+    "purchase_repeated",
+    "deliver_called",
+    "refuse_called",
+    "merchant_departed",
+    "deadline_expired",
+  ],
+  cancelled: [
+    "purchase_repeated",
+    "deliver_called",
+    "refuse_called",
+    "merchant_departed",
+    "deadline_expired",
+  ],
+};
+
 describe("the shape of the machine", () => {
   it("reaches every state in the vocabulary through legal events alone", () => {
     // A state nothing can walk to is a claim the machine cannot back up. This
@@ -75,6 +277,25 @@ describe("the shape of the machine", () => {
     // A floor under the loop: if a change made every pairing illegal, the
     // checks above would pass while exercising nothing at all.
     expect(accepted).toBeGreaterThan(60);
+  });
+
+  it("answers exactly the events each state has a meaning for", () => {
+    // The sweep above holds if a delivered order starts taking a refusal: it
+    // pins that something comes back, never what. This pins what, and what is
+    // the promise — the portal's tables tell a merchant which of his calls an
+    // order in each state will hear, and an agent reads the same table from
+    // the other side. A pairing that quietly became meaningful, or quietly
+    // stopped being, is one of those rows changing with nobody saying so.
+    for (const state of ORDER_STATES) {
+      const answered = new Set(ANSWERED[state]);
+
+      for (const kind of ORDER_EVENT_KINDS) {
+        const result = transition(reach(state), sampleEvent(kind));
+        const meaningful = result.ok || result.rejection.code !== "event_not_applicable";
+
+        expect(meaningful, `${state} on ${kind}`).toBe(answered.has(kind));
+      }
+    }
   });
 
   it("never changes the order it was given", () => {
