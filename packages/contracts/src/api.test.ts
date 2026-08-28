@@ -808,6 +808,16 @@ describe("the route table", () => {
       "registration_request",
       "registered_merchant",
     ],
+    ["get_seller_name", "GET", "/v0/seller-name", "merchant_key", "-", "-", "seller_name"],
+    [
+      "set_seller_name",
+      "POST",
+      "/v0/seller-name",
+      "merchant_key",
+      "-",
+      "seller_name",
+      "seller_name",
+    ],
     ["list_keys", "GET", "/v0/keys", "merchant_key", "-", "-", "merchant_key_list"],
     ["issue_key", "POST", "/v0/keys", "merchant_key", "-", "issue_key_request", "issued_key"],
     ["disable_key", "POST", "/v0/keys/:key_id/disable", "merchant_key", "-", "-", "disabled_key"],
@@ -1099,6 +1109,13 @@ describe("the route table", () => {
     // them say a retry after a dropped connection is safe. This one is not, and
     // read in that company a silence would be taken for the same promise.
     expect(API_ROUTES.register_merchant.description).toContain("two merchants");
+  });
+
+  it("says that a name can be taken away as well as set", () => {
+    // A merchant who set a name and wants none again has one call for it, and
+    // the shape says so by taking null rather than by having a second route.
+    // Left unsaid, somebody would build a screen that can only ever add.
+    expect(API_ROUTES.set_seller_name.description).toContain("null");
   });
 
   it("says what a pause does and does not do to the orders already open", () => {

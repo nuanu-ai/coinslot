@@ -7,6 +7,7 @@ import {
   MerchantKeySchema,
   RegisteredMerchantSchema,
   RegistrationRequestSchema,
+  SellerNameSchema,
 } from "./merchant.js";
 import { errorOf, expectMissingFieldRejected } from "./testing/expect-schema.js";
 
@@ -302,6 +303,50 @@ describe("what registering answers with", () => {
   it("refuses a field it does not know", () => {
     expect(errorOf(RegisteredMerchantSchema, { ...registered, session: "sess_1" })).toContain(
       "session",
+    );
+  });
+});
+
+describe("the name buyers read beside a merchant's products", () => {
+  // The promise: a merchant can find out what they are listed under, set it,
+  // and take it away again. It is one document both ways, so a cabinet reads
+  // back exactly the shape it sent.
+  const named = { seller_name: "Someone's shop" };
+  const unnamed = { seller_name: null };
+
+  it("carries the name a merchant chose", () => {
+    expect(SellerNameSchema.parse(named)).toStrictEqual(named);
+  });
+
+  it("says a merchant has no name rather than leaving the field out", () => {
+    // Null is the fact "nobody has chosen one", and it is also how a merchant
+    // takes a name away. An absent field is a silence, and the screen that
+    // reads it cannot tell a silence from a field somebody forgot to send: it
+    // would have to guess, and guessing wrong means a settings page that says
+    // a merchant is listed under nothing when they are listed under something.
+    expect(SellerNameSchema.parse(unnamed)).toStrictEqual(unnamed);
+    expect(SellerNameSchema.safeParse({}).success).toBe(false);
+  });
+
+  it("refuses a document without seller_name and names it", () => {
+    expectMissingFieldRejected(SellerNameSchema, named, "seller_name");
+  });
+
+  it("holds the name to the rule of the catalogue that will carry it", () => {
+    // The same rule the catalogue applies before it drops what it cannot
+    // render. Refused here, a merchant is told what is wrong with the name they
+    // typed; accepted here, they trade under a mangled version of it and
+    // nothing anywhere says so.
+    expect(SellerNameSchema.safeParse({ seller_name: "" }).success).toBe(false);
+    expect(SellerNameSchema.safeParse({ seller_name: "x".repeat(33) }).success).toBe(false);
+    expect(SellerNameSchema.safeParse({ seller_name: "Магазин" }).success).toBe(false);
+    expect(SellerNameSchema.safeParse({ seller_name: " padded " }).success).toBe(false);
+    expect(SellerNameSchema.safeParse({ seller_name: "x".repeat(32) }).success).toBe(true);
+  });
+
+  it("refuses a field it does not know", () => {
+    expect(errorOf(SellerNameSchema, { ...named, merchant_id: "mch_4d21bb" })).toContain(
+      "merchant_id",
     );
   });
 });
