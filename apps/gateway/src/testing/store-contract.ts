@@ -720,16 +720,35 @@ export function describeStore(name: string, open: () => Promise<Store>): void {
       });
 
       it("is not written when the decision asked for nothing to be written", async () => {
-        // Leaving `save` out is how a read that changes nothing says so. A store
-        // that wrote the order back anyway would move its updated instant on
-        // every read and, worse, would write whatever the caller happened to be
-        // holding.
+        // Leaving `save` out is how a read that changes nothing says so, and
+        // what it costs to get wrong is not tidiness. A store that wrote back
+        // whatever the decision was holding, rather than what it asked to have
+        // written, is a store where a call that changed nothing overwrites
+        // whatever landed while it was reading — the lost update `withOrder`
+        // exists to prevent, arrived at by the one call that was not trying to
+        // write at all.
+        //
+        // So the decision below builds the order it would have written and asks
+        // for none of it. A store taking that has taken a state nobody asked it
+        // to take, and the order is read back both plainly and through a second
+        // decision, because in both adapters those two arrive by different
+        // routes.
+        //
+        // What this cannot see is a store that wrote the order back byte for
+        // byte: the document is the same either way, and the instant a row was
+        // last written at is a column rather than anything the port promises.
+        // The database file asks about that column where it exists.
         const store = await twoMerchants();
         await store.addOrder(anOrder("ord_1", "created"));
 
-        await store.withOrder("ord_1", () => ({ result: "just looking" }));
+        await store.withOrder("ord_1", (found) => ({
+          result: { ...found, order: { ...found.order, state: "cancelled" as const } },
+        }));
 
         expect((await store.orderById("ord_1"))?.order.state).toBe("created");
+        expect(
+          await store.withOrder("ord_1", (found) => ({ result: found.order.state })),
+        ).toStrictEqual({ found: true, result: "created" });
       });
 
       it("is not found by another merchant, and is not written by one either", async () => {

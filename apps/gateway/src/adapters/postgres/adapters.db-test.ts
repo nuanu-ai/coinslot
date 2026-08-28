@@ -583,6 +583,64 @@ if (databaseUrl === null) {
       });
     });
 
+    it("leaves the row alone when a decision asked for nothing to be written", async () => {
+      // `updated_at` is written from `rowFor` on every save, and it is the only
+      // place a write with nothing to write shows up at all — the document that
+      // came back would be identical either way, so the shared suite can ask
+      // this only of the state and not of the row.
+      //
+      // What it costs to be wrong is not the column. A store that wrote on
+      // every decision is a store where a call that changed nothing puts back
+      // what it read over whatever landed in between, which is the lost update
+      // the hold exists to prevent, reached by the one call that was not trying
+      // to write.
+      const published = await store.publishCard(
+        A,
+        { ...syncCard, merchant_item_id: "untouched" },
+        now,
+      );
+      const offered = await gateway.beginPurchase(published.id, {});
+      if (offered.step !== "pay") throw new Error("no price was offered");
+      const orderId = offered.order.order.id;
+
+      const writtenAt = async (): Promise<string> => {
+        const { rows } = await pool.query<{ at: Date }>(
+          "select updated_at as at from orders where id = $1",
+          [orderId],
+        );
+        const at = rows[0]?.at;
+        if (at === undefined) {
+          throw new Error(`there is no order ${orderId}, so there is no row to read`);
+        }
+        return at.toISOString();
+      };
+
+      const before = await writtenAt();
+      // Far enough apart that two writes could not land on one instant. The
+      // column resolves to microseconds and this is twenty milliseconds, so a
+      // write that did happen has nowhere to hide.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      await store.withOrder(orderId, (found) => ({
+        // The order this decision would have written, handed back as its answer
+        // rather than named in `save`.
+        result: { ...found, order: { ...found.order, state: "cancelled" as const } },
+      }));
+
+      expect(await writtenAt()).toBe(before);
+
+      // The negative control, and it is what makes the line above mean
+      // anything: a decision that does ask for a write moves the column, so
+      // "unchanged" is this store keeping its word rather than this column
+      // never moving.
+      await store.withOrder(orderId, (found) => ({
+        save: { ...found, priceId: "written on purpose" },
+        result: null,
+      }));
+
+      expect(await writtenAt()).not.toBe(before);
+    });
+
     it("carries an envelope through the queue and does not send it round again by itself", async () => {
       const published = await store.publishCard(
         A,
