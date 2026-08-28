@@ -208,10 +208,40 @@ export class Gateway {
     if (record === null || record.openDeliveryId !== reminder.handOver) {
       return;
     }
-    await this.runner.apply(reminder.orderId, {
-      kind: "handler_undelivered",
-      at: this.runtime.clock(),
-    });
+
+    // The hand-over is given up on in the same write that decides what to do
+    // about it, and that is what leaves the guard above true the second time.
+    //
+    // There is a second time. Reminders go on the queue with the library's own
+    // retries where envelopes go on with none, so a reminder whose delivery was
+    // never completed — the process took it and died, the completion never
+    // reached the database — is handed out again, carrying the same hand-over
+    // it carried the first time. With the hand-over still standing as the open
+    // one, that second arrival passes the same guard and the machine decides on
+    // a second redelivery: two envelopes and two of the order's deliveries
+    // spent on one silence the merchant only had once. Running out of
+    // deliveries closes the order, and closing an order that has been paid for
+    // is a debt — the merchant loses a sale he could still have made and owes
+    // the money back.
+    //
+    // What is written here is the same fact the three answer routes write when
+    // they pass `openDeliveryId: null`, reached from the other side. There the
+    // hand-over is over because the merchant answered it; here it is over
+    // because we have stopped waiting for him. Either way the order is waiting
+    // on no hand-over at this instant, which is the only thing the guard reads.
+    //
+    // It does not shut the guard for good. The redelivery this decides on mints
+    // a hand-over of its own the moment a worker draws it, and arms its own
+    // reminder against that one, so the next silence is worth a delivery in its
+    // turn. And where the machine refuses the event nothing is written, this
+    // included — which costs nothing, because an event it will not take decides
+    // on no redelivery either, and the second arrival is refused exactly as the
+    // first one was.
+    await this.runner.apply(
+      reminder.orderId,
+      { kind: "handler_undelivered", at: this.runtime.clock() },
+      { openDeliveryId: null },
+    );
   }
 
   /**
