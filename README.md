@@ -79,7 +79,7 @@ sequenceDiagram
     participant A as Agent
     participant G as Gateway
     participant F as Facilitator
-    participant H as Merchant's handler
+    participant H as Merchant
     A->>G: purchase
     G-->>A: 402, with the price, the network and the asset
     A->>G: the same request, carrying a signed payment
@@ -109,7 +109,7 @@ sequenceDiagram
     participant A as Agent
     participant G as Gateway
     participant F as Facilitator
-    participant H as Merchant's handler
+    participant H as Merchant
     A->>G: purchase
     G-->>A: 402, with the price, the network and the asset
     A->>G: the same request, carrying a signed payment
@@ -140,7 +140,7 @@ sequenceDiagram
     participant A as Agent
     participant G as Gateway
     participant F as Facilitator
-    participant H as Merchant's handler
+    participant H as Merchant
     A->>G: purchase
     G->>H: will you deliver this
     Note over G: awaiting confirmation
