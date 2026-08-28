@@ -163,7 +163,7 @@ export const IssuedKeySchema = z
   })
   .meta({
     description:
-      "A key as it comes back from being issued: the row a merchant will see in their list from now on, and the key itself. This is the only answer in the whole contract that carries a key, and it carries it once — what is written down on our side is a digest, so a key that is lost is replaced by a new one rather than read back.",
+      "A key as it comes back from being issued: the row a merchant will see in their list from now on, and the key itself. It carries the key once. Two answers in this contract carry one — this and what registering gives back, which is the first key of a new merchant — and nothing else does, because what is written down on our side is a digest. A key that is lost is replaced by a new one rather than read back.",
   });
 
 /**
