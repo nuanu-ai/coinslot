@@ -108,20 +108,19 @@
 }
 
 /*
- * The way out, in the corner before the title.
+ * The way out of the documentation.
  *
- * It sits in the bar beside the theme's own navigation, so it takes the theme's
- * own measurements rather than ours: the same size, the same muted colour, and
- * the same weight the nav links carry, so that a reader sees one row of
- * controls and not one row plus something we bolted on.
+ * It rides with the theme's own navigation rather than in the corner, because
+ * the corner is inside the title's anchor and a link there is a link inside a
+ * link — see .vitepress/theme/index.mjs. So it takes the theme's measurements:
+ * the size, the muted colour and the weight its nav links carry, and a reader
+ * sees one row of controls rather than one row plus something bolted on.
  */
 .way-out {
   display: inline-flex;
   align-items: center;
-  margin-right: 12px;
-  padding-right: 12px;
-  border-right: 1px solid var(--vp-c-divider);
-  font-size: 13px;
+  margin-right: 16px;
+  font-size: 14px;
   font-weight: 500;
   color: var(--vp-c-text-2);
   white-space: nowrap;
@@ -132,13 +131,14 @@
   color: var(--vp-c-text-1);
 }
 
-/* On a narrow screen the bar is the title and a hamburger and nothing else has
-   room. The way out stays and the divider goes, because a rule with nothing on
-   one side of it is a mark nobody can read. */
-@media (max-width: 640px) {
+/* Below the theme's own breakpoint the bar collapses to the title and a
+   hamburger, and the navigation this link rides with is not rendered at all.
+   The link is put back by hand there, because "no way out" is the whole defect
+   and a phone is where somebody is most likely to have arrived from a search. */
+@media (max-width: 767px) {
   .way-out {
-    margin-right: 8px;
-    padding-right: 0;
-    border-right: 0;
+    display: inline-flex;
+    margin-right: 12px;
+    font-size: 13px;
   }
 }

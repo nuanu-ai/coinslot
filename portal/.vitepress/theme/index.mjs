@@ -15,8 +15,15 @@
 // which normally takes a reader home, takes them to the front page of the
 // documentation they are already in. There was no way out at all: a reader who
 // arrived from the landing could go back, and a reader who arrived from a search
-// result could not. The slot takes a plain anchor, which is not resolved against
-// anything and therefore goes where it says.
+// result could not. A plain anchor is not resolved against anything and
+// therefore goes where it says.
+//
+// It rides in `nav-bar-content-before` rather than in the corner, and that is
+// the theme's shape rather than a preference. The slots at the corner render
+// *inside* the title's own anchor, so a link put there is a link inside a link:
+// invalid, and in practice the outer one takes the click and carries the reader
+// to the page they are already on. It looked right and did nothing, which is
+// how it shipped. This slot is outside that anchor.
 
 import DefaultTheme from "vitepress/theme";
 import { h } from "vue";
@@ -26,12 +33,21 @@ export default {
   extends: DefaultTheme,
   Layout() {
     return h(DefaultTheme.Layout, null, {
-      "nav-bar-title-before": () =>
+      "nav-bar-content-before": () =>
         h(
           "a",
           {
             class: "way-out",
             href: "/",
+            // The one attribute that makes this leave the documentation at all.
+            // VitePress runs a router over every same-origin link and handles
+            // the click itself, and its router knows only the pages under
+            // /docs — so a link to the site root was intercepted and went
+            // nowhere, silently. A target makes its handler stand aside and the
+            // browser follow the link, which is what a link is for. `_self`
+            // rather than `_blank`: leaving the documentation is going back,
+            // not opening something new.
+            target: "_self",
             // Not `aria-label`: the text is already the label, and a second one
             // saying something longer is what a screen reader reads instead of
             // what everybody else sees.
