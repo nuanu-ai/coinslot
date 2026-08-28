@@ -129,13 +129,35 @@ const gateway = new Gateway(runtime);
  * that matters: the migration is a separate step that has already finished, and
  * it is what wrote the merchant row and gave every existing card, order and
  * receipt an owner. All this does is hang a key on it.
+ *
+ * Every way this can go says which one it was, including the two that write
+ * nothing. `compose.yaml` tells an operator to close the sandbox by handing the
+ * process the name with nothing after it, and promises the log will say which
+ * of the two it did — so silence is the one answer that cannot be given: it
+ * reads the same whether the key was taken and honoured, was already there, or
+ * was never configured at all.
  */
-async function seedTheSandbox(secret: string): Promise<void> {
+async function seedTheSandbox(secret: string | null): Promise<void> {
+  if (secret === null) {
+    console.log(
+      "[gateway] SANDBOX_MERCHANT_KEY is not set — a name with nothing after it reads the same as no " +
+        "name at all — so no key was seeded, and every key that opens a merchant here is one somebody issued",
+    );
+    return;
+  }
+
   const seeded = await seedSandboxKey(runtime.store, runtime.ids, secret, runtime.clock());
   if (seeded.kind === "issued") {
     console.warn(
       `[gateway] SANDBOX: the key in SANDBOX_MERCHANT_KEY now opens ${seeded.merchantId} — ` +
         "a key from an environment cannot be revoked without a deployment, so no deployment should set it",
+    );
+    return;
+  }
+  if (seeded.kind === "already_there") {
+    console.warn(
+      "[gateway] SANDBOX: the key in SANDBOX_MERCHANT_KEY was already in the database and still opens " +
+        "the sandbox merchant; this start wrote nothing",
     );
     return;
   }
@@ -149,9 +171,7 @@ async function seedTheSandbox(secret: string): Promise<void> {
 
 try {
   await gateway.start();
-  if (config.sandboxMerchantKey !== null) {
-    await seedTheSandbox(config.sandboxMerchantKey);
-  }
+  await seedTheSandbox(config.sandboxMerchantKey);
 } catch (thrown) {
   // The first thing an engineer bringing this up sees. A stack trace out of the
   // queue's own internals says "something about Postgres" and makes them go
