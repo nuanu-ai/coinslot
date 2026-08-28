@@ -1008,6 +1008,16 @@ describe("a card written short", () => {
       expect(message).toContain("5.00 USD");
     });
 
+    it("refuses a price with space around it rather than reading past the space", () => {
+      // Trimming or collapsing here would make `" 5.00 USD"`, `"5.00  USD"` and
+      // `"5.00 USD"` three spellings of one price, and a merchant comparing
+      // what they typed against what came back would find them identical. Each
+      // of these is told what a price looks like instead.
+      for (const price of [" 5.00 USD", "5.00 USD ", "5.00  USD", "5.00\tUSD"]) {
+        expect(complaint({ price }), JSON.stringify(price)).toContain("5.00 USD");
+      }
+    });
+
     it("refuses a type word the compiler has no check for, and names the field", () => {
       const message = complaint({ result: { x: "strin" } });
 
@@ -1025,9 +1035,22 @@ describe("a card written short", () => {
       expect(message).toContain("access_url");
     });
 
+    it("tells a declaration nobody wrote from one written wrongly", () => {
+      // Two mistakes with two different fixes: one merchant has to add a field
+      // they left out, the other has to write differently the one they have.
+      // Told in the same words, the first goes looking for a shape problem in
+      // something that is not there at all.
+      const { result, ...withoutResult } = longCard;
+
+      expect(result).toBeDefined();
+
+      const missing = errorOf(CardSchema, withoutResult);
+
+      expect(missing).not.toBe(complaint({ result: "string" }));
+      expect(missing).not.toContain("access_url");
+    });
+
     it("still says which field is missing when the declaration is not there", () => {
-      // The message above is about a declaration somebody wrote wrongly. A
-      // declaration nobody wrote is a different finding and has to read as one.
       expectMissingFieldRejected(CardSchema, longCard, "result");
       expectMissingFieldRejected(CardSchema, longCard, "price");
     });
