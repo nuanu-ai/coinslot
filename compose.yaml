@@ -88,11 +88,16 @@
 #
 # The last two are one string on a laptop and two different things on a server,
 # which is why they are two variables. Seeding is what makes `docker compose up`
-# come up selling with nothing run by hand: the gateway writes that key into the
-# merchant's row at every start. That is also what makes it unrevocable — a key
-# disabled at a terminal is back after the next restart — so a deployment issues
-# a key with `merchant key` instead, puts it in COINSLOT_MERCHANT_KEY, and sets
-# COINSLOT_SEED_KEY to nothing at all:
+# come up selling with nothing run by hand: at start the gateway hangs a row for
+# that key on the sandbox's merchant, if there is not one there already. A
+# second boot writes nothing, and a key disabled at a terminal is left disabled
+# — revoking one is not a thing a restart undoes. What a key kept in a file
+# cannot do is go away: disabling its row stops it opening anything, but the
+# string is still in the file the gateway is handed at every start, so retiring
+# it is an edit and a deployment rather than a row disabled, and a database
+# brought up from nothing is seeded off that same line again. A deployment
+# therefore issues a key with `merchant key` instead, puts it in
+# COINSLOT_MERCHANT_KEY, and sets COINSLOT_SEED_KEY to nothing at all:
 #
 #   COINSLOT_SEED_KEY=
 #
@@ -190,10 +195,11 @@ services:
       # disabled. No deployment sets this — a key in an environment cannot be
       # revoked without a deployment, which is what moving keys into rows fixed.
       # Its own variable rather than the one the cabinet presents, because the
-      # two part company on a server: this one is written into the merchant's
-      # row at every start, which is exactly what a key that can be revoked at a
-      # terminal must not be. Set to nothing, this process writes no key and
-      # every key is one somebody issued.
+      # two part company on a server: this one is read from a file at every
+      # start and put back into the database whenever the row is missing, which
+      # is what makes it a key nobody can retire without a deployment. Set to
+      # nothing, this process writes no key and every key is one somebody
+      # issued.
       #
       # The dash carries no colon on purpose: `${VAR-default}` gives the default
       # only when nobody named the variable, so a deployment naming it with
