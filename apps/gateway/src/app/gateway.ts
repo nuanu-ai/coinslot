@@ -172,21 +172,26 @@ export class Gateway {
     // rather than keeping a second record of what was meant to happen, and it
     // is written to be safe run twice, because it will be.
     //
-    // Twice at once, in fact, and not only one after another. This job runs on
-    // pg-boss's defaults — no singleton policy, no heartbeat, nothing here
-    // asking for one — so a run that outlasts the library's window is taken
-    // back and handed out again while the first one is still going. That is not
-    // survivable by the argument that covers a second run afterwards: every arm
-    // reads the world and then acts on what it read, so two at once both find
-    // the same thing missing and both do it. The sweep takes the work under a
-    // name for exactly that reason, and the run that finds the name held does
-    // nothing.
+    // Twice at once, in fact, and not only one after another — and the reason
+    // is a second gateway rather than anything this one does to itself. Inside
+    // a process there is one worker on this queue and it waits for the handler
+    // to return before it fetches again, so however long a run takes, the next
+    // one cannot start beside it here. Two processes have no such arrangement,
+    // and the argument that covers a second run afterwards does not cover them:
+    // every arm reads the world and then acts on what it read, so two at once
+    // both find the same thing missing and both do it. The sweep takes the work
+    // under a name for that, and the run that finds the name held does nothing.
     //
     // The lock is in the sweep rather than here on purpose. Registering with a
     // queue policy would leave it to a call whose settings the library writes
     // only when the queue is first made — every database that has already run
-    // this would ignore it in silence — and it would say nothing at all about
-    // a second gateway.
+    // this would ignore it in silence — and a policy is about jobs on one
+    // queue, which is not what two gateways are.
+    //
+    // A skipped run is logged and nothing else: pg-boss is told the job
+    // finished, because it did. Worth knowing when reading those logs, since
+    // this is the safety net for effects that went missing — a name wedged
+    // permanently would show up as nothing but that line, every day.
     await this.runtime.queue.everyDay(SWEEP_EFFECTS, () => this.runner.sweep());
   }
 

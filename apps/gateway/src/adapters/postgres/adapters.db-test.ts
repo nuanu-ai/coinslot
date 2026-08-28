@@ -64,6 +64,28 @@ const databaseUrl = await readyDatabase(wanted);
  */
 const QUEUE_SCHEMA = "pgboss_adapters";
 
+/**
+ * Terminates one named backend, from a connection of its own.
+ *
+ * It takes the session as a number rather than going looking for it, and the
+ * two versions this replaced are the reason. Terminating everything holding an
+ * advisory lock took the gateway's own connections down and failed thirteen
+ * tests that had nothing to do with any of it. Narrowing that to sessions whose
+ * last statement was `pg_try_advisory_lock` looked exact and was not: the other
+ * lock tests in this file run through the shared pool and leave its connections
+ * sitting idle on exactly that statement, so the wrong one was killed depending
+ * on what had run before. What is left is a pid the caller knows because it
+ * asked its own single-connection pool for it.
+ */
+async function terminate(pid: number): Promise<void> {
+  const pool = new Pool({ connectionString: databaseUrl ?? "", max: 1 });
+  try {
+    await pool.query("select pg_terminate_backend($1)", [pid]);
+  } finally {
+    await pool.end();
+  }
+}
+
 /** Which server session a connection is, so a lock can be attributed to it. */
 async function backendPid(of: Pool): Promise<number> {
   const { rows } = await of.query<{ pid: number }>("select pg_backend_pid() as pid");
@@ -933,6 +955,84 @@ if (databaseUrl === null) {
       } finally {
         await onePool.end();
         await otherPool.end();
+      }
+    }, 30_000);
+
+    it("survives the connection holding the lock being terminated under it", async () => {
+      // The connection is pinned out of the pool and then left idle for the
+      // whole run, with no query in flight for a fatal to surface through. A
+      // checked-out client carries no error listener — the pool takes its own
+      // off on the way out and puts it back on release — so without one of ours
+      // the `error` event a terminated backend emits is an uncaught exception
+      // and a dead process, taking every parked purchase and parked worker with
+      // it. The triggers are ordinary: an administrator, a failover, a pooler
+      // dropping an idle session, a provider's idle-session timeout.
+      //
+      // Two things are checked and the first is checked by this test existing.
+      // An uncaught exception fails the run whatever the assertions say, so a
+      // pass means nothing was left unlistened. The second is the answer: the
+      // work's own result comes back, rather than the unlock's failure — which
+      // sits in a `finally` and would otherwise replace it, reporting a sweep
+      // that finished as one that failed and handing its work out again.
+      // A pool of its own, so that what is terminated below can only ever be
+      // this test's connection. Aimed at the shared one it would take the
+      // gateway's own down with it, which is a thing this test did on the way
+      // to being written.
+      //
+      // One connection in it, and that is load-bearing rather than thrift: the
+      // second run below has to be handed the same client, so that a broken one
+      // put back in the pool is a broken one it draws. With room to spare, a
+      // client returned in that state is simply never used again and the test
+      // watches nothing.
+      const ownPool = new Pool({ connectionString: databaseUrl, max: 1 });
+      try {
+        const own = new PostgresStore(drizzle(ownPool), countedIds());
+        // The pool holds one connection, so this is the one `runAlone` will
+        // pin and the one terminated below. Asked for before rather than
+        // hunted for after, which is what keeps this off everybody else's.
+        const pinned = await backendPid(ownPool);
+
+        const ran = await own.runAlone("a_terminated_sweep", async () => {
+          await terminate(pinned);
+          // Long enough for the client to notice and emit.
+          await new Promise((resolve) => setTimeout(resolve, 250));
+          return "the work still finished";
+        });
+
+        expect(ran).toStrictEqual({ ran: true, result: "the work still finished" });
+
+        // And the store still works afterwards: the broken client was destroyed
+        // rather than handed back to the pool for somebody else's query to fail
+        // on, and the lock went with the backend.
+        expect(await own.runAlone("a_terminated_sweep", async () => "free")).toStrictEqual({
+          ran: true,
+          result: "free",
+        });
+      } finally {
+        await ownPool.end();
+      }
+    }, 30_000);
+
+    it("gives back the work's own failure and not the connection's", async () => {
+      // The other direction of the same `finally`. When the work fails and the
+      // unlock fails behind it, the reason that reaches whoever is reading is
+      // the work's — the connection's is logged and dropped. Swapped, an
+      // operator looking for why a sweep died would find a database error in
+      // place of the thing that actually went wrong.
+      const ownPool = new Pool({ connectionString: databaseUrl, max: 1 });
+      try {
+        const own = new PostgresStore(drizzle(ownPool), countedIds());
+        const pinned = await backendPid(ownPool);
+
+        const failing = own.runAlone("a_failing_terminated_sweep", async () => {
+          await terminate(pinned);
+          await new Promise((resolve) => setTimeout(resolve, 250));
+          throw new Error("the sweep fell over on its own");
+        });
+
+        await expect(failing).rejects.toThrow("the sweep fell over on its own");
+      } finally {
+        await ownPool.end();
       }
     }, 30_000);
 
