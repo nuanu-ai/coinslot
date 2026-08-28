@@ -219,11 +219,12 @@ describe("a synchronous purchase", () => {
     // The fifth gate, in the one place it costs money: an agent told his
     // purchase did not happen goes and buys the same thing elsewhere without
     // looking at his wallet.
+    // The budget is wide on purpose: the header on `brisk` in deadlines.test.ts.
     const harnessed = await started({
       QUOTE_RESPONSE_MS: "50",
       SYNC_RESPONSE_MS: "200",
       SETTLE_RESPONSE_MS: "100",
-      SYNC_BUDGET_MS: "300",
+      SYNC_BUDGET_MS: "2000",
     });
     const itemId = await published(harnessed, syncCard);
     harnessed.facilitator.willSettle({ settled: "unknown", reason: "the facilitator timed out" });
@@ -441,11 +442,12 @@ describe("an asynchronous purchase", () => {
     // the refusal being ignored and the new payment written down anyway: the
     // record of which authorisation is unaccounted for is the only thing
     // anybody could ever reconcile that order from.
+    // The budget is wide on purpose: the header on `brisk` in deadlines.test.ts.
     const harnessed = await started({
       QUOTE_RESPONSE_MS: "50",
       SYNC_RESPONSE_MS: "200",
       SETTLE_RESPONSE_MS: "100",
-      SYNC_BUDGET_MS: "300",
+      SYNC_BUDGET_MS: "2000",
     });
     const itemId = await published(harnessed, syncCard);
     harnessed.facilitator.willSettle({ settled: "unknown", reason: "the facilitator timed out" });
@@ -1016,11 +1018,12 @@ describe("two payments racing one order", () => {
     // and one that fails on a merchant who handed over goods for nothing. The
     // decision is made under the store's lock, reading the order there, so the
     // first arrival becomes the owner and the second is turned away.
+    // The budget is wide on purpose: the header on `brisk` in deadlines.test.ts.
     const harnessed = await started({
       QUOTE_RESPONSE_MS: "50",
       SYNC_RESPONSE_MS: "300",
       SETTLE_RESPONSE_MS: "100",
-      SYNC_BUDGET_MS: "500",
+      SYNC_BUDGET_MS: "2000",
     });
     const itemId = await published(harnessed, syncCard);
     const offered = await harnessed.gateway.beginPurchase(itemId, { nights: 1 });
