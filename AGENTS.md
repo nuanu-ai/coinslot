@@ -78,6 +78,10 @@ operator.
 - Until a decision is written down in an ADR, it has not been taken. A change
   that creates the condition another ADR named as its exit trigger says so, in
   that ADR, in the same change.
+- A change that applies a rule already recorded needs no new ADR: the
+  contracts and their tests are the truth of what the system does; an ADR
+  records why it is not otherwise. A new ADR is owed only where a change sets
+  a new rule; changing a recorded one is an edit to its file.
 - Decisions are living documents until the first external merchant or a second
   permanent participant: an accepted change is an edit to the file itself, the
   history lives in git, and there are no decisions on top of decisions. A
