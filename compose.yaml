@@ -367,22 +367,53 @@ services:
       # generous against a line rewritten twice a second; it is a bound on a
       # stalled process, not a timing budget.
       #
+      # It prints the line before it exits, whichever way it exits, because a
+      # probe that fails silently reproduces the complaint that this whole
+      # healthcheck is the answer to: `docker inspect` would say `unhealthy`
+      # and give no reason, which is `running` again in a different word. What
+      # it prints lands in .State.Health.Log, so the reason is in the same place
+      # as the verdict.
+      #
+      # The strings are joined with `+` and not written as template literals,
+      # which is not a matter of taste: compose substitutes `${...}` in this
+      # value before Node ever sees it, so a template literal here becomes an
+      # empty string and a warning at every `docker compose config`.
+      #
       # What this can and cannot claim is written where the line is produced,
       # and the short of it is that a `selling` line means no poll has failed
-      # lately, not that the catalogue is still on the shelf.
+      # in the last ninety seconds, not that the catalogue is still on the
+      # shelf. The cost of that window is worth knowing before it surprises
+      # somebody: a gateway restarted on purpose leaves this service red for up
+      # to ninety seconds afterwards, because a worker that has just been
+      # refused cannot tell a restart from an outage until the quiet has gone
+      # on long enough to mean something.
       test:
-        [
-          "CMD",
-          "node",
-          "-e",
-          "const fs=require('node:fs'),p=require('node:path').join(require('node:os').tmpdir(),'coinslot-merchant-subscription');process.exit(Date.now()-fs.statSync(p).mtimeMs<15000&&fs.readFileSync(p,'utf8').startsWith('selling')?0:1)",
-        ]
+        - CMD
+        - node
+        - -e
+        - |
+          const fs = require("node:fs");
+          const p = require("node:path").join(require("node:os").tmpdir(), "coinslot-merchant-subscription");
+          try {
+            const line = fs.readFileSync(p, "utf8").trim();
+            const age = Math.round((Date.now() - fs.statSync(p).mtimeMs) / 1000);
+            console.log(line + " (written " + age + "s ago)");
+            process.exit(age < 15 && line.startsWith("selling") ? 0 : 1);
+          } catch (thrown) {
+            console.log("cannot read " + p + ": " + thrown.message);
+            process.exit(1);
+          }
       interval: 5s
       timeout: 3s
-      # Three in a row rather than one, so a single probe that lands in the
-      # moment between a dropped poll and the retry that succeeds does not turn
-      # the service red on its own. A gateway that is really gone keeps failing
-      # and is red within the quarter minute.
+      # Three in a row rather than one, and what they buy is narrower than it
+      # looks. They do not bridge a dropped poll: one of those holds the line at
+      # `doubting` for the whole window above, which is eighteen probes and not
+      # three. What they cover is the probe itself failing to run — this spawns
+      # a Node process every five seconds, and on a loaded machine one of those
+      # can lose the three-second timeout while the merchant is perfectly well.
+      # Nothing else is left to flap: the line is swapped into place by a rename
+      # rather than a truncating write, so a probe can no longer catch the file
+      # half written.
       retries: 3
       # The same grace its neighbours have, and for the same reason: this
       # process comes up through tsx, and it publishes its catalogue before it
