@@ -361,6 +361,25 @@ export function describeStore(name: string, open: () => Promise<Store>): void {
         );
         expect(entries.find((entry) => entry.card.merchantId === B)?.payoutWallet).toBeNull();
       });
+
+      it("carries what each card's merchant is listed as, and nothing where nobody named one", async () => {
+        // The other half of whether a card may be offered, and it travels for
+        // the same reason: a payment request names the seller, and a merchant
+        // stripped of their name has nobody to be named — so a catalog read that
+        // lost the name would go on listing cards that invite an agent to pay
+        // somebody the request cannot identify.
+        const store = await twoMerchants();
+        await store.publishCard(A, card("sku-1", "A's room"), 10_000);
+        await store.publishCard(B, card("sku-1", "B's room"), 20_000);
+        await store.setServiceName(A, "A's own shop", 30_000);
+
+        const entries = await store.catalogEntries();
+
+        expect(entries.find((entry) => entry.card.merchantId === A)?.serviceName).toBe(
+          "A's own shop",
+        );
+        expect(entries.find((entry) => entry.card.merchantId === B)?.serviceName).toBeNull();
+      });
     });
 
     describe("whether a merchant is selling", () => {

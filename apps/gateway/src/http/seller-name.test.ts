@@ -126,11 +126,13 @@ describe("the name a merchant is listed under", () => {
   });
 
   it("refuses to take a name away, and says what to do instead", async () => {
-    // The one thing this call will not do. A merchant left with cards on sale
-    // and no name has products offered through a payment request that names no
-    // seller, and nothing afterwards says so — while what they were actually
-    // reaching for, stopping their selling, is a control they already have and
-    // one that leaves their cards where they can find them again.
+    // The one thing this call will not do. A merchant with no name has nobody
+    // for a payment request to name as the seller, so every card of theirs
+    // comes off sale — an end to their selling arriving under the name of
+    // editing a setting, and from a screen where nothing said that is what the
+    // button meant. What they were actually reaching for, stopping their
+    // selling, is a control they already have and one that leaves their cards
+    // where they can find them again.
     const { served, harnessed } = await started();
     await setSellerName(served, harnessed.merchant.key, "Someone's shop");
 

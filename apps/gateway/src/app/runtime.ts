@@ -80,18 +80,20 @@ export function quoteReachesTheMerchant(card: Card): boolean {
  *
  * There are two switches a merchant can press — one card off sale, or the whole
  * catalog — and a third thing that stops a sale without anybody pressing
- * anything: a merchant with nowhere for the money to go. There is exactly one
- * guard in the machine. This is where the three become the one, and it is a
+ * anything: a merchant who cannot make one, because there is nowhere for the
+ * money to go or nobody for the request to name as the seller. There is exactly
+ * one guard in the machine. This is where the three become the one, and it is a
  * translation rather than a second notion of pausing: what comes out is the
  * machine's own vocabulary, and a card that comes out `paused` refuses new
  * orders through the guard that already exists, with the rejection and the
  * message that already exist.
  *
- * The wallet belongs here rather than at the purchase, and the difference is a
- * row in a database. A challenge for such a card cannot be written at all —
- * there is no address to put in it and the operator's own will not stand in
- * (ADR-0019) — so a purchase that checked at the till would have opened the
- * order first and failed afterwards, leaving one nobody can pay and nothing
+ * The merchant's own standing belongs here rather than at the purchase, and the
+ * difference is a row in a database. A challenge for such a card is either
+ * unwritable or untrue — there is no address to put in it and the operator's
+ * own will not stand in (ADR-0019), or there is no seller to name and the field
+ * is simply left out — so a purchase that checked at the till would have opened
+ * the order first and failed afterwards, leaving one nobody can pay and nothing
  * will ever collect. Folded in here, the card is not offered, not listed, and
  * refused with the word an agent's client already knows.
  *
@@ -103,9 +105,9 @@ export function quoteReachesTheMerchant(card: Card): boolean {
 export function sellingFor(
   merchant: MerchantSelling,
   card: StoredCard,
-  payable: boolean,
+  sellable: boolean,
 ): MerchantSelling {
-  return merchant === "open" && (card.paused || !payable) ? "paused" : merchant;
+  return merchant === "open" && (card.paused || !sellable) ? "paused" : merchant;
 }
 
 /**
@@ -120,4 +122,40 @@ export function sellingFor(
  */
 export function payableTo(payoutWallet: string | null, config: GatewayConfig): boolean {
   return payoutWallet !== null || isSandboxFacilitator(config.payment.facilitatorUrl);
+}
+
+/**
+ * Whether there is a seller for a payment request to name.
+ *
+ * The sibling of the rule above, and the publish door's other one. A challenge
+ * carries the name its merchant is listed under, and where there is none the
+ * field is left out altogether — which is the only honest thing a document can
+ * do with a name nobody chose, and which leaves an agent invited to pay
+ * somebody the request does not name. That has been shipped from here once.
+ *
+ * There is no sandbox in this one, and the asymmetry with the wallet is the
+ * point: a sandbox settles against nothing, so no money is going anywhere and
+ * no address is missing — but a challenge in a sandbox names its seller exactly
+ * as a real one does, and nothing about pretending to take money makes a
+ * nameless seller nameable.
+ */
+export function listedUnder(serviceName: string | null): boolean {
+  return serviceName !== null;
+}
+
+/**
+ * Whether this merchant could make a sale at all, which is the two rules above
+ * read as the one fact the fold needs.
+ *
+ * They are apart where somebody can be told which is missing — the publish door
+ * names the wallet and the name separately, and so does the cabinet — and
+ * together everywhere the answer is a word about a card. From the order's side
+ * there is nothing to tell apart: both are the merchant, neither is the card,
+ * and either one of them means this sale cannot be made.
+ */
+export function sellableBy(
+  merchant: { readonly payoutWallet: string | null; readonly serviceName: string | null },
+  config: GatewayConfig,
+): boolean {
+  return payableTo(merchant.payoutWallet, config) && listedUnder(merchant.serviceName);
 }

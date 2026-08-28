@@ -366,6 +366,15 @@ export interface CatalogEntry {
    * comes back refused.
    */
   readonly payoutWallet: string | null;
+  /**
+   * What that merchant is listed under, or nothing where nobody has named one.
+   *
+   * It travels for the same reason the address does, one step earlier: a
+   * payment request names the seller, and where there is no name the field is
+   * left out — so a card whose merchant has none cannot be offered either, and
+   * listing it would invite an agent to pay somebody the request does not name.
+   */
+  readonly serviceName: string | null;
 }
 
 /** Which merchant an order belongs to, where a read is one merchant's alone. */

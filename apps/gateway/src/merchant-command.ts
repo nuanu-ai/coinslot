@@ -14,11 +14,13 @@
  *
  * The listing name is the one worth reading twice, because the two sides differ
  * in what they allow rather than in who they are scoped to. A merchant sets a
- * name and changes it and can never end up with none, since their published
- * cards would stay on sale while the payment request an agent reads named no
- * seller. Here `--none` does exactly that, deliberately: it is how a name that
- * should never have been listed is pulled, by somebody who can see what it
- * costs and pause the merchant's selling in the same sitting.
+ * name and changes it and can never end up with none: somebody reaching for
+ * that from a cabinet wants either a different name or an end to selling, and
+ * both of those are calls they already have. Here `--none` exists for the one
+ * act neither of them is — a name that should never have been listed, pulled by
+ * somebody with the whole database in front of them. It takes the merchant's
+ * cards off sale as it goes, because a card sells only under a name, and the
+ * command says so at the terminal.
  *
  * The address a merchant is paid at is the same shape of verb and has no such
  * escape, for the reason written beside it: there is no caller for whom taking
@@ -48,6 +50,7 @@ const USAGE = [
   "  listed-as <merchant> <name>",
   "                             the name this seller is shown under in a",
   "                             discovery catalog, or --none to take it away",
+  "                             and their cards off sale with it",
   "  pays-to <merchant> <0x…>   the address this merchant's sales are paid into",
   "  key <merchant> <label>     issue a key to a merchant and print it, once",
   "  keys <merchant>            that merchant's keys, working and revoked",
@@ -180,11 +183,20 @@ async function setListingName(
     return 1;
   }
 
-  say(
-    named.serviceName === null
-      ? `${named.id} is listed under no name, so nothing about the seller goes out.`
-      : `${named.id} is listed as "${named.serviceName}".`,
-  );
+  if (named.serviceName !== null) {
+    say(`${named.id} is listed as "${named.serviceName}".`);
+    return 0;
+  }
+
+  // The whole of what was just done, because the row is the smaller half of it.
+  // A card sells only under a name — that name is what the payment request
+  // calls the seller — so every card this merchant has published is off sale
+  // from now, and somebody who read "nothing about the seller goes out" and
+  // walked away would find that out from the merchant.
+  say(`${named.id} is listed under no name, so nothing about the seller goes out.`);
+  say("");
+  say("Every card they have published is off sale until they are listed again:");
+  say("a payment request has to name the seller, and there is nobody to name.");
   return 0;
 }
 
@@ -193,13 +205,12 @@ async function setListingName(
  *
  * There is no `--none` here and the omission is deliberate. Taking a listing
  * name away is a thing somebody at a terminal has a reason to do — a name that
- * should never have been listed is pulled, and the merchant's selling is paused
- * in the same sitting. Taking an address away has no such use: the payment
- * request for every card the merchant has published is written around it, so a
- * merchant without one has products that answer an agent with nothing at all,
- * and the act that actually stops their selling is the pause. What this verb is
- * for is the merchant who cannot reach their own cabinet, and for them the
- * useful act is setting an address rather than removing one.
+ * should never have been listed is pulled, and the merchant's cards come off
+ * sale with it. Taking an address away has no such use: nobody needs a
+ * merchant's money to stop arriving somewhere, and the acts that stop their
+ * selling are the pause and, from here, the name. What this verb is for is the
+ * merchant who cannot reach their own cabinet, and for them the useful act is
+ * setting an address rather than removing one.
  */
 async function setPaidAt(
   store: Store,

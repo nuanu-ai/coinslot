@@ -312,6 +312,12 @@ if (databaseUrl === null) {
       // merchants get wallets, the same way testing/harness.ts seeds its own.
       await store.setPayoutWallet(A, "0x0000000000000000000000000000000000000001", now);
       await store.setPayoutWallet(B, "0x0000000000000000000000000000000000000002", now);
+      // And a name, for the same shape of reason one step earlier: a payment
+      // request names its seller, so a merchant listed under nobody has nothing
+      // on sale either. Without these every purchase below would be refused for
+      // a reason that has nothing to do with what it is testing.
+      await store.setServiceName(A, "The merchant of this suite", now);
+      await store.setServiceName(B, "The other merchant", now);
     });
 
     afterAll(async () => {
