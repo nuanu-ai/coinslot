@@ -351,6 +351,7 @@ export class MemoryStore implements Store {
       card,
       merchant: this.#sellingOf(card.merchantId),
       payoutWallet: this.#merchants.get(card.merchantId)?.payoutWallet ?? null,
+      serviceName: this.#merchants.get(card.merchantId)?.serviceName ?? null,
     }));
   }
 

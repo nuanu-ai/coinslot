@@ -246,7 +246,7 @@ describe("loadConfig", () => {
     ).not.toThrow();
   });
 
-  it("reads a host written down to the root as the host it is", () => {
+  it("reads a host written down to the root as the host it is, and passes it on in one spelling", () => {
     // `api.cdp.coinbase.com.` is the fully qualified spelling of the same name,
     // and it is a spelling deployments genuinely use — it is what a resolver is
     // handed to stop a search domain being appended. Read as a different host it
@@ -264,6 +264,21 @@ describe("loadConfig", () => {
         CDP_API_KEY_SECRET: "secret",
       }),
     ).not.toThrow();
+
+    // And what is carried away from here is the one spelling, not the one that
+    // was typed. Everything downstream reads this string rather than the
+    // environment — the client that signs a token naming the host, and the
+    // `Host` header on the very request that token is good for — so a second
+    // spelling surviving this far would be a deployment that passes the door
+    // above and is then refused by the facilitator on every call.
+    expect(
+      loadConfig({
+        ...required,
+        FACILITATOR_URL: rooted,
+        CDP_API_KEY_ID: "key-id",
+        CDP_API_KEY_SECRET: "secret",
+      }).payment.facilitatorUrl,
+    ).toBe("https://api.cdp.coinbase.com/platform/v2/x402");
   });
 
   it("will not start unauthenticated against a Coinbase host it does not know", () => {

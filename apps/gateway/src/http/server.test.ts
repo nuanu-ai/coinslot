@@ -1529,22 +1529,13 @@ describe("a product that is declared and a product that is not", () => {
     ).toBe("The pilot merchant");
   });
 
-  it("says nothing about a seller whose merchant has taken their name away", async () => {
-    // The negative control for the case above: the field is left out rather
-    // than sent empty, and an empty string is a thing a catalogue would render.
-    // Reaching it takes a merchant who publishes and then stops being named,
-    // because a merchant with no name cannot publish at all.
-    const { served, harnessed } = await started();
-    const itemId = await publish(served, syncCard);
-    await setServiceName(harnessed.store, harnessed.merchant.id, null, Date.now());
-
-    const answered = await served.call("GET", `/v0/items/${itemId}/purchase`);
-    const { resource } = decodePaymentRequiredHeader(
-      answered.headers.get(PAYMENT_REQUIRED_HEADER) ?? "",
-    );
-
-    expect("serviceName" in resource).toBe(false);
-  });
+  // There was a test here for the challenge of a card whose merchant had been
+  // stripped of their name: it asserted the seller field was left out rather
+  // than sent empty. There is no such challenge any more — a card whose
+  // merchant is listed under nobody is off sale, and the purchase is refused
+  // before anything is written (`http/seller-name.test.ts`). The rule it was
+  // really about, that an absent name is an absent field rather than an empty
+  // one, is where it belongs: `packages/contracts/src/card.test.ts`.
 
   it("names the same resource however the address was typed", async () => {
     // The resource identity is what a listing is keyed on, and a query string

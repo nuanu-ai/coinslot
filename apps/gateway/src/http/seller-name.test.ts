@@ -19,6 +19,8 @@
 import type { Card } from "@coinslot/contracts";
 import { decodePaymentRequiredHeader } from "@x402/core/http";
 import { afterEach, describe, expect, it } from "vitest";
+import { setServiceName } from "../app/merchants.js";
+import { SANDBOX_FACILITATOR } from "../config.js";
 import { type Harness, harness, type Served, serve } from "../testing/harness.js";
 import { PAYMENT_REQUIRED_HEADER } from "./x402.js";
 
@@ -38,8 +40,12 @@ const cardFor = (merchantItemId: string, title: string): Card => ({
 
 let open: { harnessed: Harness; served: Served } | null = null;
 
-const started = async () => {
-  const harnessed = await harness({ PAY_TO_ADDRESS: PAY_TO, REGISTRATION_INVITATION: INVITATION });
+const started = async (overrides: Record<string, string> = {}) => {
+  const harnessed = await harness({
+    PAY_TO_ADDRESS: PAY_TO,
+    REGISTRATION_INVITATION: INVITATION,
+    ...overrides,
+  });
   const served = await serve(harnessed);
   open = { harnessed, served };
   return open;
@@ -120,11 +126,13 @@ describe("the name a merchant is listed under", () => {
   });
 
   it("refuses to take a name away, and says what to do instead", async () => {
-    // The one thing this call will not do. A merchant left with cards on sale
-    // and no name has products offered through a payment request that names no
-    // seller, and nothing afterwards says so — while what they were actually
-    // reaching for, stopping their selling, is a control they already have and
-    // one that leaves their cards where they can find them again.
+    // The one thing this call will not do. A merchant with no name has nobody
+    // for a payment request to name as the seller, so every card of theirs
+    // comes off sale — an end to their selling arriving under the name of
+    // editing a setting, and from a screen where nothing said that is what the
+    // button meant. What they were actually reaching for, stopping their
+    // selling, is a control they already have and one that leaves their cards
+    // where they can find them again.
     const { served, harnessed } = await started();
     await setSellerName(served, harnessed.merchant.key, "Someone's shop");
 
@@ -353,3 +361,112 @@ const sellerInTheChallenge = async (
   ) as unknown as { resource: { serviceName?: string } };
   return challenge.resource.serviceName;
 };
+
+/**
+ * One card on sale whose merchant is listed under no name.
+ *
+ * The road here is the only one there is, and it is a real one: a merchant
+ * publishes under a name, and somebody at a terminal then runs
+ * `merchant listed-as <id> --none` — the verb that exists for a name that
+ * should never have been listed. The route a merchant has refuses to take a
+ * name away and the publish door refuses to make a card without one, so this is
+ * the state, reached the way it is reached, with the call the command makes
+ * underneath.
+ */
+const soldUnderNoName = async (
+  harnessed: Harness,
+  served: Served,
+  merchantItemId = "a-room",
+): Promise<{ readonly itemId: string; readonly key: string; readonly merchantId: string }> => {
+  const key = await nameless(served);
+  await payableAt(served, key);
+  await setSellerName(served, key, "A name that was pulled");
+  const itemId = await publish(served, key, cardFor(merchantItemId, "A room"));
+
+  const opened = await harnessed.gateway.keyBehind(key);
+  if (opened === null) {
+    throw new Error("the key this test just registered opens nothing");
+  }
+  await setServiceName(harnessed.store, opened.merchantId, null, harnessed.now());
+  return { itemId, key, merchantId: opened.merchantId };
+};
+
+describe("a card whose merchant is listed under no name", () => {
+  it("tells an agent it is not on sale rather than inviting it to pay a seller nobody names", async () => {
+    // The finding this describe exists for. The name is not decoration: it is
+    // what the payment request calls the seller, and the challenge simply
+    // leaves the field out when there is none — so an agent would be invited to
+    // pay somebody the request does not name, which this gateway has shipped
+    // once already. Off sale is the truth and it is a word the agent's own
+    // client already reads.
+    const { served, harnessed } = await started();
+    const { itemId } = await soldUnderNoName(harnessed, served);
+
+    const answered = await served.call("GET", `/v0/items/${itemId}/purchase`);
+
+    expect(answered.status, JSON.stringify(answered.body)).toBe(409);
+    expect((answered.body as { error: { code: string } }).error.code).toBe("not_selling");
+  });
+
+  it("opens no order against a sale the request could not describe", async () => {
+    // The half that costs more than a status code: an order written first and
+    // refused afterwards leaves a row on the merchant's own stream, in their
+    // cabinet, against a deadline, for a sale that could never have been made.
+    const { served, harnessed } = await started();
+    const { itemId, merchantId } = await soldUnderNoName(harnessed, served);
+
+    const answered = await served.call("POST", `/v0/items/${itemId}/purchase`, {
+      body: { params: {} },
+    });
+
+    expect(answered.status, JSON.stringify(answered.body)).toBe(409);
+    expect((answered.body as { error: { code: string } }).error.code).toBe("not_selling");
+    expect(await harnessed.gateway.orders(merchantId, undefined)).toStrictEqual([]);
+  });
+
+  it("is not in the catalog an agent walks", async () => {
+    // A catalog is an offer, and an entry every purchase of which comes back
+    // refused is an offer we would not honour: the agent budgets against it,
+    // chooses it over a competitor, and finds out at the till.
+    const { served, harnessed } = await started();
+    const { itemId } = await soldUnderNoName(harnessed, served);
+    const sellable = await publish(served, harnessed.merchant.key, cardFor("a-desk", "A desk"));
+
+    const listed = (await served.call("GET", "/v0/catalog")).body as { items: { id: string }[] };
+
+    expect(listed.items.map((item) => item.id)).not.toContain(itemId);
+    // The other half, or the assertion above would pass against a catalog that
+    // had stopped listing anything at all.
+    expect(listed.items.map((item) => item.id)).toContain(sellable);
+  });
+
+  it("says the same thing to its own merchant as it says to a buyer", async () => {
+    // One word about whether a card sells, and everybody who asks gets it. A
+    // cabinet showing a card as selling while every purchase of it came back
+    // refused would send its merchant looking at the card for the fault.
+    const { served, harnessed } = await started();
+    const { itemId, key } = await soldUnderNoName(harnessed, served);
+
+    const own = (await served.call("GET", "/v0/cards", { headers: bearer(key) })).body as {
+      cards: { id: string; selling: string }[];
+    };
+
+    expect(own.cards.find((card) => card.id === itemId)?.selling).not.toBe("open");
+  });
+
+  it("stops selling in the sandbox too, where a missing wallet is excused and a missing name is not", async () => {
+    // The two merchant-shaped reasons a card comes off sale are not one rule.
+    // A sandbox settles against nothing, so there is no money to send and no
+    // address to be missing — that is why a local stack sells with no wallet
+    // configured anywhere. The name is not about money: a sandbox challenge
+    // names its seller exactly as a real one does, and nothing sells under
+    // nobody's name.
+    const { served, harnessed } = await started({ FACILITATOR_URL: SANDBOX_FACILITATOR });
+    const { itemId } = await soldUnderNoName(harnessed, served);
+
+    const answered = await served.call("GET", `/v0/items/${itemId}/purchase`);
+
+    expect(answered.status, JSON.stringify(answered.body)).toBe(409);
+    expect((answered.body as { error: { code: string } }).error.code).toBe("not_selling");
+  });
+});

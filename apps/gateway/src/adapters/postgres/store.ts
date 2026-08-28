@@ -410,6 +410,7 @@ export class PostgresStore implements Store {
         card: cards,
         selling: merchants.selling,
         payoutWallet: merchants.payoutWallet,
+        serviceName: merchants.serviceName,
       })
       .from(cards)
       .innerJoin(merchants, eq(cards.merchantId, merchants.id))
@@ -418,6 +419,7 @@ export class PostgresStore implements Store {
       card: storedCardOf(row.card),
       merchant: sellingWordOf(row.selling),
       payoutWallet: row.payoutWallet,
+      serviceName: row.serviceName,
     }));
   }
 

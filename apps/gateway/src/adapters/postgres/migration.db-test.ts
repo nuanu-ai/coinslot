@@ -1,18 +1,15 @@
 /**
- * The migration that gives every existing row an owner, run against rows.
+ * The migrations that touch rows, run against rows.
  *
  * Everything else in `pnpm test:db` runs against a database the migrator built
- * from nothing, where the backfill in `0003_merchant_tenancy.sql` touches no
- * rows at all — so the one thing that migration exists to do is exercised
- * nowhere. This is the file that exercises it: a database is brought up to the
- * version before it, a card, an order and a receipt are written the way that
- * version wrote them, and then the migration runs.
+ * from nothing, where a backfill touches nothing at all — so the one thing such
+ * a migration exists to do is exercised nowhere. This is the file that
+ * exercises it: a database is brought up to the version before the change, rows
+ * are written the way that version wrote them, and then the migration runs.
  *
- * What is being checked is not that it completes. It is that nothing is lost
- * and nothing changes hands: every row comes out belonging to the one merchant
- * everything predating this migration belongs to, an order's document says the
- * same thing its column does, and a merchant who had stopped selling is not put
- * back on sale by it.
+ * What is being checked is not that it completes. It is what became of the
+ * rows: that nothing is lost, that nothing changes hands, and that what the
+ * migration was not written for is left exactly as it was found.
  *
  * The migrations are applied as SQL rather than through drizzle's migrator,
  * because the point is to stop part way — and the migrator applies everything
@@ -23,10 +20,13 @@
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Pool } from "pg";
+import type { Pool } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { SEEDED_MERCHANT } from "../../app/merchants.js";
+import { PaymentEdge } from "../../http/x402.js";
 import { noDatabaseHere, readyDatabase, testDatabaseUrl } from "../../testing/database.js";
+import { countedIds, testConfig } from "../../testing/harness.js";
+import { connect, type Database, PostgresStore } from "./store.js";
 
 /**
  * A database of this file's own, beside the one the rest of `pnpm test:db` uses.
@@ -58,7 +58,7 @@ async function statementsOf(file: string): Promise<string[]> {
 }
 
 if (databaseUrl === null) {
-  describe.skip(`the migration that gives every row an owner ${noDatabaseHere(wanted)}`, () => {
+  describe.skip(`the migrations that touch rows ${noDatabaseHere(wanted)}`, () => {
     it("needs a database", () => undefined);
   });
 } else {
@@ -101,7 +101,7 @@ if (databaseUrl === null) {
     };
 
     beforeAll(async () => {
-      pool = new Pool({ connectionString: url });
+      pool = connect(url).pool;
     }, 60_000);
 
     afterAll(async () => {
@@ -246,6 +246,201 @@ if (databaseUrl === null) {
            values ('itm_x', 'mch_nobody', 'sku-x', '{}', now())`,
         ),
       ).rejects.toThrow();
+    });
+  });
+
+  /**
+   * The migration that gives an order verified before yesterday the address its
+   * charge will be sent to.
+   *
+   * The window it closes is a real one and it is measured in a deploy. An
+   * order's document carries `payTo` — the address the payment was checked
+   * against, kept from that moment so a merchant who moves their wallet
+   * mid-sale is paid at the new one on their next sale and not on this one. The
+   * orders verified before that field existed have no such key, and it reads
+   * back as nothing: on a deployment that settles for real the charge is then
+   * refused with the sentence about a merchant who has set no wallet — which is
+   * false for a merchant who has one — out of the effects loop, as a five
+   * hundred, inside the merchant's own delivery call, after the goods went out.
+   *
+   * So the repair is in the data and not in a branch that would outlive the
+   * window: the orders still open and already paid for are given their own
+   * merchant's current address, and everything else is left exactly as it was
+   * found.
+   */
+  describe("the migration that carries the address a charge is sent to", () => {
+    const url = databaseUrl;
+    let pool: Pool;
+    let db: Database;
+    let store: PostgresStore;
+
+    /** A merchant with somewhere to be paid, and one without. */
+    const PAID_AT = "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed";
+    const WITH_WALLET = "mch_paid";
+    const WITHOUT_WALLET = "mch_unpaid";
+
+    const run = async (file: string): Promise<void> => {
+      for (const statement of await statementsOf(file)) {
+        await pool.query(statement);
+      }
+    };
+
+    /**
+     * One order as the version before this migration wrote it: no `payTo` key
+     * anywhere in the document, because there was no such field.
+     */
+    const orderAsItWas = (
+      id: string,
+      merchantId: string,
+      extra: Record<string, unknown> = {},
+    ): Record<string, unknown> => ({
+      order: {
+        id,
+        state: "paid",
+        price: { amount: "80.00", currency: "USD", asOf: 0 },
+      },
+      merchantId,
+      itemId: "itm_1",
+      merchantItemId: "sku-1",
+      params: {},
+      priceId: null,
+      delivery: null,
+      payment: "the authorisation the agent signed",
+      paidBy: "0x1111111111111111111111111111111111111111",
+      settlement: null,
+      paymentWords: [],
+      paymentWordsDropped: 0,
+      openDeliveryId: null,
+      ...extra,
+    });
+
+    const writeOrder = async (
+      id: string,
+      merchantId: string,
+      { open = true, extra = {} }: { open?: boolean; extra?: Record<string, unknown> } = {},
+    ): Promise<void> => {
+      await pool.query(
+        `insert into orders (id, state, open, merchant_id, item_id, merchant_item_id, record, created_at, updated_at)
+         values ($1, 'paid', $2, $3, 'itm_1', 'sku-1', $4, now(), now())`,
+        [id, open, merchantId, JSON.stringify(orderAsItWas(id, merchantId, extra))],
+      );
+    };
+
+    /** The document as the gateway reads it back, through its own store. */
+    const readBack = async (id: string): Promise<Record<string, unknown>> => {
+      const record = await store.orderById(id);
+      if (record === null) {
+        throw new Error(`the order ${id} is not there`);
+      }
+      return record as unknown as Record<string, unknown>;
+    };
+
+    /**
+     * Where the charge for this order would actually be sent, on a deployment
+     * that settles for real — or the refusal, in the words a person would read.
+     *
+     * This is the call the settle path makes with `record.payTo` in hand
+     * (`app/runner.ts`, `adapters/x402/facilitator.ts`), and it is the one that
+     * throws where there is no address. Asserting on the row alone would say
+     * that a key is present; this says what becomes of somebody's money.
+     */
+    const chargedTo = (payTo: unknown): string =>
+      new PaymentEdge(
+        testConfig({ PAY_TO_ADDRESS: "0x0000000000000000000000000000000000000009" }).payment,
+        "https://coinslot.example",
+        300,
+      ).requirementsFor({ amount: "80.00", currency: "USD" }, "ord_1", payTo as string | null)
+        .payTo;
+
+    beforeAll(async () => {
+      const connected = connect(url);
+      pool = connected.pool;
+      db = connected.db;
+      store = new PostgresStore(db, countedIds());
+    }, 60_000);
+
+    afterAll(async () => {
+      await pool.end();
+    });
+
+    beforeEach(async () => {
+      await pool.query("drop schema public cascade");
+      await pool.query("create schema public");
+      for (const file of [
+        "0000_init.sql",
+        "0001_payment_claims.sql",
+        "0002_selling.sql",
+        "0003_merchant_tenancy.sql",
+        "0004_merchant_service_name.sql",
+        "0005_merchant_payout_wallet.sql",
+      ]) {
+        await run(file);
+      }
+      await pool.query(
+        `insert into merchants (id, name, selling, payout_wallet, created_at, updated_at)
+         values ($1, 'A merchant who is paid somewhere', 'open', $2, now(), now()),
+                ($3, 'A merchant who set no wallet', 'open', null, now(), now())`,
+        [WITH_WALLET, PAID_AT, WITHOUT_WALLET],
+      );
+    });
+
+    it("sends the charge on an order verified before the field existed to its merchant's wallet", async () => {
+      // The promise: a sale that was verified last week and is delivered today
+      // settles, at the address its own merchant is paid at, instead of dying
+      // inside the merchant's delivery call with a sentence that is not true
+      // of them.
+      await writeOrder("ord_open", WITH_WALLET);
+
+      await run("0006_order_pay_to_backfill.sql");
+
+      expect((await readBack("ord_open")).payTo).toBe(PAID_AT);
+      expect(chargedTo((await readBack("ord_open")).payTo)).toBe(PAID_AT);
+    });
+
+    it("leaves the order of a merchant who has no wallet alone, because that sentence is true", async () => {
+      // The one order the refusal was written for. There is no address to give
+      // it and the operator's own will not stand in (ADR-0019), so the honest
+      // outcome is the refusal that names what is missing — inventing an
+      // address here would send somebody's takings to somebody else.
+      await writeOrder("ord_nowhere", WITHOUT_WALLET);
+
+      await run("0006_order_pay_to_backfill.sql");
+
+      const untouched = await readBack("ord_nowhere");
+      expect("payTo" in untouched).toBe(false);
+      expect(() => chargedTo(untouched.payTo)).toThrow(/no wallet/);
+    });
+
+    it("touches no order that is closed or that nobody has paid for", async () => {
+      // A closed order is history: its charge is over, and rewriting the
+      // address it was settled against would make the record disagree with the
+      // chain. An open order with no payment has been promised nothing yet —
+      // the address arrives with the payment and not before, so writing one now
+      // would say a wallet had been checked when none had.
+      await writeOrder("ord_closed", WITH_WALLET, { open: false });
+      await writeOrder("ord_unpaid", WITH_WALLET, { extra: { payment: null } });
+
+      await run("0006_order_pay_to_backfill.sql");
+
+      expect("payTo" in (await readBack("ord_closed"))).toBe(false);
+      expect("payTo" in (await readBack("ord_unpaid"))).toBe(false);
+    });
+
+    it("does not write over an address a payment was already verified against", async () => {
+      // What the field is for: the address the payer signed for, which is not
+      // necessarily the one the merchant is paid at now. An order carrying one
+      // is an order the running gateway wrote, and a migration that read "no
+      // address yet" as "no key" would move a charge the buyer never
+      // authorised. The sandbox writes that field as null on purpose, and null
+      // is an answer rather than an absence.
+      const signedFor = "0x1111111111111111111111111111111111111111";
+      await writeOrder("ord_signed", WITH_WALLET, { extra: { payTo: signedFor } });
+      await writeOrder("ord_sandbox", WITH_WALLET, { extra: { payTo: null } });
+
+      await run("0006_order_pay_to_backfill.sql");
+
+      expect((await readBack("ord_signed")).payTo).toBe(signedFor);
+      expect((await readBack("ord_sandbox")).payTo).toBeNull();
     });
   });
 }

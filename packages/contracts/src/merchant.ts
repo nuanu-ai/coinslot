@@ -221,12 +221,12 @@ export const SellerNameSchema = z
  * The same field held to the same rule, and one difference: there is no null.
  * A merchant can go from having no name to having one and from one name to
  * another, and not back. Having none is a starting state rather than a setting,
- * because a merchant who took their name away would keep every card they had
- * already published on sale, each offered through a payment request naming no
- * seller, with nothing anywhere saying so. What somebody reaching for that
- * actually wants is one of two other acts: a different name, which is this same
- * call, or an end to selling, which is the pause — and the pause leaves their
- * cards where they can find them again.
+ * because a payment request names the seller and there would be nobody to name:
+ * every card they had already published would come off sale, which is an end to
+ * their selling arriving under the name of editing a setting. What somebody
+ * reaching for that actually wants is one of two other acts: a different name,
+ * which is this same call, or an end to selling, which is the pause — and the
+ * pause leaves their cards where they can find them again.
  *
  * So it is two documents rather than one, and a cabinet still reads back the
  * shape it sent. The message on a null is written here rather than left to a
@@ -258,7 +258,7 @@ export const SellerNameRequestSchema = z
   })
   .meta({
     description:
-      "What a merchant sends to change the name their products are sold under. The same rule as the answer — at most 32 characters of printable ASCII, the catalog's rule rather than ours — and one difference: null is refused. A merchant goes from no name to a name and from one name to another, never back to none, because a merchant with no name still has every card they published on sale, each offered through a payment request that names no seller. Somebody reaching for null wants one of two other things: a different name, which is this call with a different value, or an end to selling, which is the pause.",
+      "What a merchant sends to change the name their products are sold under. The same rule as the answer — at most 32 characters of printable ASCII, the catalog's rule rather than ours — and one difference: null is refused. A merchant goes from no name to a name and from one name to another, never back to none, because a payment request names the seller and there would be nobody to name: every card they have published would come off sale, which is an end to their selling arriving under the name of editing a setting. Somebody reaching for null wants one of two other things: a different name, which is this call with a different value, or an end to selling, which is the pause.",
   });
 
 /**

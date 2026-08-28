@@ -63,12 +63,14 @@ import {
 } from "./merchants.js";
 import { OrderRunner, orderDocumentOf, SWEEP_EFFECTS } from "./runner.js";
 import {
+  listedUnder,
   modeForCard,
   payableTo,
   policyFor,
   priceCheckOf,
   quoteReachesTheMerchant,
   type Runtime,
+  sellableBy,
   sellingFor,
 } from "./runtime.js";
 import { purchaseOf, Waiting } from "./waiting.js";
@@ -345,7 +347,7 @@ export class Gateway {
     // door resolved this key to a merchant a moment ago, so it does not happen.
     const merchant = await this.runtime.store.merchantById(merchantId);
     const missing: PublishError[] = [];
-    if (merchant === null || merchant.serviceName === null) {
+    if (merchant === null || !listedUnder(merchant.serviceName)) {
       missing.push(NO_SELLER_NAME);
     }
     // The same question the selling word asks of every card afterwards, put
@@ -392,11 +394,8 @@ export class Gateway {
       items: entries
         .filter(
           (entry) =>
-            sellingFor(
-              entry.merchant,
-              entry.card,
-              payableTo(entry.payoutWallet, this.runtime.config),
-            ) === "open",
+            sellingFor(entry.merchant, entry.card, sellableBy(entry, this.runtime.config)) ===
+            "open",
         )
         .map((entry) =>
           publicCardOf(entry.card.card, {
@@ -432,18 +431,15 @@ export class Gateway {
       stored,
       // The same fold every other reader of this question gets, and the same
       // one the machine is given: the merchant's word, the card's own pause and
-      // whether there is anywhere to send the money become one word. A merchant
-      // the store cannot find is a card with no owner, which the database
-      // refuses — and if it ever happened, the safe reading of "I cannot say"
-      // is that this is not for sale.
+      // whether that merchant could make a sale at all — somewhere to send the
+      // money, a name to sell under — become one word. A merchant the store
+      // cannot find is a card with no owner, which the database refuses — and if
+      // it ever happened, the safe reading of "I cannot say" is that this is not
+      // for sale.
       selling:
         merchant === null
           ? "paused"
-          : sellingFor(
-              merchant.selling,
-              stored,
-              payableTo(merchant.payoutWallet, this.runtime.config),
-            ),
+          : sellingFor(merchant.selling, stored, sellableBy(merchant, this.runtime.config)),
       serviceName: merchant?.serviceName ?? null,
       payoutWallet: merchant?.payoutWallet ?? null,
     };
@@ -459,14 +455,15 @@ export class Gateway {
    * merchant's card is never selected rather than selected and dropped.
    */
   async merchantCards(merchantId: string): Promise<MerchantCardList> {
-    const { selling, payable } = await this.#howTheySell(merchantId);
+    const { selling, sellable } = await this.#howTheySell(merchantId);
     const cards = await this.runtime.store.cards(merchantId);
-    return { selling, cards: cards.map((stored) => merchantCardOf(stored, selling, payable)) };
+    return { selling, cards: cards.map((stored) => merchantCardOf(stored, selling, sellable)) };
   }
 
   /**
    * The two facts every card of one merchant is read through: the word they
-   * sell under, and whether a sale of theirs could be paid for at all.
+   * sell under, and whether a sale of theirs could be made at all — paid for,
+   * and made under a name.
    *
    * One read rather than two, and a merchant the store cannot find is a defect
    * rather than a case — every key names a merchant that exists and every card
@@ -476,14 +473,14 @@ export class Gateway {
    */
   async #howTheySell(
     merchantId: string,
-  ): Promise<{ readonly selling: MerchantSelling; readonly payable: boolean }> {
+  ): Promise<{ readonly selling: MerchantSelling; readonly sellable: boolean }> {
     const merchant = await this.runtime.store.merchantById(merchantId);
     if (merchant === null) {
       throw new Error(`there is no merchant ${merchantId}, so there is no word for their selling`);
     }
     return {
       selling: merchant.selling,
-      payable: payableTo(merchant.payoutWallet, this.runtime.config),
+      sellable: sellableBy(merchant, this.runtime.config),
     };
   }
 
@@ -507,8 +504,8 @@ export class Gateway {
       // finding out what somebody else is selling.
       return null;
     }
-    const { selling, payable } = await this.#howTheySell(merchantId);
-    return merchantCardOf(stored, selling, payable);
+    const { selling, sellable } = await this.#howTheySell(merchantId);
+    return merchantCardOf(stored, selling, sellable);
   }
 
   /**
@@ -612,9 +609,10 @@ export class Gateway {
    * Sets what this merchant's products are sold under.
    *
    * There is no taking one away here, and that is the contract's rule rather
-   * than this method's: what arrives is a name, because a merchant with cards
-   * on sale and no name has products offered through a payment request that
-   * names no seller. The flow underneath still writes a null, because the
+   * than this method's: what arrives is a name, because a merchant with no name
+   * has nobody for a payment request to name as the seller and every card of
+   * theirs comes off sale — an end to their selling arriving under the name of
+   * editing a setting. The flow underneath still writes a null, because the
    * terminal has a verb for it and somebody with the whole database in front of
    * them is a different caller from a merchant with one key.
    *
@@ -800,13 +798,14 @@ export class Gateway {
       },
       test: STAGE_ONE_ORDERS_ARE_TESTS,
       // One word out of the two switches a merchant has — the whole catalog and
-      // this card — and out of the address their money would go to. Whichever
-      // of the three it is, the machine hears the same word and refuses the
-      // same way, before an order exists: the orders already accepted are
-      // untouched, and none is opened that could never be paid. Whose word it
-      // is comes off the card: a buyer walks one catalog across every merchant,
+      // this card — and out of whether that merchant could make a sale at all:
+      // an address for the money, a name to sell under. Whichever of them it
+      // is, the machine hears the same word and refuses the same way, before an
+      // order exists: the orders already accepted are untouched, and none is
+      // opened that could never be paid or never be described. Whose word it is
+      // comes off the card: a buyer walks one catalog across every merchant,
       // and what governs this sale is the card's own merchant.
-      selling: sellingFor(theirs.selling, stored, theirs.payable),
+      selling: sellingFor(theirs.selling, stored, theirs.sellable),
     });
 
     if (!created.ok) {
@@ -1697,21 +1696,21 @@ function sentNow(envelope: WorkerEnvelope, at: number): WorkerEnvelope {
  *
  * The two selling fields come from different places on purpose. `selling` is
  * what a purchase of this card would actually meet, which is the merchant's own
- * word, the card's pause and whether there is anywhere to send the money folded
- * into one by `sellingFor` — the same fold the order machine is given. `paused`
- * is the card's own flag, untouched, so a merchant can still see which cards
- * they took off themselves while everything is stopped.
+ * word, the card's pause and whether that merchant could make a sale at all
+ * folded into one by `sellingFor` — the same fold the order machine is given.
+ * `paused` is the card's own flag, untouched, so a merchant can still see which
+ * cards they took off themselves while everything is stopped.
  */
 function merchantCardOf(
   stored: StoredCard,
   merchant: MerchantSelling,
-  payable: boolean,
+  sellable: boolean,
 ): MerchantCard {
   return {
     id: stored.id,
     as_of: asTimestamp(stored.asOf),
     card: stored.card,
-    selling: sellingFor(merchant, stored, payable),
+    selling: sellingFor(merchant, stored, sellable),
     paused: stored.paused,
   };
 }
