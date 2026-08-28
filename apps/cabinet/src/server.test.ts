@@ -214,6 +214,16 @@ interface Running {
   readonly forgetMerchant: (email: string) => void;
   /** The rows the component wrote, for the two assertions that read one. */
   readonly rows: Record<string, Record<string, unknown>[]>;
+  /**
+   * The payout address the stand-in for that route is holding.
+   *
+   * The route itself is being added on another branch, so what this cabinet
+   * talks to for it is not the real gateway. What these tests can hold is the
+   * cabinet's half — that an address a merchant typed was sent, and that one
+   * refused on the page never was. What actually goes on the wire is held in
+   * `gateway.test.ts` against a server that records it.
+   */
+  readonly payoutWallet: () => string | null;
   /** Every message the cabinet handed over while this test ran. */
   readonly mails: Message[];
   /** A second browser on the same cabinet, for two people or two devices. */
@@ -257,7 +267,7 @@ const started = async (
   const gateway = await serve(harnessed);
   const basePath = options.base ?? "";
   const mails: Message[] = [];
-  const { browser, url, identity, forgetMerchant, rows } = await visiting(
+  const { browser, url, identity, forgetMerchant, rows, payoutWallet } = await visiting(
     gateway.url,
     basePath,
     mails,
@@ -275,6 +285,7 @@ const started = async (
     identity,
     forgetMerchant,
     rows,
+    payoutWallet,
     mails,
     another: async () => await attachedTo(url, basePath),
     async stopGateway() {
@@ -296,6 +307,35 @@ afterEach(async () => {
   open = null;
 });
 
+/**
+ * The two payout-address calls, answered in this process.
+ *
+ * The route behind them is being added to the gateway on another branch, so
+ * there is nothing on the real one to call: without this every settings screen
+ * in this file would be a 502 about a gateway that answered 404. It holds one
+ * address, the way one merchant's row would, and it is deliberately no stricter
+ * than that — an address of the wrong shape reaching it is the cabinet having
+ * failed to refuse one, which is a thing a test here should see happen rather
+ * than have caught for it.
+ */
+const standingInForPayoutWallet = (): {
+  over: (real: GatewayClient) => GatewayClient;
+  held: () => string | null;
+} => {
+  let address: string | null = null;
+  return {
+    held: () => address,
+    over: (real) => ({
+      ...real,
+      payoutWallet: async () => ({ ok: true, document: address }),
+      setPayoutWallet: async (given: string) => {
+        address = given;
+        return { ok: true, document: address };
+      },
+    }),
+  };
+};
+
 /** The cabinet on a port, and a cookie jar of one. */
 async function visiting(
   gatewayUrl: string,
@@ -310,6 +350,7 @@ async function visiting(
   identity: Identity;
   forgetMerchant: (email: string) => void;
   rows: Record<string, Record<string, unknown>[]>;
+  payoutWallet: () => string | null;
 }> {
   // No merchant key in the environment, which is the point: the cabinet builds
   // its client from the key on the row of whoever is signed in, so what these
@@ -330,12 +371,14 @@ async function visiting(
   const { identity, forgetMerchant, rows } = await withIdentity(config, async (message) => {
     mails.push(message);
   });
+  const payout = standingInForPayoutWallet();
   const app = buildApp(config, {
     identity,
     ...(registrar === undefined ? {} : { registrar }),
-    ...(client === undefined
-      ? {}
-      : { gatewayFor: (key: string) => client(gatewayFor(gatewayUrl, key)) }),
+    gatewayFor: (key: string) => {
+      const real = payout.over(gatewayFor(gatewayUrl, key));
+      return client === undefined ? real : client(real);
+    },
   });
   // On the address it is called at, rather than on the wildcard: the gateway's
   // own harness says at length what a wildcard bind costs, and this cabinet is
@@ -351,6 +394,7 @@ async function visiting(
     identity,
     forgetMerchant,
     rows,
+    payoutWallet: payout.held,
     browser: {
       ...browser,
       // Closing one that is already closed is not an error. A test that stands
@@ -1723,6 +1767,117 @@ describe("the account on the settings screen", () => {
     expect(text).toMatch(/cannot send you a link/i);
     expect(text).not.toMatch(/we can send you a link/i);
     expect(text).toMatch(/gave you the address of this site/i);
+  });
+});
+
+describe("the address a merchant's money arrives at", () => {
+  /**
+   * An address of the right shape that is nobody's: the digits run 0 to 9 and
+   * then the letters a to f, twice over. A fixture rather than somewhere money
+   * could sensibly be sent.
+   */
+  const SHAPED = "0x0123456789abcdef0123456789abcdef01234567";
+
+  it("is asked for on the settings screen", async () => {
+    // The block is one line on that screen and this is what holds it there: a
+    // merchant with nowhere to be paid has to be able to find the box without
+    // being sent a link to it.
+    const { browser } = await started();
+    await browser.signIn();
+
+    const screen = await browser.get("/settings");
+
+    expect(screen.status).toBe(200);
+    expect(screen.html).toContain('name="payout_wallet"');
+    expect(readable(screen.html)).toMatch(/where your money arrives/i);
+  });
+
+  it("is saved, and the whole of it is on the page afterwards", async () => {
+    const running = await started();
+    await running.browser.signIn();
+
+    const saved = await running.browser.post("/settings/payout-wallet", {
+      payout_wallet: SHAPED,
+    });
+
+    expect(saved.status).toBe(303);
+    expect(saved.to).toBe("/settings");
+    expect(running.payoutWallet()).toBe(SHAPED);
+    // And read back whole rather than shortened, because the shortening is the
+    // presentation under which a wrong address and the right one look the same.
+    const after = await running.browser.get("/settings");
+    expect(after.html.replaceAll(/<[^>]*>/g, "")).toContain(SHAPED);
+  });
+
+  it("keeps the capitals a wallet gave it", async () => {
+    // The capitals in an address are a check the address carries on itself, and
+    // a merchant comparing what we show against their own wallet is comparing
+    // character by character. Correcting the case would break both.
+    const mixed = "0x0123456789ABCDEF0123456789abcdef01234567";
+    const running = await started();
+    await running.browser.signIn();
+
+    await running.browser.post("/settings/payout-wallet", { payout_wallet: mixed });
+
+    expect(running.payoutWallet()).toBe(mixed);
+    expect((await running.browser.get("/settings")).html.replaceAll(/<[^>]*>/g, "")).toContain(
+      mixed,
+    );
+  });
+
+  it("takes the space off what was pasted rather than refusing it", async () => {
+    // An address is copied out of a wallet, and a wallet hands it over with a
+    // newline on the end about as often as not. Refusing that is refusing a
+    // merchant who did exactly the right thing.
+    const running = await started();
+    await running.browser.signIn();
+
+    const saved = await running.browser.post("/settings/payout-wallet", {
+      payout_wallet: `  ${SHAPED}\n`,
+    });
+
+    expect(saved.status).toBe(303);
+    expect(running.payoutWallet()).toBe(SHAPED);
+  });
+
+  it("refuses an address of the wrong shape and sends nothing", async () => {
+    const running = await started();
+    await running.browser.signIn();
+    await running.browser.post("/settings/payout-wallet", { payout_wallet: SHAPED });
+
+    const answered = await running.browser.post("/settings/payout-wallet", {
+      payout_wallet: `${SHAPED}0`,
+    });
+
+    expect(answered.status).toBe(400);
+    // What was refused, that nothing was written, and — the half a merchant
+    // cannot see for themselves — where their money still goes.
+    expect(readable(answered.html)).toMatch(/not saved/i);
+    expect(answered.html.replaceAll(/<[^>]*>/g, "")).toContain(SHAPED);
+    expect(running.payoutWallet()).toBe(SHAPED);
+  });
+
+  it("refuses an empty box and says what to paste into it", async () => {
+    const running = await started();
+    await running.browser.signIn();
+
+    for (const form of [{ payout_wallet: "" }, {}] as Record<string, string>[]) {
+      const answered = await running.browser.post("/settings/payout-wallet", form);
+      expect(answered.status).toBe(400);
+      expect(readable(answered.html)).toMatch(/address is needed/i);
+      expect(running.payoutWallet()).toBeNull();
+    }
+  });
+
+  it("says the gateway would not answer rather than drawing a page with no address on it", async () => {
+    const running = await started();
+    await running.browser.signIn();
+    await running.stopGateway();
+
+    const screen = await running.browser.get("/settings");
+
+    expect(screen.status).toBe(502);
+    expect(readable(screen.html)).toMatch(/did not answer/i);
   });
 });
 

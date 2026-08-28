@@ -13,6 +13,7 @@
 
 import type { MerchantCard, MerchantCardList, OrderList, ReceiptList } from "@coinslot/contracts";
 import { escaped, page, state, type Tab, table } from "./html.js";
+import type { PayoutWallet } from "./payout-wallet.js";
 import {
   FULFILLMENT_WORDS,
   moment,
@@ -52,6 +53,17 @@ export interface Viewer {
    * for the reason `html.ts` gives beside the selling word.
    */
   readonly sellerName?: string | null;
+  /**
+   * The address this merchant's money arrives at, and anything wrong with what
+   * was just typed into the box for it.
+   *
+   * The refusal travels with the address because one block on one screen draws
+   * both, and a screen holding one of them without the other cannot draw that
+   * block at all. Absent everywhere the block is not drawn, which today is
+   * every screen but the settings — a page that did not ask the gateway must
+   * not tell a merchant they have set no address.
+   */
+  readonly payout?: PayoutWallet;
 }
 
 interface Frame {

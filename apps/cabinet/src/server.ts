@@ -37,6 +37,7 @@ import {
 import { bare, escaped } from "./html.js";
 import type { Identity, Person } from "./identity.js";
 import { keysScreen, newKeyScreen } from "./keys.js";
+import { WALLET_NEEDED, whatIsWrongWithTheWallet } from "./payout-wallet.js";
 import { printable } from "./printable.js";
 import { cardsScreen, ordersScreen, receiptsScreen, type Viewer } from "./screens.js";
 import {
@@ -767,12 +768,44 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
     response.redirect(303, `${base}/cards`);
   });
 
-  app.get(`${base}/settings`, async (request, response) => {
-    const name = await gatewayAs(request).sellerName();
+  /**
+   * Everything the settings screen is drawn from, asked for in one place.
+   *
+   * The screen shows two things a merchant has set, and it is reached three
+   * ways: opened, and redrawn after either of its two forms was refused. Asking
+   * for both in each of those by hand is how one of them comes to be forgotten
+   * in one of them — and the page that results does not look broken, it looks
+   * like a merchant who has set nothing.
+   *
+   * Both calls go out together rather than one after the other, because a
+   * merchant waiting for a page should wait for the slower of the two rather
+   * than for their sum. Either one failing is the whole page failing: a
+   * settings screen drawn without one of its answers would be claiming
+   * something about a field nobody asked about.
+   */
+  const settingsOf = async (
+    request: Request,
+  ): Promise<Answer<{ sellerName: string | null; payoutWallet: string | null }>> => {
+    const gateway = gatewayAs(request);
+    const [name, wallet] = await Promise.all([gateway.sellerName(), gateway.payoutWallet()]);
     if (!name.ok) {
-      return trouble(response, base, name);
+      return name;
     }
-    response.type("html").send(settingsScreen(viewing(request, base, name.document)));
+    if (!wallet.ok) {
+      return wallet;
+    }
+    return {
+      ok: true,
+      document: { sellerName: name.document, payoutWallet: wallet.document },
+    };
+  };
+
+  app.get(`${base}/settings`, async (request, response) => {
+    const settings = await settingsOf(request);
+    if (!settings.ok) {
+      return trouble(response, base, settings);
+    }
+    response.type("html").send(settingsScreen(viewingSettings(request, base, settings.document)));
   });
 
   app.post(`${base}/settings`, async (request, response) => {
@@ -787,14 +820,14 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
       // typed, the way the keys screen redraws its list after a refusal: a
       // merchant reading a refused name in the box under "the name buyers read"
       // is reading something they are not listed under.
-      const name = await gatewayAs(request).sellerName();
-      if (!name.ok) {
-        return trouble(response, base, name);
+      const settings = await settingsOf(request);
+      if (!settings.ok) {
+        return trouble(response, base, settings);
       }
       response
         .status(400)
         .type("html")
-        .send(settingsScreen(viewing(request, base, name.document), wrong));
+        .send(settingsScreen(viewingSettings(request, base, settings.document), wrong));
       return;
     }
 
@@ -805,6 +838,46 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
     noted(whoIs(request), "changed the name their products are sold under");
     // Back to the page rather than answered with one, so that a reload does not
     // send the name again.
+    response.redirect(303, `${base}/settings`);
+  });
+
+  /**
+   * Where a merchant's money arrives.
+   *
+   * Its own route rather than a second field on the one above, because they are
+   * two forms with two buttons and a merchant presses one of them. Sharing a
+   * route would mean every save of a name also rewriting an address, which is
+   * the shape that turns a typo in one box into a payment sent somewhere else.
+   *
+   * The address is checked here as well as at the gateway so that a refusal
+   * reads as a page rather than as an API answer, and so that an address of the
+   * wrong shape never leaves this process at all.
+   */
+  app.post(`${base}/settings/payout-wallet`, async (request, response) => {
+    const typed = walletIn(request);
+    const wrong = typed === "" ? WALLET_NEEDED : whatIsWrongWithTheWallet(typed);
+    if (wrong !== null) {
+      const settings = await settingsOf(request);
+      if (!settings.ok) {
+        return trouble(response, base, settings);
+      }
+      // The block is redrawn from the address the gateway has, so a merchant
+      // who was refused is still looking at where their money actually goes
+      // rather than at what they just mistyped.
+      response
+        .status(400)
+        .type("html")
+        .send(settingsScreen(viewingSettings(request, base, settings.document, wrong)));
+      return;
+    }
+
+    const set = await gatewayAs(request).setPayoutWallet(typed);
+    if (!set.ok) {
+      return trouble(response, base, set);
+    }
+    // The address itself stays out of the line. It is not a secret, but this
+    // log is a process log and the record of who changed it is what it is for.
+    noted(whoIs(request), "changed the address their money arrives at");
     response.redirect(303, `${base}/settings`);
   });
 
@@ -1149,6 +1222,27 @@ const viewing = (request: Request, base: string, sellerName?: string | null): Vi
 };
 
 /**
+ * The same, for the one screen that also draws the payout address.
+ *
+ * Separate from `viewing` rather than a fourth argument to it, because every
+ * other screen would then be passing an absence: a screen that has not asked
+ * the gateway for the address must not be able to say anything about it, and
+ * the cheapest way to hold that is for those screens to have no way to.
+ */
+const viewingSettings = (
+  request: Request,
+  base: string,
+  settings: { sellerName: string | null; payoutWallet: string | null },
+  walletProblem?: string,
+): Viewer => ({
+  ...viewing(request, base, settings.sellerName),
+  payout: {
+    wallet: settings.payoutWallet,
+    ...(walletProblem === undefined ? {} : { problem: walletProblem }),
+  },
+});
+
+/**
  * The name in a form post, with the space at either end taken off.
  *
  * Trimmed rather than refused for a space, because the catalogue's rule turns a
@@ -1159,6 +1253,20 @@ const viewing = (request: Request, base: string, sellerName?: string | null): Vi
 const nameIn = (request: Request): string => {
   const form = (request.body ?? {}) as { seller_name?: unknown };
   return typeof form.seller_name === "string" ? form.seller_name.trim() : "";
+};
+
+/**
+ * The payout address in a form post, with the space at either end taken off.
+ *
+ * Trimmed rather than refused, because an address is copied out of a wallet and
+ * a wallet hands it over with a newline on the end about as often as not. What
+ * is inside is untouched: the capitals in an address are a check the address
+ * carries on itself, and correcting the case of what somebody pasted would
+ * throw that away before their own wallet could use it.
+ */
+const walletIn = (request: Request): string => {
+  const form = (request.body ?? {}) as { payout_wallet?: unknown };
+  return typeof form.payout_wallet === "string" ? form.payout_wallet.trim() : "";
 };
 
 /**

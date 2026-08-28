@@ -585,3 +585,59 @@ h2 {
 .page > p.quiet {
   padding: 0 32px;
 }
+
+/* --- the payout address on the settings screen -------------------------- */
+
+/*
+ * The address a merchant's money arrives at, shown back to them.
+ *
+ * Forty characters is more than anybody reads in a run, so it is set in the
+ * monospaced family and broken into groups of four the way a long number is.
+ * The gaps are this rule's and not the text's: the groups are spans with
+ * nothing between them in the markup, so a merchant who selects the address and
+ * pastes it into a wallet pastes an address rather than a spaced-out copy of
+ * one that no wallet will take.
+ *
+ * `overflow-wrap` is here for the same reason it is on the callout above: this
+ * block has no scroller of its own, and an unbroken forty-character run would
+ * be the one thing on the page that scrolls the whole document sideways on a
+ * phone. Wrapping happens between groups, which is where a person reading it
+ * against their wallet would break it anyway.
+ */
+.saved {
+  margin: 0 32px 24px;
+  padding: 16px 20px;
+  border: var(--hairline) solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.saved .label {
+  font-size: 11px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.saved .address {
+  margin-top: 10px;
+  font-family: var(--font-mono);
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+
+.saved .address .lead {
+  color: var(--muted);
+}
+
+.saved .address .quad {
+  margin-right: 0.5em;
+}
+
+.saved .under {
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 10px;
+  max-width: 70ch;
+}

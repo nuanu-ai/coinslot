@@ -38,6 +38,10 @@ import {
   RegisteredMerchantSchema,
   SellerNameSchema,
 } from "@coinslot/contracts";
+// The payout address is not on that surface yet. Everything about it comes from
+// one module which is deleted when the contract lands, and these two names then
+// come from the import above like the rest.
+import { PAYOUT_WALLET_ROUTES, PayoutWalletSchema } from "./payout-wallet-contract.js";
 
 /** What a call came to, in the two shapes a page has to draw differently. */
 export type Answer<T> =
@@ -62,6 +66,9 @@ export interface GatewayClient {
   /** The name buyers read beside this merchant's products, or null for none. */
   sellerName(): Promise<Answer<string | null>>;
   setSellerName(name: string): Promise<Answer<string | null>>;
+  /** The address this merchant's money arrives at, or null for none. */
+  payoutWallet(): Promise<Answer<string | null>>;
+  setPayoutWallet(address: string): Promise<Answer<string | null>>;
 }
 
 /**
@@ -206,6 +213,20 @@ export const gatewayFor = (
         body: { seller_name: name },
       });
       return answered.ok ? { ok: true, document: answered.document.seller_name } : answered;
+    },
+    // The same shape as the two above and for the same reasons: the contract
+    // wraps the address so the answer can grow a field beside it, and the one
+    // screen that draws it wants the address. Null is a real answer — it is the
+    // merchant who has told us nowhere to send their money yet.
+    payoutWallet: async () => {
+      const answered = await call(PAYOUT_WALLET_ROUTES.get_payout_wallet, PayoutWalletSchema);
+      return answered.ok ? { ok: true, document: answered.document.payout_wallet } : answered;
+    },
+    setPayoutWallet: async (address) => {
+      const answered = await call(PAYOUT_WALLET_ROUTES.set_payout_wallet, PayoutWalletSchema, {
+        body: { payout_wallet: address },
+      });
+      return answered.ok ? { ok: true, document: answered.document.payout_wallet } : answered;
     },
   };
 };
