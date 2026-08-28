@@ -64,6 +64,7 @@ import {
   MerchantKeySchema,
   RegisteredMerchantSchema,
   RegistrationRequestSchema,
+  SellerNameRequestSchema,
   SellerNameSchema,
 } from "./merchant.js";
 import { OrderSchema } from "./order.js";
@@ -183,6 +184,7 @@ export type {
   RegisteredMerchant,
   RegistrationRequest,
   SellerName,
+  SellerNameRequest,
 } from "./merchant.js";
 export {
   DisabledKeySchema,
@@ -192,6 +194,7 @@ export {
   MerchantKeySchema,
   RegisteredMerchantSchema,
   RegistrationRequestSchema,
+  SellerNameRequestSchema,
   SellerNameSchema,
 } from "./merchant.js";
 export type { Order } from "./order.js";
@@ -316,6 +319,7 @@ export const schemas = Object.freeze({
   refusal_code: RefusalCodeSchema,
   sale_price: SalePriceSchema,
   seller_name: SellerNameSchema,
+  seller_name_request: SellerNameRequestSchema,
   selling_state: SellingStateSchema,
   service_name: ServiceNameSchema,
   tags: TagsSchema,

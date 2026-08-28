@@ -57,6 +57,7 @@ import {
   MerchantKeyListSchema,
   RegisteredMerchantSchema,
   RegistrationRequestSchema,
+  SellerNameRequestSchema,
   SellerNameSchema,
 } from "./merchant.js";
 import { OrderSchema } from "./order.js";
@@ -666,8 +667,8 @@ export const API_ROUTES = Object.freeze({
     path: "/v0/seller-name",
     auth: "merchant_key",
     description:
-      "Sets what the merchant this call's own key belongs to is listed under, or takes it away with null. The answer is the name as it now stands, read back from what was written rather than echoed, so a screen showing it afterwards is showing what is true. Setting the same name twice changes nothing and answers the same way, so a retry after a dropped connection is safe. A name outside the rule of the catalog that will carry it is refused and nothing is written, which leaves the merchant listed under whatever they had before. Two things this call does not do are worth knowing before a screen is built on it. It does not touch the cards already published, so a merchant who takes their name away leaves cards listed whose payment challenge names no seller at all — publishing is refused while no name is set, and nothing refuses this. And the name here is not the name a person reads in a list of merchants at a terminal: those are two fields, held to two different rules, and only this one ever leaves us.",
-    request: SellerNameSchema,
+      "Sets what the merchant this call's own key belongs to is listed under. The answer is the name as it now stands, read back from what was written rather than echoed, so a screen showing it afterwards is showing what is true. Setting the same name twice changes nothing and answers the same way, so a retry after a dropped connection is safe. A name outside the rule of the catalog that will carry it is refused and nothing is written, which leaves the merchant listed under whatever they had before. What this call will not do is take a name away: it goes from no name to a name and from one name to another, and null is refused. A merchant with no name still has every card they published on sale, each offered through a payment request that names no seller, so removal is not a setting — somebody reaching for it wants either a different name, which is this same call, or an end to selling, which is the pause, and the pause leaves their cards where they can put them back on sale. One more thing is worth knowing before a screen is built on this: the name here is not the name a person reads in a list of merchants at a terminal. Those are two fields, held to two different rules, and only this one ever leaves us.",
+    request: SellerNameRequestSchema,
     response: { document: SellerNameSchema },
   },
 

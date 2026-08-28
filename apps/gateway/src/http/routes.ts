@@ -20,7 +20,7 @@ import type {
   PurchaseRequest,
   RegistrationRequest,
   RouteName,
-  SellerName,
+  SellerNameRequest,
   WorkerPollRequest,
 } from "@coinslot/contracts";
 import { outcomeFor } from "@coinslot/core";
@@ -167,7 +167,7 @@ export function handlersFor(gateway: Gateway): Partial<Record<RouteName, Mounted
         status: OK,
         document: await gateway.setSellerName(
           merchantOf(call),
-          (call.body as SellerName).seller_name,
+          (call.body as SellerNameRequest).seller_name,
         ),
       }),
     },

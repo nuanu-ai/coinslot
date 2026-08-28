@@ -815,7 +815,7 @@ describe("the route table", () => {
       "/v0/seller-name",
       "merchant_key",
       "-",
-      "seller_name",
+      "seller_name_request",
       "seller_name",
     ],
     ["list_keys", "GET", "/v0/keys", "merchant_key", "-", "-", "merchant_key_list"],
@@ -1128,11 +1128,12 @@ describe("the route table", () => {
     expect(API_ROUTES.publish_card.description).toContain("/v0/seller-name");
   });
 
-  it("says that a name can be taken away as well as set", () => {
-    // A merchant who set a name and wants none again has one call for it, and
-    // the shape says so by taking null rather than by having a second route.
-    // Left unsaid, somebody would build a screen that can only ever add.
-    expect(API_ROUTES.set_seller_name.description).toContain("null");
+  it("says a name cannot be taken away, and names the act that is wanted instead", () => {
+    // A merchant who has a name keeps one. Somebody building a settings screen
+    // would otherwise put a "remove" button beside the field, find the call
+    // refuses, and read that as a gap rather than as the rule it is — so the
+    // row says which act does what they were reaching for.
+    expect(API_ROUTES.set_seller_name.description).toContain("pause");
   });
 
   it("says what a pause does and does not do to the orders already open", () => {

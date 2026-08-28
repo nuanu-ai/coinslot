@@ -188,18 +188,14 @@ export const DisabledKeySchema = z
   });
 
 /**
- * The name a merchant's products are sold under, going either way.
+ * What a merchant's products are sold under, as the merchant reads it back.
  *
- * One shape for the read and for the write, so a cabinet parses back exactly
- * what it sent and a settings screen has one document to hold rather than two
- * that must be kept in step.
- *
- * Null is a value here and not an absence, and both halves of that matter. It
- * is how a merchant who has never chosen a name is described, and it is how one
- * who wants to stop being listed says so — there is no second call for taking a
- * name away. An absent field would collapse those into the same thing as a
- * client that forgot to send it, so the field is required and nullable, and a
- * write that leaves it out is refused rather than read as "none".
+ * Null is the fact "nobody has chosen one", which is every merchant on the day
+ * they register and is the state they stay in until they do. It is a value
+ * rather than an absent field, because an absent field would be
+ * indistinguishable from a client that dropped it, and a settings screen
+ * reading the second as the first would tell a merchant they are listed under
+ * nothing while they are listed under something.
  *
  * The name is held to the rule of the catalog that carries it, which is where
  * this name is going: at most thirty-two characters of printable ASCII. That
@@ -215,7 +211,53 @@ export const SellerNameSchema = z
   })
   .meta({
     description:
-      "The name a merchant's products are sold under: what a discovery catalog lists them under and what a buyer's agent is shown beside the price. Null means nobody has chosen one, and sending null is how a merchant takes their name away again. The field is always present in both directions: an absent one would be indistinguishable from a client that dropped it, and read as \"none\" it would quietly delist a merchant who has a name. What a name may be is the catalog's rule rather than ours — at most 32 characters of printable ASCII — because a name outside it is dropped there in silence, so it is refused here where somebody is told. A merchant with no name cannot publish a card: a card published without one reaches a buyer's agent inside a payment request that names no seller at all.",
+      "The name a merchant's products are sold under: what a discovery catalog lists them under and what a buyer's agent is shown beside the price. Null means nobody has chosen one, which is where every merchant starts. The field is always present rather than left out when there is no name: an absent field would be indistinguishable from a client that dropped it. What a name may be is the catalog's rule rather than ours — at most 32 characters of printable ASCII — because a name outside it is dropped there in silence, so it is refused here where somebody is told. A merchant with no name cannot publish a card: a card published without one reaches a buyer's agent inside a payment request that names no seller at all.",
+  });
+
+/**
+ * What a merchant sends to change what their products are sold under.
+ *
+ * The same field held to the same rule, and one difference: there is no null.
+ * A merchant can go from having no name to having one and from one name to
+ * another, and not back. Having none is a starting state rather than a setting,
+ * because a merchant who took their name away would keep every card they had
+ * already published on sale, each offered through a payment request naming no
+ * seller, with nothing anywhere saying so. What somebody reaching for that
+ * actually wants is one of two other acts: a different name, which is this same
+ * call, or an end to selling, which is the pause — and the pause leaves their
+ * cards where they can find them again.
+ *
+ * So it is two documents rather than one, and a cabinet still reads back the
+ * shape it sent. The message on a null is written here rather than left to a
+ * type error, because "expected string, received null" describes the shape and
+ * says nothing about which act the sender was reaching for.
+ */
+export const SellerNameRequestSchema = z
+  .strictObject({
+    /**
+     * What buyers are to read beside this merchant's products.
+     *
+     * The rule lives once, in `ServiceNameSchema`, and this reaches it through
+     * a string that carries its own words for "this is not a name at all". A
+     * second copy of the length and the alphabet written out here is the copy
+     * that goes stale.
+     */
+    seller_name: z
+      .string({
+        // A field that is missing is a client with a bug and a field holding
+        // null is a client with a misunderstanding. Only the second gets this
+        // sentence; the first falls through to the ordinary words about a
+        // field that is not there, which is what its author needs to read.
+        error: (issue) =>
+          issue.input === undefined
+            ? undefined
+            : "a seller name cannot be taken away, only changed: a merchant who wants to stop being listed pauses their selling, which leaves their cards where they can put them back on sale",
+      })
+      .pipe(ServiceNameSchema),
+  })
+  .meta({
+    description:
+      "What a merchant sends to change the name their products are sold under. The same rule as the answer — at most 32 characters of printable ASCII, the catalog's rule rather than ours — and one difference: null is refused. A merchant goes from no name to a name and from one name to another, never back to none, because a merchant with no name still has every card they published on sale, each offered through a payment request that names no seller. Somebody reaching for null wants one of two other things: a different name, which is this call with a different value, or an end to selling, which is the pause.",
   });
 
 /**
@@ -272,6 +314,7 @@ export const RegisteredMerchantSchema = z
   });
 
 export type SellerName = z.infer<typeof SellerNameSchema>;
+export type SellerNameRequest = z.infer<typeof SellerNameRequestSchema>;
 export type MerchantKey = z.infer<typeof MerchantKeySchema>;
 export type MerchantKeyList = z.infer<typeof MerchantKeyListSchema>;
 export type IssueKeyRequest = z.infer<typeof IssueKeyRequestSchema>;

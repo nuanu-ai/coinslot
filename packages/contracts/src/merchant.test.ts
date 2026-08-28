@@ -7,6 +7,7 @@ import {
   MerchantKeySchema,
   RegisteredMerchantSchema,
   RegistrationRequestSchema,
+  SellerNameRequestSchema,
   SellerNameSchema,
 } from "./merchant.js";
 import { errorOf, expectMissingFieldRejected } from "./testing/expect-schema.js";
@@ -308,9 +309,9 @@ describe("what registering answers with", () => {
 });
 
 describe("the name buyers read beside a merchant's products", () => {
-  // The promise: a merchant can find out what they are listed under, set it,
-  // and take it away again. It is one document both ways, so a cabinet reads
-  // back exactly the shape it sent.
+  // The promise: a merchant can find out what they are listed under and change
+  // it. What they cannot do is have none once they have one, and the two
+  // documents differ in exactly that.
   const named = { seller_name: "Someone's shop" };
   const unnamed = { seller_name: null };
 
@@ -319,8 +320,8 @@ describe("the name buyers read beside a merchant's products", () => {
   });
 
   it("says a merchant has no name rather than leaving the field out", () => {
-    // Null is the fact "nobody has chosen one", and it is also how a merchant
-    // takes a name away. An absent field is a silence, and the screen that
+    // Null is the fact "nobody has chosen one", which is every merchant on the
+    // day they register. An absent field is a silence, and the screen that
     // reads it cannot tell a silence from a field somebody forgot to send: it
     // would have to guess, and guessing wrong means a settings page that says
     // a merchant is listed under nothing when they are listed under something.
@@ -346,6 +347,56 @@ describe("the name buyers read beside a merchant's products", () => {
 
   it("refuses a field it does not know", () => {
     expect(errorOf(SellerNameSchema, { ...named, merchant_id: "mch_4d21bb" })).toContain(
+      "merchant_id",
+    );
+  });
+});
+
+describe("what a merchant sends to change that name", () => {
+  const asked = { seller_name: "Someone's shop" };
+
+  it("takes the name, held to the same rule the answer is", () => {
+    expect(SellerNameRequestSchema.parse(asked)).toStrictEqual(asked);
+    expect(SellerNameRequestSchema.safeParse({ seller_name: "x".repeat(33) }).success).toBe(false);
+    expect(SellerNameRequestSchema.safeParse({ seller_name: "Магазин" }).success).toBe(false);
+    expect(SellerNameRequestSchema.safeParse({ seller_name: " padded " }).success).toBe(false);
+    expect(SellerNameRequestSchema.safeParse({ seller_name: "" }).success).toBe(false);
+  });
+
+  it("refuses null, because a name cannot be taken away", () => {
+    // The difference between this document and the answer, and the whole of it.
+    // Having no name is a state a merchant starts in and cannot go back to:
+    // their cards would stay on sale while the payment request an agent reads
+    // named no seller. A merchant who wants a different name sets a different
+    // name, and one who wants to stop selling pauses selling, which leaves
+    // their cards where they can find them again.
+    expect(SellerNameRequestSchema.safeParse({ seller_name: null }).success).toBe(false);
+  });
+
+  it("says what to do instead, rather than that a string was expected", () => {
+    // The reader here is whoever wrote the client, and "expected string,
+    // received null" tells them the shape and not the reason. Somebody who
+    // wanted a merchant to stop being listed has an act that does that, and
+    // this is where they find out which.
+    const complaint = errorOf(SellerNameRequestSchema, { seller_name: null });
+
+    expect(complaint).toContain("pause");
+    expect(complaint).not.toContain("expected string");
+  });
+
+  it("refuses a document without seller_name and names it", () => {
+    expectMissingFieldRejected(SellerNameRequestSchema, asked, "seller_name");
+  });
+
+  it("complains about a missing field in its own words, not the ones about null", () => {
+    // A client that dropped the field has a bug, and a client that sent null
+    // has a misunderstanding. Told the same sentence, whoever wrote the first
+    // one would go looking for a decision nobody made.
+    expect(errorOf(SellerNameRequestSchema, {})).not.toContain("pause");
+  });
+
+  it("refuses a field it does not know", () => {
+    expect(errorOf(SellerNameRequestSchema, { ...asked, merchant_id: "mch_4d21bb" })).toContain(
       "merchant_id",
     );
   });

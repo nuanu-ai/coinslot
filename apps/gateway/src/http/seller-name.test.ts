@@ -24,6 +24,9 @@ import { PAYMENT_REQUIRED_HEADER } from "./x402.js";
 
 const PAY_TO = "0x0000000000000000000000000000000000000001";
 
+/** The code this suite's gateway is configured to accept. */
+const INVITATION = "the-code-from-the-invitation";
+
 const cardFor = (merchantItemId: string, title: string): Card => ({
   merchant_item_id: merchantItemId,
   title,
@@ -36,7 +39,7 @@ const cardFor = (merchantItemId: string, title: string): Card => ({
 let open: { harnessed: Harness; served: Served } | null = null;
 
 const started = async () => {
-  const harnessed = await harness({ PAY_TO_ADDRESS: PAY_TO });
+  const harnessed = await harness({ PAY_TO_ADDRESS: PAY_TO, REGISTRATION_INVITATION: INVITATION });
   const served = await serve(harnessed);
   open = { harnessed, served };
   return open;
@@ -60,17 +63,30 @@ const sellerName = async (served: Served, key: string) => {
 const setSellerName = async (served: Served, key: string, name: string | null) =>
   served.call("POST", "/v0/seller-name", { body: { seller_name: name }, headers: bearer(key) });
 
+/**
+ * A merchant listed under nothing, made the only way one comes to exist: by
+ * registering. The harness names the merchants it seeds, because a merchant
+ * with no name publishes nothing and almost every test here sells something;
+ * this is the state a real merchant is in between signing up and choosing.
+ */
+const nameless = async (served: Served): Promise<string> => {
+  const answered = await served.call("POST", "/v0/merchants", {
+    body: { invitation: INVITATION },
+  });
+  expect(answered.status, JSON.stringify(answered.body)).toBe(200);
+  return (answered.body as { secret: string }).secret;
+};
+
 describe("the name a merchant is listed under", () => {
   it("reads back nothing for a merchant nobody has named", async () => {
     // Null is the answer, not an empty string and not a 404. A merchant who has
     // no name has a settings page to draw, and the shape it draws from has to
     // say "there is none" in a way a reader cannot mistake for "I could not
     // find you".
-    const { served, harnessed } = await started();
-    const nameless = await harnessed.addMerchant("A merchant with no listing");
-    await setSellerName(served, nameless.key, null);
+    const { served } = await started();
+    const key = await nameless(served);
 
-    expect(await sellerName(served, nameless.key)).toStrictEqual({ seller_name: null });
+    expect(await sellerName(served, key)).toStrictEqual({ seller_name: null });
   });
 
   it("sets a name and hands back what was written rather than what was sent", async () => {
@@ -87,17 +103,39 @@ describe("the name a merchant is listed under", () => {
     });
   });
 
-  it("takes a name away again", async () => {
-    // A merchant who wants to stop being listed says so with null. Without it
-    // the only way out would be a name they do not want, and the terminal.
+  it("refuses to take a name away, and says what to do instead", async () => {
+    // The one thing this call will not do. A merchant left with cards on sale
+    // and no name has products offered through a payment request that names no
+    // seller, and nothing afterwards says so — while what they were actually
+    // reaching for, stopping their selling, is a control they already have and
+    // one that leaves their cards where they can find them again.
     const { served, harnessed } = await started();
     await setSellerName(served, harnessed.merchant.key, "Someone's shop");
 
     const cleared = await setSellerName(served, harnessed.merchant.key, null);
 
-    expect(cleared.status, JSON.stringify(cleared.body)).toBe(200);
-    expect(cleared.body).toStrictEqual({ seller_name: null });
-    expect(await sellerName(served, harnessed.merchant.key)).toStrictEqual({ seller_name: null });
+    expect(cleared.status).toBe(400);
+    const { error } = cleared.body as { error: { problems: { message: string }[] } };
+    expect(error.problems.map((problem) => problem.message).join(" ")).toContain("pause");
+    // And the name they had is still theirs: a refusal that had already written
+    // the removal would be worse than no rule at all.
+    expect(await sellerName(served, harnessed.merchant.key)).toStrictEqual({
+      seller_name: "Someone's shop",
+    });
+  });
+
+  it("changes a name that is already set, which is what a merchant wanted anyway", async () => {
+    // The act the refusal above sends people to when what they want is a
+    // different name rather than none.
+    const { served, harnessed } = await started();
+    await setSellerName(served, harnessed.merchant.key, "Someone's shop");
+
+    const renamed = await setSellerName(served, harnessed.merchant.key, "The shop on the corner");
+
+    expect(renamed.status, JSON.stringify(renamed.body)).toBe(200);
+    expect(await sellerName(served, harnessed.merchant.key)).toStrictEqual({
+      seller_name: "The shop on the corner",
+    });
   });
 
   it("names the merchant whose key the call was made with and nobody else", async () => {
@@ -175,18 +213,18 @@ describe("the name a merchant is listed under", () => {
     expect(await sellerInTheChallenge(served, itemId)).toBe("Someone's shop");
   });
 
-  it("carries no seller once the name is taken away, which is what makes the above a claim", async () => {
-    // The negative control, and a gap worth knowing about rather than
-    // discovering. Publishing is refused while no name is set, but a merchant
-    // who publishes and then clears their name leaves cards already listed
-    // whose challenge names nobody. Nothing refuses that today.
+  it("puts a changed name into the challenge of a card already published", async () => {
+    // The negative control for the assertion above: the challenge reads the
+    // merchant's name at the moment it is asked for, rather than copying it on
+    // to each card as it is published. A merchant who renames themselves is
+    // renamed everywhere they are offered for sale, with no republishing.
     const { served, harnessed } = await started();
     await setSellerName(served, harnessed.merchant.key, "Someone's shop");
     const itemId = await publish(served, harnessed.merchant.key, cardFor("a-room", "A room"));
 
-    await setSellerName(served, harnessed.merchant.key, null);
+    await setSellerName(served, harnessed.merchant.key, "The shop on the corner");
 
-    expect(await sellerInTheChallenge(served, itemId)).toBeUndefined();
+    expect(await sellerInTheChallenge(served, itemId)).toBe("The shop on the corner");
   });
 });
 
@@ -200,11 +238,10 @@ describe("publishing before a name has been chosen", () => {
     // name reaches a buyer's agent inside a payment request that names no
     // seller at all, and the agent is invited to pay somebody the request does
     // not name. This gateway has shipped that once.
-    const { served, harnessed } = await started();
-    const nameless = await harnessed.addMerchant("A merchant with no listing");
-    await setSellerName(served, nameless.key, null);
+    const { served } = await started();
+    const key = await nameless(served);
 
-    const refused = await publishing(served, nameless.key, cardFor("a-room", "A room"));
+    const refused = await publishing(served, key, cardFor("a-room", "A room"));
 
     expect(refused.status).toBe(422);
     const { errors } = refused.body as { errors: { code: string; message: string }[] };
@@ -229,13 +266,12 @@ describe("publishing before a name has been chosen", () => {
   it("writes nothing, so the card is not there afterwards", async () => {
     // A refusal that had already written the card would be worse than no rule:
     // the merchant would be told no and be selling anyway.
-    const { served, harnessed } = await started();
-    const nameless = await harnessed.addMerchant("A merchant with no listing");
-    await setSellerName(served, nameless.key, null);
+    const { served } = await started();
+    const key = await nameless(served);
 
-    await publishing(served, nameless.key, cardFor("a-room", "A room"));
+    await publishing(served, key, cardFor("a-room", "A room"));
 
-    const own = await served.call("GET", "/v0/cards", { headers: bearer(nameless.key) });
+    const own = await served.call("GET", "/v0/cards", { headers: bearer(key) });
     expect((own.body as { cards: unknown[] }).cards).toStrictEqual([]);
   });
 
@@ -243,11 +279,10 @@ describe("publishing before a name has been chosen", () => {
     // A merchant with no name and a card that is also wrong learns both in one
     // answer. Told them one at a time, they fix the card, publish again, and
     // only then find out about the name.
-    const { served, harnessed } = await started();
-    const nameless = await harnessed.addMerchant("A merchant with no listing");
-    await setSellerName(served, nameless.key, null);
+    const { served } = await started();
+    const key = await nameless(served);
 
-    const refused = await publishing(served, nameless.key, {
+    const refused = await publishing(served, key, {
       ...cardFor("a-room", "A room"),
       price: { amount: "not a number", currency: "USD" },
     });
@@ -261,14 +296,13 @@ describe("publishing before a name has been chosen", () => {
   it("lets a merchant publish as soon as they set one", async () => {
     // The road out of the refusal, walked end to end. A rule a merchant cannot
     // get past is not a rule, it is a wall.
-    const { served, harnessed } = await started();
-    const nameless = await harnessed.addMerchant("A merchant with no listing");
-    await setSellerName(served, nameless.key, null);
-    expect((await publishing(served, nameless.key, cardFor("a-room", "A room"))).status).toBe(422);
+    const { served } = await started();
+    const key = await nameless(served);
+    expect((await publishing(served, key, cardFor("a-room", "A room"))).status).toBe(422);
 
-    await setSellerName(served, nameless.key, "Their own shop");
+    await setSellerName(served, key, "Their own shop");
 
-    const published = await publishing(served, nameless.key, cardFor("a-room", "A room"));
+    const published = await publishing(served, key, cardFor("a-room", "A room"));
     expect(published.status, JSON.stringify(published.body)).toBe(200);
     expect(
       await sellerInTheChallenge(served, (published.body as { ok: { id: string } }).ok.id),

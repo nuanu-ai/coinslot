@@ -1,14 +1,24 @@
 /**
  * The commands that make a merchant and keep their keys.
  *
- * A merchant now makes and revokes their own keys over the API, from their
- * cabinet (ADR-0014 §5), so this is no longer the only way any of it happens.
- * What it is for is everything those routes deliberately cannot do: making a
- * merchant without an invitation, issuing a key to somebody who has lost every
- * key they had, and disabling a key by naming it alone — which is what the
- * route refuses when it is the key the caller is holding. Somebody at a
- * terminal has the whole database in front of them and needs no merchant to be
- * scoped to; that is the difference, and it is why these verbs stay.
+ * A merchant now makes and revokes their own keys over the API, and sets the
+ * name their products are sold under, from their cabinet (ADR-0014), so this is
+ * no longer the only way any of it happens. What it is for is everything those
+ * routes deliberately cannot do: making a merchant without an invitation,
+ * issuing a key to somebody who has lost every key they had, disabling a key by
+ * naming it alone — which is what the route refuses when it is the key the
+ * caller is holding — and taking a listing name away, which the route refuses
+ * outright. Somebody at a terminal has the whole database in front of them and
+ * needs no merchant to be scoped to; that is the difference, and it is why
+ * these verbs stay.
+ *
+ * The listing name is the one worth reading twice, because the two sides differ
+ * in what they allow rather than in who they are scoped to. A merchant sets a
+ * name and changes it and can never end up with none, since their published
+ * cards would stay on sale while the payment request an agent reads named no
+ * seller. Here `--none` does exactly that, deliberately: it is how a name that
+ * should never have been listed is pulled, by somebody who can see what it
+ * costs and pause the merchant's selling in the same sitting.
  *
  * It is a tested module with the terminal handed to it rather than a script
  * that prints as it goes, for the reason the cabinet's account command is.

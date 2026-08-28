@@ -541,7 +541,14 @@ export class Gateway {
   }
 
   /**
-   * Sets what this merchant's products are sold under, or takes it away.
+   * Sets what this merchant's products are sold under.
+   *
+   * There is no taking one away here, and that is the contract's rule rather
+   * than this method's: what arrives is a name, because a merchant with cards
+   * on sale and no name has products offered through a payment request that
+   * names no seller. The flow underneath still writes a null, because the
+   * terminal has a verb for it and somebody with the whole database in front of
+   * them is a different caller from a merchant with one key.
    *
    * The name is checked before it is written, by the one function that checks
    * it — a name the catalog cannot carry is dropped there in silence, so the
@@ -552,7 +559,7 @@ export class Gateway {
    * What comes back is read off the row that was written, not off the argument.
    * Echoed, this answer would look identical whether the write landed or not.
    */
-  async setSellerName(merchantId: string, sellerName: string | null): Promise<SellerName> {
+  async setSellerName(merchantId: string, sellerName: string): Promise<SellerName> {
     const named = await setServiceName(
       this.runtime.store,
       merchantId,
