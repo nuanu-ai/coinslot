@@ -56,6 +56,8 @@ import {
   IssuedKeySchema,
   IssueKeyRequestSchema,
   MerchantKeyListSchema,
+  PayoutWalletRequestSchema,
+  PayoutWalletSchema,
   RegisteredMerchantSchema,
   RegistrationRequestSchema,
   SellerNameRequestSchema,
@@ -798,6 +800,25 @@ export const API_ROUTES = Object.freeze({
       "Sets what the merchant this call's own key belongs to is listed under. The answer is the name as it now stands, read back from what was written rather than echoed, so a screen showing it afterwards is showing what is true. Setting the same name twice changes nothing and answers the same way, so a retry after a dropped connection is safe. A name outside the rule of the catalog that will carry it is refused and nothing is written, which leaves the merchant listed under whatever they had before. What this call will not do is take a name away: it goes from no name to a name and from one name to another, and null is refused. A merchant with no name still has every card they published on sale, each offered through a payment request that names no seller, so removal is not a setting — somebody reaching for it wants either a different name, which is this same call, or an end to selling, which is the pause, and the pause leaves their cards where they can put them back on sale. One more thing is worth knowing before a screen is built on this: the name here is not the name a person reads in a list of merchants at a terminal. Those are two fields, held to two different rules, and only this one ever leaves us.",
     request: SellerNameRequestSchema,
     response: { document: SellerNameSchema },
+  },
+
+  get_payout_wallet: {
+    method: "GET",
+    path: "/v0/payout-wallet",
+    auth: "merchant_key",
+    description:
+      "The address the sales of the merchant this call's own key belongs to are paid into. Payments here are not held by anybody on the way: a buyer's agent pays this address directly and no balance of the merchant's is ever held on our side, which is why the address has to be theirs and why this call exists. Null is the ordinary answer for a merchant who has set none, and it is an answer rather than a refusal — a merchant with no wallet exists and has a settings screen to draw. The address comes back in lower case whichever spelling was sent to set it, and it is the same address.",
+    response: { document: PayoutWalletSchema },
+  },
+
+  set_payout_wallet: {
+    method: "POST",
+    path: "/v0/payout-wallet",
+    auth: "merchant_key",
+    description:
+      "Sets the address the sales of the merchant this call's own key belongs to are paid into. The answer is the address as it now stands, read back from what was written rather than echoed, and in lower case. Setting the same address twice changes nothing and answers the same way, so a retry after a dropped connection is safe. An address whose capital letters do not agree with the rest of it is refused and nothing is written, because those capitals are a checksum and letters that disagree mean a character is wrong — and an address that is wrong is another perfectly good address belonging to somebody else. What this call will not do is take an address away: null is refused, because the merchant's published cards stay on sale and a payment request for one of them cannot be written without an address; somebody reaching for that wants either a different address, which is this same call, or an end to selling, which is the pause. On a deployment that settles on a real chain, a merchant with no wallet set here cannot publish a card, and the refusal at the publish says so.",
+    request: PayoutWalletRequestSchema,
+    response: { document: PayoutWalletSchema },
   },
 
   list_keys: {
