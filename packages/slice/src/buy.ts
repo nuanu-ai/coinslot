@@ -114,6 +114,31 @@ const comeBackLater = (orderId: string, where: string, why: string): void => {
 };
 
 /**
+ * What stands in for a receipt, printed wherever a reader would go looking for
+ * one and find none.
+ *
+ * A reader is owed the difference between a receipt that is missing and one
+ * that was never theirs to be given. Neither of the agent's doors carries
+ * ours: a receipt is the merchant's own record of the sale, kept behind the
+ * merchant's key.
+ *
+ * What an agent holds instead is not the same in both modes, and saying one
+ * sentence for both would credit a proof that is not there. Where the payment
+ * executes last — the synchronous sale — the payment layer signs a settlement
+ * onto the answer, and that is the agent's word that money moved. Where it
+ * executes while the order is being opened, no settlement rides back on this
+ * exchange at all, and the price and the test word are the whole of what the
+ * agent is told about its own money.
+ */
+const insteadOfAReceipt = (settled: boolean): void => {
+  console.log(
+    settled
+      ? "[buyer] no receipt here: a receipt is the merchant's own record of the sale. The settlement above is the payment layer's word that the money moved, and the price and the test word are what this door tells an agent about it."
+      : "[buyer] no receipt here, and no settlement either: the money moved as the order was opened rather than as the last step of this exchange. The price and the test word above are the whole of what this door tells an agent about the money, and the receipt is the merchant's own record.",
+  );
+};
+
+/**
  * The refusal code an answer carried, where it was a refusal at all.
  *
  * Read off the document rather than off the HTTP status, and the difference
@@ -240,6 +265,10 @@ const answered = bought.body as {
 } | null;
 
 if (answered?.delivered != null) {
+  // The goods were in the purchase answer and this run is over. The reader is
+  // owed the same line the waiting path prints, and for the same reason: they
+  // have just read a whole answer with no receipt in it.
+  insteadOfAReceipt(bought.settlement !== null);
   process.exit(0);
 }
 
@@ -335,12 +364,8 @@ if (seen.state !== "delivered") {
 
 console.log(`[buyer] the goods:`);
 console.log(JSON.stringify(seen.delivered, null, 2));
-// Said because a reader who went looking for a receipt is owed the difference
-// between one that is missing and one that was never the agent's to be given.
-// Neither of the agent's doors carries our receipt: the price and the `test`
-// word in the document above are what an agent is handed, the settlement the
-// payment layer signed is what says money moved, and the receipt is written
-// into the merchant's own record.
-console.log(
-  "[buyer] neither of the agent's doors carries a receipt: the price and the test word above are the agent's proof, and the receipt is the merchant's record",
-);
+// The settlement is read off the purchase rather than off this answer, because
+// this door never carries one: whatever the payment layer signed, it signed
+// onto the exchange that moved the money, and a card whose goods come later
+// moved it back at the purchase.
+insteadOfAReceipt(bought.settlement !== null);

@@ -171,6 +171,15 @@ describe("the stage-one gate: a sandbox purchase, green from catalog to receipt"
     expect(answered.delivered).toBeNull();
     expect(answered.price?.amount).toBe("8.00");
 
+    // And no settlement rides back on this answer, though the money moved. The
+    // payment layer signs its receipt onto the answer that follows the charge,
+    // and here the charge happened while the order was being opened rather
+    // than as the last step of the exchange. So what this agent is told about
+    // its own money is the price and the test word, and nothing else — which
+    // is what the buy command has to say rather than crediting a settlement
+    // that only the synchronous sale gets.
+    expect(bought.settlement).toBeNull();
+
     // The merchant's own worker takes the order on. Its status to the agent is
     // "in progress" — taken on is not delivered, and the fifth gate says an
     // unfinished order must not read as a refused one.
@@ -290,26 +299,56 @@ describe("the stage-one gate: a sandbox purchase, green from catalog to receipt"
     // write and two chances to read the same sale two ways: an agent that
     // bought and an agent that came back later were being handed different
     // documents about the same order, and only one of them was published.
+    //
+    // Both cards are walked, and the synchronous one is the half that bites.
+    // Its purchase answer carries the goods, so a fork that dropped the
+    // delivered-goods rule from one of the two builders would show up here as
+    // an order whose goods appear at one door and not at the other. Read on
+    // the eSIM alone the comparison is between two documents that both say
+    // null, and it would survive that fork without a word.
     const catalog = await buyer.catalog();
+    const rented = catalog.find((card) => card.title === RENTED_NUMBER.title);
     const esim = catalog.find((card) => card.title === EUROPE_ESIM.title);
-    if (esim === undefined) throw new Error("the eSIM is not in the catalog");
+    if (rented === undefined || esim === undefined) {
+      throw new Error("the catalog is missing one of the two cards");
+    }
 
-    const bought = await buyer.buy(esim.id, { email: "buyer@example.com" });
-    expect(bought.status).toBe(200);
+    const walked: { what: string; bought: unknown; collected: unknown }[] = [];
 
-    const purchased = fields(bought.body);
-    const orderId = purchased.order_id;
-    if (typeof orderId !== "string") throw new Error("the purchase named no order");
+    for (const [what, itemId, params] of [
+      ["a synchronous sale, delivered on the call", rented.id, { area_code: "415" }],
+      ["an asynchronous sale, still running", esim.id, { email: "buyer@example.com" }],
+    ] as const) {
+      const bought = await buyer.buy(itemId, params);
+      expect(bought.status, `${what}: ${JSON.stringify(bought.body)}`).toBe(200);
 
-    // Nothing moves this order between the two reads: the eSIM is delivered by
-    // an explicit call this test has not made, so both doors are describing the
-    // same standing order and every field may be compared.
-    const collected = await buyer.status(orderId);
+      const purchased = fields(bought.body);
+      const orderId = purchased.order_id;
+      if (typeof orderId !== "string") throw new Error(`${what}: the purchase named no order`);
 
-    expect(() => AgentOrderStatusSchema.parse(bought.body)).not.toThrow();
-    expect(() => AgentOrderStatusSchema.parse(collected.body)).not.toThrow();
-    expect(purchased).toStrictEqual(fields(collected.body));
-  }, 20_000);
+      // Nothing moves either order between its two reads. The rented number is
+      // finished by the time the purchase answers, and the eSIM is delivered by
+      // an explicit call this test has not made — so both doors are describing
+      // the same standing order and every field may be compared.
+      const collected = await buyer.status(orderId);
+
+      expect(() => AgentOrderStatusSchema.parse(bought.body), what).not.toThrow();
+      expect(() => AgentOrderStatusSchema.parse(collected.body), what).not.toThrow();
+      expect(purchased, what).toStrictEqual(fields(collected.body));
+
+      walked.push({
+        what,
+        bought: purchased.delivered,
+        collected: fields(collected.body).delivered,
+      });
+    }
+
+    // The control on the comparison itself: one of the two orders really did
+    // carry goods through both doors, and the other really did carry none. Two
+    // orders with nothing in them would agree just as well and prove nothing.
+    expect(walked.map((one) => one.bought !== null)).toStrictEqual([true, false]);
+    expect(walked.map((one) => one.collected !== null)).toStrictEqual([true, false]);
+  }, 30_000);
 
   it("hands the merchant's own key for the product and the buyer's answers through neither door", async () => {
     // The status door was already built by addition rather than by
