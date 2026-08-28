@@ -683,7 +683,20 @@ describe("getting into the cabinet", () => {
     const { browser, gateway } = await started({ base: "/cabinet" });
     await publish(gateway, roomCard);
 
-    const page = await browser.signIn();
+    const signedIn = await browser.post("/cabinet/sign-in", {
+      email: PERSON,
+      password: PASSWORD,
+    });
+    const page = await browser.get(signedIn.to ?? "/cabinet/cards");
+
+    // The session cookie hangs off the mount point too, and that is the half
+    // no link on the page can show. Behind Caddy this origin also carries the
+    // gateway's own /v0, so a cookie scoped to `/` would be attached to every
+    // request an agent makes to the money path — which is the one thing
+    // ADR-0005 §2 exists to keep a person's session away from. The name of the
+    // cookie depends on it as well: server.ts declines the `__Host-` prefix
+    // precisely because that prefix would force this back to `/`.
+    expect(signedIn.headers.getSetCookie().join(" ")).toMatch(/;\s*Path=\/cabinet\s*(?:;|$)/i);
 
     expect((await browser.get("/cabinet/")).to).toBe("/cabinet/cards");
     // And without the trailing slash, which is what a person types and what
