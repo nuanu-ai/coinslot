@@ -59,8 +59,9 @@ deadline of its own and it arrives together with the mode.
 
 ### A whole card
 
-The fields above, assembled into the one document they make. This is what a
-publication sends, and every field in it is described somewhere on this page.
+The fields above, assembled into the one document they make: this is what
+publishing a card sends, and every field in it is described somewhere on this
+page.
 
 <<< @/examples/card/access-monthly.json
 
