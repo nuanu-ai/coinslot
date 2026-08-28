@@ -105,6 +105,27 @@ describe("MemoryStore, where it is not like the other one", () => {
 
     expect((await store.orderById("ord_1"))?.itemId).toBe("item_1");
   });
+
+  it("says which merchant a key was refused for", async () => {
+    // The shared suite can only ask that this is refused, not what it says.
+    // There the refusal is the database's foreign key and reaches the caller as
+    // the driver's own error, whose message happens to contain the merchant's
+    // identifier among the statement's bound parameters — so a test matching it
+    // would pass on a leak rather than on a sentence anybody wrote.
+    //
+    // Here the refusal is a guard of this adapter's own, standing in for that
+    // foreign key, and what it says is this adapter's to promise. Whoever meets
+    // it is running the seed or a command they typed, and the one thing they
+    // need is which merchant the store cannot find: a bare "no such merchant"
+    // in the middle of a script that names four of them is a message that
+    // starts an investigation rather than ending one.
+    const store = new MemoryStore(counted());
+    await store.addMerchant({ id: A, name: "Merchant A" }, 0);
+
+    await expect(
+      store.addKey({ id: "mk_1", merchantId: "mch_nobody", label: "one", digest: "d" }, 1_000),
+    ).rejects.toThrow(/mch_nobody/);
+  });
 });
 
 describe("MemoryStore writes that go with an order", () => {
