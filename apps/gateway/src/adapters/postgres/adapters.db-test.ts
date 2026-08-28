@@ -11,12 +11,19 @@
  * and not the one the stack runs on: see `testing/database.ts` for what
  * happened when they were the same.
  *
- * What is checked here is only what cannot be checked in memory: that the two
- * adapters keep the same promises the in-memory ones do, in the one place where
- * keeping them is a different problem. Above all `withOrder`, whose hold is a
- * chain of promises in one process and a row lock in a database, and which is
- * the thing standing between two events about one order and a charge that
- * happens twice.
+ * What the two adapters both promise is not written out here. It is one suite
+ * in `testing/store-contract.ts`, run at the foot of this file against a real
+ * Postgres and under `pnpm test` against the maps in memory, so that a
+ * difference between them is a failure rather than two test files drifting
+ * apart in the same direction.
+ *
+ * What is left in this file is what cannot be checked in memory at all: the
+ * round trip through JSONB and through a queue that is a table, the columns
+ * written from the document, the driver's own refusals, the pool and its
+ * listeners, the advisory lock across two connections, and the migrations. Above
+ * all `withOrder` under two clients that share nothing in this process, where
+ * the hold is a row lock rather than a chain of promises, and which is the thing
+ * standing between two events about one order and a charge that happens twice.
  *
  * The queue's own promises — the delayed reminder, the retry after a handler
  * throws, the window after which an unanswered delivery is taken back — are
@@ -37,11 +44,11 @@ import { PgBoss } from "pg-boss";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { Gateway } from "../../app/gateway.js";
 import type { Runtime } from "../../app/runtime.js";
-import type { OrderChange, Store } from "../../ports/store.js";
+import type { OrderChange } from "../../ports/store.js";
 import { noDatabaseHere, readyDatabase, testDatabaseUrl } from "../../testing/database.js";
 import { countedIds, testConfig, workUntilStopped } from "../../testing/harness.js";
+import { describeStore } from "../../testing/store-contract.js";
 import { ScriptedFacilitator } from "../memory/facilitator.js";
-import { MemoryStore } from "../memory/store.js";
 import { PgBossQueue, streamOf } from "../pgboss/queue.js";
 import { connect, PostgresStore } from "./store.js";
 
@@ -63,6 +70,28 @@ const databaseUrl = await readyDatabase(wanted);
  * is using.
  */
 const QUEUE_SCHEMA = "pgboss_adapters";
+
+/**
+ * Emptying every table this schema has, in one statement, in one place.
+ *
+ * The list is meant to stay complete, and it is written once because it is
+ * asked for twice — the file empties them before it starts, and the shared
+ * store contract empties them before each of its own cases. Two copies of a
+ * list that must stay complete are one copy that will not.
+ *
+ * Why it is every table and not the two that hold the fixtures. A claim on a
+ * payment left behind owns the fingerprint this run presents, and every
+ * purchase below is refused: a suite that passes once and never again, on a
+ * volume that outlives it. The merchant's row is here for the same reason
+ * before it has cost anybody an afternoon — it carries whether they are
+ * selling at all, so a run that ever paused them would leave every later run's
+ * purchases turned away, and the failure would look like anything but its
+ * cause.
+ *
+ * A table added to `schema.ts` belongs in this list.
+ */
+const EMPTY_EVERY_TABLE =
+  "truncate table cards, orders, receipts, payment_claims, merchant_keys, merchants";
 
 /**
  * Terminates one named backend, from a connection of its own.
@@ -169,6 +198,18 @@ if (databaseUrl === null) {
   describe("the real adapters", () => {
     let pool: Pool;
     let store: PostgresStore;
+    /**
+     * The pool the shared store contract runs on, kept apart from the one this
+     * file's own store and gateway share.
+     *
+     * Its size is the load-bearing part. Two of the contract's cases hold a
+     * decision open while a second decision runs, and a decision is a
+     * transaction holding a connection for as long as it lasts — so on a pool
+     * of one the second would wait for a connection rather than for a lock, and
+     * "these two orders do not wait for each other" would be answered by the
+     * pool instead of by the database.
+     */
+    let contract: ReturnType<typeof connect>;
     let queue: PgBossQueue;
     let boss: PgBoss;
     let gateway: Gateway;
@@ -188,21 +229,14 @@ if (databaseUrl === null) {
 
       const connected = connect(databaseUrl);
       pool = connected.pool;
+      // Through `connect` like every other pool here, so the contract's own
+      // connections carry the same error listeners the rest of them do. Four,
+      // which is more than the two its cases need at once and small enough that
+      // a pool exhausted by something else is still a visible failure.
+      contract = connect(databaseUrl, { max: 4 });
       // Every run starts from an empty catalog, or the counts below would be
       // reading somebody else's leftovers.
-      //
-      // Every table this schema has, and the list is meant to stay that way. A
-      // claim on a payment left behind owns the fingerprint this run presents,
-      // and every purchase below is refused — a suite that passes once and
-      // never again, on a volume that outlives it. The merchant's row is here
-      // for the same reason before it has cost anybody an afternoon: it carries
-      // whether they are selling at all, so a run that ever pauses them would
-      // leave every later run's purchases turned away, and the failure would
-      // look like anything but its cause. A table added to `schema.ts` belongs
-      // in this list.
-      await pool.query(
-        "truncate table cards, orders, receipts, payment_claims, merchant_keys, merchants",
-      );
+      await pool.query(EMPTY_EVERY_TABLE);
       // And the queue's own tables, which are none of ours. They are dropped
       // rather than emptied, dropped before the gateway is up rather than
       // after, and dropped from an installation of this suite's own rather than
@@ -277,6 +311,7 @@ if (databaseUrl === null) {
       // middle leaves this behind, and the next run must not care.
       await pool.query(`drop schema if exists ${QUEUE_SCHEMA} cascade`);
       await pool.end();
+      await contract.pool.end();
     });
 
     afterEach(() => {
@@ -370,7 +405,14 @@ if (databaseUrl === null) {
 
       const results = await Promise.all([bump(), bump(), bump()]);
 
-      expect(results.map((r) => (r.found ? r.result : null)).sort()).toStrictEqual([1, 2, 3]);
+      // Sorted as numbers rather than by the default sort, which compares them
+      // as text and agrees with the numbers only while there are fewer than ten
+      // of them. Raised to eleven, the bare sort would start lying by passing.
+      expect(
+        results
+          .map((r) => (r.found ? r.result : null))
+          .sort((one, other) => Number(one) - Number(other)),
+      ).toStrictEqual([1, 2, 3]);
       expect((await store.orderById(orderId))?.order.dispatch.attempts).toBe(3);
     });
 
@@ -523,86 +565,6 @@ if (databaseUrl === null) {
       expect(won).toHaveLength(1);
     });
 
-    it("claims a payment the same way in memory and in the database", async () => {
-      // The whole of the application logic is tested against the in-memory
-      // store, so every promise the flows rely on is really a promise about
-      // both adapters. The replay guard is the one where the two are least
-      // alike: a map and a check in memory, one insert and a primary key here.
-      // The same script is run through each and the answers have to match, or
-      // a purchase that the offline suite says is refused is a purchase that
-      // goes through in production.
-      const script = async (subject: Store) => ({
-        first: await subject.claimPayment("fp-parity", "ord_one"),
-        anotherOrder: await subject.claimPayment("fp-parity", "ord_two"),
-        // The retry the portal promises is safe.
-        ownRetry: await subject.claimPayment("fp-parity", "ord_one"),
-        // Letting go is the holder's to do and nobody else's: an order that
-        // never held this fingerprint asking for it back leaves it exactly
-        // where it was, so one buyer can never free another buyer's signature.
-        strangerLetsGo: await (async () => {
-          await subject.releaseClaim("fp-parity", "ord_two");
-          return subject.claimPayment("fp-parity", "ord_two");
-        })(),
-        // The holder letting go frees it, which is what a buyer turned away for
-        // ownership gets back.
-        holderLetsGo: await (async () => {
-          await subject.releaseClaim("fp-parity", "ord_one");
-          return subject.claimPayment("fp-parity", "ord_two");
-        })(),
-        // The sweep runs against a table this suite shares, so what is compared
-        // is that something went and not how many — the count is not the same
-        // question in a table other tests have written to.
-        sweptSomething: (await subject.forgetClaimsBefore(Date.now() + 60_000)) > 0,
-        afterTheSweep: await subject.claimPayment("fp-parity", "ord_two"),
-      });
-
-      const inTheDatabase = await script(store);
-      const inMemory = await script(new MemoryStore(countedIds()));
-
-      expect(inTheDatabase).toStrictEqual(inMemory);
-      // Said outright as well as compared, so a day when both adapters are
-      // wrong in the same way is not a day this test passes.
-      expect(inTheDatabase).toStrictEqual({
-        first: { claimed: true },
-        anotherOrder: { claimed: false, heldBy: "ord_one" },
-        ownRetry: { claimed: true },
-        strangerLetsGo: { claimed: false, heldBy: "ord_one" },
-        holderLetsGo: { claimed: true },
-        sweptSomething: true,
-        afterTheSweep: { claimed: true },
-      });
-    });
-
-    it("keeps and clears a seller's listing name the same way in memory and here", async () => {
-      // The name a seller is listed under travels to strangers, and everything
-      // offline is tested against the in-memory store. A column that took a
-      // name and gave back something else — or, worse, one that answered for a
-      // merchant nobody named — would show up only in production, in a
-      // catalog. The same script through both, and the answers compared.
-      const script = async (subject: Store) => {
-        await subject.addMerchant({ id: "mch_listed", name: "A merchant" }, now);
-        return {
-          madeWithNone: (await subject.merchantById("mch_listed"))?.serviceName ?? "absent",
-          named: (await subject.setServiceName("mch_listed", "Freeland", now))?.serviceName,
-          readBack: (await subject.merchantById("mch_listed"))?.serviceName,
-          cleared: (await subject.setServiceName("mch_listed", null, now))?.serviceName ?? "absent",
-          nobody: await subject.setServiceName("mch_nobody", "Freeland", now),
-        };
-      };
-
-      const inTheDatabase = await script(store);
-      const inMemory = await script(new MemoryStore(countedIds()));
-
-      expect(inTheDatabase).toStrictEqual(inMemory);
-      expect(inTheDatabase).toStrictEqual({
-        madeWithNone: "absent",
-        named: "Freeland",
-        readBack: "Freeland",
-        cleared: "absent",
-        nobody: null,
-      });
-    });
-
     it("forgets claims older than an instant, and says how many went", async () => {
       await store.claimPayment("fp-db-old", "ord_old");
 
@@ -647,6 +609,64 @@ if (databaseUrl === null) {
       expect(await store.withOrder("ord_nope", () => ({ result: 1 }))).toStrictEqual({
         found: false,
       });
+    });
+
+    it("leaves the row alone when a decision asked for nothing to be written", async () => {
+      // `updated_at` is written from `rowFor` on every save, and it is the only
+      // place a write with nothing to write shows up at all — the document that
+      // came back would be identical either way, so the shared suite can ask
+      // this only of the state and not of the row.
+      //
+      // What it costs to be wrong is not the column. A store that wrote on
+      // every decision is a store where a call that changed nothing puts back
+      // what it read over whatever landed in between, which is the lost update
+      // the hold exists to prevent, reached by the one call that was not trying
+      // to write.
+      const published = await store.publishCard(
+        A,
+        { ...syncCard, merchant_item_id: "untouched" },
+        now,
+      );
+      const offered = await gateway.beginPurchase(published.id, {});
+      if (offered.step !== "pay") throw new Error("no price was offered");
+      const orderId = offered.order.order.id;
+
+      const writtenAt = async (): Promise<string> => {
+        const { rows } = await pool.query<{ at: Date }>(
+          "select updated_at as at from orders where id = $1",
+          [orderId],
+        );
+        const at = rows[0]?.at;
+        if (at === undefined) {
+          throw new Error(`there is no order ${orderId}, so there is no row to read`);
+        }
+        return at.toISOString();
+      };
+
+      const before = await writtenAt();
+      // Far enough apart that two writes could not land on one instant. The
+      // column resolves to microseconds and this is twenty milliseconds, so a
+      // write that did happen has nowhere to hide.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      await store.withOrder(orderId, (found) => ({
+        // The order this decision would have written, handed back as its answer
+        // rather than named in `save`.
+        result: { ...found, order: { ...found.order, state: "cancelled" as const } },
+      }));
+
+      expect(await writtenAt()).toBe(before);
+
+      // The negative control, and it is what makes the line above mean
+      // anything: a decision that does ask for a write moves the column, so
+      // "unchanged" is this store keeping its word rather than this column
+      // never moving.
+      await store.withOrder(orderId, (found) => ({
+        save: { ...found, priceId: "written on purpose" },
+        result: null,
+      }));
+
+      expect(await writtenAt()).not.toBe(before);
     });
 
     it("carries an envelope through the queue and does not send it round again by itself", async () => {
@@ -746,86 +766,6 @@ if (databaseUrl === null) {
 
       expect((await store.disableKey("mk_twice", now + 1_000))?.disabledAt).toBe(now + 1_000);
       expect((await store.disableKey("mk_twice", now + 9_000))?.disabledAt).toBe(now + 1_000);
-    });
-
-    it("lists a merchant's keys oldest first, settling a tie by the identifier", async () => {
-      // The same order the in-memory adapter gives, which is the point: a
-      // merchant reads this list on a screen, and only a database can reorder
-      // it between two visits. Ordered by the instant alone, two keys stamped
-      // in one millisecond come back in whatever order the planner chose that
-      // time — and a registration writes a merchant and their first key at one
-      // instant, so ties are the ordinary case rather than a contrived one.
-      await store.addKey({ id: "mk_ord_z", merchantId: A, label: "z", digest: "ord-z" }, now);
-      await store.addKey({ id: "mk_ord_a", merchantId: A, label: "a", digest: "ord-a" }, now);
-      await store.addKey(
-        { id: "mk_ord_old", merchantId: A, label: "older", digest: "ord-old" },
-        now - 1_000,
-      );
-
-      const listed = (await store.keysOf(A)).map((key) => key.id);
-
-      expect(listed.filter((id) => id.startsWith("mk_ord_"))).toStrictEqual([
-        "mk_ord_old",
-        "mk_ord_a",
-        "mk_ord_z",
-      ]);
-    });
-
-    it("disables a key of the merchant who asked, and finds none of anybody else's", async () => {
-      // The scoping in the predicate rather than after the read, which is what
-      // makes "not yours" and "not there" one answer from where the caller
-      // stands — a refusal that told them apart would count somebody else's
-      // keys. Only a database runs this `where`.
-      await store.addKey({ id: "mk_own_a", merchantId: A, label: "A's", digest: "own-a" }, now);
-      await store.addKey({ id: "mk_own_b", merchantId: B, label: "B's", digest: "own-b" }, now);
-
-      expect((await store.disableKeyOf(A, "mk_own_a", now + 1_000))?.disabledAt).toBe(now + 1_000);
-      expect(await store.disableKeyOf(A, "mk_own_b", now + 1_000)).toBeNull();
-      expect(await store.disableKeyOf(A, "mk_nobody_was_issued", now + 1_000)).toBeNull();
-      // And B's key still opens the door, which is what the null was protecting.
-      expect((await store.workingKey("own-b"))?.merchantId).toBe(B);
-      // The same coalesce as the unscoped verb: a retry keeps the first instant.
-      expect((await store.disableKeyOf(A, "mk_own_a", now + 9_000))?.disabledAt).toBe(now + 1_000);
-    });
-
-    it("writes a merchant and their first key in one transaction, or neither", async () => {
-      // ADR-0014 §1. Two inserts, and only a database can roll the first one
-      // back when the second fails — in memory this is a delete and here it is
-      // the transaction itself. A merchant left behind by a half-written
-      // registration has a generated identifier nobody holds and no key, so
-      // nothing would ever find it again.
-      const made = await store.registerMerchant(
-        { id: "mch_reg", name: "Someone's shop", serviceName: "Someone's shop" },
-        { id: "mk_reg", label: "the first key", digest: "reg-digest" },
-        now,
-      );
-
-      expect(made?.merchant).toMatchObject({ id: "mch_reg", serviceName: "Someone's shop" });
-      expect((await store.workingKey("reg-digest"))?.id).toBe("mk_reg");
-
-      // A digest already taken is the way the second insert fails with nothing
-      // else wrong, and the merchant beside it must not survive it.
-      await expect(
-        store.registerMerchant(
-          { id: "mch_rolled_back", name: "Another shop", serviceName: "Another shop" },
-          { id: "mk_rolled_back", label: "the first key", digest: "reg-digest" },
-          now,
-        ),
-      ).rejects.toThrow();
-
-      expect(await store.merchantById("mch_rolled_back")).toBeNull();
-
-      // And an identifier already taken is answered rather than thrown, without
-      // touching the merchant that is there.
-      expect(
-        await store.registerMerchant(
-          { id: "mch_reg", name: "Somebody else", serviceName: "Somebody else" },
-          { id: "mk_second", label: "the first key", digest: "another-digest" },
-          now,
-        ),
-      ).toBeNull();
-      expect((await store.merchantById("mch_reg"))?.name).toBe("Someone's shop");
-      expect(await store.workingKey("another-digest")).toBeNull();
     });
 
     it("refuses a key for a merchant that is not there", async () => {
@@ -1493,6 +1433,36 @@ if (databaseUrl === null) {
         expect(second?.receipted).toBe(0);
         expect(await store.receiptForOrder(orderId)).toStrictEqual(written);
       }, 30_000);
+    });
+
+    /**
+     * Everything both stores promise, against the one that a merchant's money
+     * actually rests on.
+     *
+     * Inside this suite rather than beside it, because what it needs — the
+     * migrated database, the pools, the emptied tables — is what `beforeAll`
+     * builds and `afterAll` takes down. Declared as a sibling it would run
+     * after the pools had been ended.
+     *
+     * A store and a pool of its own, and that is the part worth reading before
+     * it is changed back. The rest of this file's store shares its pool with a
+     * started gateway whose pg-boss workers are polling, and writes its
+     * envelopes onto a real stream. The contract needs neither — it never asks
+     * for a write alongside an order — and handing it that store would put its
+     * transactions and its truncates in the same pool as work nobody in the
+     * contract asked for. What the contract's pool does need is room for more
+     * than one transaction at a time: two of its cases hold a decision open
+     * while another runs, and on a pool of one they would wait for a connection
+     * rather than for a lock, which is a different thing that looks identical.
+     *
+     * Each case is given an empty store, which here means every table emptied.
+     * That takes the merchants this file's own `beforeEach` writes as well; the
+     * contract makes whatever it needs, and the next case in this file gets
+     * them back from that hook.
+     */
+    describeStore("the store on Postgres", async () => {
+      await contract.pool.query(EMPTY_EVERY_TABLE);
+      return new PostgresStore(contract.db, countedIds());
     });
   });
 }
