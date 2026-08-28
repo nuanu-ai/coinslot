@@ -2382,6 +2382,33 @@ describe("when something goes wrong that the merchant has to get out of", () => 
       expect(readable(forged.html), origin).toContain("did not come from the cabinet");
     }
   });
+
+  it("writes down what it compared, because the other person it refuses is honest", async () => {
+    // This refusal reaches two people. One is guessing, and the page tells them
+    // nothing on purpose. The other is a merchant who did nothing wrong and now
+    // cannot sign in, and until this line existed there was no way to tell the
+    // two apart — the check turned an honest browser away on the live site and
+    // the only evidence anywhere was a screenshot somebody sent.
+    const said: string[] = [];
+    const log = vi
+      .spyOn(console, "log")
+      .mockImplementation((...parts: unknown[]) => said.push(parts.map(String).join(" ")));
+    try {
+      const { browser, url } = await started();
+
+      await browser
+        .sending({ origin: "https://evil.example.com" })
+        .post("/sign-in", { email: PERSON, password: PASSWORD });
+
+      const line = said.find((one) => one.includes("form post was refused")) ?? "";
+      // Both halves of the comparison, because either one alone leaves the
+      // reader guessing which of the two was wrong.
+      expect(line).toContain("evil.example.com");
+      expect(line).toContain(new URL(url).host);
+    } finally {
+      log.mockRestore();
+    }
+  });
 });
 
 describe("when the gateway will not answer", () => {

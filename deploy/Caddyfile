@@ -56,11 +56,25 @@
 {$COINSLOT_SITE_ADDRESS::8080} {
 	encode zstd gzip
 
-	# ADR-0005 §1 puts four things on one origin, and same-origin is then the
-	# whole of the boundary between them: a static landing, a static portal
-	# build, a cabinet that will hold a merchant's session, and the money path
+	# The web surface decision puts four things on one origin, and same-origin is
+	# then the whole of the boundary between them: a static landing, a static
+	# portal build, a cabinet that holds a merchant's session, and the money path
 	# at /v0. These three headers are the part of the hardening that costs
-	# nothing and cannot break a page.
+	# nothing.
+	#
+	# It said "and cannot break a page", and one of them broke every form in the
+	# cabinet. `Referrer-Policy: no-referrer` does more than hide the referrer:
+	# by the fetch specification, a request whose method is not GET or HEAD and
+	# whose referrer policy is `no-referrer` carries `Origin: null` instead of
+	# the page's own origin. So every form post from the cabinet arrived claiming
+	# to come from nowhere, the check that a form came from this host refused it,
+	# and a merchant on the live site could not sign in at all. Nothing about it
+	# looked like a header problem: the same request from a command line, which
+	# implements no referrer policy, was let through.
+	#
+	# `same-origin` gives up nothing we wanted. A referrer still never reaches
+	# another site, which is the whole reason the line is here, and our own
+	# origin survives on our own requests. `no-referrer` must not come back.
 	#
 	# What is deliberately not here: HSTS, because on a plain-HTTP local origin
 	# it would pin localhost in every developer's browser for its max-age; and a
@@ -70,7 +84,7 @@
 	# first deployment to a real host, and neither should be guessed here.
 	header {
 		X-Content-Type-Options nosniff
-		Referrer-Policy no-referrer
+		Referrer-Policy same-origin
 		X-Frame-Options DENY
 	}
 
