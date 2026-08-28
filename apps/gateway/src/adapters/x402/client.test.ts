@@ -222,6 +222,20 @@ describe("choosing a facilitator client for a configuration", () => {
       "POST api.cdp.coinbase.com/platform/v2/x402/verify",
     ]);
 
+    // The same host written down to the root, which is a spelling deployments
+    // genuinely use. Read as a different host it would be handed no credentials
+    // and refused by the facilitator on every call.
+    const rooted = facilitatorClientFor(
+      aPayment({
+        facilitatorUrl: "https://api.cdp.coinbase.com./platform/v2/x402",
+        cdpApiKeyId: "an-api-key",
+        cdpApiKeySecret: anApiKeySecret(),
+      }),
+    );
+    expect((await rooted.createAuthHeaders("verify")).headers.Authorization).toMatch(
+      /^Bearer \S+$/,
+    );
+
     const unsigned = facilitatorClientFor(aPayment());
     expect((await unsigned.createAuthHeaders("verify")).headers.Authorization).toBeUndefined();
   });
