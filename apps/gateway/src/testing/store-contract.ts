@@ -417,6 +417,34 @@ export function describeStore(name: string, open: () => Promise<Store>): void {
         expect(await store.setServiceName("mch_nobody", "Freeland", 5_000)).toBeNull();
       });
 
+      it("is paid at a wallet only where somebody set one, and at their own", async () => {
+        // Where the money goes. Everything offline is tested against the
+        // in-memory store, so a column that took an address and gave back
+        // another — or one that answered with a merchant's address for the
+        // merchant beside them — would show up first on a chain, in a payment
+        // that cannot be called back.
+        const store = await twoMerchants();
+
+        // Nobody has said where the money goes, which is the ordinary state
+        // and is never guessed at from anywhere.
+        expect((await store.merchantById(A))?.payoutWallet).toBeNull();
+
+        // Written as a wallet shows it, which is what the one caller of this
+        // hands over — the store keeps what it is given and normalizes nothing,
+        // so the fixture is written in the form that actually arrives.
+        const wallet = "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed";
+        expect((await store.setPayoutWallet(A, wallet, 3_000))?.payoutWallet).toBe(wallet);
+        expect((await store.merchantById(A))?.payoutWallet).toBe(wallet);
+        // And the merchant beside them is still paid nowhere.
+        expect((await store.merchantById(B))?.payoutWallet).toBeNull();
+
+        const second = "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359";
+        expect((await store.setPayoutWallet(A, second, 4_000))?.payoutWallet).toBe(second);
+        expect((await store.merchantById(A))?.payoutWallet).toBe(second);
+
+        expect(await store.setPayoutWallet("mch_nobody", wallet, 5_000)).toBeNull();
+      });
+
       it("is registered with a first key, both in one write", async () => {
         // ADR-0014 §1. The two go down together because a merchant missing the
         // key is unreachable rather than incomplete: nobody can call as them,
@@ -451,6 +479,9 @@ export function describeStore(name: string, open: () => Promise<Store>): void {
 
         expect(made?.merchant.serviceName).toBeNull();
         expect((await store.merchantById(A))?.serviceName).toBeNull();
+        // And paid nowhere, for the same reason: registering asks for neither.
+        expect(made?.merchant.payoutWallet).toBeNull();
+        expect((await store.merchantById(A))?.payoutWallet).toBeNull();
       });
 
       it("is not written at all where the key beside them cannot be", async () => {

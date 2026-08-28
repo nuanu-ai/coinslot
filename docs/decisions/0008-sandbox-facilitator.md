@@ -66,7 +66,10 @@ takes none is sent nothing, whatever an environment file was left holding.
 of this decision made it one. The payment challenge cannot be built without an
 address (`apps/gateway/src/http/x402.ts` refuses rather than inventing one), so
 a sandbox that rejected it could not sell anything, which is the whole reason
-the sandbox exists.
+the sandbox exists. Since ADR-0019 that address is the sandbox's alone: a
+payment request names the wallet of the merchant who published the card, and
+the configured address stands in only where a merchant has set none — which is
+allowed here, where nothing settles, and refused everywhere else.
 
 ## Consequences
 

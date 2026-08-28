@@ -73,13 +73,29 @@ const registered = async (served: Served): Promise<Registered> => {
   return answered.body as Registered;
 };
 
-/** What this merchant's products are sold under, set the way a cabinet sets it. */
-const listAs = async (served: Served, key: string, name: string) => {
-  const answered = await served.call("POST", "/v0/seller-name", {
+/**
+ * What this merchant's products are sold under, and where their sales are paid,
+ * set the way a cabinet sets them.
+ *
+ * The two travel together here because they are the two things a merchant made
+ * by registering has to say before anything of theirs can be published, and
+ * nothing in this file is about either — what it is about is keys. A test that
+ * set only one would be refused at its first card for a reason it is not
+ * testing; `seller-name.test.ts` and `payout-wallet.test.ts` are where each
+ * refusal is the subject.
+ */
+const readyToSell = async (served: Served, key: string, name: string) => {
+  const named = await served.call("POST", "/v0/seller-name", {
     body: { seller_name: name },
     headers: bearer(key),
   });
-  expect(answered.status, JSON.stringify(answered.body)).toBe(200);
+  expect(named.status, JSON.stringify(named.body)).toBe(200);
+
+  const paidAt = await served.call("POST", "/v0/payout-wallet", {
+    body: { payout_wallet: "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed" },
+    headers: bearer(key),
+  });
+  expect(paidAt.status, JSON.stringify(paidAt.body)).toBe(200);
 };
 
 const keysWith = async (served: Served, key: string): Promise<MerchantKeyList> => {
@@ -149,7 +165,7 @@ describe("registering a merchant", () => {
     // catalogue reads — which is the whole road from registering to being found.
     const { served } = await started();
     const made = await registered(served);
-    await listAs(served, made.secret, "Someone's shop");
+    await readyToSell(served, made.secret, "Someone's shop");
 
     const itemId = await publish(served, made.secret, cardFor("a-room", "A room"));
     const seller = await sellerInTheChallenge(served, itemId);
@@ -208,7 +224,7 @@ describe("registering a merchant", () => {
 
     const first = await registered(served);
     const second = await registered(served);
-    await listAs(served, first.secret, "First shop");
+    await readyToSell(served, first.secret, "First shop");
     const itemId = await publish(served, first.secret, cardFor("a-room", "A room"));
 
     expect(second.merchant_id).not.toBe(first.merchant_id);
@@ -326,7 +342,7 @@ describe("issuing another key", () => {
     const { served } = await started();
     const first = await registered(served);
     const second = await registered(served);
-    await listAs(served, first.secret, "First shop");
+    await readyToSell(served, first.secret, "First shop");
     const itemId = await publish(served, first.secret, cardFor("a-room", "A room"));
 
     const another = await issued(served, first.secret, "another of the first shop's");

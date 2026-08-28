@@ -138,7 +138,7 @@ export class X402Facilitator implements Facilitator {
     try {
       return {
         payload: decodePaymentSignatureHeader(charge.payment),
-        requirements: this.#edge.requirementsFor(charge, charge.orderId),
+        requirements: this.#edge.requirementsFor(charge, charge.orderId, charge.payTo),
       };
     } catch {
       return null;

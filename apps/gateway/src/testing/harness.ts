@@ -20,7 +20,13 @@ import { ScriptedFacilitator } from "../adapters/memory/facilitator.js";
 import { MemoryQueue } from "../adapters/memory/queue.js";
 import { MemoryStore } from "../adapters/memory/store.js";
 import { Gateway } from "../app/gateway.js";
-import { issueKey, keyDigest, makeMerchant, setServiceName } from "../app/merchants.js";
+import {
+  issueKey,
+  keyDigest,
+  makeMerchant,
+  setPayoutWallet,
+  setServiceName,
+} from "../app/merchants.js";
 import type { Runtime } from "../app/runtime.js";
 import { type GatewayConfig, loadConfig } from "../config.js";
 import { buildApp } from "../http/server.js";
@@ -57,6 +63,16 @@ export interface SeededMerchant {
   readonly key: string;
   /** The row the key is, so a test can disable it. */
   readonly keyId: string;
+  /**
+   * The address this merchant is paid at, which is theirs and no other seeded
+   * merchant's.
+   *
+   * It is carried out rather than left to be looked up because the assertions
+   * that need it are about whose address a challenge names, and a test that
+   * wrote the address in by hand would be pinning the harness's counter rather
+   * than the gateway's answer.
+   */
+  readonly wallet: string;
 }
 
 export interface Harness {
@@ -163,11 +179,20 @@ export async function harness(overrides: Record<string, string> = {}): Promise<H
       throw new Error(`the harness could not make the merchant ${name}`);
     }
     await setServiceName(store, made.id, name, now);
+    // And a wallet, for the reason the listing name is set: a merchant with
+    // none publishes nothing on a gateway that settles for real, which is what
+    // the harness's own configuration says it is. Every test whose subject is a
+    // sale — a deadline, a refusal, the shape of a receipt — would otherwise be
+    // refused at its first card for a reason that has nothing to do with it.
+    // Each merchant gets their own, because a shared one would let a gateway
+    // that paid every sale to one address pass a test about whose it is.
+    const wallet = aSeededWallet();
+    await setPayoutWallet(store, made.id, wallet, now);
     const issued =
       secret === undefined
         ? await issueKey(store, ids, made.id, "the harness", now)
         : await addKnownKey(store, ids, made.id, secret, now);
-    return { id: made.id, name: made.name, key: issued.secret, keyId: issued.key.id };
+    return { id: made.id, name: made.name, key: issued.secret, keyId: issued.key.id, wallet };
   };
 
   // Everything after the gateway is running is guarded, because a throw here
@@ -231,6 +256,28 @@ async function addKnownKey(
   );
   return { key, secret };
 }
+
+/**
+ * An address no other seeded merchant has, counted upwards so that a test
+ * reading two of them side by side can see which is which.
+ *
+ * It is written out of a counter rather than picked at random: a test that
+ * fails on whose address a challenge names is read by somebody, and
+ * `0x…0002` beside `0x…0003` says what forty random characters do not. All
+ * digits, so there is no letter for the checksum to capitalise: it is an
+ * address in either of the two spellings one can be written in, and it is its
+ * own canonical form, so no checksum has to be computed to write one down
+ * here. What that costs is that these addresses say nothing about the
+ * canonical form either way — the tests that are about it use addresses with
+ * letters in them.
+ */
+const aSeededWallet = (() => {
+  let issued = 0;
+  return () => {
+    issued += 1;
+    return `0x${issued.toString().padStart(40, "0")}`;
+  };
+})();
 
 /** A, B, C… so two merchants in one test are told apart at a glance. */
 const countedName = (() => {
@@ -443,16 +490,14 @@ function encoded(
   payload: Record<string, unknown>,
 ): { readonly payment: string; readonly fingerprint: string } {
   const { config } = worked.runtime;
-  // An address to be paid at, where the harness was given none: an offer has to
-  // name one, and nowhere is the honest answer for an offer nobody reads.
-  const edge = new PaymentEdge(
-    { ...config.payment, payTo: config.payment.payTo ?? NOWHERE },
-    config.publicBaseUrl,
-    config.payment.timeoutSeconds,
-  );
+  const edge = new PaymentEdge(config.payment, config.publicBaseUrl, config.payment.timeoutSeconds);
   const signed: PaymentPayload = {
     x402Version: X402_VERSION,
-    accepted: edge.requirementsFor({ amount: "0.00", currency: "USD" }, null),
+    // An offer has to name an address to be paid at, and nowhere is the honest
+    // one for an offer nobody reads: nothing about this payment is checked
+    // against a merchant, and the fingerprint the route takes of it does not
+    // look at the address at all.
+    accepted: edge.requirementsFor({ amount: "0.00", currency: "USD" }, null, NOWHERE),
     payload,
   };
 

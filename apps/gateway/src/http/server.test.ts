@@ -404,7 +404,10 @@ describe("the payment challenge", () => {
     );
     expect(challenge.x402Version).toBe(2);
     expect(challenge.accepts[0]?.amount).toBe("80000000");
-    expect(challenge.accepts[0]?.payTo).toBe(PAY_TO);
+    // The address is the seller's own and not the one this gateway is
+    // configured with, which is the operator's; `payout-wallet.test.ts` is
+    // where that is the subject rather than a field being read back.
+    expect(challenge.accepts[0]?.payTo).toBe(harnessed.merchant.wallet);
     expect(challenge.accepts[0]?.network).toBe("eip155:84532");
     // No order was opened by a call that cannot be a purchase.
     expect(await harnessed.store.orders(harnessed.merchant.id)).toStrictEqual([]);

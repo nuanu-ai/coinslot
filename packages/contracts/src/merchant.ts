@@ -1,6 +1,6 @@
 /**
- * How a merchant comes to exist, the name their products are sold under, and
- * the keys they open the door with.
+ * How a merchant comes to exist, the name their products are sold under, the
+ * wallet their sales are paid into, and the keys they open the door with.
  *
  * The first two belong together because registering is the act that produces
  * both: one call makes the merchant and issues their first key, and what comes
@@ -28,6 +28,7 @@
 
 import { z } from "zod";
 import { ServiceNameSchema } from "./card.js";
+import { EvmAddressSchema } from "./evm-address.js";
 import { IdentifierSchema, TimestampSchema } from "./primitives.js";
 
 /**
@@ -261,6 +262,84 @@ export const SellerNameRequestSchema = z
   });
 
 /**
+ * The wallet a merchant's sales are paid into, as the merchant reads it back.
+ *
+ * Payments here are not held by anybody on the way: a buyer's agent pays the
+ * merchant's own address directly, and this is that address. There is no
+ * account of theirs on our side with a balance in it and no moment at which
+ * their money is ours, which is why this field exists at all — without it there
+ * would have to be.
+ *
+ * Null is the fact "nobody has said where the money goes", which is every
+ * merchant on the day they register. It is a value rather than an absent field
+ * for the reason the seller name is: a settings screen cannot tell a silence
+ * from a client that dropped the field, and reading the second as the first
+ * tells a merchant they are set up to be paid when nothing of theirs can be.
+ *
+ * What comes back is always the spelling a wallet shows, whichever of the two
+ * accepted spellings was sent. The door takes both and everything behind it
+ * holds one (ADR-0017), and this is the one for a reason that is about the
+ * person rather than about the storage: a merchant pastes forty characters out
+ * of their wallet and reads them back on a settings screen, and handed the same
+ * address in lower case they cannot tell it from a different address without
+ * comparing character by character. On the one field money is sent to, that
+ * glance is the whole of the checking anybody does.
+ */
+export const PayoutWalletSchema = z
+  .strictObject({
+    /** Where this merchant's sales are paid, or nothing at all. */
+    payout_wallet: EvmAddressSchema.nullable(),
+  })
+  .meta({
+    description:
+      "The address a merchant's sales are paid into. Payments are not held by anybody on the way: a buyer's agent pays this address directly, and it is the payTo of every payment request made for this merchant's products. Null means nobody has set one, which is where every merchant starts; the field is always present rather than left out, because an absent field is indistinguishable from a client that dropped it. The address comes back in the mixed-case spelling a wallet shows, whichever of the two accepted spellings was sent — so what a merchant reads back on a screen is character for character what they copied out of their wallet. On a deployment that settles on a real chain a merchant with no wallet here cannot publish a card, because the money from that card's sales would have nowhere to go.",
+  });
+
+/**
+ * What a merchant sends to change where their sales are paid.
+ *
+ * The same field held to the same rule, and one difference, which is the same
+ * difference the seller name has and rests on something harder. There is no
+ * null. A merchant goes from having no wallet to having one and from one wallet
+ * to another, and not back: a merchant who took their address away would keep
+ * every card they had already published on sale, and the payment request an
+ * agent is answered with cannot be built at all without an address — so the
+ * products would stop being buyable and nothing anywhere would say why. What
+ * somebody reaching for null actually wants is one of two other acts: a
+ * different address, which is this same call, or an end to selling, which is
+ * the pause, and the pause leaves their cards where they can put them back.
+ *
+ * There is nowhere here to put a key, and a document carrying one is refused
+ * rather than trimmed. This contract knows where a merchant is paid and has no
+ * business knowing anything that could spend it.
+ */
+export const PayoutWalletRequestSchema = z
+  .strictObject({
+    /**
+     * Where this merchant's sales are to be paid.
+     *
+     * The rule lives once, in `EvmAddressSchema`, and this reaches it through a
+     * string that carries its own words for "this is not an address at all".
+     */
+    payout_wallet: z
+      .string({
+        // A field that is missing is a client with a bug and a field holding
+        // null is a client with a misunderstanding. Only the second gets this
+        // sentence; the first falls through to the ordinary words about a
+        // field that is not there.
+        error: (issue) =>
+          issue.input === undefined
+            ? undefined
+            : "a payout wallet cannot be taken away, only changed: a merchant who wants to stop being paid pauses their selling, which leaves their cards where they can put them back on sale — a merchant with cards on sale and no wallet has products a payment request cannot even be written for",
+      })
+      .pipe(EvmAddressSchema),
+  })
+  .meta({
+    description:
+      "What a merchant sends to set or change the address their sales are paid into. The same rule as the answer — 0x and forty hexadecimal characters, in lower case or in the exact mixed-case spelling a wallet shows — and one difference: null is refused. A merchant goes from no wallet to a wallet and from one wallet to another, never back to none, because their published cards stay on sale and a payment request for one of them cannot be written without an address. Somebody reaching for null wants either a different address, which is this call with a different value, or an end to selling, which is the pause. Nothing here takes a private key or a seed phrase, and a document carrying one is refused rather than ignored: this contract knows where a merchant is paid and nothing that could spend it.",
+  });
+
+/**
  * What somebody sends to become a merchant.
  *
  * One field, and what is not here is most of what is worth reading. The address
@@ -315,6 +394,8 @@ export const RegisteredMerchantSchema = z
 
 export type SellerName = z.infer<typeof SellerNameSchema>;
 export type SellerNameRequest = z.infer<typeof SellerNameRequestSchema>;
+export type PayoutWallet = z.infer<typeof PayoutWalletSchema>;
+export type PayoutWalletRequest = z.infer<typeof PayoutWalletRequestSchema>;
 export type MerchantKey = z.infer<typeof MerchantKeySchema>;
 export type MerchantKeyList = z.infer<typeof MerchantKeyListSchema>;
 export type IssueKeyRequest = z.infer<typeof IssueKeyRequestSchema>;

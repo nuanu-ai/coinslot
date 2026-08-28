@@ -50,6 +50,7 @@ import {
 } from "./card.js";
 import { WorkerEnvelopeSchema } from "./envelope.js";
 import { OrderEventSchema, RefundDueReasonSchema } from "./events.js";
+import { EvmAddressSchema } from "./evm-address.js";
 import {
   AcceptanceSchema,
   DeliverySchema,
@@ -63,6 +64,8 @@ import {
   IssueKeyRequestSchema,
   MerchantKeyListSchema,
   MerchantKeySchema,
+  PayoutWalletRequestSchema,
+  PayoutWalletSchema,
   RegisteredMerchantSchema,
   RegistrationRequestSchema,
   SellerNameRequestSchema,
@@ -172,6 +175,8 @@ export {
 } from "./envelope.js";
 export type { OrderEvent, RefundDueReason } from "./events.js";
 export { ORDER_EVENT_TYPES, OrderEventSchema, RefundDueReasonSchema } from "./events.js";
+export type { EvmAddress } from "./evm-address.js";
+export { checksummedAddressOf, EvmAddressSchema } from "./evm-address.js";
 export type { Acceptance, Delivery, HandlerAnswer, Refusal, RefusalCode } from "./handler.js";
 export {
   AcceptanceSchema,
@@ -187,6 +192,8 @@ export type {
   IssueKeyRequest,
   MerchantKey,
   MerchantKeyList,
+  PayoutWallet,
+  PayoutWalletRequest,
   RegisteredMerchant,
   RegistrationRequest,
   SellerName,
@@ -198,6 +205,8 @@ export {
   IssueKeyRequestSchema,
   MerchantKeyListSchema,
   MerchantKeySchema,
+  PayoutWalletRequestSchema,
+  PayoutWalletSchema,
   RegisteredMerchantSchema,
   RegistrationRequestSchema,
   SellerNameRequestSchema,
@@ -290,6 +299,7 @@ export const schemas = Object.freeze({
   delivery: DeliverySchema,
   disabled_key: DisabledKeySchema,
   error_envelope: ErrorEnvelopeSchema,
+  evm_address: EvmAddressSchema,
   field_spec: FieldSpecSchema,
   fulfillment: FulfillmentSchema,
   handler_answer: HandlerAnswerSchema,
@@ -314,6 +324,8 @@ export const schemas = Object.freeze({
   param_name: ParamNameSchema,
   param_spec: ParamSpecSchema,
   param_type: ParamTypeSchema,
+  payout_wallet: PayoutWalletSchema,
+  payout_wallet_request: PayoutWalletRequestSchema,
   price_check: PriceCheckSchema,
   public_card: PublicCardSchema,
   publish_error: PublishErrorSchema,

@@ -869,6 +869,11 @@ export class OrderRunner {
       amount: price.amount,
       currency: price.currency,
       payment,
+      // The address this sale's own merchant is paid at, read from the order's
+      // own merchant. The charge goes to the seller and to nobody else, and
+      // reading it from anywhere but the order that is being settled would be
+      // one merchant's sale paid into another merchant's wallet.
+      payTo: (await this.#runtime.store.merchantById(record.merchantId))?.payoutWallet ?? null,
     });
 
     if (outcome.settled === true) {

@@ -54,6 +54,23 @@ export const merchants = pgTable("merchants", {
    * carries printable ASCII and cuts anything else without a word.
    */
   serviceName: text("service_name"),
+  /**
+   * The address on the chain this merchant's sales are paid into, where
+   * somebody has set one. Null is the ordinary state.
+   *
+   * A column and not a setting in the environment, because the money is the
+   * merchant's and never ours: it goes straight from a buyer's agent to this
+   * address, and one address per deployment would mean one address for every
+   * merchant on it — which is the custodial arrangement this whole design
+   * refuses. It is never filled in from the operator's own configured address
+   * for the same reason.
+   *
+   * Always in the mixed-case spelling a wallet displays. An address has two
+   * spellings, and holding both would make one address two strings to every
+   * comparison and to every read back; of the two, this is the one a merchant
+   * can check against their own wallet at a glance.
+   */
+  payoutWallet: text("payout_wallet"),
   /** The order machine's own word: open, paused or departed. */
   selling: text("selling").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull(),

@@ -197,6 +197,19 @@ export class PostgresStore implements Store {
     return row === undefined ? null : storedMerchantOf(row);
   }
 
+  async setPayoutWallet(
+    id: string,
+    payoutWallet: string,
+    at: number,
+  ): Promise<StoredMerchant | null> {
+    const [row] = await this.#db
+      .update(merchants)
+      .set({ payoutWallet, updatedAt: new Date(at) })
+      .where(eq(merchants.id, id))
+      .returning();
+    return row === undefined ? null : storedMerchantOf(row);
+  }
+
   async addKey(
     key: {
       readonly id: string;
@@ -921,6 +934,7 @@ function storedMerchantOf(row: {
   id: string;
   name: string;
   serviceName: string | null;
+  payoutWallet: string | null;
   selling: string;
   createdAt: Date;
 }): StoredMerchant {
@@ -928,6 +942,7 @@ function storedMerchantOf(row: {
     id: row.id,
     name: row.name,
     serviceName: row.serviceName,
+    payoutWallet: row.payoutWallet,
     selling: sellingWordOf(row.selling),
     createdAt: row.createdAt.getTime(),
   };
