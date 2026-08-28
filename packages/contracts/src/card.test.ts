@@ -122,6 +122,12 @@ describe("card", () => {
 
     expect(message).toContain("confirm");
     expect(message).toContain("pilot");
+    // And it is filed against the field, which is the half the sentence itself
+    // does not say: the word "fulfillment" appears nowhere in the message, so
+    // this can only come from the path the finding carries. A merchant's editor
+    // puts a finding next to the line it is about, and one with an empty path
+    // is a complaint about the card as a whole.
+    expect(message).toContain("fulfillment");
   });
 
   it("complains about the mode and not about the deadlines that go with it", () => {
