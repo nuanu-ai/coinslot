@@ -165,14 +165,10 @@ describe("registering what a process answers", () => {
 });
 
 describe("the lifecycle a merchant drives", () => {
-  it("says the address is missing at the call that needs one, not before", async () => {
-    const coinslot = createClient({ apiKey: API_KEY });
-
-    // Registering needs no gateway: nothing has been asked of it yet.
-    coinslot.on("order", (arrived) => arrived.accepted());
-
-    await expect(coinslot.start()).rejects.toThrow(/baseUrl/);
-  });
+  // "Says the address is missing at the call that needs one" stood here and is
+  // gone: `client.test.ts` asks the same thing of `start()` and of the three
+  // calls besides it, so this was the shorter half of a test that already
+  // exists.
 
   it("refuses to start a worker that would answer nothing", async () => {
     // A process that starts with no handler drains its own queue: every order
