@@ -51,10 +51,10 @@ import type { Viewer } from "./screens.js";
  * do themselves is the only one there is.
  */
 export const WALLET_RULE =
-  "An address is 0x followed by forty characters, each of them a digit or a letter from a to f." +
-  " That is all this page checks. It does not look the address up anywhere, so it cannot tell" +
-  " you that the address exists, that it is yours, or that anything has ever been paid to it —" +
-  " copy it from your wallet rather than typing it out.";
+  "An address is 0x followed by forty characters, each of them a digit or a letter from a to f," +
+  " capital or small. That is all this page checks. It does not look the address up anywhere, so" +
+  " it cannot tell you that the address exists, that it is yours, or that anything has ever been" +
+  " paid to it — copy it from your wallet rather than typing it out.";
 
 /**
  * What somebody is told whose address is not one.
@@ -143,7 +143,7 @@ export const payoutWalletBlock = (viewer: Viewer): string => {
   <div class="lede">
     <div>
       <h2>Where your money arrives</h2>
-      <p>Buyers pay you directly. The money goes from the buyer's wallet to this address, and Coinslot never holds it: there is no balance here, nothing to withdraw, and no point on the way where your payment sits with us.</p>
+      <p>Buyers pay you directly. The money goes from the buyer's wallet to this address, and Coinslot never holds it: there is no balance here, nothing to withdraw, and no point on the way where the money sits with us.</p>
       <p>The address is the only thing we ask for, and it is the only thing we can use. There is nowhere on this site to type a private key or a recovery phrase — the words your wallet told you to write down — and nobody here will ever ask you for one.</p>
       <p class="quiet">A product published without this address is refused wherever the payments are real. On a preview, where nothing settles and no money moves, nothing is refused: an empty box there stops nothing, and a sale that goes through there has paid nobody.</p>
     </div>
