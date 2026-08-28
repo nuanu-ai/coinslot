@@ -138,66 +138,63 @@ export function buildApp(
     response.status(404).json(refusal("no_such_route", "there is no call at this address"));
   });
 
-  // A body that is not JSON at all is refused by the parser above, before any
-  // route runs, so nothing in the mounting loop ever sees it. Without this it
-  // comes back as express's own HTML page — from a surface whose every other
-  // refusal is a document, to a client that only reads documents.
+  // Everything refused before a route runs arrives here, and here is the only
+  // place it is still possible to say what was refused. Without an answer of
+  // our own it comes back as express's own HTML page — from a surface whose
+  // every other refusal is a document, to a client that reads only documents.
   //
-  // The parser refuses a body over the limit with the same kind of throw, and
-  // the two are told apart here because the answer is what the caller acts on.
-  // A document that is perfectly good JSON and merely too long, answered "could
-  // not be read as JSON", sends its sender to re-encode something already
-  // correct; it will get the same answer every time. So the size case says so,
-  // under the status the web already has for it, and it names the limit —
-  // "too large" without a number leaves the caller to find the edge by
-  // bisection against a live gateway.
+  // The rule is the status. Whatever raised the throw, a 4xx is that thing
+  // saying the caller was wrong, and this gateway does not take the blame for a
+  // call it was right to turn away: a 5xx is the one answer an agent is
+  // entitled to retry, and the retry brings the same bad request back for as
+  // long as it keeps trying. A throw carrying no such claim is ours, and gets
+  // the log line and the 500.
   //
-  // A third refusal arrives from that same throw and is the furthest of the
-  // three from the default: a content-encoding the parser has no decompressor
-  // for. Nothing at all was read in that case, so nothing whatever is known
-  // about the JSON inside — "could not be read as JSON" claims a reading that
-  // never happened, and the document may well be flawless. The answer names the
-  // header that was refused, because a caller not told that has only the body
-  // left to suspect; and it names the way out, because uncompressed is the one
-  // encoding this gateway always takes, and leaving the caller to find that by
-  // trying the others against a live gateway is not work to hand to somebody
-  // else. The charset named on the content-type is refused the same way and
-  // for the same reason — a different header, the same silence about a
-  // document nobody turned into text — and names utf-8, which is what JSON is
-  // required to be written in anyway.
+  // Within that, the named refusals are refinements, each keyed on the word the
+  // parser puts on its own throw. They exist because the answer is the only
+  // thing the caller can act on, and one refusal wearing another's words sends
+  // somebody else's agent to repair what was never broken. A document that is
+  // good JSON and merely too long, told it could not be read, is re-encoded and
+  // sent again unchanged forever, so the size case says so and names the limit
+  // — "too large" without a number leaves the caller bisecting against a live
+  // gateway. The encoding and charset refusals both happen before the body
+  // becomes text at all, so nothing whatever about the JSON inside is known and
+  // neither answer pretends otherwise; each names the header it refused and the
+  // one value that always works, rather than the set that would work, which
+  // belongs to a dependency and would rot in this file unwatched.
   //
-  // The fourth refusal does not name itself and so was not caught by any of
-  // this. Handed a body under an encoding it does inflate, whose bytes then
-  // turn out not to be that encoding — a dropped upload, a client that set the
-  // header and forgot to compress — the parser passes zlib's own failure up
-  // wrapped in a status and nothing else, no `type`, and the guard below wants
-  // both before it will call a throw the parser's. So it fell to the last
-  // answer on the page: 500, "nothing was decided", and a line in the log
-  // calling it a request that failed before reaching a route. Nothing there was
-  // true. The call was refused at the boundary on purpose; the fault is in the
-  // caller's bytes or in the header describing them; and a 5xx is the one
-  // answer an agent is entitled to retry, so the same broken bytes come back
-  // for as long as it keeps trying.
+  // One refusal arrives with no word on it: a body under an encoding the parser
+  // does inflate whose bytes then turn out not to be that encoding — a dropped
+  // upload, or a client that set the header and forgot to compress. Two things
+  // are known there and no more, that the caller asked for a decompression and
+  // that the parser blamed the caller. That is enough to answer honestly and
+  // not enough to say whether the bytes or the header is the wrong one, so the
+  // answer offers both and picks neither.
   //
-  // Two things are known at that point and no more: the caller asked for a
-  // decompression, and the parser blamed the caller rather than itself. That
-  // is enough to answer honestly and not enough to say which of the bytes and
-  // the header is the wrong one, so the answer says both and picks neither.
-  // The order matters and is the whole repair: every refusal the parser does
-  // name is answered above, which is what keeps a body that inflates cleanly
-  // and holds bad JSON — the same header, a different failure — on its own
-  // answer rather than this one.
+  // Order carries the rest. Every named refusal is answered above the unnamed
+  // ones, which is what keeps a body that inflates cleanly and holds bad JSON —
+  // the same header, a different failure — on the malformed-JSON answer. The
+  // generic sits under all of them and says only that the call was refused
+  // before we began and that there is no name for why here. The next refusal
+  // raised by a layer we do not control lands there, and a floor that guessed
+  // would be wrong about it in some new way.
   app.use(
     (thrown: unknown, request: Request, response: Response, next: (error?: unknown) => void) => {
       if (response.headersSent) {
         next(thrown);
         return;
       }
-      const fromTheParser =
-        typeof thrown === "object" && thrown !== null && "type" in thrown && "status" in thrown;
 
-      if (fromTheParser) {
-        if ((thrown as { type: unknown }).type === "entity.too.large") {
+      if (blamesTheCaller(thrown)) {
+        const named = refusalType(thrown);
+
+        if (named === "entity.parse.failed") {
+          response
+            .status(400)
+            .json(refusal("malformed_body", "this call's body could not be read as JSON"));
+          return;
+        }
+        if (named === "entity.too.large") {
           response
             .status(413)
             .json(
@@ -208,7 +205,7 @@ export function buildApp(
             );
           return;
         }
-        if ((thrown as { type: unknown }).type === "charset.unsupported") {
+        if (named === "charset.unsupported") {
           response
             .status(415)
             .json(
@@ -219,7 +216,7 @@ export function buildApp(
             );
           return;
         }
-        if ((thrown as { type: unknown }).type === "encoding.unsupported") {
+        if (named === "encoding.unsupported") {
           response
             .status(415)
             .json(
@@ -230,22 +227,29 @@ export function buildApp(
             );
           return;
         }
-        response
-          .status(400)
-          .json(refusal("malformed_body", "this call's body could not be read as JSON"));
-        return;
-      }
-      if (blamesTheCaller(thrown) && declaresCompression(request)) {
+        if (declaresCompression(request)) {
+          response
+            .status(400)
+            .json(
+              refusal(
+                "body_undecodable",
+                "this call's body could not be decompressed as the content-encoding it declares, so either those bytes or that header is wrong",
+              ),
+            );
+          return;
+        }
+
         response
           .status(400)
           .json(
             refusal(
-              "body_undecodable",
-              "this call's body could not be decompressed as the content-encoding it declares, so either those bytes or that header is wrong",
+              "call_refused",
+              "this call was refused before the gateway began handling it, for a reason this gateway has no name for",
             ),
           );
         return;
       }
+
       console.error("[gateway] a request failed before it reached a route", thrown);
       response
         .status(500)
@@ -421,11 +425,12 @@ async function merchantBehind(
  * Whether a thrown value is a refusal of the caller rather than a failure of
  * ours.
  *
- * The body parser marks both kinds the same way, with an HTTP status, and the
- * status is the only part of an unnamed throw that says whose fault it was.
- * A 4xx is the parser declining to read what it was sent; anything else is
- * this process, and this process does not get to answer its own defects with
- * somebody else's name on them.
+ * Everything that turns a request away before our handlers do — the body
+ * parser, the router decoding a path — marks the refusal the same way, with an
+ * HTTP status, and on a throw that says nothing else the status is the only
+ * part that says whose fault it was. A 4xx is that layer declining what it was
+ * sent; anything else is this process, and this process does not get to answer
+ * its own defects with somebody else's name on them.
  */
 function blamesTheCaller(thrown: unknown): boolean {
   if (typeof thrown !== "object" || thrown === null || !("status" in thrown)) {
@@ -433,6 +438,22 @@ function blamesTheCaller(thrown: unknown): boolean {
   }
   const { status } = thrown as { status: unknown };
   return typeof status === "number" && status >= 400 && status < 500;
+}
+
+/**
+ * The word a refusal puts on itself, when it puts one there at all.
+ *
+ * The body parser names most of what it turns away; the layers around it name
+ * almost nothing. A refusal with no word is not a lesser refusal, only one this
+ * gateway has no refinement for, and it is answered as such rather than being
+ * sorted into whichever named case it happens to resemble.
+ */
+function refusalType(thrown: unknown): string | null {
+  if (typeof thrown !== "object" || thrown === null || !("type" in thrown)) {
+    return null;
+  }
+  const { type } = thrown as { type: unknown };
+  return typeof type === "string" ? type : null;
 }
 
 /**
