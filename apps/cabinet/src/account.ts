@@ -23,14 +23,21 @@
  */
 
 import { runAccount } from "./account-command.js";
-import { connect, postgresAccounts } from "./accounts-postgres.js";
+import { loadConfig } from "./config.js";
+import { connect } from "./database.js";
+import { identityFor } from "./identity.js";
 
-const databaseUrl = process.env.DATABASE_URL;
-if (databaseUrl === undefined || databaseUrl === "") {
-  console.error(
-    "DATABASE_URL is not set, so there is no database to keep an account in." +
-      " It is the same address the cabinet is given.",
-  );
+// The whole configuration, not the database address alone. What this command
+// makes is a password the component derives, and the component is built from
+// the same values the cabinet is built from — so a command run with a different
+// secret from the process it is making an account for would be a puzzle nobody
+// wants to solve at a terminal. Reading it here means the same refusal, in the
+// same words, before anything is written.
+let config: ReturnType<typeof loadConfig>;
+try {
+  config = loadConfig(process.env);
+} catch (thrown) {
+  console.error(thrown instanceof Error ? thrown.message : String(thrown));
   process.exit(1);
 }
 
@@ -54,10 +61,10 @@ const readStandardInput = async (): Promise<string> => {
   return said;
 };
 
-const accounts = postgresAccounts(connect(databaseUrl));
+const identity = identityFor(config, { pool: connect(config.databaseUrl) });
 let code = 1;
 try {
-  code = await runAccount(process.argv.slice(2), accounts, {
+  code = await runAccount(process.argv.slice(2), identity, {
     say: (line) => {
       console.log(line);
     },
@@ -71,7 +78,7 @@ try {
   // and the driver's are not the same object.
   console.error(thrown);
 } finally {
-  await accounts.close();
+  await identity.close();
 }
 
 // `process.exitCode` and not `process.exit`, because this command's whole

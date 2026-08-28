@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@coinslot/contracts": "workspace:*",
+    "better-auth": "1.7.2",
     "drizzle-orm": "0.45.2",
     "express": "5.2.1",
     "pg": "8.23.0",

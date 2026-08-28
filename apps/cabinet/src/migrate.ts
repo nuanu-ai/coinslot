@@ -7,14 +7,14 @@
  * are two of them they race each other over the same tables. In the local stack
  * this runs in the `migrate` service, before the cabinet is started.
  *
- * These are the cabinet's own two tables and their history is kept apart from
- * the gateway's, in `drizzle.cabinet_migrations` — see `accounts-postgres.ts`
- * for why two migration sets cannot share one journal.
+ * These are the cabinet's own four tables and their history is kept apart from
+ * the gateway's, in `drizzle.cabinet_migrations` — see `database.ts` for why
+ * two migration sets cannot share one journal.
  */
 
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { connect, migrateAccounts } from "./accounts-postgres.js";
+import { connect, migrateAccounts } from "./database.js";
 
 const databaseUrl = process.env.DATABASE_URL;
 if (databaseUrl === undefined || databaseUrl === "") {
@@ -27,7 +27,7 @@ const pool = connect(databaseUrl);
 
 try {
   await migrateAccounts(pool, join(here, "..", "drizzle"));
-  console.log("The cabinet's accounts and sessions are up to date.");
+  console.log("The cabinet's accounts, sessions, passwords and links are up to date.");
 } finally {
   await pool.end();
 }

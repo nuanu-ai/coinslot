@@ -4,8 +4,14 @@
  * A merchant registers for themselves now (ADR-0014), so this is no longer the
  * only door into the cabinet. It is still the door somebody walks through when
  * a merchant already exists at the gateway and needs a person who can sign in
- * as them — which is what the first account on a deployed server is — and it is
- * still the answer to a lost password, because nothing here sends mail.
+ * as them — which is what the first account on a deployed server is.
+ *
+ * It is also still the answer to a lost password, but no longer the only one. A
+ * merchant whose address has been confirmed asks the cabinet for a link and
+ * never needs anybody at a terminal; this is what is left for the case that is
+ * not covered, which is an account nobody has confirmed the address of. The
+ * listing says which is which, so that whoever runs this can tell before they
+ * start.
  *
  * A password is never taken as an argument. One typed on a command line is in
  * the shell's history, in the process list of everybody on the machine, and in
@@ -19,8 +25,8 @@
  * that whoever runs this can pipe it in from wherever they are holding it.
  */
 
-import type { AccountMerchant, Accounts } from "./accounts.js";
-import { hashPassword, newPassword } from "./credentials.js";
+import { newPassword } from "./credentials.js";
+import type { AccountMerchant, Identity } from "./identity.js";
 import { printable } from "./printable.js";
 
 /**
@@ -117,7 +123,7 @@ export interface Terminal {
  */
 export async function runAccount(
   argv: readonly string[],
-  accounts: Accounts,
+  identity: Identity,
   terminal: Terminal,
 ): Promise<number> {
   const print = terminal.say;
@@ -133,7 +139,7 @@ export async function runAccount(
   // cabinet", which is the only question it is for.
   const say = (line: string): void => print(printable(line));
   try {
-    return await dispatch(argv, accounts, say, now, terminal.readKey);
+    return await dispatch(argv, identity, say, now, terminal.readKey);
   } catch (thrown) {
     if (!missingTables(thrown)) {
       throw thrown;
@@ -146,7 +152,7 @@ export async function runAccount(
 
 async function dispatch(
   argv: readonly string[],
-  accounts: Accounts,
+  identity: Identity,
   say: (line: string) => void,
   now: () => Date,
   readKey: () => Promise<string>,
@@ -154,7 +160,7 @@ async function dispatch(
   const [verb, address, merchant] = argv;
 
   if (verb === "list") {
-    return await listAccounts(accounts, say, now);
+    return await listAccounts(identity, say, now);
   }
   if (verb !== "add" && verb !== "password" && verb !== "revoke") {
     for (const line of USAGE) {
@@ -172,20 +178,19 @@ async function dispatch(
   }
 
   if (verb === "add") {
-    return await addAccount(accounts, say, address, merchant, now, readKey);
+    return await addAccount(identity, say, address, merchant, readKey);
   }
   if (verb === "password") {
-    return await changePassword(accounts, say, address);
+    return await changePassword(identity, say, address);
   }
-  return await revokeSessions(accounts, say, address);
+  return await revokeSessions(identity, say, address);
 }
 
 async function addAccount(
-  accounts: Accounts,
+  identity: Identity,
   say: (line: string) => void,
   address: string,
   merchantId: string | undefined,
-  now: () => Date,
   readKey: () => Promise<string>,
 ): Promise<number> {
   // Both halves of the merchant before anything is generated or written. An
@@ -213,7 +218,7 @@ async function addAccount(
   }
 
   const password = newPassword();
-  const made = await accounts.add(address, await hashPassword(password), now(), merchant);
+  const made = await identity.make(address, password, merchant);
   if (made === null) {
     // Not an overwrite. Somebody running this twice must not silently replace a
     // password the person on the other end is already using, nor point their
@@ -261,12 +266,12 @@ async function merchantKey(
 }
 
 async function changePassword(
-  accounts: Accounts,
+  identity: Identity,
   say: (line: string) => void,
   address: string,
 ): Promise<number> {
   const password = newPassword();
-  const changed = await accounts.setPassword(address, await hashPassword(password));
+  const changed = await identity.replacePassword(address, password);
   if (!changed) {
     say(`Nobody has an account at ${address.trim()}, so there is no password to change.`);
     return 1;
@@ -278,18 +283,18 @@ async function changePassword(
 }
 
 async function revokeSessions(
-  accounts: Accounts,
+  identity: Identity,
   say: (line: string) => void,
   address: string,
 ): Promise<number> {
   // Asked before it is done, because ending nothing and there being nobody are
   // two different answers and only one of them means somebody mistyped.
-  if ((await accounts.byEmail(address)) === null) {
+  if ((await identity.byEmail(address)) === null) {
     say(`Nobody has an account at ${address.trim()}, so there are no sessions to end.`);
     return 1;
   }
 
-  const ended = await accounts.endEveryFor(address);
+  const ended = await identity.endEverySessionFor(address);
   say(
     ended === 1
       ? `Ended 1 session for ${address.trim()}. The account is untouched.`
@@ -299,11 +304,11 @@ async function revokeSessions(
 }
 
 async function listAccounts(
-  accounts: Accounts,
+  identity: Identity,
   say: (line: string) => void,
   now: () => Date,
 ): Promise<number> {
-  const listed = await accounts.list(now());
+  const listed = await identity.list(now());
   if (listed.length === 0) {
     say("There are no accounts. Nobody can sign into this cabinet yet.");
     say("A merchant can register for one from the cabinet, or make one here:");
@@ -323,8 +328,13 @@ async function listAccounts(
     // printed with a gap where the others have a word: it was made before
     // accounts had merchants, and it cannot sign in at all.
     const whose = row.merchant ?? "no merchant, cannot sign in";
+    // Whether the address has been confirmed, because that is what decides
+    // whether this person can be sent a new password or has to be given one
+    // from here. Somebody running this command is usually running it for
+    // exactly that reason.
+    const address = row.confirmed ? "address confirmed" : "address not confirmed";
     say(
-      `${row.email.padEnd(widest)}  made ${row.createdAt.toISOString().slice(0, 10)}  ${open}  ${whose}`,
+      `${row.email.padEnd(widest)}  made ${row.createdAt.toISOString().slice(0, 10)}  ${open}  ${address}  ${whose}`,
     );
   }
   return 0;

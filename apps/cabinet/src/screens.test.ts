@@ -21,7 +21,7 @@ import { ordersScreen, receiptsScreen, type Viewer } from "./screens.js";
 import { readable } from "./testing/html.js";
 
 /** A page is drawn for somebody now, and every screen says who (ADR-0009). */
-const SEEN_BY: Viewer = { base: "", who: "dmitry@example.com" };
+const SEEN_BY: Viewer = { base: "", who: "dmitry@example.com", confirmed: true };
 
 const cards = MerchantCardListSchema.parse({
   selling: "open",

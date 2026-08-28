@@ -35,6 +35,13 @@ export interface Viewer {
   readonly base: string;
   /** The address of the person signed in. */
   readonly who: string;
+  /**
+   * Whether that address has been confirmed.
+   *
+   * Every page says which it is, because what an unconfirmed address costs its
+   * owner only shows up on the day they have lost their password.
+   */
+  readonly confirmed: boolean;
 }
 
 interface Frame {
@@ -49,6 +56,7 @@ const framed = (frame: Frame): string =>
   page({
     base: frame.viewer.base,
     who: frame.viewer.who,
+    confirmed: frame.viewer.confirmed,
     tab: frame.tab,
     title: frame.title,
     selling: SELLING_WORDS[frame.selling],
