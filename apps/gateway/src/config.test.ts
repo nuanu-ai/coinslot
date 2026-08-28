@@ -239,7 +239,10 @@ describe("loadConfig", () => {
     // so a look-alike somebody else registered asks for nothing and is handed
     // nothing — credentials do not travel to a host on somebody's say-so.
     expect(() =>
-      loadConfig({ ...required, FACILITATOR_URL: "https://api.cdp.coinbase.com.evil.example/x402" }),
+      loadConfig({
+        ...required,
+        FACILITATOR_URL: "https://api.cdp.coinbase.com.evil.example/x402",
+      }),
     ).not.toThrow();
   });
 
