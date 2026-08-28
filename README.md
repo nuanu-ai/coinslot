@@ -77,7 +77,7 @@ once the merchant has produced them. A refusal costs the buyer nothing.
 ```mermaid
 sequenceDiagram
     participant A as Agent
-    participant G as Gateway
+    participant G as Coinslot
     participant F as Facilitator
     participant H as Merchant
     A->>G: buys the card
@@ -107,7 +107,7 @@ later or a day later, which makes no difference to the shape.
 ```mermaid
 sequenceDiagram
     participant A as Agent
-    participant G as Gateway
+    participant G as Coinslot
     participant F as Facilitator
     participant H as Merchant
     A->>G: buys the card
@@ -136,7 +136,7 @@ so this is the mode whose branches matter more than its happy path.
 ```mermaid
 sequenceDiagram
     participant A as Agent
-    participant G as Gateway
+    participant G as Coinslot
     participant F as Facilitator
     participant H as Merchant
     A->>G: buys the card
