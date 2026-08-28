@@ -157,7 +157,7 @@ async function seedTheSandbox(secret: string | null): Promise<void> {
   if (seeded.kind === "already_there") {
     console.warn(
       "[gateway] SANDBOX: the key in SANDBOX_MERCHANT_KEY was already in the database and still opens " +
-        "the sandbox merchant; this start wrote nothing",
+        "the sandbox merchant; this start issued no key",
     );
     return;
   }
