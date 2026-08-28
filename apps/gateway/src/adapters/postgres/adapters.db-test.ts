@@ -11,12 +11,19 @@
  * and not the one the stack runs on: see `testing/database.ts` for what
  * happened when they were the same.
  *
- * What is checked here is only what cannot be checked in memory: that the two
- * adapters keep the same promises the in-memory ones do, in the one place where
- * keeping them is a different problem. Above all `withOrder`, whose hold is a
- * chain of promises in one process and a row lock in a database, and which is
- * the thing standing between two events about one order and a charge that
- * happens twice.
+ * What the two adapters both promise is not written out here. It is one suite
+ * in `testing/store-contract.ts`, run at the foot of this file against a real
+ * Postgres and under `pnpm test` against the maps in memory, so that a
+ * difference between them is a failure rather than two test files drifting
+ * apart in the same direction.
+ *
+ * What is left in this file is what cannot be checked in memory at all: the
+ * round trip through JSONB and through a queue that is a table, the columns
+ * written from the document, the driver's own refusals, the pool and its
+ * listeners, the advisory lock across two connections, and the migrations. Above
+ * all `withOrder` under two clients that share nothing in this process, where
+ * the hold is a row lock rather than a chain of promises, and which is the thing
+ * standing between two events about one order and a charge that happens twice.
  *
  * The queue's own promises — the delayed reminder, the retry after a handler
  * throws, the window after which an unanswered delivery is taken back — are
@@ -37,11 +44,11 @@ import { PgBoss } from "pg-boss";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { Gateway } from "../../app/gateway.js";
 import type { Runtime } from "../../app/runtime.js";
-import type { OrderChange, Store } from "../../ports/store.js";
+import type { OrderChange } from "../../ports/store.js";
 import { noDatabaseHere, readyDatabase, testDatabaseUrl } from "../../testing/database.js";
 import { countedIds, testConfig, workUntilStopped } from "../../testing/harness.js";
+import { describeStore } from "../../testing/store-contract.js";
 import { ScriptedFacilitator } from "../memory/facilitator.js";
-import { MemoryStore } from "../memory/store.js";
 import { PgBossQueue, streamOf } from "../pgboss/queue.js";
 import { connect, PostgresStore } from "./store.js";
 
@@ -521,86 +528,6 @@ if (databaseUrl === null) {
 
       const won = [first, second].filter((claim) => claim.claimed);
       expect(won).toHaveLength(1);
-    });
-
-    it("claims a payment the same way in memory and in the database", async () => {
-      // The whole of the application logic is tested against the in-memory
-      // store, so every promise the flows rely on is really a promise about
-      // both adapters. The replay guard is the one where the two are least
-      // alike: a map and a check in memory, one insert and a primary key here.
-      // The same script is run through each and the answers have to match, or
-      // a purchase that the offline suite says is refused is a purchase that
-      // goes through in production.
-      const script = async (subject: Store) => ({
-        first: await subject.claimPayment("fp-parity", "ord_one"),
-        anotherOrder: await subject.claimPayment("fp-parity", "ord_two"),
-        // The retry the portal promises is safe.
-        ownRetry: await subject.claimPayment("fp-parity", "ord_one"),
-        // Letting go is the holder's to do and nobody else's: an order that
-        // never held this fingerprint asking for it back leaves it exactly
-        // where it was, so one buyer can never free another buyer's signature.
-        strangerLetsGo: await (async () => {
-          await subject.releaseClaim("fp-parity", "ord_two");
-          return subject.claimPayment("fp-parity", "ord_two");
-        })(),
-        // The holder letting go frees it, which is what a buyer turned away for
-        // ownership gets back.
-        holderLetsGo: await (async () => {
-          await subject.releaseClaim("fp-parity", "ord_one");
-          return subject.claimPayment("fp-parity", "ord_two");
-        })(),
-        // The sweep runs against a table this suite shares, so what is compared
-        // is that something went and not how many — the count is not the same
-        // question in a table other tests have written to.
-        sweptSomething: (await subject.forgetClaimsBefore(Date.now() + 60_000)) > 0,
-        afterTheSweep: await subject.claimPayment("fp-parity", "ord_two"),
-      });
-
-      const inTheDatabase = await script(store);
-      const inMemory = await script(new MemoryStore(countedIds()));
-
-      expect(inTheDatabase).toStrictEqual(inMemory);
-      // Said outright as well as compared, so a day when both adapters are
-      // wrong in the same way is not a day this test passes.
-      expect(inTheDatabase).toStrictEqual({
-        first: { claimed: true },
-        anotherOrder: { claimed: false, heldBy: "ord_one" },
-        ownRetry: { claimed: true },
-        strangerLetsGo: { claimed: false, heldBy: "ord_one" },
-        holderLetsGo: { claimed: true },
-        sweptSomething: true,
-        afterTheSweep: { claimed: true },
-      });
-    });
-
-    it("keeps and clears a seller's listing name the same way in memory and here", async () => {
-      // The name a seller is listed under travels to strangers, and everything
-      // offline is tested against the in-memory store. A column that took a
-      // name and gave back something else — or, worse, one that answered for a
-      // merchant nobody named — would show up only in production, in a
-      // catalog. The same script through both, and the answers compared.
-      const script = async (subject: Store) => {
-        await subject.addMerchant({ id: "mch_listed", name: "A merchant" }, now);
-        return {
-          madeWithNone: (await subject.merchantById("mch_listed"))?.serviceName ?? "absent",
-          named: (await subject.setServiceName("mch_listed", "Freeland", now))?.serviceName,
-          readBack: (await subject.merchantById("mch_listed"))?.serviceName,
-          cleared: (await subject.setServiceName("mch_listed", null, now))?.serviceName ?? "absent",
-          nobody: await subject.setServiceName("mch_nobody", "Freeland", now),
-        };
-      };
-
-      const inTheDatabase = await script(store);
-      const inMemory = await script(new MemoryStore(countedIds()));
-
-      expect(inTheDatabase).toStrictEqual(inMemory);
-      expect(inTheDatabase).toStrictEqual({
-        madeWithNone: "absent",
-        named: "Freeland",
-        readBack: "Freeland",
-        cleared: "absent",
-        nobody: null,
-      });
     });
 
     it("forgets claims older than an instant, and says how many went", async () => {
@@ -1413,6 +1340,31 @@ if (databaseUrl === null) {
         expect(second?.receipted).toBe(0);
         expect(await store.receiptForOrder(orderId)).toStrictEqual(written);
       }, 30_000);
+    });
+
+    /**
+     * Everything both stores promise, against the one that a merchant's money
+     * actually rests on.
+     *
+     * Inside this suite rather than beside it, because the store it hands over
+     * is the one `beforeAll` built and `afterAll` takes down: declared as a
+     * sibling it would run after the pool had been ended.
+     *
+     * Each case is given an empty store, which here means the tables emptied.
+     * That is the same list `beforeAll` empties and it is meant to stay that
+     * way — a table added to `schema.ts` belongs in both. Emptying it takes the
+     * merchants this file's own `beforeEach` writes as well; the suite makes
+     * whatever it needs, and the next test in this file gets them back from
+     * that hook.
+     */
+    describeStore("the store on Postgres", async () => {
+      await pool.query(
+        "truncate table cards, orders, receipts, payment_claims, merchant_keys, merchants",
+      );
+      // The pool outlives one test, so ending it is the file's job rather than
+      // the suite's, and the store handed over is the one the rest of this file
+      // uses — envelopes and all.
+      return store;
     });
   });
 }
