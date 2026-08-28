@@ -16,11 +16,78 @@
 
 import { describe, expect, it } from "vitest";
 import { runAccount } from "./account-command.js";
-import { type Accounts, memoryAccounts } from "./accounts.js";
-import { hashPassword, passwordMatches } from "./credentials.js";
-import { sessionFor } from "./testing/accounts-contract.js";
+import { loadConfig } from "./config.js";
+import { type Identity, identityFor } from "./identity.js";
 
-const HOUR = 60 * 60 * 1_000;
+/**
+ * The component the command is driven against, on its own memory store.
+ *
+ * The real one, doing the real deriving: what these tests hold is that the
+ * password the command printed is the password that signs in, and a stubbed
+ * store could not be wrong about that in the way a real one can.
+ *
+ * The rows come back with it so that a test can count sessions and can put a
+ * row into a state no door produces — an account with no merchant on it.
+ */
+const store = (): {
+  identity: Identity;
+  sessions: () => Record<string, unknown>[];
+  forgetMerchant: (email: string) => void;
+  /**
+   * Writes an account row straight into the store, past every door.
+   *
+   * For the one test whose subject is a row no door would accept: an address
+   * carrying characters a terminal acts on. Such a row arrives from a
+   * hand-written insert or a restored dump, never from a form, which is
+   * precisely why the listing renders every line it prints rather than trusting
+   * what was let in.
+   */
+  putRow: (row: Record<string, unknown>) => void;
+} => {
+  const rows: Record<string, Record<string, unknown>[]> = {
+    cabinet_accounts: [],
+    cabinet_sessions: [],
+    cabinet_credentials: [],
+    cabinet_verifications: [],
+  };
+  const identity = identityFor(
+    loadConfig({
+      DATABASE_URL: "postgres://nobody@nowhere:5432/unused",
+      AUTH_SECRET: "a-secret-that-is-at-least-32-characters-long",
+    }),
+    { rows },
+  );
+  return {
+    identity,
+    putRow: (row) => {
+      (rows.cabinet_accounts ?? []).push({
+        id: `acc_${(rows.cabinet_accounts ?? []).length + 1}`,
+        emailVerified: false,
+        name: "",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        merchantId: null,
+        merchantKey: null,
+        ...row,
+      });
+    },
+    sessions: () => rows.cabinet_sessions ?? [],
+    forgetMerchant: (email) => {
+      for (const row of rows.cabinet_accounts ?? []) {
+        if (row.email === email) {
+          row.merchantId = null;
+          row.merchantKey = null;
+        }
+      }
+    },
+  };
+};
+
+/** The password an account in this file is made with, where a test needs one. */
+const PASSWORD = "a-password-nobody-guesses";
+
+/** The day these runs happen on, which is what the listing prints. */
+const TODAY = new Date().toISOString().slice(0, 10);
 
 /** The merchant an account made in this file belongs to. */
 const MERCHANT = "mer_the_merchant";
@@ -52,12 +119,12 @@ interface Run {
 const NOON = new Date("2026-08-27T12:00:00.000Z");
 
 const running = async (
-  accounts: Accounts,
+  identity: Identity,
   argv: readonly string[],
   readKey: () => Promise<string> = async () => KEY,
 ): Promise<Run> => {
   const lines: string[] = [];
-  const code = await runAccount(argv, accounts, {
+  const code = await runAccount(argv, identity, {
     say: (line) => lines.push(line),
     readKey,
     now: () => NOON,
@@ -69,23 +136,24 @@ const running = async (
   return { code, said, password: shown?.[1] ?? null };
 };
 
-const run = async (accounts: Accounts, ...argv: string[]): Promise<Run> =>
-  await running(accounts, argv);
+const run = async (identity: Identity, ...argv: string[]): Promise<Run> =>
+  await running(identity, argv);
 
 describe("making an account", () => {
   it("makes one that can be signed into with the password it printed", async () => {
-    const accounts = memoryAccounts();
+    const { identity } = store();
 
-    const made = await run(accounts, "add", "dmitry@example.com", MERCHANT);
+    const made = await run(identity, "add", "dmitry@example.com", MERCHANT);
 
     expect(made.code).toBe(0);
     expect(made.said).toContain("dmitry@example.com");
     expect(made.password).not.toBeNull();
-    const stored = await accounts.byEmail("dmitry@example.com");
-    expect(stored).not.toBeNull();
-    await expect(passwordMatches(made.password ?? "", stored?.passwordHash ?? "")).resolves.toBe(
-      true,
-    );
+    expect(await identity.byEmail("dmitry@example.com")).not.toBeNull();
+    // The password it printed is the password that signs in, which is the whole
+    // of what this command promises: printing one thing and storing another
+    // would be discovered by whoever was handed it, at the sign-in form.
+    const signed = await identity.signIn("dmitry@example.com", made.password ?? "");
+    expect(signed.ok).toBe(true);
   });
 
   it("puts the merchant it was named on the account, with the key that came in on standard input", async () => {
@@ -93,12 +161,12 @@ describe("making an account", () => {
     // whoever is signed in. An account made without one is an account that can
     // sign in and then see nothing at all, so this is the whole of what the
     // command is for now.
-    const accounts = memoryAccounts();
+    const { identity } = store();
 
-    const made = await run(accounts, "add", "dmitry@example.com", MERCHANT);
+    const made = await run(identity, "add", "dmitry@example.com", MERCHANT);
 
     expect(made.code).toBe(0);
-    expect((await accounts.byEmail("dmitry@example.com"))?.merchant).toStrictEqual({
+    expect((await identity.byEmail("dmitry@example.com"))?.merchant).toStrictEqual({
       id: MERCHANT,
       key: KEY,
     });
@@ -108,9 +176,9 @@ describe("making an account", () => {
     // The key goes to a terminal's scrollback and to whatever collects it, and
     // unlike the password beside it there is nothing to be gained by showing it
     // — whoever ran this is holding it already.
-    const accounts = memoryAccounts();
+    const { identity } = store();
 
-    const made = await run(accounts, "add", "dmitry@example.com", MERCHANT);
+    const made = await run(identity, "add", "dmitry@example.com", MERCHANT);
 
     expect(made.said).not.toContain(KEY);
   });
@@ -119,24 +187,24 @@ describe("making an account", () => {
     // `something | account add ...` ends the value with a newline more often
     // than not, and a key stored with one on the end is a key the gateway
     // refuses — on every screen, with nothing on the page to say why.
-    const accounts = memoryAccounts();
+    const { identity } = store();
 
-    const made = await running(accounts, ["add", "dmitry@example.com", MERCHANT], async () => {
+    const made = await running(identity, ["add", "dmitry@example.com", MERCHANT], async () => {
       return `  ${KEY}\n`;
     });
 
     expect(made.code).toBe(0);
-    expect((await accounts.byEmail("dmitry@example.com"))?.merchant?.key).toBe(KEY);
+    expect((await identity.byEmail("dmitry@example.com"))?.merchant?.key).toBe(KEY);
   });
 
   it("refuses when no key arrives on standard input, and says where it looks for one", async () => {
-    const accounts = memoryAccounts();
+    const { identity } = store();
 
-    const tried = await running(accounts, ["add", "dmitry@example.com", MERCHANT], async () => "");
+    const tried = await running(identity, ["add", "dmitry@example.com", MERCHANT], async () => "");
 
     expect(tried.code).not.toBe(0);
     expect(tried.said).toMatch(/standard input/i);
-    await expect(accounts.byEmail("dmitry@example.com")).resolves.toBeNull();
+    await expect(identity.byEmail("dmitry@example.com")).resolves.toBeNull();
   });
 
   it("refuses a key short enough to walk through", async () => {
@@ -144,10 +212,10 @@ describe("making an account", () => {
     // end is over equal lengths, and a key short enough to guess makes that
     // care pointless — and this is the only place a key is accepted now that
     // the cabinet has no key in its configuration.
-    const accounts = memoryAccounts();
+    const { identity } = store();
 
     const tried = await running(
-      accounts,
+      identity,
       ["add", "dmitry@example.com", MERCHANT],
       async () => "walk-through",
     );
@@ -157,66 +225,63 @@ describe("making an account", () => {
     // And what arrived is not quoted back. It is a secret whether or not it is
     // the right one, and a terminal's scrollback is where it should not be.
     expect(tried.said).not.toContain("walk-through");
-    await expect(accounts.byEmail("dmitry@example.com")).resolves.toBeNull();
+    await expect(identity.byEmail("dmitry@example.com")).resolves.toBeNull();
   });
 
   it("says what it wanted when it is given no merchant to make the account for", async () => {
-    const accounts = memoryAccounts();
+    const { identity } = store();
 
-    const nothing = await run(accounts, "add", "dmitry@example.com");
+    const nothing = await run(identity, "add", "dmitry@example.com");
 
     expect(nothing.code).not.toBe(0);
     expect(nothing.said).toMatch(/merchant/i);
-    await expect(accounts.byEmail("dmitry@example.com")).resolves.toBeNull();
+    await expect(identity.byEmail("dmitry@example.com")).resolves.toBeNull();
   });
 
   it("says the password is shown once and is not kept anywhere readable", async () => {
     // Whoever runs this has to know that scrolling back is the only copy, and
     // that we cannot recover it for them later.
-    const accounts = memoryAccounts();
+    const { identity } = store();
 
-    const made = await run(accounts, "add", "dmitry@example.com", MERCHANT);
+    const made = await run(identity, "add", "dmitry@example.com", MERCHANT);
 
     expect(made.said).toContain("once");
-    expect(made.said).not.toContain(
-      String((await accounts.byEmail("dmitry@example.com"))?.passwordHash),
-    );
   });
 
   it("refuses an address that already has one rather than replacing the password", async () => {
     // Run twice by mistake, this would otherwise leave the person holding a
     // password that no longer works and no sign that anything happened.
-    const accounts = memoryAccounts();
-    await run(accounts, "add", "dmitry@example.com", MERCHANT);
-    const before = (await accounts.byEmail("dmitry@example.com"))?.passwordHash;
+    const { identity } = store();
+    const first = await run(identity, "add", "dmitry@example.com", MERCHANT);
 
-    const again = await run(accounts, "add", "dmitry@example.com", "mer_somebody_else");
+    const again = await run(identity, "add", "dmitry@example.com", "mer_somebody_else");
 
     expect(again.code).not.toBe(0);
     expect(again.said).toContain("already");
     expect(again.password).toBeNull();
-    const kept = await accounts.byEmail("dmitry@example.com");
-    expect(kept?.passwordHash).toBe(before);
+    // The password from the first run still signs in, so nobody is left
+    // holding one that quietly stopped working.
+    expect((await identity.signIn("dmitry@example.com", first.password ?? "")).ok).toBe(true);
     // And the merchant it was pointed at the first time, so a second run cannot
     // quietly move somebody's cabinet to a catalogue that is not theirs.
-    expect(kept?.merchant?.id).toBe(MERCHANT);
+    expect((await identity.byEmail("dmitry@example.com"))?.merchant?.id).toBe(MERCHANT);
   });
 
   it("refuses something that is not an address, and says which part is wrong", async () => {
-    const accounts = memoryAccounts();
+    const { identity } = store();
 
     for (const bad of ["dmitry", "dmitry@", "@example.com", "a b@example.com", ""]) {
-      const tried = await run(accounts, "add", bad, MERCHANT);
+      const tried = await run(identity, "add", bad, MERCHANT);
       expect(tried.code, bad).not.toBe(0);
       expect(tried.said, bad).toMatch(/address/i);
     }
-    await expect(accounts.list(new Date())).resolves.toStrictEqual([]);
+    await expect(identity.list(new Date())).resolves.toStrictEqual([]);
   });
 
   it("says what it wanted when it is given no address at all", async () => {
-    const accounts = memoryAccounts();
+    const { identity } = store();
 
-    const nothing = await run(accounts, "add");
+    const nothing = await run(identity, "add");
 
     expect(nothing.code).not.toBe(0);
     expect(nothing.said).toContain("add");
@@ -228,57 +293,54 @@ describe("setting a new password from the command line", () => {
     // This is what is run when a password has gone somewhere it should not
     // have. A session opened with the old one surviving would make the whole
     // exercise pointless.
-    const accounts = memoryAccounts();
-    const at = new Date("2026-08-27T09:00:00.000Z");
-    const person = await accounts.add("dmitry@example.com", await hashPassword("old"), at, {
-      id: MERCHANT,
-      key: KEY,
-    });
-    await accounts.open("laptop", person?.id ?? "", at, new Date(+at + 12 * HOUR));
+    const { identity, sessions } = store();
+    await identity.make("dmitry@example.com", PASSWORD, { id: MERCHANT, key: KEY });
+    await identity.signIn("dmitry@example.com", PASSWORD);
+    expect(sessions()).toHaveLength(1);
 
-    const changed = await run(accounts, "password", "dmitry@example.com");
+    const changed = await run(identity, "password", "dmitry@example.com");
 
     expect(changed.code).toBe(0);
     expect(changed.password).not.toBeNull();
-    const stored = (await accounts.byEmail("dmitry@example.com"))?.passwordHash ?? "";
-    await expect(passwordMatches("old", stored)).resolves.toBe(false);
-    await expect(passwordMatches(changed.password ?? "", stored)).resolves.toBe(true);
-    await expect(sessionFor(accounts, "laptop", at)).resolves.toBeNull();
+    expect((await identity.signIn("dmitry@example.com", PASSWORD)).ok).toBe(false);
+    expect((await identity.signIn("dmitry@example.com", changed.password ?? "")).ok).toBe(true);
+    // Every session the old password opened is gone. The one row left is the
+    // one the line above just opened with the new password.
+    expect(sessions()).toHaveLength(1);
   });
 
   it("says so rather than inventing an account for an address nobody has", async () => {
-    const accounts = memoryAccounts();
+    const { identity } = store();
 
-    const missing = await run(accounts, "password", "nobody@example.com");
+    const missing = await run(identity, "password", "nobody@example.com");
 
     expect(missing.code).not.toBe(0);
     expect(missing.said).toContain("nobody@example.com");
-    await expect(accounts.byEmail("nobody@example.com")).resolves.toBeNull();
+    await expect(identity.byEmail("nobody@example.com")).resolves.toBeNull();
   });
 });
 
 describe("ending somebody's sessions from the command line", () => {
   it("ends every one of them and says how many", async () => {
-    const accounts = memoryAccounts();
-    const at = new Date("2026-08-27T09:00:00.000Z");
-    const person = await accounts.add("dmitry@example.com", "hash", at, { id: MERCHANT, key: KEY });
-    await accounts.open("laptop", person?.id ?? "", at, new Date(+at + 12 * HOUR));
-    await accounts.open("telephone", person?.id ?? "", at, new Date(+at + 12 * HOUR));
+    const { identity, sessions } = store();
+    await identity.make("dmitry@example.com", PASSWORD, { id: MERCHANT, key: KEY });
+    await identity.signIn("dmitry@example.com", PASSWORD);
+    await identity.signIn("dmitry@example.com", PASSWORD);
+    expect(sessions()).toHaveLength(2);
 
-    const ended = await run(accounts, "revoke", "dmitry@example.com");
+    const ended = await run(identity, "revoke", "dmitry@example.com");
 
     expect(ended.code).toBe(0);
     expect(ended.said).toContain("2");
-    await expect(sessionFor(accounts, "laptop", at)).resolves.toBeNull();
-    await expect(sessionFor(accounts, "telephone", at)).resolves.toBeNull();
+    expect(sessions()).toHaveLength(0);
     // The account is still there: ending a session is not deleting a person.
-    await expect(accounts.byEmail("dmitry@example.com")).resolves.not.toBeNull();
+    await expect(identity.byEmail("dmitry@example.com")).resolves.not.toBeNull();
   });
 
   it("does not pretend to have ended something for an address nobody has", async () => {
-    const accounts = memoryAccounts();
+    const { identity } = store();
 
-    const nothing = await run(accounts, "revoke", "nobody@example.com");
+    const nothing = await run(identity, "revoke", "nobody@example.com");
 
     expect(nothing.code).not.toBe(0);
     expect(nothing.said).toContain("nobody@example.com");
@@ -287,25 +349,21 @@ describe("ending somebody's sessions from the command line", () => {
 
 describe("listing what accounts there are", () => {
   it("names each address, when it was made, and how many sessions are open", async () => {
-    const accounts = memoryAccounts();
-    const at = new Date("2026-08-27T09:00:00.000Z");
-    const person = await accounts.add("dmitry@example.com", "hash-one", at, {
-      id: MERCHANT,
-      key: KEY,
-    });
-    await accounts.add("someone@example.com", "hash-two", at, { id: MERCHANT, key: KEY });
-    await accounts.open("laptop", person?.id ?? "", at, new Date(+at + 12 * HOUR));
+    const { identity } = store();
+    await identity.make("dmitry@example.com", PASSWORD, { id: MERCHANT, key: KEY });
+    await identity.make("someone@example.com", PASSWORD, { id: MERCHANT, key: KEY });
+    await identity.signIn("dmitry@example.com", PASSWORD);
 
-    const listed = await run(accounts, "list");
+    const listed = await run(identity, "list");
 
     expect(listed.code).toBe(0);
     expect(listed.said).toContain("dmitry@example.com");
     expect(listed.said).toContain("someone@example.com");
-    expect(listed.said).toContain("2026-08-27");
+    expect(listed.said).toContain(TODAY);
     expect(listed.said).toMatch(/1 session/);
-    // Never the stored value of a password, on the screen or in a scrollback.
-    expect(listed.said).not.toContain("hash-one");
-    expect(listed.said).not.toContain("hash-two");
+    // Never a password, nor anything derived from one, on the screen or in a
+    // scrollback.
+    expect(listed.said).not.toContain(PASSWORD);
   });
 
   it("says which merchant each account is looking at, and never that merchant's key", async () => {
@@ -313,12 +371,12 @@ describe("listing what accounts there are", () => {
     // the only place anybody can see which is which. The key is what makes that
     // true and is not printed: it goes into a scrollback and into whatever
     // collects it, and whoever is reading this listing does not need it.
-    const accounts = memoryAccounts();
-    const at = new Date("2026-08-27T09:00:00.000Z");
-    await accounts.add("dmitry@example.com", "hash-one", at, { id: MERCHANT, key: KEY });
-    await accounts.add("older@example.com", "hash-two", at, null);
+    const { identity, forgetMerchant } = store();
+    await identity.make("dmitry@example.com", PASSWORD, { id: MERCHANT, key: KEY });
+    await identity.make("older@example.com", PASSWORD, { id: MERCHANT, key: KEY });
+    forgetMerchant("older@example.com");
 
-    const listed = await run(accounts, "list");
+    const listed = await run(identity, "list");
 
     expect(listed.said).toContain(MERCHANT);
     expect(listed.said).not.toContain(KEY);
@@ -328,9 +386,9 @@ describe("listing what accounts there are", () => {
   });
 
   it("says there are none rather than printing an empty table", async () => {
-    const accounts = memoryAccounts();
+    const { identity } = store();
 
-    const listed = await run(accounts, "list");
+    const listed = await run(identity, "list");
 
     expect(listed.code).toBe(0);
     expect(listed.said).toMatch(/no accounts/i);
@@ -362,12 +420,15 @@ describe("an address carrying characters a terminal acts on", () => {
     // What is at stake is small and specific: `account list` is the only answer
     // to "who can sign into this cabinet", and a row that can erase the row
     // above it is an answer with somebody quietly missing from it.
-    const accounts = memoryAccounts();
-    const at = new Date("2026-08-27T09:00:00.000Z");
-    await accounts.add(`a${ERASES_A_ROW}b@example.com`, "hash", at, { id: MERCHANT, key: KEY });
-    await accounts.add("dmitry@example.com", "hash", at, { id: MERCHANT, key: KEY });
+    const { identity, putRow } = store();
+    putRow({
+      email: `a${ERASES_A_ROW}b@example.com`,
+      merchantId: MERCHANT,
+      merchantKey: KEY,
+    });
+    await identity.make("dmitry@example.com", PASSWORD, { id: MERCHANT, key: KEY });
 
-    const listed = await run(accounts, "list");
+    const listed = await run(identity, "list");
 
     expect(listed.code).toBe(0);
     expect(listed.said).not.toContain("\u001b");
@@ -383,9 +444,9 @@ describe("an address carrying characters a terminal acts on", () => {
   it("is shown rather than obeyed in a refusal as well", async () => {
     // The rejection echoes what was typed, which is a path into the terminal
     // that needs no account and no database at all.
-    const accounts = memoryAccounts();
+    const { identity } = store();
 
-    const refused = await run(accounts, "add", `${ERASES_A_ROW}not an address`);
+    const refused = await run(identity, "add", `${ERASES_A_ROW}not an address`);
 
     expect(refused.code).not.toBe(0);
     expect(refused.said).not.toContain("\u001b");
@@ -394,17 +455,17 @@ describe("an address carrying characters a terminal acts on", () => {
 });
 
 describe("a database the migrations have never been run against", () => {
-  /** A store whose every call fails the way the Postgres one does. */
-  const withoutTables = (): Accounts => {
+  /** An identity whose every call fails the way the Postgres one does. */
+  const withoutTables = (): Identity => {
     const failing = () => {
       throw Object.assign(
         new Error("the cabinet's listing of accounts was not answered by the database (42P01)"),
         { code: "42P01" },
       );
     };
-    return new Proxy(memoryAccounts(), {
-      get: (store, member) => (member === "close" ? store.close.bind(store) : failing),
-    }) as Accounts;
+    return new Proxy(store().identity, {
+      get: (real, member) => (member === "close" ? real.close.bind(real) : failing),
+    }) as Identity;
   };
 
   it("says which command puts the tables there, on every verb", async () => {
@@ -435,7 +496,7 @@ describe("a database the migrations have never been run against", () => {
   it("lets any other failure go up rather than blaming the migrations", async () => {
     // An unfamiliar failure with a confident sentence written over it sends
     // somebody to run a migration that was never the problem.
-    const elsewhere: Accounts = new Proxy(memoryAccounts(), {
+    const elsewhere: Identity = new Proxy(store().identity, {
       get: () => () => {
         throw Object.assign(
           new Error("the cabinet's listing of accounts was not answered (57P03)"),
@@ -444,7 +505,7 @@ describe("a database the migrations have never been run against", () => {
           },
         );
       },
-    }) as Accounts;
+    }) as Identity;
 
     await expect(run(elsewhere, "list")).rejects.toThrow("57P03");
   });
@@ -452,10 +513,10 @@ describe("a database the migrations have never been run against", () => {
 
 describe("a command nobody meant to run", () => {
   it("names the ones there are rather than doing something close to it", async () => {
-    const accounts = memoryAccounts();
+    const { identity } = store();
 
     for (const argv of [[], ["delete", "dmitry@example.com"], ["--help"]]) {
-      const said = await run(accounts, ...argv);
+      const said = await run(identity, ...argv);
       expect(said.code, argv.join(" ")).not.toBe(0);
       for (const verb of ["add", "password", "revoke", "list"]) {
         expect(said.said, argv.join(" ")).toContain(verb);
@@ -468,9 +529,9 @@ describe("a command nobody meant to run", () => {
     // an argument is in the shell's history and in the process list of
     // everybody on the machine, and the only moment that can be prevented is
     // before it is typed.
-    const accounts = memoryAccounts();
+    const { identity } = store();
 
-    const said = await run(accounts, "--help");
+    const said = await run(identity, "--help");
 
     expect(said.said).toMatch(/standard input/i);
   });
@@ -481,9 +542,8 @@ describe("the verbs that have no key to read", () => {
     // A command run without a pipe in front of it waits forever on standard
     // input, so a verb that read it whether or not it needed it would be three
     // of the four verbs hanging at a terminal with nothing printed.
-    const accounts = memoryAccounts();
-    const at = new Date("2026-08-27T09:00:00.000Z");
-    await accounts.add("dmitry@example.com", "hash", at, { id: MERCHANT, key: KEY });
+    const { identity } = store();
+    await identity.make("dmitry@example.com", PASSWORD, { id: MERCHANT, key: KEY });
     const neverAsked = async (): Promise<string> => {
       throw new Error("standard input was read by a command that has no key to take");
     };
@@ -493,7 +553,7 @@ describe("the verbs that have no key to read", () => {
       ["password", "dmitry@example.com"],
       ["revoke", "dmitry@example.com"],
     ]) {
-      const said = await running(accounts, argv, neverAsked);
+      const said = await running(identity, argv, neverAsked);
       expect(said.code, argv.join(" ")).toBe(0);
     }
   });

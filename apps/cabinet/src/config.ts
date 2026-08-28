@@ -6,9 +6,10 @@
  * than one per restart.
  *
  * There is a database address here and there is exactly one thing it is for:
- * the people who sign into the cabinet and the sessions they are signed in with
- * (ADR-0009). ADR-0005 §3 still holds for everything else — every card, order
- * and receipt on every screen comes from the public API, because the reason that section gives is dogfooding: a screen
+ * the people who sign into the cabinet, their sessions, their passwords and the
+ * one-time links they are sent (ADR-0009). ADR-0005 §3 still holds for
+ * everything else — every card, order and receipt on every screen comes from
+ * the public API, because the reason that section gives is dogfooding: a screen
  * the cabinet cannot draw is API the merchant does not have either.
  *
  * There is no merchant key here, and its absence is the point rather than an
@@ -17,9 +18,9 @@
  * was signed in. The key is on the row of the person signed in now (ADR-0014
  * §2), so a deployment has one less thing to set and one more thing to back up.
  *
- * The one secret left in here is read and never printed. The sentence this file
- * throws names the variable that is wrong and not the value it held, because a
- * startup failure goes to a log and a log goes places the environment does not.
+ * The two secrets left in here are read and never printed. The sentences this
+ * file throws name the variable that is wrong and not the value it held, because
+ * a startup failure goes to a log and a log goes places the environment does not.
  */
 
 import { z } from "zod";
@@ -46,6 +47,17 @@ function isHttpUrl(value: string): boolean {
 }
 
 /**
+ * The shortest secret the cabinet will sign a session with.
+ *
+ * Thirty-two characters is what `openssl rand -base64 32` produces and it is
+ * the length the sentence below tells an operator to make. The floor is on what
+ * a deployment is allowed to hand us rather than a claim about strength: what it
+ * catches is a placeholder somebody left in a file, not a weak choice by
+ * somebody who read the sentence.
+ */
+const SHORTEST_SECRET = 32;
+
+/**
  * Addresses a link in a message must not be built on.
  *
  * A message goes to somebody else's machine, and a link on this list is an
@@ -61,8 +73,8 @@ const environmentSchema = z.object({
   /**
    * Where the cabinet's own accounts and sessions live.
    *
-   * The same Postgres as everything else (ADR-0003 §6), and the cabinet's own
-   * tables in it. Without one there is nowhere to look a session up, so
+   * The same Postgres as everything else (ADR-0003 §6), and four tables of the
+   * cabinet's own in it. Without one there is nowhere to look a session up, so
    * every visitor would be a stranger — a cabinet that draws a sign-in form and
    * can never accept one.
    */
@@ -118,6 +130,28 @@ const environmentSchema = z.object({
     .enum(["true", "false"])
     .default("false")
     .transform((value) => value === "true"),
+
+  /**
+   * What the cabinet signs a session cookie with.
+   *
+   * There is no default and there deliberately is not one. The component that
+   * signs in for us has its own fallback, and a deployment that leaned on it
+   * would be running on a secret written in somebody else's public source — so
+   * the cabinet asks for one rather than accepting whatever is there, and stops
+   * when there is none.
+   *
+   * Changing it signs everybody out and nothing worse: a session is still a row
+   * that can be ended on its own, so this secret is not the only way to revoke
+   * one. What it buys is that a cookie somebody wrote by hand is refused before
+   * a single query is made, which is why the value never leaves this process and
+   * never appears in a message this file throws.
+   */
+  AUTH_SECRET: z
+    .string({ error: absentOrWrong("must be a string") })
+    .refine(
+      (value) => value.length >= SHORTEST_SECRET,
+      `must be at least ${SHORTEST_SECRET} characters; make one with: openssl rand -base64 32`,
+    ),
 
   /**
    * The address a merchant reaches this cabinet at, from their own machine.
@@ -177,6 +211,8 @@ export interface CabinetConfig {
   readonly basePath: string;
   readonly cookieSecure: boolean;
   readonly databaseUrl: string;
+  /** What a session cookie is signed with. Never printed, never on a page. */
+  readonly authSecret: string;
   /** What the links in the cabinet's two messages are built on. */
   readonly publicBaseUrl: string;
   readonly mailUrl: string;
@@ -265,6 +301,7 @@ export function loadConfig(environment: Record<string, string | undefined>): Cab
     basePath: values.BASE_PATH,
     cookieSecure: values.COOKIE_SECURE,
     databaseUrl: values.DATABASE_URL,
+    authSecret: values.AUTH_SECRET,
     publicBaseUrl: values.PUBLIC_BASE_URL,
     mailUrl: values.MAIL_URL,
     mailApiKey: values.MAIL_API_KEY ?? null,

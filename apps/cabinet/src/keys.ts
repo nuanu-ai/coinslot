@@ -108,7 +108,14 @@ ${
   </form>
 `;
 
-  return page({ base, who: viewer.who, tab: "keys", title: "Keys", body });
+  return page({
+    base,
+    who: viewer.who,
+    confirmed: viewer.confirmed,
+    tab: "keys",
+    title: "Keys",
+    body,
+  });
 };
 
 /**
@@ -140,5 +147,12 @@ export const newKeyScreen = (viewer: Viewer, label: string, secret: string): str
   <p class="quiet"><a href="${escaped(base)}/keys">Back to your keys</a></p>
 `;
 
-  return page({ base, who: viewer.who, tab: "keys", title: "Your new key", body });
+  return page({
+    base,
+    who: viewer.who,
+    confirmed: viewer.confirmed,
+    tab: "keys",
+    title: "Your new key",
+    body,
+  });
 };

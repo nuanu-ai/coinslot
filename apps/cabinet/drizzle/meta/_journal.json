@@ -15,6 +15,20 @@
       "when": 1787892988087,
       "tag": "0001_merchant_on_account",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1787900754247,
+      "tag": "0002_the_old_sign_in_goes",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1787900760784,
+      "tag": "0003_identity_component",
+      "breakpoints": true
     }
   ]
 }

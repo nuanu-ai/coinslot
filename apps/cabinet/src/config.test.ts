@@ -13,6 +13,7 @@ import { loadConfig } from "./config.js";
 /** What a deployment has to set for the cabinet to be able to do anything. */
 const REQUIRED = {
   DATABASE_URL: "postgres://coinslot:coinslot@postgres:5432/coinslot",
+  AUTH_SECRET: "a-secret-that-is-at-least-32-characters-long",
 };
 
 const given = (environment: Record<string, string> = {}): Record<string, string> => ({
@@ -21,6 +22,17 @@ const given = (environment: Record<string, string> = {}): Record<string, string>
 });
 
 describe("what the cabinet will not start without", () => {
+  it("refuses to start with nothing to sign a session with", () => {
+    // The component that signs people in has a fallback of its own, and a
+    // deployment that leaned on it would be running on a value written in
+    // somebody else's public source. So the cabinet asks for one rather than
+    // taking whatever is there, and stops when there is none.
+    const { AUTH_SECRET: _absent, ...withoutSecret } = given();
+
+    expect(() => loadConfig(withoutSecret)).toThrow(/AUTH_SECRET/);
+    expect(() => loadConfig(given({ AUTH_SECRET: "too short" }))).toThrow(/AUTH_SECRET/);
+  });
+
   it("refuses to start with no database to keep its accounts and sessions in", async () => {
     // ADR-0009 puts the people who sign in, and their sessions, in rows. With
     // no database there is nowhere to look one up, so every visitor would be a
@@ -202,5 +214,25 @@ describe("what the configuration says about itself", () => {
     const said = thrown();
     expect(said).toContain("PORT");
     expect(said).not.toContain("s3cret-database-password");
+  });
+
+  it("does not put what it signs sessions with into the sentence it throws", () => {
+    // The same rule as the line above, for the other secret in this file. A
+    // startup failure is printed by whatever is watching the process.
+    const thrown = (): string => {
+      try {
+        loadConfig({
+          ...given({ PORT: "no" }),
+          AUTH_SECRET: "s3cret-signing-value-of-at-least-32-characters",
+        });
+        return "";
+      } catch (error) {
+        return String(error);
+      }
+    };
+
+    const said = thrown();
+    expect(said).toContain("PORT");
+    expect(said).not.toContain("s3cret-signing-value-of-at-least-32-characters");
   });
 });

@@ -33,6 +33,15 @@ export interface Chrome {
    * all their selling.
    */
   readonly who: string;
+  /**
+   * Whether anybody has shown they can read mail sent to that address.
+   *
+   * Unconfirmed, every page says so beside the address and offers the one
+   * control that changes it. It is on every page rather than on a settings
+   * screen because what it costs its owner only shows up on the day they have
+   * lost their password — which is a day they cannot read a settings screen.
+   */
+  readonly confirmed: boolean;
   readonly tab: Tab;
   readonly title: string;
   /**
@@ -58,12 +67,12 @@ const TABS: readonly [Tab, string][] = [
 /**
  * One whole page.
  *
- * Beside the address in the corner is the plain fact that nobody has confirmed
- * it (ADR-0014 §4). Nothing is ever sent to that address — not a confirmation
- * and not a password reset — so a merchant reading it on every page must not
- * come to treat it as a way of reaching them. It is three words rather than a
- * paragraph because it is on every page; the paragraph is on the two pages the
- * address is actually typed into.
+ * Beside the address in the corner, until it is confirmed, is the plain fact
+ * that nobody has confirmed it and the one control that changes that. It is
+ * three words and a button rather than a paragraph because it is on every page;
+ * the paragraph is on the pages the address is actually typed into. Once the
+ * address is confirmed both go, because a banner that never leaves is a banner
+ * nobody reads.
  *
  * The stylesheet is linked rather than inlined so that a merchant moving
  * between the four screens fetches it once, and so that the one visual
@@ -99,7 +108,14 @@ export const page = (chrome: Chrome): string => `<!doctype html>
     <div class="whoami">
       ${chrome.selling === undefined ? "" : state(chrome.selling)}
       <a class="who" href="${escaped(chrome.base)}/password">${escaped(chrome.who)}</a>
-      <span class="tag plain">address not confirmed</span>
+      ${
+        chrome.confirmed
+          ? ""
+          : `<span class="tag plain">address not confirmed</span>
+      <form class="inline" method="post" action="${escaped(chrome.base)}/confirm">
+        <button type="submit">Send me the link</button>
+      </form>`
+      }
       <form class="inline" method="post" action="${escaped(chrome.base)}/sign-out">
         <button type="submit">Sign out</button>
       </form>
