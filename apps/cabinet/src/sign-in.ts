@@ -108,6 +108,7 @@ export const passwordScreen = (
   <input id="fresh" name="fresh" type="password" autocomplete="new-password" minlength="${minimum}" required>
   <button class="primary" type="submit">Change it</button>
   ${problem === undefined ? "" : `<p class="problem">${escaped(problem)}</p>`}
+  <p class="quiet">That address is not confirmed by anybody and nothing is ever sent to it — it is the name you sign in with. If the new password is lost, ask us for another one; there is no link we can mail you.</p>
   <p class="quiet"><a href="${escaped(base)}/cards">Back to your cards</a></p>
 </form>
 </div>`,

@@ -19,8 +19,8 @@ export const escaped = (value: string): string =>
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
 
-/** Which of the three screens is being looked at. */
-export type Tab = "cards" | "orders" | "receipts";
+/** Which of the four screens is being looked at. */
+export type Tab = "cards" | "orders" | "receipts" | "keys";
 
 export interface Chrome {
   /** Where the cabinet is mounted, "" when it is at the root of its origin. */
@@ -35,8 +35,16 @@ export interface Chrome {
   readonly who: string;
   readonly tab: Tab;
   readonly title: string;
-  /** The merchant's own selling word, for the light in the corner. */
-  readonly selling: { readonly text: string; readonly tone: string };
+  /**
+   * The merchant's own selling word, for the light in the corner.
+   *
+   * Absent on a screen that is not about selling, which is the keys. The word
+   * comes from the card list, and fetching one on a page that draws no cards
+   * would be a call to the gateway whose only purpose is a coloured dot — on
+   * the one screen a merchant is most likely to be reading because something
+   * about their keys has gone wrong.
+   */
+  readonly selling?: { readonly text: string; readonly tone: string };
   readonly body: string;
 }
 
@@ -44,14 +52,22 @@ const TABS: readonly [Tab, string][] = [
   ["cards", "Cards"],
   ["orders", "Orders"],
   ["receipts", "Receipts"],
+  ["keys", "Keys"],
 ];
 
 /**
  * One whole page.
  *
+ * Beside the address in the corner is the plain fact that nobody has confirmed
+ * it (ADR-0014 §4). Nothing is ever sent to that address — not a confirmation
+ * and not a password reset — so a merchant reading it on every page must not
+ * come to treat it as a way of reaching them. It is three words rather than a
+ * paragraph because it is on every page; the paragraph is on the two pages the
+ * address is actually typed into.
+ *
  * The stylesheet is linked rather than inlined so that a merchant moving
- * between the three screens fetches it once, and so that the one visual
- * language ADR-0005 §6 asks for is one file rather than three copies.
+ * between the four screens fetches it once, and so that the one visual
+ * language ADR-0005 §6 asks for is one file rather than four copies.
  *
  * The faces are linked separately, from the shared origin, because they are
  * woff2 files the landing already serves and their addresses are relative to
@@ -81,8 +97,9 @@ export const page = (chrome: Chrome): string => `<!doctype html>
       ).join("")}</nav>
     </div>
     <div class="whoami">
-      <span class="state ${chrome.selling.tone}"><span class="dot"></span>${escaped(chrome.selling.text)}</span>
+      ${chrome.selling === undefined ? "" : state(chrome.selling)}
       <a class="who" href="${escaped(chrome.base)}/password">${escaped(chrome.who)}</a>
+      <span class="tag plain">address not confirmed</span>
       <form class="inline" method="post" action="${escaped(chrome.base)}/sign-out">
         <button type="submit">Sign out</button>
       </form>

@@ -105,7 +105,12 @@ describe("a list where some of the money was real and some was not", () => {
     expect(readable(html)).toContain("1 receipt here is a test purchase");
     // One row carries the mark and the other does not: a page that marked both
     // or neither would be useless on exactly the day this matters.
-    expect(rows.filter((row) => row.includes('class="tag"'))).toHaveLength(1);
+    //
+    // The mark is found by its word rather than by the class it is drawn with.
+    // That class is a small pill and the page has another one on it now — the
+    // note beside the address saying nobody has confirmed it — so a search for
+    // the class would count a thing that has nothing to do with test money.
+    expect(rows.filter((row) => row.includes(">test<"))).toHaveLength(1);
   });
 
   it("says nothing about test money when none of it was a test", () => {
@@ -119,6 +124,6 @@ describe("a list where some of the money was real and some was not", () => {
 
     expect(onReceipts).not.toContain("test purchase");
     expect(onOrders).not.toContain("test purchase");
-    expect(receiptsScreen(SEEN_BY, cards, receipts)).not.toContain('class="tag"');
+    expect(receiptsScreen(SEEN_BY, cards, receipts)).not.toContain(">test<");
   });
 });

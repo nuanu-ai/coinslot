@@ -1,6 +1,6 @@
 /**
- * The cabinet's own HTTP surface: three screens, a sign-in, a password, and the
- * four switches that stop and start selling.
+ * The cabinet's own HTTP surface: four screens, a sign-in, a registration, a
+ * password, and the four switches that stop and start selling.
  *
  * It is server-rendered with no client framework and no build step, which is
  * ADR-0005 §4. Every page is one GET and every change is one form post
@@ -41,6 +41,7 @@ import {
   registrarFor,
 } from "./gateway.js";
 import { bare, escaped } from "./html.js";
+import { keysScreen, newKeyScreen } from "./keys.js";
 import { cardsScreen, ordersScreen, receiptsScreen, type Viewer } from "./screens.js";
 import { passwordScreen, registerScreen, signInScreen } from "./sign-in.js";
 
@@ -728,6 +729,69 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
       response.redirect(303, `${base}/cards`);
     });
   }
+
+  app.get(`${base}/keys`, async (request, response) => {
+    const keys = await gatewayAs(request).keys();
+    if (!keys.ok) {
+      return trouble(response, base, keys);
+    }
+    response.type("html").send(keysScreen(viewing(request, base), keys.document));
+  });
+
+  app.post(`${base}/keys`, async (request, response) => {
+    const form = (request.body ?? {}) as { label?: unknown };
+    const label = typeof form.label === "string" ? form.label.trim() : "";
+    const gateway = gatewayAs(request);
+
+    if (label === "") {
+      // Refused here rather than sent on, because a key with no name is a key
+      // nobody can tell from another on the very screen whose job is telling
+      // them apart before revoking one. The list is fetched again so the
+      // refusal lands on the page they were looking at.
+      const keys = await gateway.keys();
+      if (!keys.ok) {
+        return trouble(response, base, keys);
+      }
+      response
+        .status(400)
+        .type("html")
+        .send(
+          keysScreen(
+            viewing(request, base),
+            keys.document,
+            "Give the key a name, so that you can tell it from the others when you come to revoke one.",
+          ),
+        );
+      return;
+    }
+
+    const issued = await gateway.issueKey(label);
+    if (!issued.ok) {
+      return trouble(response, base, issued);
+    }
+    // The name and the identifier, never the secret. A log goes places the
+    // database does not, and this is the one moment the secret exists outside
+    // the merchant's own hands.
+    noted(whoIs(request), `issued a key, ${issued.document.key.id}, named "${label}"`);
+    // Answered with a page rather than a redirect, which is the one place this
+    // cabinet does that. `keys.ts` says why: a redirect cannot carry the secret
+    // anywhere it would be safe to read it back from.
+    response.type("html").send(newKeyScreen(viewing(request, base), label, issued.document.secret));
+  });
+
+  app.post(`${base}/keys/:key_id/disable`, async (request, response) => {
+    const keyId = request.params.key_id ?? "";
+    const stopped = await gatewayAs(request).disableKey(keyId);
+    if (!stopped.ok) {
+      // Including the one refusal the screen tries not to provoke: the gateway
+      // will not disable the key its caller is holding. The screen offers no
+      // control for it, and somebody who reaches this address anyway is told
+      // what the gateway said rather than shown a page implying it worked.
+      return trouble(response, base, stopped);
+    }
+    noted(whoIs(request), `revoked the key ${keyId}`);
+    response.redirect(303, `${base}/keys`);
+  });
 
   app.use((_request, response) => {
     response.status(404).type("html").send(problemPage(base, "There is no such page."));

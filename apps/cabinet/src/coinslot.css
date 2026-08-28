@@ -502,3 +502,85 @@ p.quiet {
   font-size: 13px;
   color: var(--muted);
 }
+
+/* The note beside the address, on every page (ADR-0014 §4). It borrows the
+   pill above rather than a shape of its own, and takes the warn colour back
+   out of it: what that colour is for on these screens is money that did not
+   move, and a page that painted this the same amber would spend a merchant's
+   attention on a fact about their account every time they looked at a
+   receipt. */
+.tag.plain {
+  color: var(--muted);
+  border-color: var(--line-strong);
+}
+
+/* --- the keys screen ---------------------------------------------------- */
+
+/*
+ * The heading over the form that issues a key, under the list of the ones there
+ * are. Smaller than the page's own heading and larger than a table's, because
+ * it opens a second half of one screen rather than a second screen.
+ */
+h2 {
+  font-size: 16px;
+}
+
+/*
+ * The form that issues a key: one box and one button, side by side, sitting
+ * where a table would.
+ *
+ * The input is styled here rather than borrowing `.gate input`, which is a
+ * whole-width box inside a sign-in card and would run the length of the page.
+ */
+.issue {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 20px 32px 32px;
+}
+
+.issue label {
+  display: block;
+  font-size: 11px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+
+.issue input {
+  font: inherit;
+  width: 340px;
+  max-width: 100%;
+  padding: 6px 12px;
+  border: var(--hairline) solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--fg);
+}
+
+/*
+ * The key itself, on the one page it is ever shown.
+ *
+ * Given a line of its own and set in the monospaced family so that it can be
+ * selected in one gesture and read back character by character — it is copied
+ * by hand at least once, and the shared palette's fallback stack is what makes
+ * that true on a machine with no fonts of ours.
+ */
+.secret {
+  padding: 28px 24px;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+
+/* The way back, under the key. On the password page this sits inside the
+   sign-in card and takes that card's padding; here it is a direct child of the
+   page frame and needs the frame's own gutter, or it lands against the edge of
+   the window. */
+.page > p.quiet {
+  padding: 0 32px;
+}
