@@ -455,18 +455,43 @@ export class PostgresStore implements Store {
           await client.query("select pg_advisory_unlock(hashtext($1))", [`coinslot.${name}`]);
         } catch (thrown) {
           console.error(`[gateway] could not let go of ${name}`, thrown);
+          // And the connection goes with the failure, which is the only thing
+          // that actually frees the name. An unlock can fail on a session that
+          // is still perfectly alive — a statement timeout is enough, SQLSTATE
+          // 57014 — and then the lock is still held, by a client about to go
+          // back into the pool holding it. Every sweep after that is told the
+          // name is taken and does nothing, which reads in the log exactly like
+          // a healthy skip, and this is the safety net for effects that went
+          // missing. Marking the connection broken makes the release below end
+          // the session instead, and a session ending is what a session lock is
+          // released by.
+          //
+          // Without this it self-heals eventually: the pooled connection is
+          // reaped on the idle timeout, about ten seconds on a quiet gateway.
+          // On a busy pool, or one with a minimum size or a longer idle timeout
+          // set, that reaping does not come and the name stays wedged for the
+          // life of the process.
+          //
+          // One thing it does not close. Postgres counts advisory locks, so a
+          // session that took the same name twice needs two unlocks; if the
+          // leaking connection were drawn again before it was destroyed and
+          // granted the name a second time, a single unlock would only
+          // decrement. That cannot happen on this path — the client is never
+          // back in the pool between the failure and the release — and it is an
+          // argument for ending the session rather than against it, since
+          // ending the session releases every count at once.
+          broken = thrown;
         }
       }
     } finally {
       // A client that failed is released with its failure, which asks the pool
-      // to destroy it rather than hand it to the next caller.
+      // to end the session rather than hand the client to the next caller.
       //
-      // Said plainly because a probe found it out: the pool would discard this
-      // client anyway. It also drops one that is no longer queryable, and a
-      // terminated connection is exactly that, so removing the argument breaks
-      // no test and changes no outcome here. What it buys is that the ask is
-      // made through the part of the interface the library documents, rather
-      // than resting on a field pg-pool's own source marks as not public.
+      // Said plainly because a probe found it out: for a connection that is
+      // already gone the pool would discard the client anyway, since it also
+      // drops one that is no longer queryable. What the argument adds is the
+      // case that connection cannot cover — a session that is alive, queryable,
+      // and holding a lock it refused to release.
       //
       // Released first and unlistened after, in that order and not the other:
       // releasing is what puts the pool's own error listener back on, and it

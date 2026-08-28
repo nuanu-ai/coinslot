@@ -1083,6 +1083,78 @@ if (databaseUrl === null) {
       }
     }, 30_000);
 
+    it("lets go of the name when the unlock fails on a connection that is still alive", async () => {
+      // The failure the `finally` above cannot see. A terminated backend takes
+      // its locks with it, so an unlock that fails because the connection died
+      // costs nothing; an unlock that fails on a session which is still there
+      // leaves the name held by a client that goes straight back into the pool
+      // holding it. Every sweep after that is told the name is taken and does
+      // nothing, and the line it logs is the same line a healthy skip logs —
+      // so the daily safety net for effects that went missing is off, and
+      // nothing anybody reads says so.
+      //
+      // What produces it in a deployment is a statement timeout: SQLSTATE
+      // 57014, the statement cancelled, the session untouched.
+      //
+      // Here the unlock is made to fail directly rather than by racing a
+      // timeout against a function that returns in microseconds. What is
+      // substituted is only the cause — the session is a real one, it really
+      // does still hold the lock, because the unlock genuinely never ran — and
+      // what is asserted is real database state, asked from a connection that
+      // shares nothing with it.
+      const heldPool = new Pool({ connectionString: databaseUrl, max: 1 });
+      const askingPool = new Pool({ connectionString: databaseUrl, max: 1 });
+      try {
+        const realConnect = heldPool.connect.bind(heldPool);
+        Object.assign(heldPool, {
+          connect: async () => {
+            const client = await realConnect();
+            const realQuery = client.query.bind(client);
+            Object.assign(client, {
+              query: (...args: Parameters<typeof realQuery>) => {
+                if (typeof args[0] === "string" && args[0].includes("pg_advisory_unlock")) {
+                  return Promise.reject(
+                    Object.assign(new Error("canceling statement due to statement timeout"), {
+                      code: "57014",
+                    }),
+                  );
+                }
+                return realQuery(...args);
+              },
+            });
+            return client;
+          },
+        });
+
+        const stubborn = new PostgresStore(drizzle(heldPool), countedIds());
+        // The run itself is a success and is reported as one. An unlock nobody
+        // could complete is not the sweep's failure to hand back to the queue.
+        expect(await stubborn.runAlone("a_wedged_sweep", async () => "swept")).toStrictEqual({
+          ran: true,
+          result: "swept",
+        });
+
+        // And the name is free again, because the connection was released with
+        // the failure and the pool ended the session rather than keeping it.
+        // Ending a session is asynchronous, so this waits — but only for two
+        // seconds, well inside the ten the pool would otherwise take to reap an
+        // idle connection. A window that reached the reaper would pass with or
+        // without the fix.
+        const next = new PostgresStore(drizzle(askingPool), countedIds());
+        const until = Date.now() + 2_000;
+        let free = await next.runAlone("a_wedged_sweep", async () => "free");
+        while (!free.ran && Date.now() < until) {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          free = await next.runAlone("a_wedged_sweep", async () => "free");
+        }
+
+        expect(free).toStrictEqual({ ran: true, result: "free" });
+      } finally {
+        await heldPool.end();
+        await askingPool.end();
+      }
+    }, 30_000);
+
     describe("the sweep of what an order is still owed", () => {
       const asyncCard: Card = {
         merchant_item_id: "swept-esim",
