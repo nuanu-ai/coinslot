@@ -31,6 +31,12 @@ export interface Chrome {
    * On every page, in the corner, because a merchant with two people has to be
    * able to tell whose screen this is before pressing the control that stops
    * all their selling.
+   *
+   * It links to the settings, where the account it names is looked after. It
+   * used to link to the password form, which is the one thing about an account
+   * somebody does rarely — pressing your own name means "show me my account",
+   * and the answer to that is a page with the address on it and the password
+   * form one press further on.
    */
   readonly who: string;
   /**
@@ -118,7 +124,7 @@ export const page = (chrome: Chrome): string => `<!doctype html>
     </div>
     <div class="whoami">
       ${chrome.selling === undefined ? "" : state(chrome.selling)}
-      <a class="who" href="${escaped(chrome.base)}/password">${escaped(chrome.who)}</a>
+      <a class="who" href="${escaped(chrome.base)}/settings">${escaped(chrome.who)}</a>
       ${
         chrome.confirmed
           ? ""

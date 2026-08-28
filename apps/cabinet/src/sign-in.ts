@@ -111,7 +111,7 @@ export const passwordScreen = (
   <button class="primary" type="submit">Change it</button>
   ${problem === undefined ? "" : `<p class="problem">${escaped(problem)}</p>`}
   <p class="quiet">If you lose it, <a href="${escaped(base)}/password/forgot">ask us for a new one</a>. That works only once you have confirmed the address, so that a link replacing a password is never sent to an address nobody has answered from.</p>
-  <p class="quiet"><a href="${escaped(base)}/cards">Back to your cards</a></p>
+  <p class="quiet"><a href="${escaped(base)}/settings">Back to your settings</a></p>
 </form>
 </div>`,
   );

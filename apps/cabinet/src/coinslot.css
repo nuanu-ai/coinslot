@@ -483,8 +483,9 @@ td.control {
 /* The address of the person signed in, in the corner of every page. Until
    ADR-0009 there was nobody to name: the cabinet held a merchant key and the
    screen could not say whose hand was on the control that stops all selling.
-   It is a link because that is where a password is changed, and the colour is
-   the muted one so that it reads as a label rather than as a fourth tab. */
+   It is a link because pressing your own name means "show me my account", and
+   it leads to the settings, where the account is. The colour is the muted one
+   so that it reads as a label rather than as a fifth tab. */
 .who {
   color: var(--muted);
   text-decoration: none;
