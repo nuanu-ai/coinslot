@@ -7,6 +7,8 @@ import {
   MerchantKeySchema,
   RegisteredMerchantSchema,
   RegistrationRequestSchema,
+  SellerNameRequestSchema,
+  SellerNameSchema,
 } from "./merchant.js";
 import { errorOf, expectMissingFieldRejected } from "./testing/expect-schema.js";
 
@@ -214,31 +216,25 @@ describe("a key that has been disabled", () => {
 });
 
 describe("registering a merchant", () => {
-  const asked = { name: "Someone's shop", invitation: "the-code-from-the-invitation" };
+  const asked = { invitation: "the-code-from-the-invitation" };
 
-  it("takes the name the seller trades under and the code they were given", () => {
+  it("takes the code they were given and nothing else", () => {
     expect(RegistrationRequestSchema.parse(asked)).toStrictEqual(asked);
   });
 
-  for (const field of ["name", "invitation"]) {
-    it(`refuses a registration without ${field} and names it`, () => {
-      expectMissingFieldRejected(RegistrationRequestSchema, asked, field);
-    });
-  }
+  it("refuses a registration without invitation and names it", () => {
+    expectMissingFieldRejected(RegistrationRequestSchema, asked, "invitation");
+  });
 
-  it("refuses a name a discovery catalog will not carry", () => {
-    // This name goes out to strangers through a catalog that carries at most
-    // thirty-two characters of printable ASCII and drops anything else without
-    // a word. Refused here, the merchant is told; accepted here, they trade
-    // under something nobody chose and nothing anywhere says so.
-    expect(RegistrationRequestSchema.safeParse({ ...asked, name: "" }).success).toBe(false);
-    expect(RegistrationRequestSchema.safeParse({ ...asked, name: "x".repeat(33) }).success).toBe(
-      false,
-    );
-    expect(RegistrationRequestSchema.safeParse({ ...asked, name: "Магазин" }).success).toBe(false);
-    expect(RegistrationRequestSchema.safeParse({ ...asked, name: " padded " }).success).toBe(false);
-    expect(RegistrationRequestSchema.safeParse({ ...asked, name: "x".repeat(32) }).success).toBe(
-      true,
+  it("does not ask for the name buyers will read", () => {
+    // The name is asked for on the screen after this one, where there is room
+    // to say what it is for and where it can be changed afterwards. Asked here,
+    // it was answered by somebody with no products, no catalogue seen and no
+    // idea what the name was for, and what they typed was then printed beside
+    // their products. Refusing the field is what stops a client sending one and
+    // believing it was written down.
+    expect(errorOf(RegistrationRequestSchema, { ...asked, name: "Someone's shop" })).toContain(
+      "name",
     );
   });
 
@@ -263,23 +259,32 @@ describe("registering a merchant", () => {
 describe("what registering answers with", () => {
   const registered = {
     merchant_id: "mch_4d21bb",
-    name: "Someone's shop",
     key: working,
     secret,
   };
 
   it("carries the merchant, their first key, and the secret once", () => {
-    // All four are needed by the one caller: it writes the merchant and the
+    // All three are needed by the one caller: it writes the merchant and the
     // secret onto the account it is creating, and shows the key's own row so
     // the person can see what they now hold.
     expect(RegisteredMerchantSchema.parse(registered)).toStrictEqual(registered);
   });
 
-  for (const field of ["merchant_id", "name", "key", "secret"]) {
+  for (const field of ["merchant_id", "key", "secret"]) {
     it(`refuses a registration answer without ${field} and names it`, () => {
       expectMissingFieldRejected(RegisteredMerchantSchema, registered, field);
     });
   }
+
+  it("names no seller, because registering chooses none", () => {
+    // A merchant who has just registered is listed under nothing at all, so
+    // there is no name here to read back. A field carrying one would be a name
+    // this call had written down, and the screen after it would show the
+    // merchant something nobody chose.
+    expect(errorOf(RegisteredMerchantSchema, { ...registered, name: "Someone's shop" })).toContain(
+      "name",
+    );
+  });
 
   it("names the merchant the account will be tied to", () => {
     // Without it the cabinet has a key and nothing to say whose it is, and an
@@ -290,11 +295,8 @@ describe("what registering answers with", () => {
     );
   });
 
-  it("holds the key to the key document and the name to the catalog's rule", () => {
+  it("holds the key to the key document", () => {
     expect(RegisteredMerchantSchema.safeParse({ ...registered, key: { id: "mk_1" } }).success).toBe(
-      false,
-    );
-    expect(RegisteredMerchantSchema.safeParse({ ...registered, name: "Магазин" }).success).toBe(
       false,
     );
   });
@@ -302,6 +304,100 @@ describe("what registering answers with", () => {
   it("refuses a field it does not know", () => {
     expect(errorOf(RegisteredMerchantSchema, { ...registered, session: "sess_1" })).toContain(
       "session",
+    );
+  });
+});
+
+describe("the name buyers read beside a merchant's products", () => {
+  // The promise: a merchant can find out what they are listed under and change
+  // it. What they cannot do is have none once they have one, and the two
+  // documents differ in exactly that.
+  const named = { seller_name: "Someone's shop" };
+  const unnamed = { seller_name: null };
+
+  it("carries the name a merchant chose", () => {
+    expect(SellerNameSchema.parse(named)).toStrictEqual(named);
+  });
+
+  it("says a merchant has no name rather than leaving the field out", () => {
+    // Null is the fact "nobody has chosen one", which is every merchant on the
+    // day they register. An absent field is a silence, and the screen that
+    // reads it cannot tell a silence from a field somebody forgot to send: it
+    // would have to guess, and guessing wrong means a settings page that says
+    // a merchant is listed under nothing when they are listed under something.
+    expect(SellerNameSchema.parse(unnamed)).toStrictEqual(unnamed);
+    expect(SellerNameSchema.safeParse({}).success).toBe(false);
+  });
+
+  it("refuses a document without seller_name and names it", () => {
+    expectMissingFieldRejected(SellerNameSchema, named, "seller_name");
+  });
+
+  it("holds the name to the rule of the catalogue that will carry it", () => {
+    // The same rule the catalogue applies before it drops what it cannot
+    // render. Refused here, a merchant is told what is wrong with the name they
+    // typed; accepted here, they trade under a mangled version of it and
+    // nothing anywhere says so.
+    expect(SellerNameSchema.safeParse({ seller_name: "" }).success).toBe(false);
+    expect(SellerNameSchema.safeParse({ seller_name: "x".repeat(33) }).success).toBe(false);
+    expect(SellerNameSchema.safeParse({ seller_name: "Магазин" }).success).toBe(false);
+    expect(SellerNameSchema.safeParse({ seller_name: " padded " }).success).toBe(false);
+    expect(SellerNameSchema.safeParse({ seller_name: "x".repeat(32) }).success).toBe(true);
+  });
+
+  it("refuses a field it does not know", () => {
+    expect(errorOf(SellerNameSchema, { ...named, merchant_id: "mch_4d21bb" })).toContain(
+      "merchant_id",
+    );
+  });
+});
+
+describe("what a merchant sends to change that name", () => {
+  const asked = { seller_name: "Someone's shop" };
+
+  it("takes the name, held to the same rule the answer is", () => {
+    expect(SellerNameRequestSchema.parse(asked)).toStrictEqual(asked);
+    expect(SellerNameRequestSchema.safeParse({ seller_name: "x".repeat(33) }).success).toBe(false);
+    expect(SellerNameRequestSchema.safeParse({ seller_name: "Магазин" }).success).toBe(false);
+    expect(SellerNameRequestSchema.safeParse({ seller_name: " padded " }).success).toBe(false);
+    expect(SellerNameRequestSchema.safeParse({ seller_name: "" }).success).toBe(false);
+  });
+
+  it("refuses null, because a name cannot be taken away", () => {
+    // The difference between this document and the answer, and the whole of it.
+    // Having no name is a state a merchant starts in and cannot go back to:
+    // their cards would stay on sale while the payment request an agent reads
+    // named no seller. A merchant who wants a different name sets a different
+    // name, and one who wants to stop selling pauses selling, which leaves
+    // their cards where they can find them again.
+    expect(SellerNameRequestSchema.safeParse({ seller_name: null }).success).toBe(false);
+  });
+
+  it("says what to do instead, rather than that a string was expected", () => {
+    // The reader here is whoever wrote the client, and "expected string,
+    // received null" tells them the shape and not the reason. Somebody who
+    // wanted a merchant to stop being listed has an act that does that, and
+    // this is where they find out which.
+    const complaint = errorOf(SellerNameRequestSchema, { seller_name: null });
+
+    expect(complaint).toContain("pause");
+    expect(complaint).not.toContain("expected string");
+  });
+
+  it("refuses a document without seller_name and names it", () => {
+    expectMissingFieldRejected(SellerNameRequestSchema, asked, "seller_name");
+  });
+
+  it("complains about a missing field in its own words, not the ones about null", () => {
+    // A client that dropped the field has a bug, and a client that sent null
+    // has a misunderstanding. Told the same sentence, whoever wrote the first
+    // one would go looking for a decision nobody made.
+    expect(errorOf(SellerNameRequestSchema, {})).not.toContain("pause");
+  });
+
+  it("refuses a field it does not know", () => {
+    expect(errorOf(SellerNameRequestSchema, { ...asked, merchant_id: "mch_4d21bb" })).toContain(
+      "merchant_id",
     );
   });
 });

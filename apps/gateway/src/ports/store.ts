@@ -334,11 +334,10 @@ export interface Store {
   ): Promise<StoredMerchant | null>;
 
   /**
-   * Writes down a merchant, the name they are listed under, and their first
-   * key, together or not at all. Null where that identifier is taken, and then
-   * nothing was written.
+   * Writes down a merchant and their first key, together or not at all. Null
+   * where that identifier is taken, and then nothing was written.
    *
-   * The three in one write is ADR-0014 §1, and what it buys is worth stating
+   * The two in one write is ADR-0014 §1, and what it buys is worth stating
    * because the failure it prevents looks harmless. A merchant written without
    * a key is a merchant nobody can reach; the identifier was generated, so
    * nobody outside this call ever held it, and nothing afterwards would point at
@@ -346,17 +345,14 @@ export interface Store {
    * on it — cards, orders and receipts all reference merchants, so the row
    * cannot simply be swept.
    *
-   * The listing name is written here rather than by a second call for the same
-   * reason. A merchant with none publishes cards whose payment challenge
-   * carries no seller declaration at all, and a registration that failed
-   * between the merchant and the name would leave one.
-   *
-   * The name is expected to have been held to the catalog's rule already; the
-   * caller that does it is `registerMerchant` in `app/merchants.ts`, beside the
-   * other place a listing name is written.
+   * No listing name goes down with them, because registering does not ask for
+   * one: the name buyers read is chosen afterwards, through `setServiceName`.
+   * What that leaves is a merchant who is listed under nothing, which is a state
+   * the rest of the system already knows how to be honest about — a card cannot
+   * be published while it holds.
    */
   registerMerchant(
-    merchant: { readonly id: string; readonly name: string; readonly serviceName: string },
+    merchant: { readonly id: string; readonly name: string },
     key: { readonly id: string; readonly label: string; readonly digest: string },
     at: number,
   ): Promise<{ readonly merchant: StoredMerchant; readonly key: StoredKey } | null>;

@@ -808,6 +808,16 @@ describe("the route table", () => {
       "registration_request",
       "registered_merchant",
     ],
+    ["get_seller_name", "GET", "/v0/seller-name", "merchant_key", "-", "-", "seller_name"],
+    [
+      "set_seller_name",
+      "POST",
+      "/v0/seller-name",
+      "merchant_key",
+      "-",
+      "seller_name_request",
+      "seller_name",
+    ],
     ["list_keys", "GET", "/v0/keys", "merchant_key", "-", "-", "merchant_key_list"],
     ["issue_key", "POST", "/v0/keys", "merchant_key", "-", "issue_key_request", "issued_key"],
     ["disable_key", "POST", "/v0/keys/:key_id/disable", "merchant_key", "-", "-", "disabled_key"],
@@ -1099,6 +1109,31 @@ describe("the route table", () => {
     // them say a retry after a dropped connection is safe. This one is not, and
     // read in that company a silence would be taken for the same promise.
     expect(API_ROUTES.register_merchant.description).toContain("two merchants");
+  });
+
+  it("sends whoever registers on to the call that names their seller", () => {
+    // Registering leaves a merchant listed under nothing, and a merchant listed
+    // under nothing cannot publish. Somebody reading only this row would build a
+    // cabinet that registers a person and takes them straight to a publish call
+    // the gateway refuses, so the road on is named where they are already
+    // reading.
+    expect(API_ROUTES.register_merchant.description).toContain("/v0/seller-name");
+  });
+
+  it("says where the name has to be set before a card can be published", () => {
+    // The publish call is the one that refuses, so it is the one that has to
+    // name the way out. A refusal that said only that something was missing
+    // would leave a merchant looking through their card for a field that is not
+    // in it, because what is missing is not on the card at all.
+    expect(API_ROUTES.publish_card.description).toContain("/v0/seller-name");
+  });
+
+  it("says a name cannot be taken away, and names the act that is wanted instead", () => {
+    // A merchant who has a name keeps one. Somebody building a settings screen
+    // would otherwise put a "remove" button beside the field, find the call
+    // refuses, and read that as a gap rather than as the rule it is — so the
+    // row says which act does what they were reaching for.
+    expect(API_ROUTES.set_seller_name.description).toContain("pause");
   });
 
   it("says what a pause does and does not do to the orders already open", () => {

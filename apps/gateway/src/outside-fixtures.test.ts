@@ -28,7 +28,7 @@ import { ScriptedFacilitator } from "./adapters/memory/facilitator.js";
 import { MemoryQueue } from "./adapters/memory/queue.js";
 import { MemoryStore } from "./adapters/memory/store.js";
 import { Gateway } from "./app/gateway.js";
-import { keyDigest } from "./app/merchants.js";
+import { keyDigest, setServiceName } from "./app/merchants.js";
 import { loadConfig } from "./config.js";
 import { buildApp } from "./http/server.js";
 
@@ -52,11 +52,17 @@ async function aGatewayOnAPort() {
   const facilitator = new ScriptedFacilitator();
 
   // A merchant and a key, written the way anything that makes one writes one:
-  // a row for the merchant, and a row holding the digest of the key rather than
-  // the key. Nothing else in this file knows the merchant's identifier — the
-  // key is the only thing the calls below carry, and the door is what turns one
-  // into the other.
+  // a row for the merchant, a name for the merchant to be sold under, and a row
+  // holding the digest of the key rather than the key. Nothing else in this file
+  // knows the merchant's identifier — the key is the only thing the calls below
+  // carry, and the door is what turns one into the other.
+  //
+  // The name is not scaffolding. A merchant listed under nothing publishes
+  // nothing, so a walk that skipped it would be refused at its first card; the
+  // walk that registers, further down, is where being made to choose one is the
+  // subject rather than a precondition.
   await store.addMerchant({ id: "mch_the_walk", name: "The merchant of this walk" }, Date.now());
+  await setServiceName(store, "mch_the_walk", "The walk's own shop", Date.now());
   await store.addKey(
     {
       id: "mk_the_walk",
@@ -419,38 +425,58 @@ describe("a purchase from the outside", () => {
     // merchant other than the one it made, the sale below simply does not
     // happen — and that failure looks like a wrong key rather than like the
     // defect it is, which is why it is worth walking rather than asserting on.
+    //
+    // It is also the whole road a new merchant walks: register, choose the name
+    // buyers will read, publish, sell. The middle step is not optional and this
+    // is where that is shown rather than asserted — a card published before it
+    // is refused, and the sale below never happens.
     const gateway = await aGatewayOnAPort();
     try {
       const registered = await gateway.call("POST", "/v0/merchants", {
-        body: { name: "The registered shop", invitation: INVITATION },
+        body: { invitation: INVITATION },
       });
       expect(registered.status).toBe(200);
       const made = registered.body as {
         merchant_id: string;
-        name: string;
         key: { id: string; label: string; disabled_at: string | null };
         secret: string;
       };
-      expect(made.name).toBe("The registered shop");
       expect(made.key.disabled_at).toBeNull();
 
       const theirKey = made.secret;
+      const card = {
+        merchant_item_id: "desk-for-a-day",
+        title: "A desk for a day",
+        description: "One desk, one day, coffee included",
+        price: { amount: "20.00", currency: "USD" },
+        result: { door_code: { type: "string" } },
+        fulfillment: "sync",
+      };
+
+      // Nothing of theirs goes on sale before they have a name. Published now,
+      // this card would be offered to a buyer's agent through a payment request
+      // naming no seller at all.
+      const early = await gateway.call("POST", "/v0/catalog/publish", {
+        headers: { authorization: `Bearer ${theirKey}` },
+        body: card,
+      });
+      expect(early.status).toBe(422);
+
+      const named = await gateway.call("POST", "/v0/seller-name", {
+        headers: { authorization: `Bearer ${theirKey}` },
+        body: { seller_name: "The registered shop" },
+      });
+      expect(named.status).toBe(200);
+
       const published = await gateway.call("POST", "/v0/catalog/publish", {
         headers: { authorization: `Bearer ${theirKey}` },
-        body: {
-          merchant_item_id: "desk-for-a-day",
-          title: "A desk for a day",
-          description: "One desk, one day, coffee included",
-          price: { amount: "20.00", currency: "USD" },
-          result: { door_code: { type: "string" } },
-          fulfillment: "sync",
-        },
+        body: card,
       });
       expect(published.status).toBe(200);
       const itemId = (published.body as { ok: { id: string } }).ok.id;
 
       // What a crawler asks for, and what it is told about the seller. This is
-      // the whole reason registering writes a listing name: without one the
+      // the whole reason a merchant is made to choose a name: without one the
       // challenge carries no seller at all, and the merchant is absent from
       // every catalogue built from these with nothing anywhere saying why.
       const probed = await gateway.call("GET", `/v0/items/${itemId}/purchase`);

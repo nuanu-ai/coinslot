@@ -57,6 +57,8 @@ import {
   MerchantKeyListSchema,
   RegisteredMerchantSchema,
   RegistrationRequestSchema,
+  SellerNameRequestSchema,
+  SellerNameSchema,
 } from "./merchant.js";
 import { OrderSchema } from "./order.js";
 import { OrderStatusSchema } from "./order-status.js";
@@ -591,7 +593,7 @@ export const API_ROUTES = Object.freeze({
     path: "/v0/catalog/publish",
     auth: "merchant_key",
     description:
-      "Publishes one product, or says what is wrong with the card. Republishing under the same merchant_item_id is how a card is changed rather than how a second one appears. The catalog identifier comes back in the result, and from then on it is what an agent, a purchase and a receipt all use.",
+      "Publishes one product, or says what is wrong with the card. Republishing under the same merchant_item_id is how a card is changed rather than how a second one appears. The catalog identifier comes back in the result, and from then on it is what an agent, a purchase and a receipt all use. One of the findings this can come back with is not about the card at all: a merchant who has not set the name their products are sold under is refused under the code no_seller_name, and the way past it is POST /v0/seller-name rather than anything on the card. That refusal is here because a card published by a merchant with no name reaches a buyer's agent inside a payment request that names no seller.",
     request: CardSchema,
     response: { document: PublishResultSchema },
   },
@@ -646,9 +648,28 @@ export const API_ROUTES = Object.freeze({
     path: "/v0/merchants",
     auth: "none",
     description:
-      "Makes a merchant, lists them under the name given here, and issues their first key — all three of those or none of them. It takes no key because nobody registering has one yet; what stands in the door instead is an invitation code out of the gateway's own configuration, and a gateway with no code configured refuses every registration in the same words a wrong code gets, so this call is not a way of finding out whether registration is open. The name is the one a discovery catalog lists this seller under, which is why it is held to that catalog's rule rather than to ours. The key comes back once and is readable nowhere afterwards. Nothing about an account, an address or a password reaches this call: those belong to whatever signs a person in, on the other side of it. Unlike every other call on this surface that writes something, a repeat of this one is not safe and there is nothing here that could make it so: two calls make two merchants under the same name, and the caller holds a key to only the second. A caller whose connection drops before the answer arrives cannot find out from here whether the first landed — it has no key with which to ask — and the merchant it may have made cannot be swept away afterwards, because a merchant is what every card, order and receipt is owned by.",
+      "Makes a merchant and issues their first key — both of those or neither. It takes no key because nobody registering has one yet; what stands in the door instead is an invitation code out of the gateway's own configuration, and a gateway with no code configured refuses every registration in the same words a wrong code gets, so this call is not a way of finding out whether registration is open. The key comes back once and is readable nowhere afterwards. What the new merchant does not have is a name: they are listed under nothing until somebody sets one at POST /v0/seller-name, and until then publishing a card is refused, so a cabinet that registers a person and takes them straight to a publish screen has built a dead end. Nothing about an account, an address or a password reaches this call either: those belong to whatever signs a person in, on the other side of it. Unlike every other call on this surface that writes something, a repeat of this one is not safe and there is nothing here that could make it so: two calls make two merchants, and the caller holds a key to only the second. A caller whose connection drops before the answer arrives cannot find out from here whether the first landed — it has no key with which to ask — and the merchant it may have made cannot be swept away afterwards, because a merchant is what every card, order and receipt is owned by.",
     request: RegistrationRequestSchema,
     response: { document: RegisteredMerchantSchema },
+  },
+
+  get_seller_name: {
+    method: "GET",
+    path: "/v0/seller-name",
+    auth: "merchant_key",
+    description:
+      "What the merchant this call's own key belongs to is listed under: the name a discovery catalog shows beside their products and a buyer's agent is shown beside the price. Null is the ordinary answer for a merchant who has not chosen one, and it is an answer rather than a refusal — a merchant with no name exists and has a settings screen to draw. This is not read off a card: the name belongs to the merchant, so every card of theirs carries the same one and none of them carries it.",
+    response: { document: SellerNameSchema },
+  },
+
+  set_seller_name: {
+    method: "POST",
+    path: "/v0/seller-name",
+    auth: "merchant_key",
+    description:
+      "Sets what the merchant this call's own key belongs to is listed under. The answer is the name as it now stands, read back from what was written rather than echoed, so a screen showing it afterwards is showing what is true. Setting the same name twice changes nothing and answers the same way, so a retry after a dropped connection is safe. A name outside the rule of the catalog that will carry it is refused and nothing is written, which leaves the merchant listed under whatever they had before. What this call will not do is take a name away: it goes from no name to a name and from one name to another, and null is refused. A merchant with no name still has every card they published on sale, each offered through a payment request that names no seller, so removal is not a setting — somebody reaching for it wants either a different name, which is this same call, or an end to selling, which is the pause, and the pause leaves their cards where they can put them back on sale. One more thing is worth knowing before a screen is built on this: the name here is not the name a person reads in a list of merchants at a terminal. Those are two fields, held to two different rules, and only this one ever leaves us.",
+    request: SellerNameRequestSchema,
+    response: { document: SellerNameSchema },
   },
 
   list_keys: {

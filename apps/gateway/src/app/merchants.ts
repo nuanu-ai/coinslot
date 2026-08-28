@@ -1,5 +1,6 @@
 /**
- * Making a merchant, and issuing a key to one.
+ * Making a merchant, naming what their products are sold under, and issuing a
+ * key to one.
  *
  * It is one small module rather than a copy per caller because there are four
  * and they must not drift: the command somebody runs at a terminal, the seed the
@@ -187,35 +188,40 @@ export interface Registration {
 }
 
 /**
- * Makes a merchant, lists them under that name, and issues their first key —
- * all three or none of them (ADR-0014 §1). Null where the identifier is taken,
- * which a generated one never is.
+ * What a merchant made by registering is called in the merchant table.
  *
- * The name does two jobs and it is worth saying which. It is the merchant's own
- * name, the one somebody reads in a list at a terminal, and it is the name the
- * seller is listed under in a discovery catalog. Elsewhere those are two fields
- * because they answer to different rules; here they start out as one string
- * because there is only one the person typed, and the catalog's rule is the
- * stricter of the two, so it is what the string is held to.
+ * That column is the name a person reads at a terminal, beside the identifier
+ * and the count of working keys, and it is not the name buyers read — the two
+ * are different fields answering to different rules, and only the other one
+ * ever leaves us. Somebody registering types neither, so this one has to come
+ * from somewhere.
  *
- * The check is here rather than in the store, for the reason `setServiceName`
- * gives beside it: this is the second of the two places a listing name is
- * written, and the catalog drops a name it cannot render without telling
- * anybody. Throwing is right — the route above holds the same rule on the way
- * in, so reaching this is a caller that skipped it.
+ * It says how the merchant came to exist, because that is the only true thing
+ * there is to say about a row nobody named. The alternatives were worse. Empty,
+ * it is a blank column somebody has to work out the meaning of. The identifier
+ * again, and the row carries it twice. Anything that reads like a name is a
+ * name somebody will go looking for the owner of, and there is none.
+ */
+export const REGISTERED_MERCHANT_NAME = "registered with an invitation";
+
+/**
+ * Makes a merchant and issues their first key — both or neither (ADR-0014 §1).
+ * Null where the identifier is taken, which a generated one never is.
+ *
+ * No name for buyers is written, because registering does not ask for one. It
+ * is chosen afterwards through `setServiceName`, and what stands between here
+ * and there is that a merchant listed under nothing publishes nothing: the
+ * refusal is at the publish, where a merchant is actually about to be shown to
+ * strangers, rather than here, where they have nothing to show yet.
  */
 export async function registerMerchant(
   store: Store,
   ids: Ids,
-  name: string,
   at: number,
 ): Promise<Registration | null> {
-  // Throws with the schema's own words, which name the rule and the number.
-  ServiceNameSchema.parse(name);
-
   const secret = newKeySecret();
   const written = await store.registerMerchant(
-    { id: ids("mch"), name, serviceName: name },
+    { id: ids("mch"), name: REGISTERED_MERCHANT_NAME },
     { id: ids("mk"), label: FIRST_KEY_LABEL, digest: keyDigest(secret) },
     at,
   );

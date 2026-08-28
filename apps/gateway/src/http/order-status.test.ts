@@ -201,7 +201,7 @@ describe("what the answer carries", () => {
     // their products. What comes back is the buyer's own purchase: where it
     // stands, what it cost, and the goods.
     const { served, harnessed } = await started();
-    const seller = await harnessed.addMerchant("A seller who is not the harness's own");
+    const seller = await harnessed.addMerchant("Not the harness's own seller");
     const itemId = await publish(served, laterCard, keyOf(seller));
     const orderId = await orderTakenOn(harnessed, served, itemId, seller.id);
 

@@ -1477,9 +1477,14 @@ describe("a product that is declared and a product that is not", () => {
     ).toBe("The pilot merchant");
   });
 
-  it("says nothing about a seller whose merchant has not been given a listing name", async () => {
-    const { served } = await started();
+  it("says nothing about a seller whose merchant has taken their name away", async () => {
+    // The negative control for the case above: the field is left out rather
+    // than sent empty, and an empty string is a thing a catalogue would render.
+    // Reaching it takes a merchant who publishes and then stops being named,
+    // because a merchant with no name cannot publish at all.
+    const { served, harnessed } = await started();
     const itemId = await publish(served, syncCard);
+    await setServiceName(harnessed.store, harnessed.merchant.id, null, Date.now());
 
     const answered = await served.call("GET", `/v0/items/${itemId}/purchase`);
     const { resource } = decodePaymentRequiredHeader(

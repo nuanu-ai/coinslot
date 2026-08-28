@@ -20,6 +20,7 @@ import {
   keyDigest,
   makeMerchant,
   newKeySecret,
+  REGISTERED_MERCHANT_NAME,
   registerMerchant,
   SEEDED_MERCHANT,
   SEEDED_SERVICE_NAME,
@@ -281,20 +282,42 @@ describe("the code in the door of registration", () => {
 });
 
 describe("registering a merchant", () => {
-  it("makes the merchant, lists them under that name, and issues one key", async () => {
-    // All three in one act (ADR-0014 §1). The listing name is the part easiest
-    // to leave out and worst to leave out: without it every card this merchant
-    // publishes answers a crawler with no seller in the challenge at all.
+  it("makes the merchant and issues one key, in one act", async () => {
+    // Both in one act (ADR-0014 §1): a merchant written without a key is a
+    // merchant nobody can reach, under an identifier that was generated inside
+    // this call and that nobody outside it ever held.
     const store = aStore();
 
-    const made = await registerMerchant(store, countedIds(), "Someone's shop", 1_000);
+    const made = await registerMerchant(store, countedIds(), 1_000);
 
-    expect(made?.merchant.serviceName).toBe("Someone's shop");
-    expect(made?.merchant.name).toBe("Someone's shop");
     expect((await store.workingKey(keyDigest(made?.secret ?? "")))?.merchantId).toBe(
       made?.merchant.id,
     );
     expect(await store.keysOf(made?.merchant.id ?? "")).toHaveLength(1);
+  });
+
+  it("lists the new merchant under nothing at all", async () => {
+    // Nobody has chosen a name yet, and there is nothing to stand in for one.
+    // Filling it from anywhere would put a word the merchant did not choose in
+    // front of every buyer who reads a catalogue.
+    const store = aStore();
+
+    const made = await registerMerchant(store, countedIds(), 1_000);
+
+    expect(made?.merchant.serviceName).toBeNull();
+  });
+
+  it("gives the row a name that says nobody typed one", async () => {
+    // The merchant row carries a name a person reads at a terminal, and this
+    // merchant was made by a route rather than by somebody typing. Left empty
+    // it would be a blank column in every listing; filled with a word that
+    // looks chosen, it would be a name somebody goes looking for the owner of.
+    const store = aStore();
+
+    const made = await registerMerchant(store, countedIds(), 1_000);
+
+    expect(made?.merchant.name).toBe(REGISTERED_MERCHANT_NAME);
+    expect(made?.merchant.name).not.toBe("");
   });
 
   it("generates the key rather than taking one", async () => {
@@ -305,33 +328,20 @@ describe("registering a merchant", () => {
     const store = aStore();
     const ids = countedIds();
 
-    const first = await registerMerchant(store, ids, "Someone's shop", 1_000);
-    const second = await registerMerchant(store, ids, "Another shop", 1_000);
+    const first = await registerMerchant(store, ids, 1_000);
+    const second = await registerMerchant(store, ids, 1_000);
 
     expect(first?.secret.startsWith(KEY_PREFIX)).toBe(true);
     expect(second?.secret.startsWith(KEY_PREFIX)).toBe(true);
     expect(first?.secret).not.toBe(second?.secret);
   });
 
-  it("refuses a name the catalog would cut down, and writes nothing", async () => {
-    // The same rule setting a listing name by hand is held to, at the one other
-    // place a listing name is written. A merchant accepted here and mangled
-    // there would trade under a word nobody chose.
-    const store = aStore();
-
-    await expect(registerMerchant(store, countedIds(), "x".repeat(33), 1_000)).rejects.toThrow(
-      /32/,
-    );
-    await expect(registerMerchant(store, countedIds(), "Кафе", 1_000)).rejects.toThrow(/ASCII/i);
-    expect(await store.merchants()).toStrictEqual([]);
-  });
-
   it("gives every registration its own merchant", async () => {
     const store = aStore();
     const ids = countedIds();
 
-    const first = await registerMerchant(store, ids, "First shop", 1_000);
-    const second = await registerMerchant(store, ids, "Second shop", 2_000);
+    const first = await registerMerchant(store, ids, 1_000);
+    const second = await registerMerchant(store, ids, 2_000);
 
     expect(first?.merchant.id).not.toBe(second?.merchant.id);
     expect((await store.merchants()).length).toBe(2);
