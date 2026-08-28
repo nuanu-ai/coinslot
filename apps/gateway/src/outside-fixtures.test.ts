@@ -1,5 +1,5 @@
 /**
- * Two purchases walked the whole way through, with nothing borrowed.
+ * Purchases walked the whole way through, with nothing borrowed.
  *
  * Everything the other tests reach for — the harness, the counted identifiers,
  * the worker loop, the cards — is built here from scratch instead. A fixture
@@ -8,6 +8,12 @@
  * takes nothing from one. It publishes a card the way a merchant's SDK would,
  * reads the catalog the way an agent would, pays the way an x402 client does,
  * answers the way a handler does, and reads the receipt at the end.
+ *
+ * The last walk borrows less again: it begins with no merchant at all, registers
+ * one over the same route a person would, and sells on the key that registration
+ * generated and showed once. Nothing in it chooses a key, a digest or a
+ * merchant, so a registration that wrote down the digest of something other than
+ * what it printed leaves the sale not happening at all.
  *
  * The only things swapped are the three that would need a database, a queue
  * server and a payment network. Everything between the socket and the order
@@ -28,6 +34,9 @@ import { buildApp } from "./http/server.js";
 
 const MERCHANT_KEY = "the-merchant-key-for-this-walk";
 const PAY_TO = "0x00000000000000000000000000000000000000aa";
+
+/** The code the gateway below takes registrations behind. */
+const INVITATION = "the-code-this-walk-was-given";
 
 /** A whole gateway and a socket to talk to it over, built from nothing. */
 async function aGatewayOnAPort() {
@@ -62,6 +71,7 @@ async function aGatewayOnAPort() {
     config: loadConfig({
       DATABASE_URL: "postgres://coinslot@localhost:5432/coinslot",
       PAY_TO_ADDRESS: PAY_TO,
+      REGISTRATION_INVITATION: INVITATION,
     }),
     store,
     queue,
@@ -116,6 +126,9 @@ async function aGatewayOnAPort() {
 function aMerchantsWorker(
   call: Awaited<ReturnType<typeof aGatewayOnAPort>>["call"],
   handle: (order: { id: string; merchant_item_id: string }) => Record<string, unknown>,
+  // Whichever key this merchant holds. The walk that registers gets its key
+  // from the registration itself and nothing here knows it in advance.
+  key: string = MERCHANT_KEY,
 ) {
   let running = true;
   const seen: string[] = [];
@@ -124,7 +137,7 @@ function aMerchantsWorker(
     while (running) {
       const drawn = await call("POST", "/v0/worker/poll", {
         body: { wait_seconds: 0, max: 10 },
-        headers: { authorization: `Bearer ${MERCHANT_KEY}` },
+        headers: { authorization: `Bearer ${key}` },
       });
       const { envelopes } = drawn.body as {
         envelopes: { kind: string; payload: { id: string; merchant_item_id: string } }[];
@@ -135,7 +148,7 @@ function aMerchantsWorker(
         seen.push(envelope.payload.id);
         await call("POST", `/v0/orders/${encodeURIComponent(envelope.payload.id)}/answer`, {
           body: { delivered: handle(envelope.payload) },
-          headers: { authorization: `Bearer ${MERCHANT_KEY}` },
+          headers: { authorization: `Bearer ${key}` },
         });
       }
 
@@ -391,6 +404,129 @@ describe("a purchase from the outside", () => {
         headers: { authorization: `Bearer ${MERCHANT_KEY}` },
       });
       expect((closed.body as { orders: unknown[] }).orders).toStrictEqual([]);
+    } finally {
+      await gateway.close();
+    }
+  });
+
+  it("walks a merchant from registering to a sale, on a key nothing here chose", async () => {
+    // The walk with the least borrowed of all. Every other test in this file
+    // starts from a merchant and a key written into the store by hand; this one
+    // starts from nothing but the invitation code, and the key it sells with is
+    // the one the gateway generated and showed once. If registration wrote a
+    // digest of anything but the string it printed, or hung the key on a
+    // merchant other than the one it made, the sale below simply does not
+    // happen — and that failure looks like a wrong key rather than like the
+    // defect it is, which is why it is worth walking rather than asserting on.
+    const gateway = await aGatewayOnAPort();
+    try {
+      const registered = await gateway.call("POST", "/v0/merchants", {
+        body: { name: "The registered shop", invitation: INVITATION },
+      });
+      expect(registered.status).toBe(200);
+      const made = registered.body as {
+        merchant_id: string;
+        name: string;
+        key: { id: string; label: string; disabled_at: string | null };
+        secret: string;
+      };
+      expect(made.name).toBe("The registered shop");
+      expect(made.key.disabled_at).toBeNull();
+
+      const theirKey = made.secret;
+      const published = await gateway.call("POST", "/v0/catalog/publish", {
+        headers: { authorization: `Bearer ${theirKey}` },
+        body: {
+          merchant_item_id: "desk-for-a-day",
+          title: "A desk for a day",
+          description: "One desk, one day, coffee included",
+          price: { amount: "20.00", currency: "USD" },
+          result: { door_code: { type: "string" } },
+          fulfillment: "sync",
+        },
+      });
+      expect(published.status).toBe(200);
+      const itemId = (published.body as { ok: { id: string } }).ok.id;
+
+      // What a crawler asks for, and what it is told about the seller. This is
+      // the whole reason registering writes a listing name: without one the
+      // challenge carries no seller at all, and the merchant is absent from
+      // every catalogue built from these with nothing anywhere saying why.
+      const probed = await gateway.call("GET", `/v0/items/${itemId}/purchase`);
+      expect(probed.status).toBe(402);
+      const declared = decodePaymentRequiredHeader(
+        probed.headers.get("payment-required") ?? "",
+      ) as unknown as { resource: { serviceName?: string }; extensions?: Record<string, unknown> };
+      expect(declared.resource.serviceName).toBe("The registered shop");
+      expect(declared.extensions?.bazaar).toBeDefined();
+
+      // And the sale itself, on their key and their worker.
+      const challenged = await gateway.call("POST", `/v0/items/${itemId}/purchase`, {
+        body: { params: {} },
+      });
+      expect(challenged.status).toBe(402);
+
+      const worker = aMerchantsWorker(gateway.call, () => ({ door_code: "8812" }), theirKey);
+      const bought = await gateway.call("POST", `/v0/items/${itemId}/purchase`, {
+        body: { params: {} },
+        headers: {
+          "payment-signature": payFor(challenged.headers.get("payment-required") ?? ""),
+        },
+      });
+      await worker.stop();
+
+      expect(bought.status).toBe(200);
+      expect((bought.body as { delivered: unknown }).delivered).toStrictEqual({
+        door_code: "8812",
+      });
+
+      // Their keys, as their own cabinet would read them: one key, and it is
+      // the one this call was made with.
+      const listed = await gateway.call("GET", "/v0/keys", {
+        headers: { authorization: `Bearer ${theirKey}` },
+      });
+      expect(listed.body).toStrictEqual({
+        keys: [made.key],
+        this_call: made.key.id,
+      });
+
+      // Disabling the key the call is made with is refused, and the key still
+      // works afterwards — which is the half that matters, because a refusal
+      // that had already written the revocation would be worse than no rule.
+      const itself = await gateway.call(
+        "POST",
+        `/v0/keys/${encodeURIComponent(made.key.id)}/disable`,
+        { headers: { authorization: `Bearer ${theirKey}` } },
+      );
+      expect(itself.status).toBe(409);
+
+      // A second key, and the first disabled with it. This is how a merchant
+      // rotates: the new key opens the door before the old one stops.
+      const second = await gateway.call("POST", "/v0/keys", {
+        body: { label: "the second worker" },
+        headers: { authorization: `Bearer ${theirKey}` },
+      });
+      expect(second.status).toBe(200);
+      const other = second.body as { key: { id: string }; secret: string };
+
+      const revoked = await gateway.call(
+        "POST",
+        `/v0/keys/${encodeURIComponent(made.key.id)}/disable`,
+        { headers: { authorization: `Bearer ${other.secret}` } },
+      );
+      expect(revoked.status).toBe(200);
+
+      const withTheOld = await gateway.call("GET", "/v0/cards", {
+        headers: { authorization: `Bearer ${theirKey}` },
+      });
+      const withTheNew = await gateway.call("GET", "/v0/cards", {
+        headers: { authorization: `Bearer ${other.secret}` },
+      });
+      expect(withTheOld.status).toBe(401);
+      expect(withTheNew.status).toBe(200);
+      expect((withTheNew.body as { cards: { id: string }[] }).cards.map((card) => card.id)).toEqual(
+        [itemId],
+      );
     } finally {
       await gateway.close();
     }
