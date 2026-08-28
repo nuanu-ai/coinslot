@@ -145,6 +145,47 @@ describe("verifying a payment", () => {
     expect(client.asked).toStrictEqual([]);
   });
 
+  it("takes one address in either spelling it may be written in", async () => {
+    // An address on an EVM chain has two spellings and one value: the mixed
+    // case a wallet shows, whose capitals are a checksum, and the same forty
+    // characters in lower case. A merchant's address is stored and offered
+    // checksummed (ADR-0019), and a client that normalises what it echoes back
+    // — or one whose library does — would have every payment it ever made
+    // refused as though it had paid a stranger, with a message saying so. The
+    // checksum's job is catching a typed character at the door, not making the
+    // wire case-sensitive.
+    const checksummed = "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed";
+    const inLowerCase = checksummed.toLowerCase();
+    const client = new Answering();
+
+    const answered = await new X402Facilitator(client, edge).verify({
+      ...charge(
+        encodePaymentSignatureHeader({
+          x402Version: 2,
+          accepted: edge.requirementsFor({ amount: "80.00", currency: "USD" }, "ord_1", inLowerCase),
+          payload: { signature: "0xsigned" },
+        }),
+      ),
+      payTo: checksummed,
+    });
+
+    expect(answered).toStrictEqual({ verified: true, payer: "0xpayer" });
+    // And what the facilitator is asked about is still our own spelling: the
+    // agent's copy is evidence of nothing, and the requirements are rebuilt.
+    expect(client.asked[0]?.requirements.payTo).toBe(checksummed);
+    // The rule is one address in two spellings, not "addresses need not match":
+    // another address is still refused, whatever case it is written in.
+    expect(
+      await new X402Facilitator(new Answering(), edge).verify({
+        ...charge(honest({ payTo: "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359" })),
+        payTo: checksummed,
+      }),
+    ).toMatchObject({
+      verified: false,
+      message: "the payment was made out to a different address from the one asked for",
+    });
+  });
+
   it("checks the payment against the merchant's address rather than the gateway's own", async () => {
     // The address in the requirements comes from the charge, which reads it off
     // the order's own merchant, and never from this gateway's configuration.
