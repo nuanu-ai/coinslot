@@ -276,6 +276,42 @@ describe("verifying a payment", () => {
     expect(answered).toMatchObject({ verified: false, reason: "signature" });
   });
 
+  it("tells a payment it could not read from a sale it cannot ask about", async () => {
+    // Two different facts, and everything about what happens next turns on
+    // which one it is. A payment that will not decode is the payer's to fix and
+    // is refused for good. A charge this gateway cannot even put a question
+    // about — a merchant with nowhere to be paid, a currency it cannot charge
+    // in — is ours, and the payment presented for it may be perfectly good. Told
+    // it "could not be read as a payment at all", an agent goes looking through
+    // a payment with nothing wrong with it.
+    const client = new Answering();
+
+    const answered = await new X402Facilitator(client, edge).verify({
+      ...charge(honest()),
+      payTo: null,
+    });
+
+    expect(answered.verified).toBe("unknown");
+    expect(answered).toMatchObject({ message: expect.stringContaining("nowhere to send the money") });
+    // And nothing reached the facilitator, because there was no question to put
+    // to it: what is missing is on our side of the call.
+    expect(client.asked).toHaveLength(0);
+  });
+
+  it("says what is actually wrong when a charge cannot be built at all", async () => {
+    // The same seam on the executing side. Whoever reads this out of a log is
+    // looking at an order whose money never moved, and "the payment cannot be
+    // read" would send them to the payment rather than to the merchant's
+    // settings.
+    const facilitator = new X402Facilitator(new Answering(), edge);
+
+    await expect(facilitator.settle({ ...charge(honest()), payTo: null })).rejects.toThrow(
+      /nowhere to send the money/,
+    );
+    // And a payment that really cannot be read still says so.
+    await expect(facilitator.settle(charge("not base64"))).rejects.toThrow(/cannot be read/);
+  });
+
   it("reads a verdict the facilitator sent with a refusing status as a verdict", async () => {
     // A facilitator may answer "this payment is invalid, and here is why" with
     // a 4xx rather than a 200, and the client turns that into a throw. Reported
