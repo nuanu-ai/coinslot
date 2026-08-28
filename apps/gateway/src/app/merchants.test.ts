@@ -14,11 +14,13 @@ import { describe, expect, it } from "vitest";
 import { MemoryStore } from "../adapters/memory/store.js";
 import { countedIds } from "../testing/harness.js";
 import {
+  invitationAccepted,
   issueKey,
   KEY_PREFIX,
   keyDigest,
   makeMerchant,
   newKeySecret,
+  registerMerchant,
   SEEDED_MERCHANT,
   seedSandboxKey,
   setServiceName,
@@ -48,9 +50,9 @@ describe("a key", () => {
     const issued = await issueKey(store, countedIds(), "mch_1", "the worker's", 1_000);
 
     expect(JSON.stringify(issued.key)).not.toContain(issued.secret);
-    expect(await store.merchantForKey(keyDigest(issued.secret))).toBe("mch_1");
+    expect((await store.workingKey(keyDigest(issued.secret)))?.merchantId).toBe("mch_1");
     // And the key itself is not what anything is looked up by.
-    expect(await store.merchantForKey(issued.secret)).toBeNull();
+    expect(await store.workingKey(issued.secret)).toBeNull();
   });
 
   it("hashes the same secret the same way every time, and two secrets differently", () => {
@@ -70,7 +72,9 @@ describe("seeding the sandbox", () => {
     const seeded = await seedSandboxKey(store, countedIds(), "the-sandbox-key", 1_000);
 
     expect(seeded).toStrictEqual({ kind: "issued", merchantId: SEEDED_MERCHANT.id });
-    expect(await store.merchantForKey(keyDigest("the-sandbox-key"))).toBe(SEEDED_MERCHANT.id);
+    expect((await store.workingKey(keyDigest("the-sandbox-key")))?.merchantId).toBe(
+      SEEDED_MERCHANT.id,
+    );
   });
 
   it("writes nothing the second time, so a restart is not a second key", async () => {
@@ -103,7 +107,7 @@ describe("seeding the sandbox", () => {
 
     expect(again).toStrictEqual({ kind: "disabled" });
     expect(await store.keysOf(SEEDED_MERCHANT.id)).toHaveLength(1);
-    expect(await store.merchantForKey(keyDigest("the-sandbox-key"))).toBeNull();
+    expect(await store.workingKey(keyDigest("the-sandbox-key"))).toBeNull();
   });
 
   it("survives two processes seeding the same key at the same instant", async () => {
@@ -121,7 +125,9 @@ describe("seeding the sandbox", () => {
 
     expect([first.kind, second.kind].sort()).toStrictEqual(["already_there", "issued"]);
     expect(await store.keysOf(SEEDED_MERCHANT.id)).toHaveLength(1);
-    expect(await store.merchantForKey(keyDigest("the-sandbox-key"))).toBe(SEEDED_MERCHANT.id);
+    expect((await store.workingKey(keyDigest("the-sandbox-key")))?.merchantId).toBe(
+      SEEDED_MERCHANT.id,
+    );
   });
 
   it("throws when the write failed for a reason that is not a race", async () => {
@@ -160,6 +166,89 @@ describe("seeding the sandbox", () => {
     await seedSandboxKey(store, ids, "the-sandbox-key", 2_000);
 
     expect(await store.selling(SEEDED_MERCHANT.id)).toBe("paused");
+  });
+});
+
+describe("the code in the door of registration", () => {
+  // The promise: this call is not a way of finding out whether registration is
+  // open here, nor of learning a character of the code one attempt at a time.
+
+  it("accepts the code the gateway was configured with and nothing else", () => {
+    expect(invitationAccepted("the-code", "the-code")).toBe(true);
+    expect(invitationAccepted("the-code", "the-cod")).toBe(false);
+    expect(invitationAccepted("the-code", "the-codE")).toBe(false);
+    expect(invitationAccepted("the-code", "the-code ")).toBe(false);
+    expect(invitationAccepted("the-code", "")).toBe(false);
+  });
+
+  it("accepts nothing at all where no code is configured", () => {
+    // Registration closed, and closed for every value anybody could present —
+    // including the empty one, which is what a caller sending no code at all
+    // would come down to if the shape of the request let it through.
+    expect(invitationAccepted(null, "")).toBe(false);
+    expect(invitationAccepted(null, "the-code")).toBe(false);
+    expect(invitationAccepted(null, "any string whatsoever")).toBe(false);
+  });
+
+  it("compares a code of any length against a code of any other", () => {
+    // The comparison is over two digests rather than two codes, which is what
+    // makes it constant-time at all: `timingSafeEqual` refuses two buffers of
+    // different lengths, so comparing the codes themselves would throw on
+    // exactly the guesses that are the wrong length and answer them differently
+    // from the ones that are not.
+    expect(invitationAccepted("short", "a very much longer guess indeed")).toBe(false);
+    expect(invitationAccepted("a very much longer code indeed", "short")).toBe(false);
+  });
+});
+
+describe("registering a merchant", () => {
+  it("makes the merchant, lists them under that name, and issues one key", async () => {
+    // All three in one act (ADR-0014 §1). The listing name is the part easiest
+    // to leave out and worst to leave out: without it every card this merchant
+    // publishes answers a crawler with no seller in the challenge at all.
+    const store = aStore();
+
+    const made = await registerMerchant(store, countedIds(), "Someone's shop", 1_000);
+
+    expect(made?.merchant.serviceName).toBe("Someone's shop");
+    expect(made?.merchant.name).toBe("Someone's shop");
+    expect((await store.workingKey(keyDigest(made?.secret ?? "")))?.merchantId).toBe(
+      made?.merchant.id,
+    );
+    expect(await store.keysOf(made?.merchant.id ?? "")).toHaveLength(1);
+  });
+
+  it("generates the key rather than taking one, and hands it over once", async () => {
+    const store = aStore();
+
+    const made = await registerMerchant(store, countedIds(), "Someone's shop", 1_000);
+
+    expect(made?.secret.startsWith(KEY_PREFIX)).toBe(true);
+    expect(JSON.stringify(made?.key)).not.toContain(made?.secret ?? "");
+  });
+
+  it("refuses a name the catalog would cut down, and writes nothing", async () => {
+    // The same rule setting a listing name by hand is held to, at the one other
+    // place a listing name is written. A merchant accepted here and mangled
+    // there would trade under a word nobody chose.
+    const store = aStore();
+
+    await expect(registerMerchant(store, countedIds(), "x".repeat(33), 1_000)).rejects.toThrow(
+      /32/,
+    );
+    await expect(registerMerchant(store, countedIds(), "Кафе", 1_000)).rejects.toThrow(/ASCII/i);
+    expect(await store.merchants()).toStrictEqual([]);
+  });
+
+  it("gives every registration its own merchant", async () => {
+    const store = aStore();
+    const ids = countedIds();
+
+    const first = await registerMerchant(store, ids, "First shop", 1_000);
+    const second = await registerMerchant(store, ids, "Second shop", 2_000);
+
+    expect(first?.merchant.id).not.toBe(second?.merchant.id);
+    expect((await store.merchants()).length).toBe(2);
   });
 });
 

@@ -725,17 +725,17 @@ if (databaseUrl === null) {
       await store.addKey({ id: "mk_door_a", merchantId: A, label: "A's", digest: "door-a" }, now);
       await store.addKey({ id: "mk_door_b", merchantId: B, label: "B's", digest: "door-b" }, now);
 
-      expect(await store.merchantForKey("door-a")).toBe(A);
-      expect(await store.merchantForKey("door-b")).toBe(B);
+      expect(await store.workingKey("door-a")).toMatchObject({ id: "mk_door_a", merchantId: A });
+      expect((await store.workingKey("door-b"))?.merchantId).toBe(B);
 
       await store.disableKey("mk_door_a", now + 1_000);
 
       // And it is refused in exactly the words a key nobody was issued gets, so
       // a revoked key is not a way of confirming that a guess was once real.
-      expect(await store.merchantForKey("door-a")).toBeNull();
-      expect(await store.merchantForKey("a-digest-nobody-was-issued")).toBeNull();
+      expect(await store.workingKey("door-a")).toBeNull();
+      expect(await store.workingKey("a-digest-nobody-was-issued")).toBeNull();
       // B's key is untouched, which is the whole reason a key is a row.
-      expect(await store.merchantForKey("door-b")).toBe(B);
+      expect((await store.workingKey("door-b"))?.merchantId).toBe(B);
     });
 
     it("keeps the instant a key was first revoked at when it is revoked again", async () => {
@@ -746,6 +746,63 @@ if (databaseUrl === null) {
 
       expect((await store.disableKey("mk_twice", now + 1_000))?.disabledAt).toBe(now + 1_000);
       expect((await store.disableKey("mk_twice", now + 9_000))?.disabledAt).toBe(now + 1_000);
+    });
+
+    it("disables a key of the merchant who asked, and finds none of anybody else's", async () => {
+      // The scoping in the predicate rather than after the read, which is what
+      // makes "not yours" and "not there" one answer from where the caller
+      // stands — a refusal that told them apart would count somebody else's
+      // keys. Only a database runs this `where`.
+      await store.addKey({ id: "mk_own_a", merchantId: A, label: "A's", digest: "own-a" }, now);
+      await store.addKey({ id: "mk_own_b", merchantId: B, label: "B's", digest: "own-b" }, now);
+
+      expect((await store.disableKeyOf(A, "mk_own_a", now + 1_000))?.disabledAt).toBe(now + 1_000);
+      expect(await store.disableKeyOf(A, "mk_own_b", now + 1_000)).toBeNull();
+      expect(await store.disableKeyOf(A, "mk_nobody_was_issued", now + 1_000)).toBeNull();
+      // And B's key still opens the door, which is what the null was protecting.
+      expect((await store.workingKey("own-b"))?.merchantId).toBe(B);
+      // The same coalesce as the unscoped verb: a retry keeps the first instant.
+      expect((await store.disableKeyOf(A, "mk_own_a", now + 9_000))?.disabledAt).toBe(now + 1_000);
+    });
+
+    it("writes a merchant and their first key in one transaction, or neither", async () => {
+      // ADR-0014 §1. Two inserts, and only a database can roll the first one
+      // back when the second fails — in memory this is a delete and here it is
+      // the transaction itself. A merchant left behind by a half-written
+      // registration has a generated identifier nobody holds and no key, so
+      // nothing would ever find it again.
+      const made = await store.registerMerchant(
+        { id: "mch_reg", name: "Someone's shop", serviceName: "Someone's shop" },
+        { id: "mk_reg", label: "the first key", digest: "reg-digest" },
+        now,
+      );
+
+      expect(made?.merchant).toMatchObject({ id: "mch_reg", serviceName: "Someone's shop" });
+      expect((await store.workingKey("reg-digest"))?.id).toBe("mk_reg");
+
+      // A digest already taken is the way the second insert fails with nothing
+      // else wrong, and the merchant beside it must not survive it.
+      await expect(
+        store.registerMerchant(
+          { id: "mch_rolled_back", name: "Another shop", serviceName: "Another shop" },
+          { id: "mk_rolled_back", label: "the first key", digest: "reg-digest" },
+          now,
+        ),
+      ).rejects.toThrow();
+
+      expect(await store.merchantById("mch_rolled_back")).toBeNull();
+
+      // And an identifier already taken is answered rather than thrown, without
+      // touching the merchant that is there.
+      expect(
+        await store.registerMerchant(
+          { id: "mch_reg", name: "Somebody else", serviceName: "Somebody else" },
+          { id: "mk_second", label: "the first key", digest: "another-digest" },
+          now,
+        ),
+      ).toBeNull();
+      expect((await store.merchantById("mch_reg"))?.name).toBe("Someone's shop");
+      expect(await store.workingKey("another-digest")).toBeNull();
     });
 
     it("refuses a key for a merchant that is not there", async () => {

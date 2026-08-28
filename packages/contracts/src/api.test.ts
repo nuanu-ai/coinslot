@@ -796,6 +796,18 @@ describe("the route table", () => {
       "-",
       "merchant_card_list",
     ],
+    [
+      "register_merchant",
+      "POST",
+      "/v0/merchants",
+      "none",
+      "-",
+      "registration_request",
+      "registered_merchant",
+    ],
+    ["list_keys", "GET", "/v0/keys", "merchant_key", "-", "-", "merchant_key_list"],
+    ["issue_key", "POST", "/v0/keys", "merchant_key", "-", "issue_key_request", "issued_key"],
+    ["disable_key", "POST", "/v0/keys/:key_id/disable", "merchant_key", "-", "-", "disabled_key"],
     ["get_order", "GET", "/v0/orders/:order_id", "merchant_key", "-", "-", "order_with_status"],
     ["list_orders", "GET", "/v0/orders", "merchant_key", "order_list_query", "-", "order_list"],
     ["list_receipts", "GET", "/v0/receipts", "merchant_key", "-", "-", "receipt_list"],
@@ -1052,6 +1064,47 @@ describe("the route table", () => {
       expect(route.request, route.path).toBeUndefined();
       expect(route.auth, route.path).toBe("merchant_key");
     }
+  });
+
+  it("takes no key on the one route whose caller cannot have one", () => {
+    // Registering is where a merchant's first key comes from, so nobody
+    // reaching it holds one. A gateway reads that off the word and not off the
+    // address: this one sits under no prefix that would give it away, and the
+    // door in front of it is a value out of the gateway's own configuration
+    // rather than anything this table carries.
+    expect(API_ROUTES.register_merchant.auth).toBe("none");
+    expect(API_ROUTES.register_merchant.request).toBe(schemas.registration_request);
+  });
+
+  it("puts a merchant's own keys behind a key of theirs", () => {
+    // The three key routes act on the merchant the caller's key resolves to and
+    // on nobody else's. Marked open, listing keys would be a list of everybody's
+    // — and issuing one would be a key on a merchant the caller chose.
+    const theKeyRoutes: RouteDefinition[] = [
+      API_ROUTES.list_keys,
+      API_ROUTES.issue_key,
+      API_ROUTES.disable_key,
+    ];
+
+    for (const route of theKeyRoutes) expect(route.auth, route.path).toBe("merchant_key");
+  });
+
+  it("disables a key by naming it in the address, and carries no body", () => {
+    // Written as one route taking a key and a word, this would accept "enable"
+    // as readily as "disable", and bringing a revoked key back is not something
+    // this surface does at all — a key that leaked is replaced, not restored.
+    expect(API_ROUTES.disable_key.request).toBeUndefined();
+    expect(pathParamsOf(API_ROUTES.disable_key.path)).toStrictEqual(["key_id"]);
+  });
+
+  it("warns whoever writes a cabinet that one key cannot be disabled from it", () => {
+    // The rule lives in the route rather than on a screen, so the table is
+    // where somebody building against it finds out. What it costs to learn the
+    // hard way is a merchant one click away from a cabinet that answers every
+    // page with "the gateway will not take this key", and no terminal to undo
+    // it with. This pins that the sentence is there, not what it says.
+    expect(API_ROUTES.disable_key.description).toContain("this call was made with");
+    expect(API_ROUTES.list_keys.description).toContain("this_call");
   });
 
   it("says what a pause does and does not do to the orders already open", () => {
