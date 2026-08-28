@@ -33,6 +33,18 @@ what has been guessed and is it marked; what this turns into at ten times the
 data; how "I don't know" sounds and whether it is distinguishable from "I know
 that there is none".
 
+## The pit of success
+The contract a stranger's engineer sees is small and obvious — hard to
+integrate wrong. Complexity lives under the hood. What the system cannot
+reliably carry to completion is refused at the door with intelligible words;
+what it accepted works, and the integrator never thinks about it again. Every
+addition to a public surface — an SDK namespace, a config knob, a field — is
+area someone is now obliged to learn: it is priced as a cost, not counted as
+a feature, and a finding is not fixed by widening the surface when honest
+words at the door fix it. Automation earns trust by being reliable; a knob
+that can silently take a deployment down is a defect in the knob, not in the
+operator.
+
 ## Git
 - Main branch: `main`. Small steps go straight into it; experiments go into
   `spike/<topic>` branches, the branch is deleted once the conclusions are in,
