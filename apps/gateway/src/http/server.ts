@@ -162,8 +162,30 @@ export function buildApp(
   // encoding this gateway always takes, and leaving the caller to find that by
   // trying the others against a live gateway is not work to hand to somebody
   // else.
+  //
+  // The fourth refusal does not name itself and so was not caught by any of
+  // this. Handed a body under an encoding it does inflate, whose bytes then
+  // turn out not to be that encoding — a dropped upload, a client that set the
+  // header and forgot to compress — the parser passes zlib's own failure up
+  // wrapped in a status and nothing else, no `type`, and the guard below wants
+  // both before it will call a throw the parser's. So it fell to the last
+  // answer on the page: 500, "nothing was decided", and a line in the log
+  // calling it a request that failed before reaching a route. Nothing there was
+  // true. The call was refused at the boundary on purpose; the fault is in the
+  // caller's bytes or in the header describing them; and a 5xx is the one
+  // answer an agent is entitled to retry, so the same broken bytes come back
+  // for as long as it keeps trying.
+  //
+  // Two things are known at that point and no more: the caller asked for a
+  // decompression, and the parser blamed the caller rather than itself. That
+  // is enough to answer honestly and not enough to say which of the bytes and
+  // the header is the wrong one, so the answer says both and picks neither.
+  // The order matters and is the whole repair: every refusal the parser does
+  // name is answered above, which is what keeps a body that inflates cleanly
+  // and holds bad JSON — the same header, a different failure — on its own
+  // answer rather than this one.
   app.use(
-    (thrown: unknown, _request: Request, response: Response, next: (error?: unknown) => void) => {
+    (thrown: unknown, request: Request, response: Response, next: (error?: unknown) => void) => {
       if (response.headersSent) {
         next(thrown);
         return;
@@ -197,6 +219,17 @@ export function buildApp(
         response
           .status(400)
           .json(refusal("malformed_body", "this call's body could not be read as JSON"));
+        return;
+      }
+      if (blamesTheCaller(thrown) && declaresCompression(request)) {
+        response
+          .status(400)
+          .json(
+            refusal(
+              "body_undecodable",
+              "this call's body could not be decompressed as the content-encoding it declares, so either those bytes or that header is wrong",
+            ),
+          );
         return;
       }
       console.error("[gateway] a request failed before it reached a route", thrown);
@@ -368,6 +401,40 @@ async function merchantBehind(
       throw new Error(`this gateway builds no door for ${String(unanswered)}`);
     }
   }
+}
+
+/**
+ * Whether a thrown value is a refusal of the caller rather than a failure of
+ * ours.
+ *
+ * The body parser marks both kinds the same way, with an HTTP status, and the
+ * status is the only part of an unnamed throw that says whose fault it was.
+ * A 4xx is the parser declining to read what it was sent; anything else is
+ * this process, and this process does not get to answer its own defects with
+ * somebody else's name on them.
+ */
+function blamesTheCaller(thrown: unknown): boolean {
+  if (typeof thrown !== "object" || thrown === null || !("status" in thrown)) {
+    return false;
+  }
+  const { status } = thrown as { status: unknown };
+  return typeof status === "number" && status >= 400 && status < 500;
+}
+
+/**
+ * Whether the caller asked for the body to be decompressed on the way in.
+ *
+ * An absent header and an empty one both mean identity, which is what the
+ * parser itself makes of them; reading either as a compression would put a
+ * refusal that has nothing to do with encoding under an answer about encoding.
+ */
+function declaresCompression(request: Request): boolean {
+  const declared = request.headers["content-encoding"];
+  if (typeof declared !== "string") {
+    return false;
+  }
+  const named = declared.toLowerCase().trim();
+  return named !== "" && named !== "identity";
 }
 
 type Held = { ok: true; value: unknown } | { ok: false; problems: readonly unknown[] };

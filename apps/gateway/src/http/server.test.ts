@@ -883,8 +883,12 @@ describe("the worker's calls over HTTP", () => {
     const wholeGzip = gzipSync(JSON.stringify({ available: true }));
     const halfGzip = wholeGzip.subarray(0, Math.floor(wholeGzip.length / 2));
 
-    const refusedFor = async (headers: Record<string, string>, body: string | Uint8Array) => {
-      const answered = await fetch(`${served.url}/v0/quotes/prc_1/answer`, {
+    const refusedFor = async (
+      headers: Record<string, string>,
+      body: string | Uint8Array,
+      path = "/v0/quotes/prc_1/answer",
+    ) => {
+      const answered = await fetch(`${served.url}${path}`, {
         method: "POST",
         headers: { ...asMerchant, "content-type": "application/json", ...headers },
         body,
@@ -909,6 +913,8 @@ describe("the worker's calls over HTTP", () => {
     let encodingRefused: typeof notJson;
     let encodingBroken: typeof notJson;
     let goodGzipBadJson: typeof notJson;
+    let brokenPath: typeof notJson;
+    let blamedOnUs: string[] = [];
     try {
       notJson = await refusedFor({}, "{ this is not json");
       tooLarge = await refusedFor({}, JSON.stringify({ note: "x".repeat(300_000) }));
@@ -925,6 +931,20 @@ describe("the worker's calls over HTTP", () => {
         { "content-encoding": "gzip" },
         gzipSync("{ this is not json"),
       );
+      blamedOnUs = complaints.filter((line) => line.includes("failed before it reached a route"));
+
+      // The negative control for the other half of the new branch, and the
+      // reason it is in two halves. Express turns away a path parameter it
+      // cannot percent-decode in the same shapeless manner — a status blaming
+      // the caller and no word saying what happened — and that request declares
+      // no encoding at all and carries a body that is fine. Reaching it, the
+      // encoding answer would be handed to somebody who sent no encoding.
+      //
+      // What it is answered instead is deliberately not pinned. Today it is the
+      // 500 that the gzip case above has just stopped being, which is the same
+      // false claim in a third place and a repair of its own; asserting it here
+      // would certify it as settled.
+      brokenPath = await refusedFor({}, "{}", "/v0/quotes/%ZZ/answer");
     } finally {
       console.error = realError;
     }
@@ -965,9 +985,8 @@ describe("the worker's calls over HTTP", () => {
     // same broken bytes.
     expect(encodingBroken.message).toContain("content-encoding");
     expect(encodingBroken.message).not.toContain("nothing was decided");
-    expect(complaints.filter((line) => line.includes("failed before it reached a route"))).toEqual(
-      [],
-    );
+    expect(blamedOnUs).toEqual([]);
+    expect(brokenPath.code).not.toBe("body_undecodable");
   });
 
   it("answers a call about an order nobody made with a plain not found", async () => {
