@@ -36,6 +36,7 @@ import {
   ReceiptListSchema,
   type RegisteredMerchant,
   RegisteredMerchantSchema,
+  SellerNameSchema,
 } from "@coinslot/contracts";
 
 /** What a call came to, in the two shapes a page has to draw differently. */
@@ -58,6 +59,9 @@ export interface GatewayClient {
   keys(): Promise<Answer<MerchantKeyList>>;
   issueKey(label: string): Promise<Answer<IssuedKey>>;
   disableKey(keyId: string): Promise<Answer<MerchantKey>>;
+  /** The name buyers read beside this merchant's products, or null for none. */
+  sellerName(): Promise<Answer<string | null>>;
+  setSellerName(name: string): Promise<Answer<string | null>>;
 }
 
 /**
@@ -70,7 +74,7 @@ export interface GatewayClient {
  * shape somebody later reads as an accident.
  */
 export interface Registrar {
-  register(name: string, invitation: string): Promise<Answer<RegisteredMerchant>>;
+  register(invitation: string): Promise<Answer<RegisteredMerchant>>;
 }
 
 /**
@@ -187,6 +191,22 @@ export const gatewayFor = (
       });
       return answered.ok ? { ok: true, document: answered.document.key } : answered;
     },
+    // Unwrapped here for the same reason the key above is: the contract carries
+    // the name inside an object so the answer can grow a field beside it, and a
+    // screen that reaches through the wrapper is a screen to edit the day it
+    // grows. Null is a real answer and not an absence — it is the merchant who
+    // has not chosen a name yet, which is the whole state these screens exist
+    // to get somebody out of.
+    sellerName: async () => {
+      const answered = await call(API_ROUTES.get_seller_name, SellerNameSchema);
+      return answered.ok ? { ok: true, document: answered.document.seller_name } : answered;
+    },
+    setSellerName: async (name) => {
+      const answered = await call(API_ROUTES.set_seller_name, SellerNameSchema, {
+        body: { seller_name: name },
+      });
+      return answered.ok ? { ok: true, document: answered.document.seller_name } : answered;
+    },
   };
 };
 
@@ -205,8 +225,8 @@ export const registrarFor = (
 ): Registrar => {
   const call = caller(baseUrl, null, answerWithinMs);
   return {
-    register: (name, invitation) =>
-      call(API_ROUTES.register_merchant, RegisteredMerchantSchema, { body: { name, invitation } }),
+    register: (invitation) =>
+      call(API_ROUTES.register_merchant, RegisteredMerchantSchema, { body: { invitation } }),
   };
 };
 
