@@ -58,13 +58,6 @@ the agent signs a payment and repeats the request carrying it. That exchange is
 x402, and the protocol itself comes from the official packages — what this
 repository adds is knowing which order a payment is for.
 
-The card declares before payment which of two things follows. Under synchronous
-fulfillment the goods come back in the answer to the purchase, and the charge
-executes only once they have. Under asynchronous fulfillment the charge goes
-through at the purchase, the agent gets an order it can ask about, and the goods
-arrive later. A third mode, where the merchant confirms before the buyer is
-charged, is built in the machine and closed at the door (ADR-0007).
-
 The merchant's side is one process standing beside their existing API: a
 handler. It listens on no port — it opens a single outgoing subscription and
 receives paid orders, price questions and order events on that one stream
@@ -73,7 +66,95 @@ receives paid orders, price questions and order events on that one stream
 The order is a state machine of sixteen states in `packages/core`, a pure
 function with no IO. The gateway feeds it events and gets back the next state
 together with the effects that state implies, and those effects are written
-down in the same transaction as the state itself (ADR-0013).
+down in the same transaction as the state itself (ADR-0013). What the card
+declares before payment is which of the three sequences below the sale follows.
+
+### Synchronous fulfillment
+
+The goods come back in the answer to the purchase, and the money moves only
+once the merchant has produced them. A refusal costs the buyer nothing.
+
+```mermaid
+sequenceDiagram
+    participant A as Agent
+    participant G as Gateway
+    participant F as Facilitator
+    participant H as Merchant's handler
+    A->>G: purchase
+    G-->>A: 402, with the price, the network and the asset
+    A->>G: the same request, carrying a signed payment
+    G->>F: verify the payment
+    F-->>G: good for it
+    Note over G: paid
+    G->>H: the order, on the open subscription
+    H-->>G: here are the goods
+    Note over G: fulfilled
+    G->>F: execute the payment
+    F-->>G: settled
+    Note over G: delivered
+    G-->>A: the goods, in the answer to the purchase
+```
+
+The goods are held until the money settles, so a delivery whose charge failed
+hands nothing over.
+
+### Asynchronous fulfillment
+
+The money moves at the purchase, before the merchant is asked for anything. The
+agent leaves with an order identifier and collects the goods later — minutes
+later or a day later, which makes no difference to the shape.
+
+```mermaid
+sequenceDiagram
+    participant A as Agent
+    participant G as Gateway
+    participant F as Facilitator
+    participant H as Merchant's handler
+    A->>G: purchase
+    G-->>A: 402, with the price, the network and the asset
+    A->>G: the same request, carrying a signed payment
+    G->>F: verify, then execute the payment
+    F-->>G: settled
+    Note over G: paid
+    G-->>A: an order identifier, and no goods yet
+    G->>H: the order, on the open subscription
+    H-->>G: accepted, I will deliver
+    H-->>G: here are the goods, later
+    Note over G: delivered
+    A->>G: what became of this order
+    G-->>A: delivered, with the goods
+```
+
+Knowing the identifier is the whole of the agent's proof, so the status call
+takes no key (ADR-0011).
+
+### Fulfillment against a confirmation
+
+The merchant says whether they will deliver before the buyer is charged at all.
+This mode is built in the state machine and closed at the door: a card asking
+for it is refused at publication, and it opens for the first merchant who
+answers orders by hand (ADR-0007).
+
+```mermaid
+sequenceDiagram
+    participant A as Agent
+    participant G as Gateway
+    participant F as Facilitator
+    participant H as Merchant's handler
+    A->>G: purchase
+    G->>H: will you deliver this
+    Note over G: awaiting confirmation
+    H-->>G: I will
+    Note over G: confirmed
+    G-->>A: 402, and a deadline to pay by
+    A->>G: the same request, carrying a signed payment
+    G->>F: verify, then execute the payment
+    F-->>G: settled
+    Note over G: paid
+    G->>H: the order, on the open subscription
+    H-->>G: here are the goods
+    Note over G: delivered
+```
 
 ## Where things are
 
