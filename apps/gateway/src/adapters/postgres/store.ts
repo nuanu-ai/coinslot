@@ -387,10 +387,46 @@ export class PostgresStore implements Store {
     // transaction keeping a snapshot alive for as long as a sweep takes — and
     // the work here writes through other connections anyway.
     //
-    // The key is hashed from a name of ours under a prefix of ours. pg-boss
-    // takes advisory locks in this same database, from its own namespace, and
-    // a collision would only cost one skipped run rather than anything wrong.
+    // Which is the other thing to know about the connection: it comes out of
+    // the same pool the work then queries through, and it is held for the whole
+    // run. Nothing sets a timeout on waiting for one, so on a pool too small to
+    // spare it the work would wait rather than fail, and would wait on a
+    // connection only it could release. The default pool has room and a sweep
+    // is one connection; a deployment that tightens the pool should count this
+    // one in.
+    //
+    // The key is hashed from a name of ours under a prefix of ours, and what a
+    // collision with somebody else's key would cost is worth having the right
+    // way round. pg-boss takes advisory locks in this same database, and it
+    // takes them by waiting rather than by asking — `pg_advisory_xact_lock`
+    // inside a transaction that sets `lock_timeout` to thirty seconds. So a
+    // collision does not cost us a skipped run: it costs pg-boss, whose
+    // create-queue or migration would sit behind our session for the length of
+    // a sweep and then fail on the timeout. Ours is the session that has to be
+    // considerate, which is why the key carries a prefix nothing else uses.
     const client = await this.#db.$client.connect();
+    let broken: unknown = null;
+
+    // A checked-out client has no error listener at all. The pool takes its own
+    // off on the way out — pg-pool's `_acquireClient` does it by name — and
+    // hands it back only on release, so between those two moments a fatal on
+    // this connection is an `error` event with nobody listening, which in Node
+    // is an uncaught exception and a dead process. That costs more here than
+    // almost anywhere: every parked purchase and every parked worker lives in
+    // this process's memory, so a backend somebody terminated would drop every
+    // agent mid-purchase. It is the same guard `connect()` puts on the pool,
+    // and this is the first place in the gateway that pins a client and then
+    // sits idle on it, with no query in flight for a fatal to surface through.
+    //
+    // What is remembered is that the connection is broken, so that the release
+    // below destroys it rather than returning it to the pool for somebody
+    // else's query to fail on.
+    const noticeTheFailure = (failed: unknown) => {
+      broken = failed;
+      console.error(`[gateway] the connection holding ${name} failed`, failed);
+    };
+    client.on("error", noticeTheFailure);
+
     try {
       const taken = await client.query<{ got: boolean }>(
         "select pg_try_advisory_lock(hashtext($1)) as got",
@@ -405,12 +441,40 @@ export class PostgresStore implements Store {
       } finally {
         // Let go however the work ended. A lock left behind on a live
         // connection outlives the failure that caused it and would keep every
-        // later run out for as long as the process lives — and the pool would
-        // hand that connection on to somebody else still holding it.
-        await client.query("select pg_advisory_unlock(hashtext($1))", [`coinslot.${name}`]);
+        // later run out for as long as the process lives.
+        //
+        // Its own failure is said out loud and dropped, never thrown. This runs
+        // in a `finally`, so a rejection here would replace whatever the work
+        // returned or threw: a sweep that finished would be reported as a
+        // failure and its work handed out again, and a sweep that failed would
+        // have its own reason swallowed and the connection's put in its place.
+        // Neither is a thing to learn from a log afterwards. And a lock that
+        // could not be released has usually been released already, by the
+        // backend going away, which is also what broke the connection.
+        try {
+          await client.query("select pg_advisory_unlock(hashtext($1))", [`coinslot.${name}`]);
+        } catch (thrown) {
+          console.error(`[gateway] could not let go of ${name}`, thrown);
+        }
       }
     } finally {
-      client.release();
+      // A client that failed is released with its failure, which asks the pool
+      // to destroy it rather than hand it to the next caller.
+      //
+      // Said plainly because a probe found it out: the pool would discard this
+      // client anyway. It also drops one that is no longer queryable, and a
+      // terminated connection is exactly that, so removing the argument breaks
+      // no test and changes no outcome here. What it buys is that the ask is
+      // made through the part of the interface the library documents, rather
+      // than resting on a field pg-pool's own source marks as not public.
+      //
+      // Released first and unlistened after, in that order and not the other:
+      // releasing is what puts the pool's own error listener back on, and it
+      // does that before it decides whether to keep the client or end it. Doing
+      // it the other way round would leave the same gap this opened with, in
+      // the window where a client is being destroyed.
+      client.release(broken === null ? undefined : (broken as Error));
+      client.removeListener("error", noticeTheFailure);
     }
   }
 

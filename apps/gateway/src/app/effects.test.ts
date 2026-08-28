@@ -358,9 +358,12 @@ describe("the sweep of what an order is still owed", () => {
     // it. The receipt arm has the same shape, both reading the orders without
     // receipts before either writes one.
     //
-    // It is not a hypothetical overlap. The sweep's own job takes pg-boss's
-    // defaults, so a run that outlasts the library's window is handed out again
-    // while the first is still going.
+    // It is not a hypothetical overlap, and it comes from a second gateway
+    // rather than from this one. Inside a process the queue's worker waits for
+    // the handler before it fetches again, so a run here cannot start beside
+    // one that has not returned; two processes on one database have nothing
+    // arranging that between them. This test starts the two by hand, which is
+    // how one process reproduces what two would do.
     const harnessed = await started();
     const orderId = await paidWithNothingOnTheStream(harnessed);
 

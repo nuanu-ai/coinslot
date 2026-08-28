@@ -521,14 +521,26 @@ export interface Store {
    * order's deliveries.
    *
    * It has to hold across processes and not merely across this one, because the
-   * overlap that makes it necessary is two gateways, or one gateway handed its
-   * own job again after the queue's window ran out.
+   * overlap that makes it necessary is two gateways running the same work at
+   * the same time. One gateway on its own does not need it: the queue's worker
+   * waits for the handler before it fetches anything else, so a second run
+   * cannot start inside a process where the first has not returned.
    *
-   * It is a lock and not a record: nothing about having run is written down,
-   * nothing has to be cleaned up, and a process that dies holding it leaves the
-   * work free for the next one rather than blocked. What it does not promise is
-   * fairness or a queue — the caller that finds it taken does not wait, it goes
-   * away, because the work it wanted is already being done.
+   * It is a lock and not a record: nothing about having run is written down and
+   * nothing has to be cleaned up afterwards.
+   *
+   * What it holds is one run per live connection, which is not quite one run.
+   * A lock is let go the moment the session holding it goes away — a backend
+   * terminated by an administrator, a failover, a pooler dropping an idle
+   * session — and the process that was doing the work does not necessarily go
+   * with it. So a run whose connection died carries on, unprotected, while the
+   * next caller is told the name is free and starts beside it. That is the
+   * failure this cannot see, and it is a much smaller window than the one it
+   * closes.
+   *
+   * And it promises no fairness and no queue: a caller that finds the name
+   * taken does not wait, it goes away, because the work it wanted is already
+   * being done.
    */
   runAlone<T>(name: string, work: () => Promise<T>): Promise<Ran<T>>;
 
