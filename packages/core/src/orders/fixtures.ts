@@ -4,10 +4,11 @@
  * purchases, and a builder that quietly guesses defaults has no business
  * standing next to someone else's money.
  *
- * Every number below is a test value and nothing more. The real deadlines and
- * the real redelivery schedule are named before the pilot — they are still
- * open questions in `docs/research/16-order-state-machine.md`, which is why
- * the machine takes them as a policy instead of carrying constants.
+ * Every number below is a test value and nothing more. The real ones live in
+ * the gateway's configuration: the portal publishes the deadlines and the
+ * attempt count as that deployment's settings, and only the pauses between the
+ * attempts stay ours. None of them belongs to this package either way, which is
+ * why the machine takes them as a policy instead of carrying constants.
  */
 
 import type { CreateOrderInput, MerchantSelling, PriceCheck } from "./create.js";
