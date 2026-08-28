@@ -25,8 +25,11 @@ or a catalogue.
 Payments are non-custodial. The `payTo` of every payment request is the
 address of the merchant who published the card, read at the moment the
 request is written — so a merchant who moves their wallet moves every
-card of theirs with it, with no republishing. There is no balance, no
-settlement run, and no moment at which a merchant's money is ours.
+card of theirs with it, with no republishing. A payment already verified
+is settled to the address it was verified against: a wallet moved
+mid-sale governs the merchant's next sale, never the one whose payer has
+already signed. There is no balance, no settlement run, and no moment at
+which a merchant's money is ours.
 
 The address is a nullable column on the merchant, set and read through
 `/v0/payout-wallet`, held to `EvmAddressSchema` in the contracts: `0x`
