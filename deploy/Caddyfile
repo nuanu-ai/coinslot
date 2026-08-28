@@ -108,11 +108,26 @@
 	# the gateway's — it is what the money path runs through, and Caddy answering
 	# at all is the whole of what the landing and the portal have to say for
 	# themselves. The path stays outside /v0 because that table is the contract a
-	# merchant's engineer integrates against, and a probe for whoever is watching
-	# the host is not part of it. What comes back is the gateway's own answer and
-	# nothing more: no verdict here stands for the other services, because a
-	# document that averaged them would be read as one and would be wrong the
-	# first time one of them went down alone.
+	# merchant's engineer integrates against, and an operational probe is not
+	# part of it.
+	#
+	# Who can ask is worth being plain about, because on a deployed origin this
+	# path is public: there is no door in front of it, so anybody who knows the
+	# hostname can ask whether the gateway is up, and a monitor that has to be
+	# given a credential first is a monitor nobody sets up. What that gives away
+	# is the answer itself and nothing else — the gateway replies `{"ok":true}`
+	# and carries no version, no hostname, no counts and no error text — so what
+	# leaks is that this address exists, which the rest of the origin already
+	# says.
+	#
+	# What comes back is the gateway's own answer and nothing more. No verdict
+	# here stands for the cabinet, and none stands for Postgres — a gateway
+	# answering this route has not been asked whether its database is reachable,
+	# so `{"ok":true}` here is compatible with a stack that cannot serve a single
+	# order. A document that averaged them would be read as one and would be
+	# wrong the first time one of them went down alone; the services that know
+	# their own state report it to compose, which is where a per-service verdict
+	# belongs.
 	#
 	# The cabinet is the second process and needs no line of its own. It answers
 	# the same probe under its own prefix, and the block below passes /cabinet/*
