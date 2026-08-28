@@ -44,6 +44,7 @@ while IFS= read -r archived_path; do
 done < <(tar -tf "${archive}")
 
 tar -xf "${archive}" -C "${payload}"
+chmod -R u+rwX,go+rX "${payload}"
 [[ -f "${payload}/compose.yaml" ]] || fail 'archive has no compose.yaml'
 [[ -f "${payload}/deploy/compose.preview.yaml" ]] || fail 'archive has no preview override'
 
