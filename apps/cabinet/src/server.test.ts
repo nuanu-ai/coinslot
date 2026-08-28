@@ -1413,6 +1413,9 @@ describe("choosing the name buyers read", () => {
     expect(text).toMatch(/buyers/i);
     // One example of what a name looks like.
     expect(text).toMatch(/eSIM/i);
+    // The rule the catalogue holds it to, before anybody types rather than
+    // after a refusal.
+    expect(text).toMatch(/32 characters/);
     // That it can be changed, and where.
     expect(text).toMatch(/change/i);
     expect(screen.html).toContain('href="/settings"');
@@ -1463,7 +1466,7 @@ describe("choosing the name buyers read", () => {
     for (const name of ["x".repeat(33), "Кириллица", "  "]) {
       const answered = await running.browser.post("/choose-name", { seller_name: name });
       expect(answered.status, name).toBe(400);
-      expect(readable(answered.html), name).toMatch(/32 characters|name is needed/i);
+      expect(readable(answered.html), name).toMatch(/not saved|name is needed/i);
       expect(await listedAs(running), name).toBeNull();
     }
   });
@@ -1579,6 +1582,8 @@ describe("the settings screen", () => {
 
     expect(text).toMatch(/cannot|never/i);
     expect(text).toMatch(/stop.*selling/i);
+    // And the rule, on the page rather than only in a refusal.
+    expect(text).toMatch(/32 characters/);
   });
 
   it("refuses a name outside the rule and leaves the one there was", async () => {
@@ -1588,7 +1593,11 @@ describe("the settings screen", () => {
     const answered = await running.browser.post("/settings", { seller_name: "x".repeat(33) });
 
     expect(answered.status).toBe(400);
-    expect(readable(answered.html)).toMatch(/32 characters/);
+    // What was refused, and that nothing was written — the second half is the
+    // one a merchant cannot see for themselves, and the page still shows what
+    // they are actually listed under.
+    expect(readable(answered.html)).toMatch(/not saved/i);
+    expect(readable(answered.html)).toContain(running.harnessed.merchant.name);
     expect(await listedAs(running)).toBe(running.harnessed.merchant.name);
   });
 

@@ -34,14 +34,29 @@ import type { Viewer } from "./screens.js";
  * is only the sentence, because the schema's messages are one per broken rule
  * and somebody filling in a form is better served by the whole rule once.
  *
- * It is checked here as well as at the gateway so that a name outside the rule
- * comes back as this sentence rather than as a refusal written for whoever is
- * reading an API response.
+ * It is on both screens before anybody types, rather than only after a refusal,
+ * so that the common case is a name that fits.
  */
 export const NAME_RULE =
   "The name your products are sold under is at most 32 characters, all of them ordinary" +
   " keyboard characters, with no space at either end. That is the rule of the catalogue that" +
   " will list you under it, not ours.";
+
+/**
+ * What somebody is told whose name the catalogue would not carry.
+ *
+ * The rule is already printed beside the box, so this does not repeat it: a
+ * refusal that answers with the same paragraph a second time reads as the page
+ * failing to notice anything happened. What the person cannot see for
+ * themselves is that nothing was written, which is the half this carries.
+ *
+ * The name is checked here as well as at the gateway so that this is what comes
+ * back rather than the gateway's own refusal, which is written for whoever is
+ * reading an API response and names a route rather than a page.
+ */
+export const NAME_REFUSED =
+  "That is not a name the catalogue will carry, so it was not saved. The rule it has to keep" +
+  " to is printed on this page.";
 
 /** What somebody who pressed the button with an empty box is told, first time. */
 export const NAME_NEEDED =
@@ -66,7 +81,7 @@ export const NAME_CANNOT_BE_TAKEN_AWAY =
 
 /** What is wrong with a name somebody typed, in a sentence, or null. */
 export const whatIsWrongWithTheName = (name: string): string | null =>
-  ServiceNameSchema.safeParse(name).success ? null : NAME_RULE;
+  ServiceNameSchema.safeParse(name).success ? null : NAME_REFUSED;
 
 /**
  * What the name is for, and what one looks like.
@@ -101,8 +116,8 @@ export const chooseNameScreen = (base: string, problem?: string): string =>
   <p class="quiet">${escaped(NAME_RULE)}</p>
   <button class="primary" type="submit">Use this name</button>
   ${problem === undefined ? "" : `<p class="problem">${escaped(problem)}</p>`}
-  <p class="quiet">You can change it whenever you like, in your settings. Until it is set, nothing you publish goes on sale, and every screen in the cabinet says so.</p>
-  <p class="quiet"><a href="${escaped(base)}/cards">Leave it for now</a> and go to your cards. Your settings are at <a href="${escaped(base)}/settings">Settings</a>.</p>
+  <p class="quiet">You can change it whenever you like. Until it is set, nothing you publish goes on sale, and every screen in the cabinet says so.</p>
+  <p class="quiet">Not decided yet? <a href="${escaped(base)}/cards">Leave it for now</a> — it is set under <a href="${escaped(base)}/settings">Settings</a> whenever you are ready.</p>
 </form>
 </div>`,
   );
