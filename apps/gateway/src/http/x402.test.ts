@@ -493,11 +493,19 @@ describe("the discovery declaration a challenge carries", () => {
     // declaration is only valid on a method that carries a body. Answering a
     // GET with one would make the resource invisible to the very thing that
     // lists it.
-    const info = declaration("GET").info as unknown as { input: Record<string, unknown> };
+    const info = declaration("GET").info as unknown as {
+      input: Record<string, unknown>;
+      output?: { example?: unknown };
+    };
 
     expect(info.input.method).toBe("GET");
     expect("bodyType" in info.input).toBe(false);
     expect("body" in info.input).toBe(false);
+    // What the probe drops is the body and nothing else. It still says what
+    // comes back, because that is the half of the declaration a catalog puts in
+    // front of a reader: a listing with no example is a product an agent cannot
+    // tell apart from any other.
+    expect(info.output?.example).toStrictEqual({ access_url: "string" });
   });
 
   for (const method of ["GET", "POST"] as const) {
@@ -572,7 +580,8 @@ describe("the shape a live validation once accepted", () => {
    * CDP validation endpoint and was answered `valid: true`. That resource is a
    * POST resource whose paid address also answers GET — the same arrangement
    * ours has — and the endpoint echoed back the declaration it accepted, on
-   * each method. The two objects below are that echo, copied from the answer.
+   * each method. The object below is the schema half of that echo, copied from
+   * the answer.
    *
    * This compares the shape of what we emit against the shape of what was
    * accepted: which fields are present at which paths, not what is in them,
@@ -580,33 +589,11 @@ describe("the shape a live validation once accepted", () => {
    * something that passed once. It is not a validation, it says nothing about
    * what the endpoint would do today, and it cannot: that is `pnpm
    * smoke:listing`, which makes the call.
-   */
-  const acceptedOnGet = {
-    input: { method: "GET", queryParams: {}, type: "http" },
-    output: {
-      example: {
-        expiresAt: "2026-08-26T00:00:00Z",
-        messagesUrl: "/freeland/numbers/msg-mock-id/messages",
-        number: "+1 202 555 0139",
-      },
-      type: "json",
-    },
-  };
-
-  const acceptedOnPost = {
-    input: { body: { country: "US" }, bodyType: "json", method: "POST", type: "http" },
-    output: {
-      example: {
-        expiresAt: "2026-08-26T00:00:00Z",
-        messagesUrl: "/freeland/numbers/msg-mock-id/messages",
-        number: "+1 202 555 0139",
-      },
-      type: "json",
-    },
-  };
-
-  /**
-   * The schema half of the same accepted answer, recorded the same way.
+   *
+   * Only the schema half is recorded. The declaration half was here too, and
+   * everything it could catch is caught by the tests above it, which say the
+   * same things about our own declaration in our own words rather than by
+   * comparison with a fixture describing somebody else's product.
    *
    * It is here for one fact that is invisible without it: the dialect is named
    * once, at the root. The rest differs from ours legitimately — the spike wrote
@@ -699,24 +686,6 @@ describe("the shape a live validation once accepted", () => {
     return declared;
   };
 
-  it("puts the same fields in the same places as the GET probe that was accepted", () => {
-    expect(skeleton(ourDeclaration("GET").info)).toStrictEqual([
-      "input.method: string",
-      "input.queryParams: {}",
-      "input.type: string",
-      "output.example.expires_at: string",
-      "output.example.messages_url: string",
-      "output.example.number: string",
-      "output.type: string",
-    ]);
-    // And the accepted one, read the same way. The literal above is what makes
-    // this test fail on a change of ours; this is what makes it fail on a
-    // change that walks away from the shape that passed.
-    expect(unique(skeleton(acceptedOnGet).map(named))).toStrictEqual(
-      unique(skeleton(ourDeclaration("GET").info).map(named)),
-    );
-  });
-
   it("names the schema dialect where the accepted shape names it, and nowhere else", () => {
     // Ours is built partly from a document rendered on its own — the purchase
     // body — and a document rendered on its own names its dialect at the top.
@@ -731,27 +700,4 @@ describe("the shape a live validation once accepted", () => {
       dialectsIn(ourDeclaration("POST").schema),
     );
   });
-
-  it("puts the same fields in the same places as the POST probe that was accepted", () => {
-    expect(unique(skeleton(acceptedOnPost).map(named))).toStrictEqual(
-      unique(skeleton(ourDeclaration("POST").info).map(named)),
-    );
-  });
 });
-
-/**
- * One path with the product's own field names taken out of it.
- *
- * The declarations being compared describe different products, so the names
- * under `body` and under `output.example` differ and are not the subject. What
- * is the subject is that both have a body and an example at all, and that the
- * protocol's own fields sit at the same places in both.
- */
-const named = (path: string): string =>
-  path
-    .replace(/^(input\.body)\..*/, "$1.<field>")
-    .replace(/^(input\.queryParams)\..*/, "$1.<field>")
-    .replace(/^(output\.example)\..*/, "$1.<field>");
-
-/** The same path once, however many of a product's own fields folded into it. */
-const unique = (paths: readonly string[]): string[] => [...new Set(paths)].sort();
