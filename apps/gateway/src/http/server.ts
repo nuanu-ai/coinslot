@@ -161,7 +161,10 @@ export function buildApp(
   // left to suspect; and it names the way out, because uncompressed is the one
   // encoding this gateway always takes, and leaving the caller to find that by
   // trying the others against a live gateway is not work to hand to somebody
-  // else.
+  // else. The charset named on the content-type is refused the same way and
+  // for the same reason — a different header, the same silence about a
+  // document nobody turned into text — and names utf-8, which is what JSON is
+  // required to be written in anyway.
   //
   // The fourth refusal does not name itself and so was not caught by any of
   // this. Handed a body under an encoding it does inflate, whose bytes then
@@ -201,6 +204,17 @@ export function buildApp(
               refusal(
                 "body_too_large",
                 `this call's body is over the ${BODY_LIMIT} a call may carry`,
+              ),
+            );
+          return;
+        }
+        if ((thrown as { type: unknown }).type === "charset.unsupported") {
+          response
+            .status(415)
+            .json(
+              refusal(
+                "charset_unsupported",
+                "this call's body was not read because the charset its content-type names is not one this gateway decodes, so send it as utf-8",
               ),
             );
           return;
