@@ -421,6 +421,45 @@ describe("a long walk over the machine", () => {
     expect(transition(order, event)).toStrictEqual(transition(order, event));
   });
 
+  /**
+   * The timeout is measured, and the measurement is written down here because
+   * the next person to see this test go red on a busy machine deserves to know
+   * whether the number was reasoned about or guessed.
+   *
+   * The work is four hundred orders of two hundred steps each. Choosing one
+   * step's event asks the machine what every event would do — thirty-one of
+   * them, since several kinds have more than one shape — so the walk runs
+   * about five million transitions, and the accounting makes roughly a hundred
+   * and forty thousand assertions over the twenty thousand steps the machine
+   * accepted. The cost is linear in the seed count: twelve and a half thousand
+   * transitions per seed, flat from fifty seeds to four hundred. Nothing here
+   * grows faster than the coverage does.
+   *
+   * Measured on an M4: the body itself costs 877ms, of which 204ms is the walk
+   * and 627ms is vitest's `expect` machinery — the same accounting written as
+   * plain conditions runs in 2ms. Run as the only file, the test lands between
+   * 871 and 900ms over eight runs.
+   *
+   * What it costs inside `pnpm test` is another matter. The suite forks a
+   * worker per core and hands them seventy-odd CPU-bound files, and this is
+   * the longest single stretch of computation among them, so it collects
+   * whatever contention the machine has: 1,494ms on a quiet one, 6,683 to
+   * 12,812ms alongside two other suites — seven full-suite runs in ten failed
+   * the 5,000ms default in that condition — and 14,494 to 24,763ms once the
+   * load average passed a hundred, where all ten of ten failed. The failure is
+   * not a hang: the body is synchronous, so the timer cannot fire inside it
+   * and the duration vitest prints on a timeout is the true cost of the work,
+   * not the point at which it was cut off.
+   *
+   * Fifty seconds is twice the worst of those measurements. It is a bet on how
+   * oversubscribed a machine can get rather than a statement about the test,
+   * which is why it is so far above the 877ms the work actually takes; a
+   * wall-clock limit is a poor instrument for a CPU-bound test, and the only
+   * honest thing to do is set it above the contention we have seen and say so.
+   * It still catches what a timeout is for: this test does not loop, and a
+   * change that made it loop would sit here for fifty seconds and then say so.
+   * Re-derive it if the seed count moves.
+   */
   it("visits every state of the machine for the walk to mean anything", () => {
     // A walk that never left `created` would pass every check above while
     // testing nothing at all. A single order's life is short — most of these
@@ -439,5 +478,5 @@ describe("a long walk over the machine", () => {
     }
 
     expect([...visited].sort()).toStrictEqual([...ORDER_STATES].sort());
-  });
+  }, 50_000);
 });
