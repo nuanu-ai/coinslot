@@ -3,8 +3,12 @@
 ## Stage
 Stage 0 of the pilot plan (`docs/research/21-pilot-plan.md`): the monorepo
 scaffold, contracts as code, the state machine with tests. Product code is
-being written, so the "Code" section is in force. Decisions taken: exposure
-ADR-0001, integration model ADR-0002, stack ADR-0003.
+being written, so the "Code" section is in force. Decisions live in
+`docs/decisions/`.
+
+The size of a solution is set by the current stage of the plan — not by the
+genre of the task, and not by the density of what is already written around
+it. When in doubt, build the smaller variant.
 
 ## Hierarchy of instructions
 Conflicts are resolved in this order: Dmitry's live word → a decision in
@@ -51,19 +55,22 @@ that there is none".
 - Never commit: secrets, `.env`, `.claude/settings.local.json`.
 
 ## Decisions
-- Every significant decision (stack, architecture, tooling) is a separate ADR
-  in `docs/decisions/` (format `NNNN-slug.md`).
-- Until a decision is written down in an ADR, it has not been taken.
-- Until the first product code, decisions are living documents: on Dmitry's
-  word the edit goes straight into the file, the history lives in git, and
-  there are no "decisions on top of decisions". A cancelled decision is
-  deleted; its "why not" moves into the rejected alternatives of its successor
-  or into research.
-- The trigger for going back to append-only/supersede is named in advance: the
-  first product code (repo scaffolding and configuration do not count; contract
-  schemas and the state machine do), a second permanent participant, or the
-  first case of "but we decided otherwise" confusion caused by an edit made
-  after the fact.
+- An ADR records a decision that is expensive to reverse: a dependency in a
+  published package's tree, a schema on disk, a wire contract, a security
+  boundary. Everything else — screens, flows, internal mechanics — is a design
+  note in `docs/research/` and is rewritten freely.
+- One decision — one file in `docs/decisions/` (format `NNNN-slug.md`), with a
+  ceiling of about sixty lines: context, the decision, the alternatives
+  rejected. Enough to reconstruct the reasoning, not to exhaust the subject;
+  measurements and their status live in research, linked.
+- Until a decision is written down in an ADR, it has not been taken. A change
+  that creates the condition another ADR named as its exit trigger says so, in
+  that ADR, in the same change.
+- Decisions are living documents until the first external merchant or a second
+  permanent participant: an accepted change is an edit to the file itself, the
+  history lives in git, and there are no decisions on top of decisions. A
+  cancelled decision is deleted; its "why not" moves into the rejected
+  alternatives of its successor or into research.
 
 ## Documents
 
