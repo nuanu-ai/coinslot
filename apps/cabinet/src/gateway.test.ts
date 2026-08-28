@@ -138,7 +138,7 @@ describe("a gateway that answers nothing", () => {
 });
 
 describe("the call that makes a merchant", () => {
-  it("goes to the registration route with the form's two values and no key at all", async () => {
+  it("goes to the registration route with the invitation and no key at all", async () => {
     // No key, and that is the whole shape of this call: nobody registering has
     // one. A key header here would be a header carrying nothing, and the
     // gateway reads an empty bearer token as a key it does not know — which
@@ -146,19 +146,17 @@ describe("the call that makes a merchant", () => {
     // who has neither.
     const { url, arrived } = await recordingServer(200, {
       merchant_id: "mer_the_merchant",
-      name: "A merchant with a name",
       key: aKey(),
       secret: "the-secret-shown-once",
     });
 
-    const made = await registrarFor(url).register("A merchant with a name", "the-invitation");
+    const made = await registrarFor(url).register("the-invitation");
 
     expect(made.ok).toBe(true);
     expect(arrived[0]?.method).toBe("POST");
     expect(arrived[0]?.path).toBe("/v0/merchants");
     expect(arrived[0]?.key).toBeNull();
     expect(JSON.parse(arrived[0]?.body ?? "{}")).toStrictEqual({
-      name: "A merchant with a name",
       invitation: "the-invitation",
     });
   });
@@ -166,12 +164,11 @@ describe("the call that makes a merchant", () => {
   it("hands back the merchant and the secret the account is written with", async () => {
     const { url } = await recordingServer(200, {
       merchant_id: "mer_the_merchant",
-      name: "A merchant with a name",
       key: aKey(),
       secret: "the-secret-shown-once",
     });
 
-    const made = await registrarFor(url).register("A merchant with a name", "the-invitation");
+    const made = await registrarFor(url).register("the-invitation");
 
     if (!made.ok) {
       throw new Error(`the registration was refused: ${made.why}`);
@@ -188,13 +185,10 @@ describe("the call that makes a merchant", () => {
     // screens later.
     const { url } = await recordingServer(200, {
       merchant_id: "mer_the_merchant",
-      name: "A merchant with a name",
       key: aKey(),
     });
 
-    await expect(
-      registrarFor(url).register("A merchant with a name", "the-invitation"),
-    ).rejects.toThrow();
+    await expect(registrarFor(url).register("the-invitation")).rejects.toThrow();
   });
 
   it("carries the gateway's own status through, so a refusal can be told from a fault", async () => {
@@ -206,7 +200,7 @@ describe("the call that makes a merchant", () => {
       error: { code: "not_invited", message: "that is not an invitation we accept" },
     });
 
-    const refused = await registrarFor(url).register("A merchant", "not-the-code");
+    const refused = await registrarFor(url).register("not-the-code");
 
     expect(refused.ok).toBe(false);
     if (refused.ok) {
