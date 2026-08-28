@@ -93,7 +93,10 @@ const orderTakenOn = async (
     onOrder: () => ({ accepted: {} }),
   });
   expect(bought.status, JSON.stringify(bought.body)).toBe(200);
-  return (bought.body as { order: { id: string } }).order.id;
+  // The purchase answers in the same document this route does, so the
+  // identifier to come back with is read off the answer the same way here as
+  // an agent would read it there.
+  return (bought.body as AgentOrderStatus).order_id;
 };
 
 const statusOf = async (served: Served, orderId: string, headers?: Record<string, string>) =>

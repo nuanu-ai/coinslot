@@ -29,6 +29,11 @@
  * when the ceiling below runs out, or the reader interrupts it, the order is
  * still the merchant's to finish and the command says where to collect it
  * rather than reporting a sale that ended.
+ *
+ * Both answers it reads are one document — where your order stands — so the
+ * purchase and the wait are read the same way here, and the only thing the
+ * card's mode decides is whether the goods are in the first answer or in a
+ * later one.
  */
 
 import { makeBuyer, type OrderStatus } from "./buyer.js";
@@ -106,6 +111,31 @@ const comeBackLater = (orderId: string, where: string, why: string): void => {
   );
   console.log(`[buyer] the goods are collected at the door that is the agent's own:`);
   console.log(`  curl -s ${where}`);
+};
+
+/**
+ * What stands in for a receipt, printed wherever a reader would go looking for
+ * one and find none.
+ *
+ * A reader is owed the difference between a receipt that is missing and one
+ * that was never theirs to be given. Neither of the agent's doors carries
+ * ours: a receipt is the merchant's own record of the sale, kept behind the
+ * merchant's key.
+ *
+ * What an agent holds instead is not the same in both modes, and saying one
+ * sentence for both would credit a proof that is not there. Where the payment
+ * executes last — the synchronous sale — the payment layer signs a settlement
+ * onto the answer, and that is the agent's word that money moved. Where it
+ * executes while the order is being opened, no settlement rides back on this
+ * exchange at all, and the price and the test word are the whole of what the
+ * agent is told about its own money.
+ */
+const insteadOfAReceipt = (settled: boolean): void => {
+  console.log(
+    settled
+      ? "[buyer] no receipt here: a receipt is the merchant's own record of the sale. The settlement above is the payment layer's word that the money moved, and the price and the test word are what this door tells an agent about it."
+      : "[buyer] no receipt here, and no settlement either: the money moved as the order was opened rather than as the last step of this exchange. The price and the test word above are the whole of what this door tells an agent about the money, and the receipt is the merchant's own record.",
+  );
 };
 
 /**
@@ -224,22 +254,29 @@ if (bought.status >= 400) {
   process.exit(1);
 }
 
-// What a paid purchase answers with depends on the card's mode: the goods
-// themselves where delivery happens on the call, an order to come back for
-// where it does not. Both were printed above; only the second has anywhere
-// left to go.
-const answered = bought.body as { readonly delivered?: unknown; readonly order?: unknown } | null;
+// A paid purchase answers with where the order stands, in the same document
+// the agent's own door answers with — so what the card's mode changes is which
+// of its fields is filled in, not which shape came back. The goods are there
+// where delivery happened on the call, and null where they come later; either
+// way the identifier is how this command comes back for them.
+const answered = bought.body as {
+  readonly delivered?: unknown;
+  readonly order_id?: unknown;
+} | null;
 
-if (answered?.delivered !== undefined) {
+if (answered?.delivered != null) {
+  // The goods were in the purchase answer and this run is over. The reader is
+  // owed the same line the waiting path prints, and for the same reason: they
+  // have just read a whole answer with no receipt in it.
+  insteadOfAReceipt(bought.settlement !== null);
   process.exit(0);
 }
 
-const order = answered?.order;
-const orderId = typeof order === "object" && order !== null ? (order as { id?: unknown }).id : null;
+const orderId = answered?.order_id;
 
 if (typeof orderId !== "string") {
   console.error(
-    "[buyer] the purchase was accepted but carried neither the goods nor an order to come back for, so there is nothing to wait on",
+    "[buyer] the purchase was accepted but named neither the goods nor an order to come back for, so there is nothing to wait on",
   );
   process.exit(1);
 }
@@ -327,10 +364,8 @@ if (seen.state !== "delivered") {
 
 console.log(`[buyer] the goods:`);
 console.log(JSON.stringify(seen.delivered, null, 2));
-// Said because the purchase above printed `receipt: null` and a reader is owed
-// the difference between a receipt that is missing and one that was never this
-// door's to give. The price and the `test` word in the document above are what
-// an agent is handed; the receipt is written into the merchant's own record.
-console.log(
-  "[buyer] this door carries no receipt: the price and the test word above are the agent's proof, and the receipt is the merchant's record",
-);
+// The settlement is read off the purchase rather than off this answer, because
+// this door never carries one: whatever the payment layer signed, it signed
+// onto the exchange that moved the money, and a card whose goods come later
+// moved it back at the purchase.
+insteadOfAReceipt(bought.settlement !== null);

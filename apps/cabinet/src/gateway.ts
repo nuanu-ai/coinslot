@@ -233,9 +233,14 @@ export const registrarFor = (
 /**
  * What the gateway said went wrong, where it said anything we can read.
  *
- * The gateway's refusal document is the gateway's own and not the contract's,
- * so this reads it defensively and falls back to the status rather than
- * inventing a sentence. An error text is a claim like any other.
+ * The shape is the contract's — every call on that surface refuses in one
+ * envelope with a code and a sentence — and this still reads it by hand rather
+ * than through the schema. What sits between this and the gateway is a proxy,
+ * a load balancer or nothing at all, and any of them can answer with a page of
+ * their own; a parse held to the envelope would turn that into no sentence,
+ * where reaching for the field and finding none turns it into the status. The
+ * fallback is the point: an error text is a claim like any other, and where
+ * there is none to read this says the status instead of inventing one.
  */
 const reasonIn = async (answered: Response): Promise<string> => {
   try {

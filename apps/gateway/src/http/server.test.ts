@@ -1,7 +1,8 @@
+import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { gzipSync } from "node:zlib";
 import type { Card, MerchantCardList, Receipt } from "@coinslot/contracts";
-import { API_ROUTES, mountableRoutes } from "@coinslot/contracts";
+import { API_ROUTES, ERROR_CODES, mountableRoutes } from "@coinslot/contracts";
 import { decodePaymentRequiredHeader, encodePaymentSignatureHeader } from "@x402/core/http";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -14,8 +15,18 @@ import {
   serve,
   workUntilStopped,
 } from "../testing/harness.js";
-import { buildApp } from "./server.js";
+import { buildApp, refusal } from "./server.js";
 import { ORDER_ID_IN_EXTRA, PAYMENT_REQUIRED_HEADER, PAYMENT_SIGNATURE_HEADER } from "./x402.js";
+
+/**
+ * The two files that hold every refusal this gateway sends, as text.
+ *
+ * Read rather than imported, because what one case below asks is which codes
+ * are written down in them — a question about the source and not about a value
+ * either file exports.
+ */
+const routesSource = readFileSync(new URL("./routes.ts", import.meta.url), "utf8");
+const serverSource = readFileSync(new URL("./server.ts", import.meta.url), "utf8");
 
 const KEY = "a-merchant-key-long-enough";
 const PAY_TO = "0x0000000000000000000000000000000000000001";
@@ -132,7 +143,7 @@ describe("the surface is the table", () => {
     const bought = await buyOverHttp(harnessed, served, itemId, {
       onOrder: () => ({ accepted: {} }),
     });
-    const orderId = (bought.body as { order: { id: string } }).order.id;
+    const orderId = (bought.body as { order_id: string }).order_id;
 
     const answered = await served.call("GET", `/v0/orders/${orderId}/status`);
 
@@ -223,6 +234,44 @@ describe("what a call answers with", () => {
     } finally {
       server.close();
     }
+  });
+
+  it("will not let a refusal's own detail take the place of its reason", () => {
+    // The detail a refusal carries comes from somewhere else — a payment
+    // layer, a validator, a schema's findings — and a field called "message"
+    // is exactly what such a place calls its own text. Spread over the two
+    // required fields it would replace the sentence the caller was meant to
+    // read, and nothing would say the real one ever existed: the parameter is
+    // typed unknown, so a string fits it and the compiler is content.
+    const refused = refusal("payment_not_verified", "the payment layer would not vouch for this", {
+      message: "the facilitator's own words about its own call",
+      retryable: true,
+    });
+
+    expect(refused.error.message).toBe("the payment layer would not vouch for this");
+    expect(refused.error.code).toBe("payment_not_verified");
+    expect(refused.error.retryable).toBe(true);
+  });
+
+  it("sends every code the contract publishes, and publishes every code it sends", () => {
+    // The published list of error codes is a promise to a consumer that
+    // switches over it: these are the refusals this gateway sends. Half of that
+    // promise the compiler keeps, and keeps completely — refusal() takes an
+    // ErrorCode and nothing else, so a refusal under a name the contract has
+    // not got stops the build at the line that invented it.
+    //
+    // The half left over is the one the compiler cannot see: a code in the list
+    // that this gateway no longer sends. Nothing goes red when a refusal is
+    // deleted, and what is left behind is a name a consumer writes a branch for
+    // and waits forever to reach. So the two files that hold every refusal are
+    // read, and each published code has to be written in one of them.
+    const written = [routesSource, serverSource].join("\n");
+    const unsent = ERROR_CODES.filter((code) => !written.includes(`"${code}"`));
+
+    expect(
+      unsent,
+      "the contract publishes these codes and this gateway sends none of them: a consumer switching over the list writes a branch it will never reach",
+    ).toStrictEqual([]);
   });
 });
 
@@ -1378,7 +1427,7 @@ describe("the merchant's receipts", () => {
     expect(after.status).toBe(200);
     expect(receipts).toHaveLength(1);
     expect(receipts[0]).toMatchObject({
-      order_id: (bought.body as { order: { id: string } }).order.id,
+      order_id: (bought.body as { order_id: string }).order_id,
       outcome: "delivered",
       item_id: itemId,
     });

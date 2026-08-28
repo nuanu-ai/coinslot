@@ -26,8 +26,13 @@
  * — a card that was not accepted, an order call that did not go through — and
  * rather than guess which of those arrive under a 200 and which under a 400,
  * the answer is read the same way whatever the status. If the body is the
- * document the route names, that is the answer; only a body that is not that
- * document is a failure, and then the status is part of what the failure says.
+ * document the route names, that is the answer. Otherwise it is asked whether
+ * it is the one envelope every route refuses in, and if it is, what the caller
+ * is told is the gateway's own code and its own sentence rather than a
+ * complaint from here about a document that did not parse — the gateway is the
+ * side that knows why, and the reason it wrote is the only thing the caller
+ * can act on. Only a body that is neither is a failure this package has to
+ * describe itself, and then the status is part of what it says.
  *
  * The third is what a failure is at all. Nothing here throws: a call comes
  * back either as the document or as a failure carrying a sentence and, where
@@ -42,6 +47,7 @@
 
 import {
   API_ROUTES,
+  ErrorEnvelopeSchema,
   expandPath,
   MERCHANT_KEY_HEADER,
   merchantKeyHeaderValue,
@@ -169,6 +175,19 @@ export interface TransportFailure {
    * broken one.
    */
   readonly body?: unknown;
+  /**
+   * The gateway's own refusal, where the answer was one.
+   *
+   * Present exactly when the body was the contract's error envelope, and it is
+   * the difference between a failure this package had to describe and one the
+   * gateway described itself. The two want different sentences in front of
+   * them: everything else here is some flavour of "we cannot tell you what
+   * happened", and this one is the gateway saying what it would not do and
+   * why. It carries the code as a value and not only inside the sentence,
+   * because a caller that wants to branch on the reason should not be parsing
+   * prose to find it.
+   */
+  readonly refusal?: { readonly code: string; readonly message: string };
 }
 
 export type Answer<N extends RouteName> =
@@ -207,19 +226,29 @@ const failure = (
   reason: string,
   reach: Reach,
   body?: unknown,
+  refusal?: TransportFailure["refusal"],
 ): { ok: false; failure: TransportFailure } => ({
   ok: false,
-  failure: { route, reason, reach, ...(body === undefined ? {} : { body }) },
+  failure: {
+    route,
+    reason,
+    reach,
+    ...(body === undefined ? {} : { body }),
+    ...(refusal === undefined ? {} : { refusal }),
+  },
 });
 
 /**
  * What is known about a failed call, in a clause that can be dropped into a
  * sentence about whatever the call was carrying.
  *
- * It lives here rather than in each caller so that the three states are
- * described in one place and cannot drift into three different vocabularies.
+ * It lives here rather than in each caller so that the four cases are
+ * described in one place and cannot drift into four different vocabularies.
+ * Three of them are the reaches; the fourth is a refusal the gateway wrote in
+ * words we recognise, which is the one failure here that is not a silence and
+ * so does not belong to any of them.
  *
- * Each clause is held to what its own reach actually knows, and the third one
+ * Each clause is held to what its own case actually knows, and the last reach
  * is the one that has to be written carefully, because it is one sentence in
  * front of three different situations. A call abandoned on an abort throws
  * with no code at all and may never have left this process. A connection that
@@ -234,6 +263,16 @@ const failure = (
  * immediately after this clause and which names the road it came down.
  */
 export const whatIsKnown = (failure: TransportFailure): string => {
+  // The fourth case, ahead of the three reaches. Each of those says some
+  // version of "we cannot tell you what this call did"; here the gateway told
+  // us, in a shape we recognise, that it would not do it. Sending a merchant
+  // "what came back could not be read" in front of a reason we are about to
+  // quote is the message arguing with itself, and the half they believe is the
+  // first one.
+  if (failure.refusal !== undefined) {
+    return "it reached us and the answer says the call did not go through";
+  }
+
   switch (failure.reach) {
     case REACH.NOT_RECEIVED:
       return "no connection was made, so it did not reach us";
@@ -317,25 +356,51 @@ export const callRoute = async <N extends RouteName>(
     );
   }
 
-  if (!("document" in route.response)) {
-    return failure(
-      name,
-      `${name} does not answer with a document: ${route.response.not_one_document}`,
-      REACH.ANSWERED,
-      body,
-    );
-  }
-
   const parsed = route.response.document.safeParse(body);
 
-  if (!parsed.success) {
+  if (parsed.success) {
+    return { ok: true, document: parsed.data as DocumentOf<N> };
+  }
+
+  // A body that is not the route's document is asked whether it is the
+  // envelope every route says no in, and if it is, the caller is handed what
+  // the gateway said rather than our complaint about being unable to read it.
+  // That is the difference between telling a merchant their order is over and
+  // sending them to read our schemas.
+  //
+  // What keeps this from swallowing one of the surface's own documents is not
+  // the order of these two reads. Some of those documents are refusals — an
+  // order call that did not go through says so inside the shape its route
+  // promises — and the envelope declines them on its own: its outer object is
+  // strict, so a body carrying anything beside `error` is not one, and the
+  // `ok` discriminator those answers lead with is exactly such a field. The
+  // guarantee is held where it can be checked rather than here, by a case in
+  // `api.test.ts` that puts an envelope to every route's document and demands
+  // a refusal from each. Reversing these two reads is not what would break it,
+  // which is why this paragraph does not claim the order is load-bearing.
+  //
+  // The status is not consulted, here or above. Which refusals of this surface
+  // arrive under which code is the gateway's to decide and is written down
+  // nowhere both sides read, so a rule keyed on it would be a guess; the shape
+  // of the answer is the agreement, and it is the same at 402 as at 500.
+  const refused = ErrorEnvelopeSchema.safeParse(body);
+
+  if (refused.success) {
+    const { code, message } = refused.data.error;
+
     return failure(
       name,
-      `${name} at ${url.href} answered ${response.status} with something that is not the document it promises: ${quote(text)}`,
+      `${name} at ${url.href} was refused ${response.status}: ${code} — ${message}`,
       REACH.ANSWERED,
       body,
+      { code, message },
     );
   }
 
-  return { ok: true, document: parsed.data as DocumentOf<N> };
+  return failure(
+    name,
+    `${name} at ${url.href} answered ${response.status} with something that is not the document it promises: ${quote(text)}`,
+    REACH.ANSWERED,
+    body,
+  );
 };

@@ -18,7 +18,12 @@
  * work does not.
  */
 
-import { type Card, deliveryCheckFor, ReceiptSchema } from "@coinslot/contracts";
+import {
+  AgentOrderStatusSchema,
+  type Card,
+  deliveryCheckFor,
+  ReceiptSchema,
+} from "@coinslot/contracts";
 import { ScriptedFacilitator } from "@coinslot/gateway";
 import { WORKER_PROBLEM_KINDS } from "@coinslot/sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -110,11 +115,21 @@ describe("the stage-one gate: a sandbox purchase, green from catalog to receipt"
     expect(() => deliveryCheckFor(RENTED_NUMBER).parse(delivered)).not.toThrow();
     expect(fields(delivered).phone_number).toMatch(/^\+1415/);
 
-    // The receipt is proof of a delivered purchase in test money, and it
-    // carries the price the sale actually went through at — the merchant's
-    // quoted 3.50, not the card's 3.00 snapshot. That difference is the quote
-    // having happened.
-    const receipt = ReceiptSchema.parse(fields(bought.body).receipt);
+    // The agent is told what it was charged, in the same answer: the
+    // merchant's quoted 3.50 and not the card's 3.00 snapshot. That difference
+    // is the quote having happened, and the word beside it is what keeps this
+    // from reading as proof of a payment that moved money.
+    const answered = AgentOrderStatusSchema.parse(bought.body);
+    expect(answered.status).toBe("delivered");
+    expect(answered.price?.amount).toBe("3.50");
+    expect(answered.test).toBe(true);
+
+    // The receipt is the merchant's record of the same sale, read where a
+    // receipt lives — behind the merchant's own key — and it agrees about the
+    // price the money moved at.
+    const receipt = ReceiptSchema.parse(
+      await booted.gateway.runtime.store.receiptForOrder(answered.order_id),
+    );
     expect(receipt.outcome).toBe("delivered");
     expect(receipt.test).toBe(true);
     expect(receipt.price.amount).toBe("3.50");
@@ -147,14 +162,23 @@ describe("the stage-one gate: a sandbox purchase, green from catalog to receipt"
     expect(facilitator.verifies).toHaveLength(1);
     expect(facilitator.settles).toHaveLength(1);
 
-    // The agent is handed an order and, honestly, no receipt yet: the receipt
-    // is written when the order reaches an ending, and this one has only just
-    // been paid for. The order carries the price the money moved at.
-    const order = fields(fields(bought.body).order);
-    const orderId = order.id;
-    if (typeof orderId !== "string") throw new Error("the purchase returned no order id");
-    expect(fields(order.price).amount).toBe("8.00");
-    expect(fields(bought.body).receipt).toBeNull();
+    // The agent is handed a running order and, honestly, no goods: the eSIM's
+    // profile is issued later, and the answer says so in the word for a
+    // purchase that has not finished. It carries the price the money moved at.
+    const answered = AgentOrderStatusSchema.parse(bought.body);
+    const orderId = answered.order_id;
+    expect(answered.status).toBe("in_progress");
+    expect(answered.delivered).toBeNull();
+    expect(answered.price?.amount).toBe("8.00");
+
+    // And no settlement rides back on this answer, though the money moved. The
+    // payment layer signs its receipt onto the answer that follows the charge,
+    // and here the charge happened while the order was being opened rather
+    // than as the last step of the exchange. So what this agent is told about
+    // its own money is the price and the test word, and nothing else — which
+    // is what the buy command has to say rather than crediting a settlement
+    // that only the synchronous sale gets.
+    expect(bought.settlement).toBeNull();
 
     // The merchant's own worker takes the order on. Its status to the agent is
     // "in progress" — taken on is not delivered, and the fifth gate says an
@@ -224,8 +248,7 @@ describe("the stage-one gate: a sandbox purchase, green from catalog to receipt"
 
     const bought = await buyer.buy(esim.id, { email: "buyer@example.com" });
     expect(bought.status).toBe(200);
-    const orderId = fields(fields(bought.body).order).id;
-    if (typeof orderId !== "string") throw new Error("the purchase returned no order id");
+    const orderId = AgentOrderStatusSchema.parse(bought.body).order_id;
 
     // Paid for and not delivered. The word for a purchase still running exists
     // so that an agent does not read a running sale as a refused one.
@@ -270,6 +293,94 @@ describe("the stage-one gate: a sandbox purchase, green from catalog to receipt"
     expect(fields(collected.body).test).toBe(true);
   }, 20_000);
 
+  it("answers a purchase with the document its status door answers with, and no other", async () => {
+    // One concept — where your order stands — and one shape for it, whichever
+    // door an agent came through. Two shapes for one thing is two readers to
+    // write and two chances to read the same sale two ways: an agent that
+    // bought and an agent that came back later were being handed different
+    // documents about the same order, and only one of them was published.
+    //
+    // Both cards are walked, and the synchronous one is the half that bites.
+    // Its purchase answer carries the goods, so a fork that dropped the
+    // delivered-goods rule from one of the two builders would show up here as
+    // an order whose goods appear at one door and not at the other. Read on
+    // the eSIM alone the comparison is between two documents that both say
+    // null, and it would survive that fork without a word.
+    const catalog = await buyer.catalog();
+    const rented = catalog.find((card) => card.title === RENTED_NUMBER.title);
+    const esim = catalog.find((card) => card.title === EUROPE_ESIM.title);
+    if (rented === undefined || esim === undefined) {
+      throw new Error("the catalog is missing one of the two cards");
+    }
+
+    const walked: { what: string; bought: unknown; collected: unknown }[] = [];
+
+    for (const [what, itemId, params] of [
+      ["a synchronous sale, delivered on the call", rented.id, { area_code: "415" }],
+      ["an asynchronous sale, still running", esim.id, { email: "buyer@example.com" }],
+    ] as const) {
+      const bought = await buyer.buy(itemId, params);
+      expect(bought.status, `${what}: ${JSON.stringify(bought.body)}`).toBe(200);
+
+      const purchased = fields(bought.body);
+      const orderId = purchased.order_id;
+      if (typeof orderId !== "string") throw new Error(`${what}: the purchase named no order`);
+
+      // Nothing moves either order between its two reads. The rented number is
+      // finished by the time the purchase answers, and the eSIM is delivered by
+      // an explicit call this test has not made — so both doors are describing
+      // the same standing order and every field may be compared.
+      const collected = await buyer.status(orderId);
+
+      expect(() => AgentOrderStatusSchema.parse(bought.body), what).not.toThrow();
+      expect(() => AgentOrderStatusSchema.parse(collected.body), what).not.toThrow();
+      expect(purchased, what).toStrictEqual(fields(collected.body));
+
+      walked.push({
+        what,
+        bought: purchased.delivered,
+        collected: fields(collected.body).delivered,
+      });
+    }
+
+    // The control on the comparison itself: one of the two orders really did
+    // carry goods through both doors, and the other really did carry none. Two
+    // orders with nothing in them would agree just as well and prove nothing.
+    expect(walked.map((one) => one.bought !== null)).toStrictEqual([true, false]);
+    expect(walked.map((one) => one.collected !== null)).toStrictEqual([true, false]);
+  }, 30_000);
+
+  it("hands the merchant's own key for the product and the buyer's answers through neither door", async () => {
+    // The status door was already built by addition rather than by
+    // subtraction, and the purchase was not: it answered with the merchant's
+    // own document for the order, which carries their key for the product and
+    // the parameters the buyer sent. Whoever holds an order's identifier can
+    // read that order (ADR-0011), so an answer assembled from the merchant's
+    // record hands all of it to whoever guessed one.
+    const catalog = await buyer.catalog();
+    const esim = catalog.find((card) => card.title === EUROPE_ESIM.title);
+    if (esim === undefined) throw new Error("the eSIM is not in the catalog");
+
+    const email = "buyer@example.com";
+    const bought = await buyer.buy(esim.id, { email });
+    const purchased = fields(bought.body);
+    const orderId = purchased.order_id;
+    if (typeof orderId !== "string") throw new Error("the purchase named no order");
+
+    const collected = await buyer.status(orderId);
+    const five = ["delivered", "order_id", "price", "status", "test"];
+
+    expect(Object.keys(purchased).sort()).toStrictEqual(five);
+    expect(Object.keys(fields(collected.body)).sort()).toStrictEqual(five);
+
+    // Read off the whole body rather than off a field name, because the cost
+    // is the value escaping and not the name it escaped under.
+    for (const answer of [bought.body, collected.body]) {
+      expect(JSON.stringify(answer)).not.toContain(EUROPE_ESIM.merchant_item_id);
+      expect(JSON.stringify(answer)).not.toContain(email);
+    }
+  }, 20_000);
+
   it("refuses an order identifier that names nothing, in the words the contract promises", async () => {
     // The negative control for the agent's door. An identifier that resolves
     // to no order is answered with one refusal and no detail — and a second
@@ -288,6 +399,52 @@ describe("the stage-one gate: a sandbox purchase, green from catalog to receipt"
     const another = await buyer.status("ord_nor_this_one");
     expect(another.status).toBe(invented.status);
     expect(another.body).toStrictEqual(invented.body);
+  }, 20_000);
+
+  it("gives the merchant the gateway's own reason for an order it will not describe", async () => {
+    // The whole road, with nothing stubbed on it: a real gateway refuses a
+    // real SDK call in words of its own, and the merchant reads those words.
+    //
+    // The order is one that closed before anybody named a price for it — the
+    // card is price-checked and this merchant's desk does not price it, so the
+    // honest answer is "there is none" and the purchase ends there. The
+    // merchant's own read of that order cannot come back in the shape it
+    // promises, because that shape carries a sale price and this sale has
+    // none. What the gateway sends instead is a refusal with a reason in it,
+    // and a merchant told only that we could not parse something would go
+    // reading our schemas about an order that is simply over.
+    const unpriceable: Card = {
+      ...EUROPE_ESIM,
+      merchant_item_id: "esim-eu-no-desk-prices-it",
+      title: "Europe eSIM, from a supplier this desk does not price",
+      price_check: "handler",
+    };
+    const published = await merchant.client.catalog.publish(unpriceable);
+    if (!("ok" in published)) {
+      throw new Error(`publishing the unpriceable card was refused: ${JSON.stringify(published)}`);
+    }
+
+    const listed = (await buyer.catalog()).find((card) => card.title === unpriceable.title);
+    if (listed === undefined) throw new Error("the unpriceable card is not in the catalog");
+
+    const bought = await buyer.buy(listed.id, { email: "buyer@example.com" });
+
+    // The purchase is over before any money moved, and it says so in the same
+    // document a purchase that worked would have used.
+    expect(bought.status).toBe(409);
+    const refusedPurchase = AgentOrderStatusSchema.parse(bought.body);
+    expect(refusedPurchase.status).toBe("rejected");
+    expect(refusedPurchase.price).toBeNull();
+    expect(facilitator.settles).toStrictEqual([]);
+
+    const said = await merchant.client.orders.get(refusedPurchase.order_id).then(
+      () => null,
+      (thrown: unknown) => (thrown instanceof Error ? thrown.message : String(thrown)),
+    );
+
+    expect(said).toContain("order_closed_before_it_was_priced");
+    expect(said).toContain("no sale to describe");
+    expect(said).not.toContain("is not the document it promises");
   }, 20_000);
 
   it("a refused payment moves no money and hands over no goods: the synchronous refusal is free", async () => {
@@ -401,9 +558,14 @@ describe("the same slice when the merchant's own code cannot fill the order", ()
     const bought = await buyer.buy(unstaffed.id, {});
 
     // The buyer paid for nothing and was charged for nothing: the payment was
-    // verified, the goods never came, and the charge was never executed.
+    // verified, the goods never came, and the charge was never executed. The
+    // goods are null rather than absent, which is the honest way to say there
+    // are none — a field left out is a silence a reader cannot tell from an
+    // oversight.
     expect(bought.status).not.toBe(200);
-    expect(fields(bought.body).delivered).toBeUndefined();
+    const ended = AgentOrderStatusSchema.parse(bought.body);
+    expect(ended.status).not.toBe("delivered");
+    expect(ended.delivered).toBeNull();
     expect(bought.settlement).toBeNull();
     expect(facilitator.verifies.length).toBeGreaterThanOrEqual(1);
     expect(facilitator.settles).toStrictEqual([]);
@@ -444,9 +606,9 @@ describe("the same slice when the merchant's own code cannot fill the order", ()
     if (esim === undefined) throw new Error("the eSIM is not in the catalog");
 
     const afterwards = await buyer.buy(esim.id, { email: "buyer@example.com" });
-    const order = fields(fields(afterwards.body).order);
 
     expect(afterwards.status).toBe(200);
-    await waitFor(() => merchant.acceptedOrders.has(String(order.id)));
+    const order = AgentOrderStatusSchema.parse(afterwards.body);
+    await waitFor(() => merchant.acceptedOrders.has(order.order_id));
   }, 20_000);
 });

@@ -41,6 +41,7 @@
  */
 
 import type {
+  AgentOrderStatus,
   Delivery,
   Order as OrderDocument,
   Receipt,
@@ -1061,6 +1062,54 @@ export function salePriceOf(record: StoredOrder): SalePrice | null {
     currency: price.currency,
     at: asTimestamp(record.order.timestamps.quotedAt ?? record.order.timestamps.createdAt),
     as_of: asTimestamp(price.asOf),
+  };
+}
+
+/**
+ * Where one order stands, as the agent that bought it reads it.
+ *
+ * Two doors ask, and they are the same question at two moments: the purchase
+ * itself, and the read the agent comes back with later on the identifier alone
+ * (ADR-0011). It is one function because they have to answer alike — two
+ * builders for one document is two places for the same sale to be described
+ * two ways, and the agent has no way of telling which of them was right. The
+ * purchase used to answer with the merchant's own document instead, which
+ * carried their key for the product and the parameters the buyer sent.
+ *
+ * It is built field by field rather than taken from the order and trimmed, and
+ * that is the whole of the protection. Whoever holds an order's identifier can
+ * read it, so assembled by subtraction a field added to the merchant's record
+ * later would arrive here too and nobody would be told; assembled by addition,
+ * the same field arrives nowhere until somebody writes it down.
+ */
+export function agentOrderStatusOf(record: StoredOrder): AgentOrderStatus {
+  const status = outcomeFor(record.order);
+
+  return {
+    order_id: record.order.id,
+    status,
+    // Null where nobody named a price rather than the card's own number: an
+    // order that closed before it was priced was never sold at anything, and
+    // standing the catalogue's figure in for it would be a claim about a sale
+    // that did not happen.
+    price: salePriceOf(record),
+    // The goods only once they are the buyer's, which is narrower than once
+    // the merchant handed them over. A synchronous delivery whose charge came
+    // back failed leaves goods on an order nothing was paid for; the purchase
+    // itself refuses to hand those over, and a door that answered with them
+    // anyway would be a way of collecting for free whatever a failed charge
+    // left behind. Where the charge failed outright a repeat purchase carries
+    // the payment home against the goods that already exist. Where it went
+    // silent instead, no repeat is taken either — the machine will not spend a
+    // second authorisation on a guess about the first — and the word this
+    // answers with is `in_progress`, because that is the truth of it: we are
+    // still waiting on the payment layer. That is the one case where goods
+    // exist, the buyer may have been charged, and nothing here hands them over.
+    delivered: status === "delivered" ? (record.delivery ?? null) : null,
+    // The same word the merchant's receipt carries. Every other field here
+    // reads the same whether the charge was real or not, so a buyer with no
+    // way to ask would be holding what looks like proof of a payment.
+    test: record.order.test,
   };
 }
 

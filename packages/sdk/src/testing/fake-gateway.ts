@@ -285,11 +285,8 @@ export const startFakeGateway = async (options: FakeGatewayOptions): Promise<Fak
       return;
     }
 
-    const document =
-      "document" in candidate.route.response ? candidate.route.response.document : undefined;
-
-    if (document !== undefined && status >= 200 && status < 300) {
-      const checked = document.safeParse(answer.body);
+    if (status >= 200 && status < 300) {
+      const checked = candidate.route.response.document.safeParse(answer.body);
       if (!checked.success) {
         await complain(
           request,

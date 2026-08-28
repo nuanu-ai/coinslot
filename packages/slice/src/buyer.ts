@@ -48,7 +48,11 @@ import { privateKeyToAccount } from "viem/accounts";
 export interface Bought {
   /** The final HTTP status the resource answered with after the payment. */
   readonly status: number;
-  /** The resource's own answer: the goods, or an order and its receipt, or an error. */
+  /**
+   * The resource's own answer: where the order stands, in the same document
+   * the status door answers with — the goods included where the purchase
+   * ended in them — or a refusal.
+   */
   readonly body: unknown;
   /**
    * The settlement receipt the payment layer wrote, where the answer carried

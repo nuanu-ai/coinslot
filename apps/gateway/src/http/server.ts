@@ -33,6 +33,8 @@
 
 import {
   type AuthMode,
+  type ErrorCode,
+  type ErrorEnvelope,
   MERCHANT_KEY_HEADER,
   mountableRoutes,
   type RouteDefinition,
@@ -332,7 +334,15 @@ async function answer(
   if (carriesBody && route.request !== undefined && handler.checksItsOwnBody !== true) {
     const held = hold(route.request, request.body);
     if (!held.ok) {
-      response.status(400).json({ error: { code: "malformed_body", problems: held.problems } });
+      response
+        .status(400)
+        .json(
+          refusal(
+            "malformed_body",
+            "this call's body is not the document this call takes, and the problems say which fields and why",
+            { problems: held.problems },
+          ),
+        );
       return;
     }
     body = held.value;
@@ -342,7 +352,15 @@ async function answer(
   if (route.query !== undefined) {
     const held = hold(route.query, request.query);
     if (!held.ok) {
-      response.status(400).json({ error: { code: "malformed_query", problems: held.problems } });
+      response
+        .status(400)
+        .json(
+          refusal(
+            "malformed_query",
+            "this call's query string is not the one this call takes, and the problems say which fields and why",
+            { problems: held.problems },
+          ),
+        );
       return;
     }
     query = held.value;
@@ -366,9 +384,13 @@ async function answer(
   // response that does not match the contract is a lie the other side would
   // reject anyway, and failing on our side is how it gets found here rather
   // than in somebody's integration.
-  if ("document" in route.response) {
-    route.response.document.parse(answered.document);
-  }
+  //
+  // A handler that writes its own response — the payment exchange, and every
+  // refusal — passes above and is not held to this. That is what `written`
+  // means and it is the whole of the exception: a challenge is a header and an
+  // empty body, and a refusal is the contract's envelope rather than the
+  // route's document.
+  route.response.document.parse(answered.document);
 
   response.status(answered.status).json(answered.document);
 }
@@ -510,17 +532,46 @@ function hold(schema: ZodType, value: unknown): Held {
 }
 
 /**
- * The gateway's own refusal document.
+ * How this gateway says no, and the only way it does.
  *
- * It is the gateway's and not the contract's, and that is worth knowing: the
- * route table publishes what each call answers with when it works, and says
- * nothing about the shapes of "you are not allowed", "there is no such route"
- * or "something here is broken". Those are invented here, so nothing in the
- * SDK should be written against them beyond the status code.
+ * The shape is the contract's — `ErrorEnvelopeSchema` — and so is the code:
+ * the first parameter takes one of `ERROR_CODES` and nothing else, which is
+ * what makes that published list true rather than a description somebody keeps
+ * in step by hand. A refusal this gateway wants to send under a name the
+ * contract has not got stops the build until the name is added there, where a
+ * consumer switching over the codes will see it.
+ *
+ * The words stay ours. The table publishes what each call answers with when it
+ * works and names no sentences, so "you are not allowed", "there is no such
+ * route" and "something here is broken" are this gateway's to write, and the
+ * contract fixes only that every refusal arrives in one shape with a code and
+ * a sentence — so a caller can always find out that it was refused and always
+ * have something to print.
+ *
+ * `detail` is for the refusals that know more about themselves than the two
+ * required fields: where an order ended, whether the payment layer might
+ * vouch for a second attempt, which fields of a document did not fit. It goes
+ * inside the envelope beside the code and the sentence rather than beside the
+ * envelope, because a reader that does not recognise it must still be able to
+ * read the two that are always there — and because a body carrying anything at
+ * the top level but `error` is not a refusal at all.
+ *
+ * It is spread first, so the code and the sentence win. Spread last it would
+ * be a way of replacing them: a detail that happened to carry a `message` —
+ * a field named after the thing it describes, arriving from a payment layer or
+ * a validator — would silently become the refusal's own sentence, and the one
+ * the caller was meant to read would be gone with nothing to say it ever
+ * existed. The type does not catch it, because `unknown` fits a string.
+ *
+ * Every refusal this gateway sends goes through here. Three of them used to be
+ * written out as object literals with findings and no sentence at all, which
+ * left the caller a code to search our source for and an empty space where the
+ * reason belongs.
  */
 export function refusal(
-  code: string,
+  code: ErrorCode,
   message: string,
-): { error: { code: string; message: string } } {
-  return { error: { code, message } };
+  detail?: Readonly<Record<string, unknown>>,
+): ErrorEnvelope {
+  return { error: { ...detail, code, message } };
 }
