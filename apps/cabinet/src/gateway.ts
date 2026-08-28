@@ -32,17 +32,13 @@ import {
   merchantKeyHeaderValue,
   type OrderList,
   OrderListSchema,
+  PayoutWalletSchema,
   type ReceiptList,
   ReceiptListSchema,
   type RegisteredMerchant,
   RegisteredMerchantSchema,
   SellerNameSchema,
 } from "@coinslot/contracts";
-// The payout address is not on that surface yet. Everything about it comes from
-// one module which is deleted when the contract lands, and these two names then
-// come from the import above like the rest.
-import { PAYOUT_WALLET_ROUTES, PayoutWalletSchema } from "./payout-wallet-contract.js";
-
 /** What a call came to, in the two shapes a page has to draw differently. */
 export type Answer<T> =
   | { readonly ok: true; readonly document: T }
@@ -219,11 +215,11 @@ export const gatewayFor = (
     // screen that draws it wants the address. Null is a real answer — it is the
     // merchant who has told us nowhere to send their money yet.
     payoutWallet: async () => {
-      const answered = await call(PAYOUT_WALLET_ROUTES.get_payout_wallet, PayoutWalletSchema);
+      const answered = await call(API_ROUTES.get_payout_wallet, PayoutWalletSchema);
       return answered.ok ? { ok: true, document: answered.document.payout_wallet } : answered;
     },
     setPayoutWallet: async (address) => {
-      const answered = await call(PAYOUT_WALLET_ROUTES.set_payout_wallet, PayoutWalletSchema, {
+      const answered = await call(API_ROUTES.set_payout_wallet, PayoutWalletSchema, {
         body: { payout_wallet: address },
       });
       return answered.ok ? { ok: true, document: answered.document.payout_wallet } : answered;

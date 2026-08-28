@@ -11,6 +11,7 @@
  * The routes that save one are driven over HTTP in `server.test.ts`.
  */
 
+import { checksummedAddressOf } from "@coinslot/contracts";
 import { describe, expect, it } from "vitest";
 import { payoutWalletBlock, whatIsWrongWithTheWallet } from "./payout-wallet.js";
 import type { Viewer } from "./screens.js";
@@ -34,12 +35,33 @@ const looking = (payout?: Viewer["payout"]): Viewer => ({
 const asCopied = (html: string): string => html.replaceAll(/<[^>]*>/g, "");
 
 describe("the rule an address is held to", () => {
-  it("takes an address of the right shape, in either case", () => {
-    // A wallet hands out an address with some of its letters capitalised, and
-    // those capitals are a check the address carries on itself. Refusing them
-    // would refuse most of the addresses merchants are actually given.
+  it("takes both of the two spellings anybody writes an address in", () => {
+    // Lower case is what a block explorer prints and what half the tooling in
+    // this world hands somebody. The mixed-case spelling is what a wallet puts
+    // on the clipboard, and its capitals are a checksum over the address
+    // itself. Refusing either would refuse addresses merchants are actually
+    // given.
     expect(whatIsWrongWithTheWallet(SHAPED)).toBeNull();
-    expect(whatIsWrongWithTheWallet("0x0123456789ABCDEF0123456789abcdef01234567")).toBeNull();
+    expect(whatIsWrongWithTheWallet(checksummedAddressOf(SHAPED))).toBeNull();
+  });
+
+  it("refuses capitals that disagree with the rest, and says which failure it is", () => {
+    // The one refusal that is not about the shape. Forty characters of the
+    // right shape whose capitals do not check out mean a character in the
+    // address is wrong — and a wrong address is another perfectly good one
+    // belonging to somebody else. A merchant told "that is not an address"
+    // would re-read a spelling that looks entirely fine, so the sentence has to
+    // name the capitals.
+    const shouted = `0x${SHAPED.slice(2).toUpperCase()}`;
+
+    const said = whatIsWrongWithTheWallet(shouted);
+
+    expect(said).not.toBeNull();
+    expect(said).toMatch(/capital letters/i);
+    expect(said).toMatch(/not saved/i);
+    // And it is not the sentence the wrong shape gets, or naming the capitals
+    // would be worth nothing.
+    expect(said).not.toBe(whatIsWrongWithTheWallet("my wallet"));
   });
 
   it("refuses what money could never reach, and says nothing was saved", () => {

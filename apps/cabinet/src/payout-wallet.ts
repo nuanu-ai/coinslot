@@ -29,10 +29,20 @@
  * long number is, with no space actually in the text: a merchant reads it
  * against their wallet group by group, and a merchant who selects it gets the
  * address back rather than a spaced-out copy of it that pastes wrong.
+ *
+ * What is shown is whatever the gateway answered with, untouched. That is not
+ * indifference about the spelling — it is where the spelling is decided. The
+ * capitals in an address are a checksum over the address itself, the gateway
+ * keeps every address in the mixed-case spelling a wallet displays, and it
+ * answers in that spelling whichever of the two accepted spellings it was
+ * given. So a merchant who pasted their address in lower case reads it back the
+ * way their own wallet shows it, and this page never has to ask anybody to take
+ * on trust that two spellings are one address.
  */
 
+import { EvmAddressSchema } from "@coinslot/contracts";
+
 import { escaped } from "./html.js";
-import { EvmAddressSchema } from "./payout-wallet-contract.js";
 import type { Viewer } from "./screens.js";
 
 /**
@@ -51,32 +61,49 @@ import type { Viewer } from "./screens.js";
  * do themselves is the only one there is.
  */
 export const WALLET_RULE =
-  "An address is 0x followed by forty characters, each of them a digit or a letter from a to f," +
-  " capital or small. That is all this page checks. It does not look the address up anywhere, so" +
-  " it cannot tell you that the address exists, that it is yours, or that anything has ever been" +
-  " paid to it — copy it from your wallet rather than typing it out.";
-
-/**
- * What somebody is told whose address is not one.
- *
- * It says the shape was wrong and it says nothing was written, because the
- * second half is the part a merchant cannot see for themselves. It does not
- * repeat the rule: the rule is a few lines up the same page, and a refusal that
- * answers with the same paragraph again reads as a page that did not notice
- * anything happened.
- */
-export const WALLET_REFUSED =
-  "That is not the shape an address has, so it was not saved. What one looks like is written" +
-  " above the box.";
+  "An address is 0x followed by forty characters, each of them a digit or a letter from a to f." +
+  " Paste it exactly as your wallet shows it, capitals and all, or write it all in lower case:" +
+  " those capitals are a check the address carries on itself, so a spelling that is neither of" +
+  " those two is refused rather than guessed at. It comes back written the way your wallet" +
+  " writes it. Past that check nothing here looks the address up anywhere, so this page cannot" +
+  " tell you that the address exists, that it is yours, or that anything has ever been paid to" +
+  " it — copy it from your wallet rather than typing it out.";
 
 /** What somebody who pressed the button with an empty box is told. */
 export const WALLET_NEEDED =
   "An address is needed here. Copy it out of the wallet you want to be paid in rather than" +
   " typing it, and paste the whole of it.";
 
-/** What is wrong with an address somebody typed, in a sentence, or null. */
-export const whatIsWrongWithTheWallet = (address: string): string | null =>
-  EvmAddressSchema.safeParse(address).success ? null : WALLET_REFUSED;
+/**
+ * The half of a refusal this file writes, and the half a merchant cannot see.
+ *
+ * They can see the box still holding what they typed. Whether it went anywhere
+ * is the thing they cannot, and on this one field that is the difference
+ * between money arriving where they meant it and money arriving somewhere else.
+ */
+const NOTHING_WAS_SAVED = "It was not saved.";
+
+/**
+ * What is wrong with an address somebody typed, in a sentence, or null.
+ *
+ * The sentence is the rule's own, asked of the schema rather than written out
+ * here a second time. Two rules can fail and they fail differently: forty
+ * characters that are not an address at all, and forty of the right shape whose
+ * capitals disagree with the rest — which means a character in it is wrong, and
+ * is the failure this box exists to catch at all. One sentence covering both
+ * would have to say "that is not an address", which is untrue of the second and
+ * leaves a merchant re-reading a spelling that looks perfectly fine.
+ */
+export const whatIsWrongWithTheWallet = (address: string): string | null => {
+  const read = EvmAddressSchema.safeParse(address);
+  if (read.success) {
+    return null;
+  }
+  const said = read.error.issues[0]?.message;
+  return said === undefined
+    ? NOTHING_WAS_SAVED
+    : `${said.slice(0, 1).toUpperCase()}${said.slice(1)}. ${NOTHING_WAS_SAVED}`;
+};
 
 /**
  * What the merchant's payout address is on the screen drawing it.
@@ -114,7 +141,7 @@ const savedAddress = (address: string): string => `
   <div class="saved">
     <div class="label">Saved here</div>
     <div class="address">${inFours(address)}</div>
-    <p class="under">Read it against your wallet in groups of four. Two addresses that differ only in the middle look the same when the middle is left out, so the whole of it is here.</p>
+    <p class="under">This is the spelling your own wallet shows, so read it against your wallet group by group. Two addresses that differ only in the middle look the same when the middle is left out, so the whole of it is here.</p>
   </div>`;
 
 /**

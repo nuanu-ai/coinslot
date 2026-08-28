@@ -25,7 +25,13 @@
 import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { connect } from "node:net";
-import type { Card, MerchantKey, MerchantKeyList, RegisteredMerchant } from "@coinslot/contracts";
+import {
+  type Card,
+  checksummedAddressOf,
+  type MerchantKey,
+  type MerchantKeyList,
+  type RegisteredMerchant,
+} from "@coinslot/contracts";
 import { buyOverHttp, type Harness, harness, type Served, serve } from "@coinslot/gateway/testing";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type CabinetConfig, loadConfig } from "./config.js";
@@ -223,7 +229,6 @@ interface Running {
    * refused on the page never was. What actually goes on the wire is held in
    * `gateway.test.ts` against a server that records it.
    */
-  readonly payoutWallet: () => string | null;
   /** Every message the cabinet handed over while this test ran. */
   readonly mails: Message[];
   /** A second browser on the same cabinet, for two people or two devices. */
@@ -267,7 +272,7 @@ const started = async (
   const gateway = await serve(harnessed);
   const basePath = options.base ?? "";
   const mails: Message[] = [];
-  const { browser, url, identity, forgetMerchant, rows, payoutWallet } = await visiting(
+  const { browser, url, identity, forgetMerchant, rows } = await visiting(
     gateway.url,
     basePath,
     mails,
@@ -285,7 +290,6 @@ const started = async (
     identity,
     forgetMerchant,
     rows,
-    payoutWallet,
     mails,
     another: async () => await attachedTo(url, basePath),
     async stopGateway() {
@@ -307,35 +311,6 @@ afterEach(async () => {
   open = null;
 });
 
-/**
- * The two payout-address calls, answered in this process.
- *
- * The route behind them is being added to the gateway on another branch, so
- * there is nothing on the real one to call: without this every settings screen
- * in this file would be a 502 about a gateway that answered 404. It holds one
- * address, the way one merchant's row would, and it is deliberately no stricter
- * than that — an address of the wrong shape reaching it is the cabinet having
- * failed to refuse one, which is a thing a test here should see happen rather
- * than have caught for it.
- */
-const standingInForPayoutWallet = (): {
-  over: (real: GatewayClient) => GatewayClient;
-  held: () => string | null;
-} => {
-  let address: string | null = null;
-  return {
-    held: () => address,
-    over: (real) => ({
-      ...real,
-      payoutWallet: async () => ({ ok: true, document: address }),
-      setPayoutWallet: async (given: string) => {
-        address = given;
-        return { ok: true, document: address };
-      },
-    }),
-  };
-};
-
 /** The cabinet on a port, and a cookie jar of one. */
 async function visiting(
   gatewayUrl: string,
@@ -350,7 +325,6 @@ async function visiting(
   identity: Identity;
   forgetMerchant: (email: string) => void;
   rows: Record<string, Record<string, unknown>[]>;
-  payoutWallet: () => string | null;
 }> {
   // No merchant key in the environment, which is the point: the cabinet builds
   // its client from the key on the row of whoever is signed in, so what these
@@ -371,12 +345,11 @@ async function visiting(
   const { identity, forgetMerchant, rows } = await withIdentity(config, async (message) => {
     mails.push(message);
   });
-  const payout = standingInForPayoutWallet();
   const app = buildApp(config, {
     identity,
     ...(registrar === undefined ? {} : { registrar }),
     gatewayFor: (key: string) => {
-      const real = payout.over(gatewayFor(gatewayUrl, key));
+      const real = gatewayFor(gatewayUrl, key);
       return client === undefined ? real : client(real);
     },
   });
@@ -394,7 +367,6 @@ async function visiting(
     identity,
     forgetMerchant,
     rows,
-    payoutWallet: payout.held,
     browser: {
       ...browser,
       // Closing one that is already closed is not an error. A test that stands
@@ -590,6 +562,10 @@ const unname = async (running: Running): Promise<void> => {
 /** What the gateway has this merchant listed as, read out of its store. */
 const listedAs = async (running: Running): Promise<string | null> =>
   (await running.harnessed.store.merchantById(running.harnessed.merchant.id))?.serviceName ?? null;
+
+/** Where the gateway would pay this merchant, read out of the same row. */
+const paidInto = async (running: Running): Promise<string | null> =>
+  (await running.harnessed.store.merchantById(running.harnessed.merchant.id))?.payoutWallet ?? null;
 
 describe("getting into the cabinet", () => {
   it("shows a visitor with no session the sign-in and nothing else at all", async () => {
@@ -1798,8 +1774,17 @@ describe("the address a merchant's money arrives at", () => {
    * An address of the right shape that is nobody's: the digits run 0 to 9 and
    * then the letters a to f, twice over. A fixture rather than somewhere money
    * could sensibly be sent.
+   *
+   * Two spellings of the same one. The lower-case form is what a block explorer
+   * prints and what half the tooling in this world hands somebody; the other is
+   * the mixed-case spelling a wallet displays, which is a checksum over the
+   * address itself. The second is computed from the first rather than typed out
+   * here, because a checksum written by hand into a fixture is a checksum that
+   * can be wrong — and a wrong one would make these tests pass against a
+   * gateway that had stopped checking.
    */
-  const SHAPED = "0x0123456789abcdef0123456789abcdef01234567";
+  const LOWER = "0x0123456789abcdef0123456789abcdef01234567";
+  const AS_A_WALLET_SHOWS_IT = checksummedAddressOf(LOWER);
 
   it("is asked for on the settings screen", async () => {
     // The block is one line on that screen and this is what holds it there: a
@@ -1820,32 +1805,63 @@ describe("the address a merchant's money arrives at", () => {
     await running.browser.signIn();
 
     const saved = await running.browser.post("/settings/payout-wallet", {
-      payout_wallet: SHAPED,
+      payout_wallet: AS_A_WALLET_SHOWS_IT,
     });
 
     expect(saved.status).toBe(303);
     expect(saved.to).toBe("/settings");
-    expect(running.payoutWallet()).toBe(SHAPED);
+    expect(await paidInto(running)).toBe(AS_A_WALLET_SHOWS_IT);
     // And read back whole rather than shortened, because the shortening is the
     // presentation under which a wrong address and the right one look the same.
     const after = await running.browser.get("/settings");
-    expect(after.html.replaceAll(/<[^>]*>/g, "")).toContain(SHAPED);
+    expect(after.html.replaceAll(/<[^>]*>/g, "")).toContain(AS_A_WALLET_SHOWS_IT);
   });
 
-  it("keeps the capitals a wallet gave it", async () => {
-    // The capitals in an address are a check the address carries on itself, and
-    // a merchant comparing what we show against their own wallet is comparing
-    // character by character. Correcting the case would break both.
-    const mixed = "0x0123456789ABCDEF0123456789abcdef01234567";
+  it("shows an address pasted in lower case the way the merchant's wallet shows it", async () => {
+    // The spelling is the gateway's to decide and it decides on the wallet's,
+    // because that is the one a person recognises without comparing character
+    // by character — which on this field is the only checking anybody does. So
+    // a merchant who pasted the lower-case spelling a block explorer gave them
+    // reads their own wallet's spelling back, and the page never asks anybody
+    // to believe that two strings are one address.
     const running = await started();
     await running.browser.signIn();
 
-    await running.browser.post("/settings/payout-wallet", { payout_wallet: mixed });
+    const saved = await running.browser.post("/settings/payout-wallet", { payout_wallet: LOWER });
 
-    expect(running.payoutWallet()).toBe(mixed);
+    expect(saved.status).toBe(303);
+    expect(await paidInto(running)).toBe(AS_A_WALLET_SHOWS_IT);
     expect((await running.browser.get("/settings")).html.replaceAll(/<[^>]*>/g, "")).toContain(
-      mixed,
+      AS_A_WALLET_SHOWS_IT,
     );
+  });
+
+  it("refuses a spelling whose capitals disagree with the rest and says which it is", async () => {
+    // The failure this box exists to catch. Forty characters of the right shape
+    // whose capitals do not check out mean a character in the address is wrong,
+    // and a wrong address is another perfectly good one belonging to somebody
+    // else. A refusal reading "that is not an address" would be untrue here and
+    // would leave a merchant re-reading a spelling that looks fine.
+    const mangled = `0x${AS_A_WALLET_SHOWS_IT.slice(2).toUpperCase()}`;
+    expect(mangled, "the fixture has capitals a wallet would not print").not.toBe(
+      AS_A_WALLET_SHOWS_IT,
+    );
+    const running = await started();
+    await running.browser.signIn();
+    const before = await paidInto(running);
+
+    const answered = await running.browser.post("/settings/payout-wallet", {
+      payout_wallet: mangled,
+    });
+
+    expect(answered.status).toBe(400);
+    // Unchanged rather than absent: the merchant this harness seeds is already
+    // being paid somewhere, and what a refusal has to leave alone is wherever
+    // that is.
+    expect(await paidInto(running)).toBe(before);
+    const text = readable(answered.html);
+    expect(text).toMatch(/capital letters/i);
+    expect(text).toMatch(/not saved/i);
   });
 
   it("takes the space off what was pasted rather than refusing it", async () => {
@@ -1856,39 +1872,45 @@ describe("the address a merchant's money arrives at", () => {
     await running.browser.signIn();
 
     const saved = await running.browser.post("/settings/payout-wallet", {
-      payout_wallet: `  ${SHAPED}\n`,
+      payout_wallet: `  ${AS_A_WALLET_SHOWS_IT}\n`,
     });
 
     expect(saved.status).toBe(303);
-    expect(running.payoutWallet()).toBe(SHAPED);
+    expect(await paidInto(running)).toBe(AS_A_WALLET_SHOWS_IT);
   });
 
   it("refuses an address of the wrong shape and sends nothing", async () => {
     const running = await started();
     await running.browser.signIn();
-    await running.browser.post("/settings/payout-wallet", { payout_wallet: SHAPED });
+    await running.browser.post("/settings/payout-wallet", {
+      payout_wallet: AS_A_WALLET_SHOWS_IT,
+    });
 
     const answered = await running.browser.post("/settings/payout-wallet", {
-      payout_wallet: `${SHAPED}0`,
+      payout_wallet: `${AS_A_WALLET_SHOWS_IT}0`,
     });
 
     expect(answered.status).toBe(400);
     // What was refused, that nothing was written, and — the half a merchant
     // cannot see for themselves — where their money still goes.
     expect(readable(answered.html)).toMatch(/not saved/i);
-    expect(answered.html.replaceAll(/<[^>]*>/g, "")).toContain(SHAPED);
-    expect(running.payoutWallet()).toBe(SHAPED);
+    expect(answered.html.replaceAll(/<[^>]*>/g, "")).toContain(AS_A_WALLET_SHOWS_IT);
+    expect(await paidInto(running)).toBe(AS_A_WALLET_SHOWS_IT);
   });
 
   it("refuses an empty box and says what to paste into it", async () => {
     const running = await started();
     await running.browser.signIn();
+    const before = await paidInto(running);
 
     for (const form of [{ payout_wallet: "" }, {}] as Record<string, string>[]) {
       const answered = await running.browser.post("/settings/payout-wallet", form);
       expect(answered.status).toBe(400);
       expect(readable(answered.html)).toMatch(/address is needed/i);
-      expect(running.payoutWallet()).toBeNull();
+      // An empty box is the shape a merchant reaches for who wants to stop
+      // being paid here, and it is the one this cannot do: where the money goes
+      // is what it was.
+      expect(await paidInto(running)).toBe(before);
     }
   });
 
