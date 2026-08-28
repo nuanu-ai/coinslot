@@ -5,6 +5,7 @@ import {
   API_ROUTES,
   AUTH_MODES,
   CatalogPageSchema,
+  ERROR_CODES,
   ErrorEnvelopeSchema,
   expandPath,
   HTTP_METHODS,
@@ -1325,6 +1326,25 @@ describe("the envelope every call refuses in", () => {
         `${name} answers with a document that accepts a refusal envelope, so a refusal to this call cannot be told from an answer to it`,
       ).toBe(false);
     }
+  });
+
+  it("accepts a code the published list has never heard of", () => {
+    // The half of the vocabulary that is easy to lose. The list beside this
+    // schema is what a consumer switches over; it is not what the schema
+    // validates against, and the day it becomes that, a client one version
+    // behind its gateway stops being able to read a refusal at all — the
+    // parse fails, and what it had was a perfectly good sentence explaining
+    // why its call did not go through.
+    const unfamiliar = { error: { code: "something_nobody_has_named_yet", message: "and yet" } };
+
+    expect(ErrorEnvelopeSchema.parse(unfamiliar)).toStrictEqual(unfamiliar);
+    expect(ERROR_CODES).not.toContain("something_nobody_has_named_yet");
+  });
+
+  it("has no code written down twice", () => {
+    // A duplicate would be harmless to the union and misleading to a reader
+    // counting what this surface can say.
+    expect(new Set(ERROR_CODES).size).toBe(ERROR_CODES.length);
   });
 
   it("is published, because it is the one answer every caller has to be able to read", () => {

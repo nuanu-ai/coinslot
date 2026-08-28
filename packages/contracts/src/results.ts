@@ -137,22 +137,35 @@ export const ORDER_CALL_ERROR_CODES = Object.freeze([
   "delivery_does_not_match_card",
 ] as const);
 
-/** One thing wrong with a card, in a place, in a code and in words. */
-export const PublishErrorSchema = z.strictObject({
-  /**
-   * Which field the finding is about, as the path to it — `["params",
-   * "email", "type"]`. An empty path is a statement rather than a missing
-   * value: the finding is about the card as a whole. Leaving the field out
-   * entirely would make those two indistinguishable.
-   */
-  path: z.array(z.string()),
+/**
+ * One thing wrong with what was sent, in a place, in a code and in words.
+ *
+ * A card's findings are where it began and no longer the whole of its use: the
+ * same shape is what a refusal carries in its `problems` when a body or a set
+ * of purchase parameters did not fit. The empty path is the part two readers
+ * were left to infer differently, so it is said in the exported description as
+ * well as here.
+ */
+export const PublishErrorSchema = z
+  .strictObject({
+    /**
+     * Which field the finding is about, as the path to it — `["params",
+     * "email", "type"]`. An empty path is a statement rather than a missing
+     * value: the finding is about the card as a whole. Leaving the field out
+     * entirely would make those two indistinguishable.
+     */
+    path: z.array(z.string()),
 
-  /** What kind of finding it is, for the code that reads it. */
-  code: z.string().regex(/\S/, "a finding carries a code"),
+    /** What kind of finding it is, for the code that reads it. */
+    code: z.string().regex(/\S/, "a finding carries a code"),
 
-  /** The same finding in words, for the person who has to fix the card. */
-  message: z.string().regex(/\S/, "a finding carries an explanation a person can read"),
-});
+    /** The same finding in words, for the person who has to fix the card. */
+    message: z.string().regex(/\S/, "a finding carries an explanation a person can read"),
+  })
+  .meta({
+    description:
+      'One thing wrong with what was sent: where it is, a code for the program that reads it, and the same finding in words for the person who has to fix it. The path names the field, innermost last — ["params", "email", "type"] — and an empty path is a statement rather than a missing value: the finding is about the whole request and not about any one field of it, which is what a document that could not be read at all produces. The field is always present for that reason, because an absent path and an empty one would be indistinguishable. This is the shape of a card\'s findings when publishing is refused, and the same shape a refusal carries in its problems when a body, a query string or a set of purchase parameters did not fit.',
+  });
 
 /**
  * The answer to publishing a card: the catalog id, or what is wrong with it.

@@ -591,10 +591,75 @@ export const ErrorEnvelopeSchema = z
   })
   .meta({
     description:
-      'How every call on this surface says no. One shape for every refusal of every route, whatever it is about and whatever HTTP status it arrives under: an object whose only field is "error", carrying a machine-readable code and a sentence a person can act on. Both are always present — a refusal with a code and no words is one only its author can read. The code is an open set and is not enumerated: a gateway meets situations this contract has not named, and what is promised here is the shape rather than the vocabulary. Inside "error" a refusal may carry more about itself — where an order ended, whether a second attempt could succeed, which fields of a document did not fit — and a reader that does not recognise those must still be able to read the code and the sentence. Nothing rides beside the envelope: a body carrying anything at the top level other than "error" is not a refusal, and reading one as a refusal would turn a document that merely mentions an error into a call that failed.',
+      'How every call on this surface says no. One shape for every refusal of every route, whatever it is about and whatever HTTP status it arrives under: an object whose only field is "error", carrying a machine-readable code and a sentence a person can act on. Both are always present — a refusal with a code and no words is one only its author can read. The code is an open set here on purpose: a gateway meets situations this contract has not named, and what this schema promises is the shape rather than the vocabulary, so an unfamiliar code parses and stays readable. The codes this gateway sends today are published beside it as a list, to switch over rather than to validate against — a consumer covers those and keeps a default arm for the one it has never seen, where the sentence in this envelope is what it shows. Inside "error" a refusal may carry more about itself — where an order ended, whether a second attempt could succeed, which fields of a document did not fit — and a reader that does not recognise those must still be able to read the code and the sentence. Nothing rides beside the envelope: a body carrying anything at the top level other than "error" is not a refusal, and reading one as a refusal would turn a document that merely mentions an error into a call that failed.',
   });
 
 export type ErrorEnvelope = z.infer<typeof ErrorEnvelopeSchema>;
+
+/**
+ * Every code this contract's gateway refuses a call with today.
+ *
+ * Named after the field it lands in — `error.code` — rather than "refusal
+ * code", which this contract already uses for something else: what a
+ * merchant's handler answers when it cannot deliver an order it was given
+ * (`RefusalCode` in `handler.ts`). Those are a merchant's words about one
+ * order; these are the surface's words about one call, and a reader who ran
+ * the two together would go looking for `out_of_stock` here.
+ *
+ * Two halves, and a consumer that takes only one of them will be wrong about
+ * this surface sooner or later.
+ *
+ * The wire is open. `ErrorEnvelopeSchema` holds `code` to a non-blank string
+ * and not to this list, deliberately and for the reason `results.ts` gives
+ * about its own codes: a situation nobody anticipated has to reach the caller
+ * in its own words rather than break the parse on the way. A gateway newer
+ * than the client, another implementation of this surface, or something
+ * standing in front of one, can all answer with a code that is not here, and
+ * the answer is still a refusal and still readable.
+ *
+ * So this list is what to switch over, not what to validate against. A
+ * consumer covers these exhaustively — the compiler tells them when the list
+ * grows — and keeps a default arm for the code it has never seen, which is not
+ * an error path: the envelope's `message` is required precisely so that arm
+ * has a sentence to show, written by the side that knows why. A consumer that
+ * refused an unknown code, or rendered nothing for it, would turn a version
+ * skew into a blank screen over a refusal the gateway explained perfectly
+ * well.
+ *
+ * The list is alphabetical because it is looked up rather than read through,
+ * and it is the codes and not their meanings: what each one means to whoever
+ * has to act on it belongs to the route that sends it and to the sentence the
+ * refusal carries.
+ */
+export const ERROR_CODES = Object.freeze([
+  "body_too_large",
+  "body_undecodable",
+  "call_refused",
+  "charset_unsupported",
+  "encoding_unsupported",
+  "gateway_failed",
+  "key_opened_this_call",
+  "malformed_body",
+  "malformed_query",
+  "merchant_departed",
+  "no_such_item",
+  "no_such_key",
+  "no_such_order",
+  "no_such_route",
+  "not_authorised",
+  "not_invited",
+  "not_selling",
+  "not_this_purchase",
+  "order_closed_before_it_was_priced",
+  "order_not_priced_yet",
+  "params_do_not_fit",
+  "payment_already_spent",
+  "payment_not_taken",
+  "payment_not_verified",
+] as const);
+
+/** One of the codes this gateway is known to refuse a call with. */
+export type ErrorCode = (typeof ERROR_CODES)[number];
 
 /**
  * What a call answers with when it works.

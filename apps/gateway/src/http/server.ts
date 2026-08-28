@@ -33,6 +33,7 @@
 
 import {
   type AuthMode,
+  type ErrorCode,
   type ErrorEnvelope,
   MERCHANT_KEY_HEADER,
   mountableRoutes,
@@ -533,13 +534,19 @@ function hold(schema: ZodType, value: unknown): Held {
 /**
  * How this gateway says no, and the only way it does.
  *
- * The shape is the contract's — `ErrorEnvelopeSchema` — and the return type is
- * what holds this file and every handler to it. The words are ours: the table
- * publishes what each call answers with when it works and names no codes, so
- * "you are not allowed", "there is no such route" and "something here is
- * broken" are this gateway's to write. What the contract fixes is that all of
- * them arrive in one shape with a code and a sentence, so a caller can always
- * find out that it was refused and always have something to print.
+ * The shape is the contract's — `ErrorEnvelopeSchema` — and so is the code:
+ * the first parameter takes one of `ERROR_CODES` and nothing else, which is
+ * what makes that published list true rather than a description somebody keeps
+ * in step by hand. A refusal this gateway wants to send under a name the
+ * contract has not got stops the build until the name is added there, where a
+ * consumer switching over the codes will see it.
+ *
+ * The words stay ours. The table publishes what each call answers with when it
+ * works and names no sentences, so "you are not allowed", "there is no such
+ * route" and "something here is broken" are this gateway's to write, and the
+ * contract fixes only that every refusal arrives in one shape with a code and
+ * a sentence — so a caller can always find out that it was refused and always
+ * have something to print.
  *
  * `detail` is for the refusals that know more about themselves than the two
  * required fields: where an order ended, whether the payment layer might
@@ -562,7 +569,7 @@ function hold(schema: ZodType, value: unknown): Held {
  * reason belongs.
  */
 export function refusal(
-  code: string,
+  code: ErrorCode,
   message: string,
   detail?: Readonly<Record<string, unknown>>,
 ): ErrorEnvelope {
