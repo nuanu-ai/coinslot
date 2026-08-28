@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { CardInput } from "./card.js";
 import {
   bazaarDeclarationOf,
   CardSchema,
@@ -154,14 +155,11 @@ describe("card", () => {
     expect(CardSchema.safeParse({ ...withoutParams, params: {} }).success).toBe(true);
   });
 
-  for (const field of [
-    "merchant_item_id",
-    "title",
-    "description",
-    "price",
-    "result",
-    "fulfillment",
-  ]) {
+  // Every field a card cannot go without. `fulfillment` is not one of them and
+  // once was: a card that names no mode is synchronous, and the word is filled
+  // in as the card is parsed rather than left for readers downstream to guess
+  // at. What holds that is "a card written short" at the foot of this file.
+  for (const field of ["merchant_item_id", "title", "description", "price", "result"]) {
     it(`refuses a card without ${field} and names it`, () => {
       expectMissingFieldRejected(CardSchema, syncCard, field);
     });
@@ -958,10 +956,25 @@ describe("a card written short", () => {
     // neither invent a type the compiler has no check for nor lose one the long
     // form allows.
     for (const type of ["string", "number", "integer", "boolean"]) {
-      expect(CardSchema.parse({ ...shortCard, result: { field: type } }).result, type).toStrictEqual(
-        { field: { type } },
-      );
+      expect(
+        CardSchema.parse({ ...shortCard, result: { field: type } }).result,
+        type,
+      ).toStrictEqual({ field: { type } });
     }
+  });
+
+  it("takes back a card it has already opened out", () => {
+    // A merchant reads a card back from us and publishes it again — from a
+    // script that keeps a catalog in step, or after editing one field of it.
+    // What comes back is the canonical form, so the canonical form has to be
+    // among the things a merchant may write, and writing it a second time has
+    // to leave it exactly where it was. The annotation below is half the
+    // assertion and it is made by the compiler: `CardInput` is spelled out by
+    // hand, and this is what stops it drifting away from the card it describes.
+    const once = CardSchema.parse(shortCard);
+    const republished: CardInput = once;
+
+    expect(CardSchema.parse(republished)).toStrictEqual(once);
   });
 
   it("fills the mode in rather than leaving it absent", () => {

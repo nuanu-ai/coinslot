@@ -53,7 +53,7 @@
 
 import type {
   Acceptance,
-  Card,
+  CardInput,
   Delivery,
   HandlerAnswer,
   Money,
@@ -282,8 +282,15 @@ export interface CatalogNamespace {
    * Publishing again under the same `merchant_item_id` changes that card
    * rather than adding a second one, so a publish script can be run as often
    * as a merchant likes.
+   *
+   * The card is taken as it may be written rather than as it is stored, which
+   * is what `CardInput` is: the price as one string or as two fields, a
+   * declared field as its type word or written out, the fulfillment mode left
+   * off a card that delivers in the answer to the purchase. Every one of those
+   * is opened out when the card is accepted, so a card read back afterwards is
+   * in the one canonical form.
    */
-  publish(card: Card): Promise<PublishResult>;
+  publish(card: CardInput): Promise<PublishResult>;
 }
 
 export interface OrdersNamespace {

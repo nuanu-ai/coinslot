@@ -28,6 +28,7 @@
 export type {
   Acceptance,
   Card,
+  CardInput,
   Delivery,
   Fulfillment,
   HandlerAnswer,
