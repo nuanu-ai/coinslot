@@ -167,16 +167,44 @@ export class PostgresStore implements Store {
     // A key naming a merchant that is not there is refused by the foreign key
     // rather than written: a key that opens a door onto nothing is worse than
     // a command that failed.
-    const [row] = await this.#db
-      .insert(merchantKeys)
-      .values({
-        id: key.id,
-        merchantId: key.merchantId,
-        label: key.label,
-        digest: key.digest,
-        createdAt: new Date(at),
-      })
-      .returning();
+    //
+    // The two uniqueness rules are answered one at a time and by name, because
+    // they are two different things to have gone wrong. An identifier already
+    // taken is our own generator having collided, which is a defect in us. A
+    // digest already taken is the same secret being issued twice, which is what
+    // the command that issues keys asks `keyByDigest` about before it writes —
+    // and this is the rule standing behind that check when two issues race.
+    let row: typeof merchantKeys.$inferSelect | undefined;
+    try {
+      [row] = await this.#db
+        .insert(merchantKeys)
+        .values({
+          id: key.id,
+          merchantId: key.merchantId,
+          label: key.label,
+          digest: key.digest,
+          createdAt: new Date(at),
+        })
+        .returning();
+    } catch (thrown) {
+      const refused = uniquenessRefused(thrown);
+      if (refused === null) {
+        throw thrown;
+      }
+      // Nothing below carries the digest, and that is the point rather than a
+      // nicety. The driver's refusal holds it twice — once among the bound
+      // parameters of the statement and once in the detail line naming the
+      // value that clashed — so passing that error along, or hanging it on one
+      // of ours as a cause, would put a merchant's stored secret into whatever
+      // collects the log the first time a key was issued twice.
+      if (refused.constraint === KEY_IDENTIFIER_TAKEN) {
+        throw new Error(`the key ${key.id} is already written down`);
+      }
+      if (refused.constraint === KEY_DIGEST_TAKEN) {
+        throw new Error("a key with that digest is already written down");
+      }
+      throw new Error(unknownRuleRefused(`issuing the key ${key.id}`, refused));
+    }
 
     if (row === undefined) {
       throw new Error(`issuing a key for ${key.merchantId} wrote no row`);
@@ -338,21 +366,26 @@ export class PostgresStore implements Store {
     try {
       await this.#db.insert(orders).values(rowFor(record));
     } catch (thrown) {
-      if (!alreadyThere(thrown)) {
+      const refused = uniquenessRefused(thrown);
+      if (refused === null) {
         throw thrown;
       }
-      // The primary key refused it, and this is where that becomes a sentence
-      // the gateway can read rather than the driver's. The in-memory store says
-      // exactly this, so a caller written against the offline suite meets the
-      // same failure here.
+      // Which rule refused is read rather than assumed, and the reason is that
+      // `orders` has one uniqueness rule today. A second one added tomorrow
+      // would otherwise be answered "already written down" — a confident wrong
+      // sentence about somebody's order, and the kind that survives review
+      // because it reads plausibly.
+      if (refused.constraint !== ORDER_IDENTIFIER_TAKEN) {
+        throw new Error(unknownRuleRefused(`writing the order ${record.order.id}`, refused));
+      }
+      // The in-memory store says exactly this, so a caller written against the
+      // offline suite meets the same failure here.
       //
       // The driver's own error is deliberately not carried as a cause. Its
       // message is the statement followed by every bound parameter, and one of
-      // those parameters is the whole order document — which holds, among other
-      // things, whatever the agent presented to pay with. That is not a thing to
-      // put in a log, and there is nothing in it to diagnose from: this table
-      // has one unique constraint, so an insert refused for being already there
-      // is refused for this identifier and no other reason.
+      // those is the whole order document — which holds, among other things,
+      // whatever the agent presented to pay with. Naming the rule is the whole
+      // of what there was to diagnose.
       throw new Error(`the order ${record.order.id} is already written down`);
     }
   }
@@ -722,28 +755,63 @@ export class PostgresStore implements Store {
 }
 
 /**
- * Whether what the driver threw is "that row is already there".
+ * The uniqueness rules this store has a sentence for, by the names they carry
+ * in the database.
  *
- * SQLSTATE 23505, which Postgres raises for a primary key or a unique index
- * that refused a write. It is looked for down the chain of causes rather than on
- * the exception itself, because drizzle wraps what the driver threw in one of
- * its own and hands the original along as `cause`. Reading the message instead
- * would be reading English somebody's server locale may not be writing.
+ * Two of the three are Postgres's own for a column declared `primary key`; the
+ * third is spelled out in `drizzle/0003_merchant_tenancy.sql`. They are matched
+ * by name rather than guessed at from the order the rules happen to be checked
+ * in, and a name that changed would turn the shared store contract red rather
+ * than quietly turning every refusal into the vague one — the suite asserts the
+ * sentence each of these produces.
  */
-function alreadyThere(thrown: unknown): boolean {
+const ORDER_IDENTIFIER_TAKEN = "orders_pkey";
+const KEY_IDENTIFIER_TAKEN = "merchant_keys_pkey";
+const KEY_DIGEST_TAKEN = "merchant_keys_digest_unique";
+
+/**
+ * The uniqueness rule that turned a write away, where that is what happened,
+ * and nothing where the failure was something else.
+ *
+ * SQLSTATE 23505 is what Postgres raises for a primary key or a unique index
+ * refusing a row. It is looked for down the chain of causes rather than on the
+ * exception itself, because drizzle wraps what the driver threw in one of its
+ * own and hands the original along as `cause`. The rule's name is read from the
+ * driver's own field beside it and never out of the message: the message is
+ * English a server's locale may not be writing, and it carries the values that
+ * clashed.
+ */
+function uniquenessRefused(thrown: unknown): { readonly constraint: string | null } | null {
   let at = thrown;
   // Bounded rather than a walk, so a cause that pointed back at itself is not a
   // failure that hangs the gateway instead of reporting itself.
   for (let deep = 0; deep < 8; deep += 1) {
     if (typeof at !== "object" || at === null) {
-      return false;
+      return null;
     }
-    if ((at as { readonly code?: unknown }).code === "23505") {
-      return true;
+    const said = at as { readonly code?: unknown; readonly constraint?: unknown };
+    if (said.code === "23505") {
+      return { constraint: typeof said.constraint === "string" ? said.constraint : null };
     }
     at = (at as { readonly cause?: unknown }).cause;
   }
-  return false;
+  return null;
+}
+
+/**
+ * What to say when a uniqueness rule refused a write and this code has no
+ * sentence for that rule.
+ *
+ * It says which rule, and says outright that it cannot say what was already
+ * there. The alternative is picking the likeliest of the table's rules and
+ * writing a sentence about it, which is a confident wrong answer — and the one
+ * thing worse than an error nobody can act on is an error everybody acts on
+ * incorrectly. The rule's name is a schema identifier and carries nothing of
+ * whatever the caller was trying to write.
+ */
+function unknownRuleRefused(what: string, refused: { readonly constraint: string | null }): string {
+  const rule = refused.constraint === null ? "a rule the driver did not name" : refused.constraint;
+  return `${what} was refused by ${rule}, and this code cannot say what was already there`;
 }
 
 /** One card row as the rest of the gateway reads it. */
