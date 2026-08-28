@@ -217,10 +217,10 @@ function wrongOffer(
   if (accepted.amount !== ours.amount) {
     return `this order is priced at ${ours.amount} and the payment was made for ${accepted.amount ?? "nothing"}`;
   }
-  if (accepted.asset !== ours.asset || accepted.network !== ours.network) {
+  if (!sameAddress(accepted.asset, ours.asset) || accepted.network !== ours.network) {
     return "the payment was made in a different asset or on a different chain from the one asked for";
   }
-  if (accepted.payTo !== ours.payTo) {
+  if (!sameAddress(accepted.payTo, ours.payTo)) {
     return "the payment was made out to a different address from the one asked for";
   }
   if (accepted.extra?.order_id !== ours.extra.order_id) {
@@ -228,6 +228,26 @@ function wrongOffer(
   }
   return null;
 }
+
+/**
+ * Whether two addresses on the chain are the same address.
+ *
+ * One address has two spellings and both are correct: the mixed case a wallet
+ * shows, whose capitals are a checksum over the rest, and the same forty
+ * characters in lower case. Which of them arrives here is decided by whatever
+ * library wrote the agent's copy of our offer, and nothing in the protocol says
+ * it must come back the way it was sent. Compared exactly, one address would be
+ * two strings, and a client that normalises case would have every payment it
+ * ever made refused as though it had paid a stranger — with a message saying so,
+ * which is the part that would send its engineer looking in the wrong place.
+ *
+ * The checksum still does its work where it is read: at the door a merchant
+ * types their address into, which is the one place a wrong character can still
+ * be caught by anybody (ADR-0019). It is not a second meaning of the address
+ * once it is on the wire.
+ */
+const sameAddress = (theirs: string | undefined, ours: string): boolean =>
+  theirs !== undefined && theirs.toLowerCase() === ours.toLowerCase();
 
 /**
  * The closest of the machine's three reasons to what the facilitator said.

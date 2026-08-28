@@ -162,7 +162,11 @@ describe("verifying a payment", () => {
       ...charge(
         encodePaymentSignatureHeader({
           x402Version: 2,
-          accepted: edge.requirementsFor({ amount: "80.00", currency: "USD" }, "ord_1", inLowerCase),
+          accepted: edge.requirementsFor(
+            { amount: "80.00", currency: "USD" },
+            "ord_1",
+            inLowerCase,
+          ),
           payload: { signature: "0xsigned" },
         }),
       ),
@@ -173,6 +177,16 @@ describe("verifying a payment", () => {
     // And what the facilitator is asked about is still our own spelling: the
     // agent's copy is evidence of nothing, and the requirements are rebuilt.
     expect(client.asked[0]?.requirements.payTo).toBe(checksummed);
+
+    // The token's address is an address too, and arrives from the same
+    // libraries. A payment echoing it in the other spelling is the same
+    // payment.
+    const ours = edge.requirementsFor({ amount: "80.00", currency: "USD" }, "ord_1", PAY_TO);
+    expect(
+      await new X402Facilitator(new Answering(), edge).verify(
+        charge(honest({ asset: ours.asset.toUpperCase().replace("0X", "0x") })),
+      ),
+    ).toStrictEqual({ verified: true, payer: "0xpayer" });
     // The rule is one address in two spellings, not "addresses need not match":
     // another address is still refused, whatever case it is written in.
     expect(
