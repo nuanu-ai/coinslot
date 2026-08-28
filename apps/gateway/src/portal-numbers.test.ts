@@ -354,6 +354,24 @@ describe("a number the portal publishes is not also called undecided", () => {
       claim: /the build that would let the command start/,
       truth: "the SDK builds and `npx coinslot verify` runs; `scripts/outside.sh` runs it",
     },
+    // The two entries about a number the portal does not name, and the reason
+    // they belong anyway: the pause between attempts is settled in `config.ts`
+    // — a base, a factor and a cap — and is deliberately left unpublished,
+    // because a merchant sizes nothing against it. Calling it an open question
+    // was the same half-claim the deadlines were, and what settled it was
+    // deleting the bullet rather than naming a schedule.
+    {
+      page: "portal/orders.md",
+      claim: /The delay before we resend/,
+      truth:
+        "settled in configuration and deliberately unpublished as internal mechanics: the repeating is automatic and is bounded by the deadline and the attempt count, and both of those are named",
+    },
+    {
+      page: "portal/failures.md",
+      claim: /The delay before we repeat/,
+      truth:
+        "settled in configuration and deliberately unpublished as internal mechanics: the page says the pauses grow, which is the whole of what a handler needs",
+    },
   ];
 
   function unsettledSection(page: string): string {
