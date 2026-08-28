@@ -911,7 +911,6 @@ describe("the worker's calls over HTTP", () => {
     let charsetRefused: typeof notJson;
     let goodGzipBadJson: typeof notJson;
     let brokenPath: typeof notJson;
-    let blamedOnUs: string[] = [];
     try {
       notJson = await refusedFor({}, "{ this is not json");
       tooLarge = await refusedFor({}, JSON.stringify({ note: "x".repeat(300_000) }));
@@ -933,19 +932,16 @@ describe("the worker's calls over HTTP", () => {
         { "content-encoding": "gzip" },
         gzipSync("{ this is not json"),
       );
-      blamedOnUs = complaints.filter((line) => line.includes("failed before it reached a route"));
-
-      // The negative control for the other half of the new branch, and the
-      // reason it is in two halves. Express turns away a path parameter it
-      // cannot percent-decode in the same shapeless manner — a status blaming
-      // the caller and no word saying what happened — and that request declares
-      // no encoding at all and carries a body that is fine. Reaching it, the
-      // encoding answer would be handed to somebody who sent no encoding.
-      //
-      // What it is answered instead is deliberately not pinned. Today it is the
-      // 500 that the gzip case above has just stopped being, which is the same
-      // false claim in a third place and a repair of its own; asserting it here
-      // would certify it as settled.
+      // The floor under all of them, and the negative control for the second
+      // half of the undecodable branch. Express turns away a path parameter it
+      // cannot percent-decode shapelessly — a status blaming the caller, and no
+      // word saying what happened — and this request declares no encoding at
+      // all and carries a body that is fine. It must not collect the encoding
+      // answer, which would be that answer handed to somebody who sent no
+      // encoding; and it must not collect the 500, because a refusal that
+      // blames the caller is not a failure of ours whatever raised it. What is
+      // left is the honest generic: refused before we began, for a reason we
+      // have no name for.
       brokenPath = await refusedFor({}, "{}", "/v0/quotes/%ZZ/answer");
     } finally {
       console.error = realError;
@@ -996,8 +992,19 @@ describe("the worker's calls over HTTP", () => {
     // same broken bytes.
     expect(encodingBroken.message).toContain("content-encoding");
     expect(encodingBroken.message).not.toContain("nothing was decided");
-    expect(blamedOnUs).toEqual([]);
-    expect(brokenPath.code).not.toBe("body_undecodable");
+
+    expect({ status: brokenPath.status, code: brokenPath.code }).toEqual({
+      status: 400,
+      code: "call_refused",
+    });
+    // It says only what it is entitled to say. Naming a cause here would be a
+    // guess dressed as a finding, and the caller acting on it would go looking
+    // wherever the guess pointed.
+    expect(brokenPath.message).not.toContain("nothing was decided");
+
+    expect(complaints.filter((line) => line.includes("failed before it reached a route"))).toEqual(
+      [],
+    );
   });
 
   it("answers a call about an order nobody made with a plain not found", async () => {
