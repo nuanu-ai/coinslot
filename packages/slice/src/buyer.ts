@@ -17,6 +17,23 @@
  * merchant's. The buyer's own spend control is a hard ceiling on any single
  * payment, so a challenge for more than the buyer meant to spend is refused
  * before anything is signed.
+ *
+ * One thing here looks like carelessness and is the point of the file. The
+ * addresses are written out as strings and the answers are read field by field,
+ * where importing the route table and the schemas from `@coinslot/contracts`
+ * would be shorter and safer. This is a stranger's agent: it has the portal and
+ * no package of ours, so code that leaned on our types would prove only that
+ * our types agree with themselves. Written this way, a green run says the wire
+ * is readable by somebody who was never given anything but the documentation.
+ * The catalog page is the exception and is read against the real schema, so
+ * that what an agent is handed to choose from is held to its published shape.
+ *
+ * The risk that buys is silent drift: an address renamed in the contract leaves
+ * these strings pointing at nothing, and a 404 inside a poll reads as an order
+ * that never arrived. `buyer.test.ts` is what stops that — it drives this buyer
+ * against a recorded fetch and holds every address it writes against the
+ * contract's own table. The staple is in the test, where importing the
+ * contracts costs nothing, and not here.
  */
 
 import { CatalogPageSchema, type PublicCard } from "@coinslot/contracts";
@@ -41,6 +58,33 @@ export interface Bought {
   readonly settlement: SettleResponse | null;
 }
 
+/**
+ * What became of one order, read back through the door that is the agent's.
+ *
+ * Deliberately smaller and looser than the document the contract publishes,
+ * because this is what an outside agent can actually hold: four things read off
+ * a JSON body by hand, and the body itself for anything this shape does not
+ * name. A field this buyer does not understand is not lost, it is in `body`.
+ */
+export interface OrderStatus {
+  /** The HTTP status: 200 for an order the door knows, 404 for one it does not. */
+  readonly status: number;
+  /** The door's whole answer — the status document, or the refusal. */
+  readonly body: unknown;
+  /**
+   * Where the order stands, in the door's own word, and null where the answer
+   * carried no such word at all — a refusal, or anything else unexpected.
+   *
+   * Null is not an ending and must not be read as one: it says this buyer was
+   * not told, which is a different thing from being told the purchase failed.
+   */
+  readonly state: string | null;
+  /** The goods, once they are the buyer's, and null while there are none. */
+  readonly delivered: unknown;
+  /** The address this answer was read at, so a caller can name it or ask again. */
+  readonly url: string;
+}
+
 export interface Buyer {
   /** The buyer's public wallet address — never the key, which is never printed. */
   readonly address: string;
@@ -54,6 +98,17 @@ export interface Buyer {
   challenge(itemId: string): Promise<PaymentRequired>;
   /** Buys one product by its catalog identifier, walking the x402 exchange. */
   buy(itemId: string, params: Readonly<Record<string, unknown>>): Promise<Bought>;
+  /**
+   * What became of an order, asked with the order's identifier and nothing
+   * else. It is how an agent that bought a product whose goods come later
+   * collects them, and knowing the identifier is the whole of the proof
+   * (ADR-0011) — this buyer holds no key and sends none.
+   *
+   * An identifier the gateway does not know is not an exception here. It comes
+   * back as the refusal it is, with the status and the body the door wrote, so
+   * a caller can tell "there is no such order" from a call that never landed.
+   */
+  status(orderId: string): Promise<OrderStatus>;
 }
 
 export interface BuyerOptions {
@@ -114,6 +169,29 @@ export function makeBuyer(options: BuyerOptions): Buyer {
       const settlement = settleHeader === null ? null : decodePaymentResponseHeader(settleHeader);
 
       return { status: response.status, body, settlement };
+    },
+
+    async status(orderId) {
+      const url = `${base}/v0/orders/${encodeURIComponent(orderId)}/status`;
+      const response = await fetch(url, { headers: { accept: "application/json" } });
+
+      const text = await response.text();
+      const body: unknown = text === "" ? null : JSON.parse(text);
+      // Read by hand, field by field, the way an agent that has this contract
+      // as a page of documentation rather than as a package would read it. A
+      // body that is not an object at all, or one whose `status` is not a
+      // word, leaves `state` null rather than inventing something to return.
+      const document =
+        typeof body === "object" && body !== null ? (body as Record<string, unknown>) : {};
+      const state = typeof document.status === "string" ? document.status : null;
+
+      return {
+        status: response.status,
+        body,
+        state,
+        delivered: document.delivered ?? null,
+        url,
+      };
     },
   };
 }

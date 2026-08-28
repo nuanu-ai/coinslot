@@ -232,7 +232,10 @@ describe("the stage-one gate: a sandbox purchase, green from catalog to receipt"
     // The merchant issues the profile in its own time — nothing the agent does
     // or can hurry.
     await waitFor(() => merchant.acceptedOrders.has(orderId));
-    expect(await merchant.deliverAccepted(orderId)).toStrictEqual({ ok: true, result: "delivered" });
+    expect(await merchant.deliverAccepted(orderId)).toStrictEqual({
+      ok: true,
+      result: "delivered",
+    });
 
     // The agent comes back the only way it can, and the goods are there.
     let collected = await buyer.status(orderId);
