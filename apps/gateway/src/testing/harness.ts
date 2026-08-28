@@ -148,30 +148,42 @@ export async function harness(overrides: Record<string, string> = {}): Promise<H
     return { id: made.id, name: made.name, key: issued.secret, keyId: issued.key.id };
   };
 
-  const merchant = await seed("The merchant", THE_MERCHANT_KEY);
+  // Everything after the gateway is running is guarded, because a throw here
+  // would leave it running with nobody holding it. Every caller writes
+  // `open = await harness(...)` and stops `open` afterwards, so a harness that
+  // threw on its way out would never be assigned and never stopped: its queue
+  // keeps live timers and its poll parks, and the suite carries them to the end
+  // of the file. The seeding below is where that can happen — the store can
+  // refuse to make a merchant, and it says so by returning null.
+  try {
+    const merchant = await seed("The merchant", THE_MERCHANT_KEY);
 
-  return {
-    gateway,
-    runtime,
-    store,
-    queue,
-    facilitator,
-    merchant,
-    now: () => now,
-    advance: (ms) => {
-      now += ms;
-    },
-    addMerchant: (name = `Merchant ${countedName()}`) => seed(name),
-    addKey: async (merchantId, label = "another of the harness's") =>
-      (await issueKey(store, ids, merchantId, label, now)).secret,
-    disableKey: async (keyId) => {
-      const disabled = await store.disableKey(keyId, now);
-      if (disabled === null) {
-        throw new Error(`the harness was asked to disable ${keyId}, and there is no such key`);
-      }
-    },
-    stop: () => gateway.stop(),
-  };
+    return {
+      gateway,
+      runtime,
+      store,
+      queue,
+      facilitator,
+      merchant,
+      now: () => now,
+      advance: (ms) => {
+        now += ms;
+      },
+      addMerchant: (name = `Merchant ${countedName()}`) => seed(name),
+      addKey: async (merchantId, label = "another of the harness's") =>
+        (await issueKey(store, ids, merchantId, label, now)).secret,
+      disableKey: async (keyId) => {
+        const disabled = await store.disableKey(keyId, now);
+        if (disabled === null) {
+          throw new Error(`the harness was asked to disable ${keyId}, and there is no such key`);
+        }
+      },
+      stop: () => gateway.stop(),
+    };
+  } catch (thrown) {
+    await gateway.stop();
+    throw thrown;
+  }
 }
 
 /**

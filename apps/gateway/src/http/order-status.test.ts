@@ -166,22 +166,14 @@ describe("coming back for goods that were not ready", () => {
 });
 
 describe("the door on the agent's route", () => {
-  it("answers a call carrying no key at all", async () => {
-    // An agent has no key, no account and no registration, and the product
-    // exists so that it needs none. A route that asked for one would be shut to
-    // the only caller it is for.
-    const { served, harnessed } = await started();
-    const itemId = await publish(served, laterCard);
-    const orderId = await orderTakenOn(harnessed, served, itemId);
-
-    expect((await statusOf(served, orderId)).status).toBe(200);
-  });
-
   it("answers the same to a key, to somebody else's key, and to no key", async () => {
-    // The other half of the same promise, and the one that catches a door
-    // attached to the `/v0/orders` prefix: whatever travels in the
-    // authorization header, this route neither opens nor closes on it. A junk
-    // key is refused everywhere else in this gateway and is ignored here.
+    // An agent has no key, no account and no registration, and the product
+    // exists so that it needs none: the call with nothing in the header is
+    // answered, which is what the last line here says. The rest is the half
+    // that catches a door attached to the `/v0/orders` prefix — whatever
+    // travels in the authorization header, this route neither opens nor closes
+    // on it. A junk key is refused everywhere else in this gateway and is
+    // ignored here.
     const { served, harnessed } = await started();
     const other = await harnessed.addMerchant("Another merchant");
     const itemId = await publish(served, laterCard);

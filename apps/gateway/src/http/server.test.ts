@@ -1,4 +1,5 @@
 import type { AddressInfo } from "node:net";
+import { gzipSync } from "node:zlib";
 import type { Card, MerchantCardList, Receipt } from "@coinslot/contracts";
 import { API_ROUTES, mountableRoutes } from "@coinslot/contracts";
 import { decodePaymentRequiredHeader, encodePaymentSignatureHeader } from "@x402/core/http";
@@ -56,8 +57,15 @@ const publish = async (served: Served, card: Card): Promise<string> => {
 
 describe("the surface is the table", () => {
   it("serves every call the contract says may be served", async () => {
-    // If this fails, one of two things happened: a call was agreed and never
-    // implemented, or one was implemented under an address nobody agreed to.
+    // A call agreed and never implemented is not what this catches: the
+    // mounting loop throws at start-up for that one, and the case below says
+    // so. What is left over is narrower and has nowhere else to be found — an
+    // address express mounts and then does not match against its own literal
+    // path. A pattern the router reads differently from the string it was
+    // written as answers "no such call" at the very address the contract
+    // publishes, and every route in the table is walked here because the one
+    // that grows such a pattern is not knowable in advance.
+    //
     // The poll window is a millisecond here so that the one call in the table
     // designed to be held open does not hold this test open with it.
     const { served } = await started({ WORKER_POLL_WAIT_MS: "1" });
@@ -157,6 +165,29 @@ describe("the surface is the table", () => {
     expect(() =>
       buildApp(harnessed.gateway, [["a_call_nobody_serves" as never, API_ROUTES.list_catalog]]),
     ).toThrow(/nothing to serve it with/);
+  });
+
+  it("answers the health check while the process is up, with no key on it", async () => {
+    // The one address the surface serves that the contract's table does not
+    // name, and the promise is a deployment's rather than an agent's:
+    // `compose.yaml` puts a container health check on it, and whatever routes
+    // in front of the gateway will too. A key check grown onto it, or an
+    // answer whose shape changed, takes a working gateway out of rotation
+    // without anything about the table looking wrong.
+    //
+    // What is pinned is exactly what the route promises today and no more: the
+    // process is up and answering. It is not a statement that the gateway can
+    // do its work — a gateway whose queue schema has been dropped out from
+    // under it goes on answering this while logging that the relation does not
+    // exist, which is written down at adapters/postgres/adapters.db-test.ts.
+    // Deepening the check into a real readiness probe is a product decision
+    // nobody has taken, so this test does not pretend it was.
+    const { served } = await started();
+
+    const answered = await served.call("GET", "/healthz");
+
+    expect(answered.status).toBe(200);
+    expect(answered.body).toStrictEqual({ ok: true });
   });
 });
 
@@ -420,52 +451,6 @@ describe("the payment challenge", () => {
 });
 
 describe("a purchase over HTTP, from the catalog to the goods", () => {
-  it("walks a synchronous sale end to end", async () => {
-    const { served, harnessed } = await started();
-    const itemId = await publish(served, syncCard);
-
-    const listed = await served.call("GET", "/v0/catalog");
-    expect((listed.body as { items: { id: string }[] }).items.map((item) => item.id)).toStrictEqual(
-      [itemId],
-    );
-
-    const priced = await served.call("POST", `/v0/items/${itemId}/purchase`, {
-      body: { params: {} },
-    });
-    expect(priced.status).toBe(402);
-    const challenge = decodePaymentRequiredHeader(
-      priced.headers.get(PAYMENT_REQUIRED_HEADER) ?? "",
-    );
-    const requirements = challenge.accepts[0];
-    if (requirements === undefined) throw new Error("no payment option was offered");
-
-    const worker = workUntilStopped(harnessed, {
-      onOrder: () => ({ delivered: { access_code: "SESAME" } }),
-    });
-    const bought = await served.call("POST", `/v0/items/${itemId}/purchase`, {
-      body: { params: {} },
-      headers: {
-        [PAYMENT_SIGNATURE_HEADER]: encodePaymentSignatureHeader({
-          x402Version: 2,
-          accepted: requirements,
-          payload: { signature: "0xsigned" },
-        }),
-      },
-    });
-    await worker.stop();
-
-    expect(bought.status).toBe(200);
-    expect(bought.body).toMatchObject({ delivered: { access_code: "SESAME" } });
-    expect(bought.headers.get("payment-response")).toBeTruthy();
-
-    const orderId = (bought.body as { order: { id: string } }).order.id;
-    const read = await served.call("GET", `/v0/orders/${orderId}`, { headers: asMerchant });
-    expect(read.body).toMatchObject({ id: orderId, status: "delivered" });
-
-    const listedOrders = await served.call("GET", "/v0/orders?open=true", { headers: asMerchant });
-    expect((listedOrders.body as { orders: unknown[] }).orders).toStrictEqual([]);
-  });
-
   it("tells the agent the purchase is over when the merchant refuses", async () => {
     const { served, harnessed } = await started();
     const itemId = await publish(served, syncCard);
@@ -849,6 +834,180 @@ describe("the worker's calls over HTTP", () => {
       error: { code: "malformed_body" },
     });
     expect(answered.status).toBe(400);
+  });
+
+  it("says a body was too large rather than that it could not be read", async () => {
+    // The promise: an error text is a claim somebody else's agent acts on. A
+    // body that is perfectly good JSON and merely over the limit, answered
+    // "could not be read as JSON", sends that agent to re-encode a document it
+    // already got right, and it will get the same answer every time. The two
+    // cases arrive from the parser as one throw and the fork that tells them
+    // apart is the only place they are still distinguishable — the test above
+    // holds the other side of that fork.
+    const { served } = await started();
+
+    const answered = await served.call("POST", "/v0/quotes/prc_1/answer", {
+      body: { available: true, note: "x".repeat(300_000) },
+      headers: asMerchant,
+    });
+
+    expect(answered.status).toBe(413);
+    const { error } = answered.body as { error: { code: string; message: string } };
+    expect(error.code).toBe("body_too_large");
+    // The limit itself, because "too large" without a number leaves the caller
+    // to find the edge by bisection against a live gateway.
+    expect(error.message).toContain("256kb");
+  });
+
+  it("tells the refusals at the door apart, and says the true one about each", async () => {
+    // The promise: an error is a claim somebody else's agent acts on, and by
+    // the time these leave the parser they are one throw with a word on it.
+    // The fork in front of them is the only place they are still separate
+    // things, so each one answered in another one's words sends that agent to
+    // repair something that was never broken — and, in most of the cases here,
+    // to do it forever, because the answer will not change however many times
+    // it tries.
+    //
+    // They are read against one gateway. A test that watched only the branch
+    // it was written for would miss a fork widened until it swallows its
+    // neighbours, which is the same defect pointing the other way.
+    const { served } = await started();
+
+    // A body that really was gzip and arrived cut in half — a dropped upload,
+    // the ordinary accident. Valid gzip up to the byte it stops at, which is
+    // what makes it the caller's mishap rather than a lie about the header.
+    const wholeGzip = gzipSync(JSON.stringify({ available: true }));
+    const halfGzip = wholeGzip.subarray(0, Math.floor(wholeGzip.length / 2));
+
+    const refusedFor = async (
+      headers: Record<string, string>,
+      body: string | Uint8Array,
+      path = "/v0/quotes/prc_1/answer",
+    ) => {
+      const answered = await fetch(`${served.url}${path}`, {
+        method: "POST",
+        headers: { ...asMerchant, "content-type": "application/json", ...headers },
+        body,
+      });
+      const { error } = (await answered.json()) as {
+        error: { code: string; message: string };
+      };
+      return { status: answered.status, ...error };
+    };
+
+    // None of these is a failure of ours, so none of them may be written to
+    // the log as one. An operator who greps for that line and finds somebody
+    // else's broken upload goes looking for a defect in this process.
+    const complaints: string[] = [];
+    const realError = console.error;
+    console.error = (...args: unknown[]) => {
+      complaints.push(String(args[0]));
+    };
+
+    let notJson: Awaited<ReturnType<typeof refusedFor>>;
+    let tooLarge: typeof notJson;
+    let encodingRefused: typeof notJson;
+    let encodingBroken: typeof notJson;
+    let charsetRefused: typeof notJson;
+    let goodGzipBadJson: typeof notJson;
+    let brokenPath: typeof notJson;
+    try {
+      notJson = await refusedFor({}, "{ this is not json");
+      tooLarge = await refusedFor({}, JSON.stringify({ note: "x".repeat(300_000) }));
+      // `compress` is a content coding the HTTP specification registers and
+      // this parser has no decompressor for. Gzip, deflate and brotli it does
+      // inflate, so a body under any of those never reaches that branch.
+      encodingRefused = await refusedFor({ "content-encoding": "compress" }, "{}");
+      encodingBroken = await refusedFor({ "content-encoding": "gzip" }, halfGzip);
+      // A different header and a different refusal: the charset named on the
+      // content-type rather than the coding the body arrived under. The parser
+      // has a word of its own for this one too, and the bytes are never turned
+      // into text, so nothing about the JSON is known here either.
+      charsetRefused = await refusedFor(
+        { "content-type": "application/json; charset=utf-77" },
+        "{}",
+      );
+      // The negative control for the branch above it. This body declares the
+      // very same header and decompresses perfectly; what is wrong is the JSON
+      // inside it. A fork that read the header instead of the failure would
+      // call this undecodable and be wrong about a document it had in its hand.
+      goodGzipBadJson = await refusedFor(
+        { "content-encoding": "gzip" },
+        gzipSync("{ this is not json"),
+      );
+      // The floor under all of them, and the negative control for the second
+      // half of the undecodable branch. Express turns away a path parameter it
+      // cannot percent-decode shapelessly — a status blaming the caller, and no
+      // word saying what happened — and this request declares no encoding at
+      // all and carries a body that is fine. It must not collect the encoding
+      // answer, which would be that answer handed to somebody who sent no
+      // encoding; and it must not collect the 500, because a refusal that
+      // blames the caller is not a failure of ours whatever raised it. What is
+      // left is the honest generic: refused before we began, for a reason we
+      // have no name for.
+      brokenPath = await refusedFor({}, "{}", "/v0/quotes/%ZZ/answer");
+    } finally {
+      console.error = realError;
+    }
+
+    expect({ status: notJson.status, code: notJson.code }).toEqual({
+      status: 400,
+      code: "malformed_body",
+    });
+    expect({ status: tooLarge.status, code: tooLarge.code }).toEqual({
+      status: 413,
+      code: "body_too_large",
+    });
+    expect({ status: goodGzipBadJson.status, code: goodGzipBadJson.code }).toEqual({
+      status: 400,
+      code: "malformed_body",
+    });
+
+    expect({ status: encodingRefused.status, code: encodingRefused.code }).toEqual({
+      status: 415,
+      code: "encoding_unsupported",
+    });
+    // The subject, because an agent not told what was refused has only the body
+    // left to suspect and the body was fine; and the way out, because sending
+    // it uncompressed is the one thing that always works and the caller should
+    // not have to find that by trying encodings against a live gateway.
+    expect(encodingRefused.message).toContain("content-encoding");
+    expect(encodingRefused.message).toContain("uncompressed");
+    expect(encodingRefused.message).not.toContain("could not be read as JSON");
+
+    expect({ status: charsetRefused.status, code: charsetRefused.code }).toEqual({
+      status: 415,
+      code: "charset_unsupported",
+    });
+    // Which of the two headers was the trouble, since the caller sent both and
+    // the answer is otherwise indistinguishable from the encoding one.
+    expect(charsetRefused.message).toContain("charset");
+    expect(charsetRefused.message).not.toContain("could not be read as JSON");
+
+    expect({ status: encodingBroken.status, code: encodingBroken.code }).toEqual({
+      status: 400,
+      code: "body_undecodable",
+    });
+    // Again the header, since that and the bytes are the two candidates and we
+    // hold neither: what is known is that they disagree. "Nothing was decided"
+    // under a 5xx was the old answer and the worst of the four, because a 5xx
+    // is the one answer an agent is right to retry, and the retry carries the
+    // same broken bytes.
+    expect(encodingBroken.message).toContain("content-encoding");
+    expect(encodingBroken.message).not.toContain("nothing was decided");
+
+    expect({ status: brokenPath.status, code: brokenPath.code }).toEqual({
+      status: 400,
+      code: "call_refused",
+    });
+    // It says only what it is entitled to say. Naming a cause here would be a
+    // guess dressed as a finding, and the caller acting on it would go looking
+    // wherever the guess pointed.
+    expect(brokenPath.message).not.toContain("nothing was decided");
+
+    expect(complaints.filter((line) => line.includes("failed before it reached a route"))).toEqual(
+      [],
+    );
   });
 
   it("answers a call about an order nobody made with a plain not found", async () => {

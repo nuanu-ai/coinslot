@@ -6,6 +6,25 @@ const database = "postgres://coinslot:secret@localhost:5432/coinslot";
 /** The one variable that has no sensible default and must always be given. */
 const required = { DATABASE_URL: database };
 
+/**
+ * What the gateway said when it refused to start on this environment.
+ *
+ * The arithmetic refusals below are checked through this rather than against a
+ * regular expression over the whole sentence. What is owed to the operator
+ * reading a container that will not come up is the numbers and what each of
+ * them is; the order the clauses are written in is not owed to anybody, and a
+ * test that pinned it would turn rewording the message into a failure and
+ * teach the next person to keep the wording rather than improve it.
+ */
+const refusalFor = (overrides: Record<string, string>): string => {
+  try {
+    loadConfig({ ...required, ...overrides });
+  } catch (thrown) {
+    return thrown instanceof Error ? thrown.message : String(thrown);
+  }
+  throw new Error("the configuration was accepted, so there is no refusal to read");
+};
+
 describe("loadConfig", () => {
   it("reads the environment and fills in the sandbox defaults", () => {
     const config = loadConfig(required);
@@ -274,11 +293,12 @@ describe("loadConfig", () => {
     // charge, and the portal promises the agent one ceiling. A configuration
     // whose parts do not fit inside that ceiling breaks the promise on the
     // first slow sale rather than at startup, so it is refused here.
-    expect(() =>
-      loadConfig({ ...required, SYNC_RESPONSE_MS: "9000", SETTLE_RESPONSE_MS: "2000" }),
-    ).toThrowError(
-      /the synchronous budget is 10000ms and the answer \(9000ms\) and the charge \(2000ms\) inside it come to 11000ms/,
-    );
+    // Four numbers, because the operator has to see which of them to change:
+    // the ceiling, the two parts, and what the two come to.
+    const refused = refusalFor({ SYNC_RESPONSE_MS: "9000", SETTLE_RESPONSE_MS: "2000" });
+    for (const owed of ["synchronous budget", "10000ms", "9000ms", "2000ms", "11000ms"]) {
+      expect(refused, refused).toContain(owed);
+    }
 
     // Exactly filling it is allowed: the sum is the worst case, not a target.
     expect(() =>
@@ -291,11 +311,13 @@ describe("loadConfig", () => {
     // the price is spent out of it. A price wait as long as the whole answer
     // leaves nothing behind it, and every synchronous sale of a card with a
     // price check would run out of time however fast the merchant answered.
-    expect(() =>
-      loadConfig({ ...required, QUOTE_RESPONSE_MS: "8000", SYNC_RESPONSE_MS: "8000" }),
-    ).toThrowError(
-      /the wait for the merchant's price is 8000ms out of the 8000ms synchronous answer, which leaves nothing to deliver in/,
-    );
+    // Equal is already too much, so this is the boundary as well as the case.
+    // Both numbers are named — they are the two an operator has to move apart —
+    // along with which wait each of them is.
+    const refused = refusalFor({ QUOTE_RESPONSE_MS: "8000", SYNC_RESPONSE_MS: "8000" });
+    for (const owed of ["merchant's price", "8000ms", "synchronous answer", "nothing to deliver"]) {
+      expect(refused, refused).toContain(owed);
+    }
   });
 
   it("gives one address for the gateway however the variable was written", () => {
@@ -360,16 +382,19 @@ describe("loadConfig", () => {
   });
 
   it("names both arithmetic problems at once when both are wrong", () => {
-    const broken = () =>
-      loadConfig({
-        ...required,
-        QUOTE_RESPONSE_MS: "9000",
-        SYNC_RESPONSE_MS: "9000",
-        SETTLE_RESPONSE_MS: "5000",
-        SYNC_BUDGET_MS: "10000",
-      });
+    // Both, and not the first one found. An operator who fixed the budget and
+    // restarted into the second refusal would be reading the configuration one
+    // mistake per deploy.
+    const refused = refusalFor({
+      QUOTE_RESPONSE_MS: "9000",
+      SYNC_RESPONSE_MS: "9000",
+      SETTLE_RESPONSE_MS: "5000",
+      SYNC_BUDGET_MS: "10000",
+    });
 
-    expect(broken).toThrowError(/the synchronous budget is 10000ms/);
-    expect(broken).toThrowError(/the wait for the merchant's price is 9000ms/);
+    expect(refused, refused).toContain("synchronous budget");
+    expect(refused, refused).toContain("10000ms");
+    expect(refused, refused).toContain("merchant's price");
+    expect(refused, refused).toContain("9000ms");
   });
 });

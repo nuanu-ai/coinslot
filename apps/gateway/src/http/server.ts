@@ -150,25 +150,118 @@ export function buildApp(
     response.status(404).json(refusal("no_such_route", "there is no call at this address"));
   });
 
-  // A body that is not JSON at all is refused by the parser above, before any
-  // route runs, so nothing in the mounting loop ever sees it. Without this it
-  // comes back as express's own HTML page — from a surface whose every other
-  // refusal is a document, to a client that only reads documents.
+  // Everything refused before a route runs arrives here, and here is the only
+  // place it is still possible to say what was refused. Without an answer of
+  // our own it comes back as express's own HTML page — from a surface whose
+  // every other refusal is a document, to a client that reads only documents.
+  //
+  // The rule is the status. Whatever raised the throw, a 4xx is that thing
+  // saying the caller was wrong, and this gateway does not take the blame for a
+  // call it was right to turn away: a 5xx is the one answer an agent is
+  // entitled to retry, and the retry brings the same bad request back for as
+  // long as it keeps trying. A throw carrying no such claim is ours, and gets
+  // the log line and the 500.
+  //
+  // Within that, the named refusals are refinements, each keyed on the word the
+  // parser puts on its own throw. They exist because the answer is the only
+  // thing the caller can act on, and one refusal wearing another's words sends
+  // somebody else's agent to repair what was never broken. A document that is
+  // good JSON and merely too long, told it could not be read, is re-encoded and
+  // sent again unchanged forever, so the size case says so and names the limit
+  // — "too large" without a number leaves the caller bisecting against a live
+  // gateway. The encoding and charset refusals both happen before the body
+  // becomes text at all, so nothing whatever about the JSON inside is known and
+  // neither answer pretends otherwise; each names the header it refused and the
+  // one value that always works, rather than the set that would work, which
+  // belongs to a dependency and would rot in this file unwatched.
+  //
+  // One refusal arrives with no word on it: a body under an encoding the parser
+  // does inflate whose bytes then turn out not to be that encoding — a dropped
+  // upload, or a client that set the header and forgot to compress. Two things
+  // are known there and no more, that the caller asked for a decompression and
+  // that the parser blamed the caller. That is enough to answer honestly and
+  // not enough to say whether the bytes or the header is the wrong one, so the
+  // answer offers both and picks neither.
+  //
+  // Order carries the rest. Every named refusal is answered above the unnamed
+  // ones, which is what keeps a body that inflates cleanly and holds bad JSON —
+  // the same header, a different failure — on the malformed-JSON answer. The
+  // generic sits under all of them and says only that the call was refused
+  // before we began and that there is no name for why here. The next refusal
+  // raised by a layer we do not control lands there, and a floor that guessed
+  // would be wrong about it in some new way.
   app.use(
-    (thrown: unknown, _request: Request, response: Response, next: (error?: unknown) => void) => {
+    (thrown: unknown, request: Request, response: Response, next: (error?: unknown) => void) => {
       if (response.headersSent) {
         next(thrown);
         return;
       }
-      const fromTheParser =
-        typeof thrown === "object" && thrown !== null && "type" in thrown && "status" in thrown;
 
-      if (fromTheParser) {
+      if (blamesTheCaller(thrown)) {
+        const named = refusalType(thrown);
+
+        if (named === "entity.parse.failed") {
+          response
+            .status(400)
+            .json(refusal("malformed_body", "this call's body could not be read as JSON"));
+          return;
+        }
+        if (named === "entity.too.large") {
+          response
+            .status(413)
+            .json(
+              refusal(
+                "body_too_large",
+                `this call's body is over the ${BODY_LIMIT} a call may carry`,
+              ),
+            );
+          return;
+        }
+        if (named === "charset.unsupported") {
+          response
+            .status(415)
+            .json(
+              refusal(
+                "charset_unsupported",
+                "this call's body was not read because the charset its content-type names is not one this gateway decodes, so send it as utf-8",
+              ),
+            );
+          return;
+        }
+        if (named === "encoding.unsupported") {
+          response
+            .status(415)
+            .json(
+              refusal(
+                "encoding_unsupported",
+                "this call's body was not read because its content-encoding is not one this gateway decompresses, so send the body uncompressed",
+              ),
+            );
+          return;
+        }
+        if (declaresCompression(request)) {
+          response
+            .status(400)
+            .json(
+              refusal(
+                "body_undecodable",
+                "this call's body could not be decompressed as the content-encoding it declares, so either those bytes or that header is wrong",
+              ),
+            );
+          return;
+        }
+
         response
           .status(400)
-          .json(refusal("malformed_body", "this call's body could not be read as JSON"));
+          .json(
+            refusal(
+              "call_refused",
+              "this call was refused before the gateway began handling it, for a reason this gateway has no name for",
+            ),
+          );
         return;
       }
+
       console.error("[gateway] a request failed before it reached a route", thrown);
       response
         .status(500)
@@ -346,6 +439,57 @@ async function callerBehind(
       throw new Error(`this gateway builds no door for ${String(unanswered)}`);
     }
   }
+}
+
+/**
+ * Whether a thrown value is a refusal of the caller rather than a failure of
+ * ours.
+ *
+ * Everything that turns a request away before our handlers do — the body
+ * parser, the router decoding a path — marks the refusal the same way, with an
+ * HTTP status, and on a throw that says nothing else the status is the only
+ * part that says whose fault it was. A 4xx is that layer declining what it was
+ * sent; anything else is this process, and this process does not get to answer
+ * its own defects with somebody else's name on them.
+ */
+function blamesTheCaller(thrown: unknown): boolean {
+  if (typeof thrown !== "object" || thrown === null || !("status" in thrown)) {
+    return false;
+  }
+  const { status } = thrown as { status: unknown };
+  return typeof status === "number" && status >= 400 && status < 500;
+}
+
+/**
+ * The word a refusal puts on itself, when it puts one there at all.
+ *
+ * The body parser names most of what it turns away; the layers around it name
+ * almost nothing. A refusal with no word is not a lesser refusal, only one this
+ * gateway has no refinement for, and it is answered as such rather than being
+ * sorted into whichever named case it happens to resemble.
+ */
+function refusalType(thrown: unknown): string | null {
+  if (typeof thrown !== "object" || thrown === null || !("type" in thrown)) {
+    return null;
+  }
+  const { type } = thrown as { type: unknown };
+  return typeof type === "string" ? type : null;
+}
+
+/**
+ * Whether the caller asked for the body to be decompressed on the way in.
+ *
+ * An absent header and an empty one both mean identity, which is what the
+ * parser itself makes of them; reading either as a compression would put a
+ * refusal that has nothing to do with encoding under an answer about encoding.
+ */
+function declaresCompression(request: Request): boolean {
+  const declared = request.headers["content-encoding"];
+  if (typeof declared !== "string") {
+    return false;
+  }
+  const named = declared.toLowerCase().trim();
+  return named !== "" && named !== "identity";
 }
 
 type Held = { ok: true; value: unknown } | { ok: false; problems: readonly unknown[] };
