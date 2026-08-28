@@ -76,11 +76,29 @@ const QUEUE_SCHEMA = "pgboss_adapters";
  * sitting idle on exactly that statement, so the wrong one was killed depending
  * on what had run before. What is left is a pid the caller knows because it
  * asked its own single-connection pool for it.
+ *
+ * The answer is read rather than discarded, and that line is the whole reason
+ * the tests below test anything. `pg_terminate_backend` returns false for a pid
+ * that is no longer a running backend, and it is a warning rather than an
+ * error, so a helper that ignores it terminates nothing and says nothing.
+ * Every assertion downstream still holds in that case: no connection breaks, no
+ * error is emitted, the unlock succeeds, the work returns what it returned.
+ * Measured — aimed at a pid that could not exist, both tests passed. So the
+ * premise they are named for is checked here, once, where the failure can still
+ * be told apart from a defect in the store.
  */
 async function terminate(pid: number): Promise<void> {
   const pool = new Pool({ connectionString: databaseUrl ?? "", max: 1 });
   try {
-    await pool.query("select pg_terminate_backend($1)", [pid]);
+    const { rows } = await pool.query<{ gone: boolean }>(
+      "select pg_terminate_backend($1) as gone",
+      [pid],
+    );
+    if (rows[0]?.gone !== true) {
+      throw new Error(
+        `backend ${pid} was not terminated, so nothing below is testing what it says it is`,
+      );
+    }
   } finally {
     await pool.end();
   }
