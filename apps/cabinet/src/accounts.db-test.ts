@@ -230,7 +230,49 @@ if (databaseUrl === null) {
       // And somebody reading the log is told, because a connection that went
       // away silently is a restart nobody can correlate anything with.
       printed.mockRestore();
-      expect(said.join("\n")).toContain("[cabinet] an idle database connection failed");
+      expect(said.join("\n")).toContain("[cabinet] a database connection failed");
+    });
+
+    it("is logged for a connection somebody is holding, too", async () => {
+      // The pool's own listener covers a connection sitting in the pool. It
+      // does not cover one that has been handed out — pg-pool removes it on the
+      // way out — and a transaction is precisely a connection held across more
+      // than one statement, with no query in flight between them for a fatal
+      // error to surface through. Signing somebody in is such a transaction.
+      //
+      // The failure this prevents does not fail a test on its own: an error
+      // event with no listener kills the whole run, so the assertion has to
+      // catch what went unlistened rather than trust a passing suite.
+      const unlistened: unknown[] = [];
+      const catchIt = (thrown: unknown): void => {
+        unlistened.push(thrown);
+      };
+      process.on("uncaughtException", catchIt);
+      const printed = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+      const its = connect(databaseUrl);
+      const held = await its.connect();
+      const { rows } = await held.query<{ pid: number }>("select pg_backend_pid() as pid");
+      const backend = rows[0]?.pid ?? 0;
+      expect(backend).toBeGreaterThan(0);
+
+      const other = connect(databaseUrl);
+      const { rows: killed } = await other.query<{ ok: boolean }>(
+        "select pg_terminate_backend($1) as ok",
+        [backend],
+      );
+      // Checked rather than assumed: a terminate that did nothing would leave
+      // this test asserting its own emptiness.
+      expect(killed[0]?.ok).toBe(true);
+      await new Promise((settle) => setTimeout(settle, 200));
+
+      held.release();
+      await its.end();
+      await other.end();
+      printed.mockRestore();
+      process.removeListener("uncaughtException", catchIt);
+
+      expect(unlistened).toStrictEqual([]);
     });
   });
 

@@ -114,9 +114,24 @@ function codeIn(thrown: unknown): string | null {
  */
 export function connect(databaseUrl: string): Pool {
   const pool = new Pool({ connectionString: databaseUrl });
-  pool.on("error", (failed) => {
-    console.error(`[cabinet] an idle database connection failed: ${String(failed)}`);
-  });
+  const noticeTheFailure = (failed: unknown): void => {
+    console.error(`[cabinet] a database connection failed: ${String(failed)}`);
+  };
+
+  // The pool's own listener covers a connection sitting idle in the pool. It
+  // does not cover one that has been handed out: pg-pool removes it on the way
+  // out and puts it back on the way in, so between those a checked-out client
+  // has no listener at all — and an error event with no listener is an uncaught
+  // exception and a dead process.
+  //
+  // That matters here because a transaction is exactly a checked-out client
+  // held across more than one statement. `acquire` fires before the removal and
+  // `release` after the restoration, so this pair leaves no gap at either edge.
+  // The gateway learned this the expensive way and this is the same three lines
+  // (`apps/gateway/src/adapters/postgres/store.ts`).
+  pool.on("error", noticeTheFailure);
+  pool.on("acquire", (client) => client.on("error", noticeTheFailure));
+  pool.on("release", (_failed, client) => client.removeListener("error", noticeTheFailure));
   return pool;
 }
 
