@@ -72,7 +72,11 @@ refund is in [If the buyer did not get the goods](/money).
 The order will arrive again. We count a handler's answer only once it has come
 back: an exception inside the handler, a process that fell over, a connection
 that broke — for us all of these mean the order never reached you, and we
-repeat the delivery, after a delay, until the mode's deadline runs out.
+repeat the delivery, after a delay, until the mode's deadline runs out — or
+until we have tried five times, whichever comes first. The count is the one the
+orders page describes, and it is the one that surprises people: a handler that
+throws on every attempt runs out of attempts long before it runs out of clock,
+and the order then ends the same way it would have ended at the deadline.
 
 What your handler threw does not travel to us or to the agent. It goes to the
 handler you registered for problems, which is also where a failed poll, a

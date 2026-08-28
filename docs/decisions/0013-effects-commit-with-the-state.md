@@ -98,6 +98,15 @@ The rule that replaces it: an effect may be swept when its receiver tolerates a
 repeat **and** repeating it costs the order nothing that belongs to a real
 failure. The second half is the one that has to be argued each time.
 
+And the sweep is not the only road to it. The same counter is spent by a
+reminder handed out twice — its handler ran, the job was not completed, the
+process died — which passed the guard meant to stop it because the guard read
+the order outside the lock that writes. That is fixed where it lives, but the
+lesson belongs here: the counter is the merchant's record of their own
+failures, and anything that increments it without one is spending money that
+is not ours to spend. Every future path that hands an order over owes that
+question, not only the sweep.
+
 ## Alternatives rejected
 
 **A table of intents drained by a worker — the usual outbox.** It is the
