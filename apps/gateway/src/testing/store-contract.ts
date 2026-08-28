@@ -16,6 +16,13 @@
  * no card, no order — because every test here builds what it needs and a store
  * carrying somebody else's leftovers is a store whose counts mean nothing.
  *
+ * It also has to allow at least two decisions to be in flight at once. Two
+ * cases hold a decision open while a second one runs, and against a database a
+ * decision is a transaction holding a connection for as long as it lasts — so
+ * a store on a pool of one would make the second wait for a connection rather
+ * than for a lock. That is a different thing with the same shape, and it would
+ * be reported as the defect those two cases are named for.
+ *
  * Two things are deliberately kept out, and both for the same reason: they are
  * not promises about the port, they are promises about one adapter's machinery.
  *
@@ -27,11 +34,15 @@
  * migrations, which stay in the database file.
  *
  * The second is the clock and the identifiers. Nothing here asserts what an
- * identifier looks like beyond what the port says about it, and nothing waits
- * on wall time: where an instant is needed it is passed in, and the one place
- * that cannot be — a claim on a payment is stamped by whichever adapter's own
- * clock — is asked about with an instant well before and well after rather than
- * with a count of milliseconds.
+ * identifier looks like beyond what the port says about it, and no assertion
+ * turns on how long something took: where an instant is needed it is passed in.
+ * Three cases do pause, and none of them is timing anything. Two hold a
+ * decision open because a lock is the subject, and give the decision waiting on
+ * it a bound so that a store which never answers is reported as that rather
+ * than as a runner timing out. The third puts real elapsed time between two
+ * claims on payments, because when a claim was made is the one instant neither
+ * adapter takes from the caller, and a sweep has to be asked to tell one age
+ * from another rather than only to take everything or nothing.
  *
  * What is not covered here is worth naming as plainly. `openOrders`,
  * `deliveredWithoutReceipt`, `runAlone` and `merchants` have no case in this

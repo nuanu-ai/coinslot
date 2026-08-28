@@ -72,6 +72,28 @@ const databaseUrl = await readyDatabase(wanted);
 const QUEUE_SCHEMA = "pgboss_adapters";
 
 /**
+ * Emptying every table this schema has, in one statement, in one place.
+ *
+ * The list is meant to stay complete, and it is written once because it is
+ * asked for twice — the file empties them before it starts, and the shared
+ * store contract empties them before each of its own cases. Two copies of a
+ * list that must stay complete are one copy that will not.
+ *
+ * Why it is every table and not the two that hold the fixtures. A claim on a
+ * payment left behind owns the fingerprint this run presents, and every
+ * purchase below is refused: a suite that passes once and never again, on a
+ * volume that outlives it. The merchant's row is here for the same reason
+ * before it has cost anybody an afternoon — it carries whether they are
+ * selling at all, so a run that ever paused them would leave every later run's
+ * purchases turned away, and the failure would look like anything but its
+ * cause.
+ *
+ * A table added to `schema.ts` belongs in this list.
+ */
+const EMPTY_EVERY_TABLE =
+  "truncate table cards, orders, receipts, payment_claims, merchant_keys, merchants";
+
+/**
  * Terminates one named backend, from a connection of its own.
  *
  * It takes the session as a number rather than going looking for it, and the
@@ -176,6 +198,18 @@ if (databaseUrl === null) {
   describe("the real adapters", () => {
     let pool: Pool;
     let store: PostgresStore;
+    /**
+     * The pool the shared store contract runs on, kept apart from the one this
+     * file's own store and gateway share.
+     *
+     * Its size is the load-bearing part. Two of the contract's cases hold a
+     * decision open while a second decision runs, and a decision is a
+     * transaction holding a connection for as long as it lasts — so on a pool
+     * of one the second would wait for a connection rather than for a lock, and
+     * "these two orders do not wait for each other" would be answered by the
+     * pool instead of by the database.
+     */
+    let contract: ReturnType<typeof connect>;
     let queue: PgBossQueue;
     let boss: PgBoss;
     let gateway: Gateway;
@@ -195,21 +229,14 @@ if (databaseUrl === null) {
 
       const connected = connect(databaseUrl);
       pool = connected.pool;
+      // Through `connect` like every other pool here, so the contract's own
+      // connections carry the same error listeners the rest of them do. Four,
+      // which is more than the two its cases need at once and small enough that
+      // a pool exhausted by something else is still a visible failure.
+      contract = connect(databaseUrl, { max: 4 });
       // Every run starts from an empty catalog, or the counts below would be
       // reading somebody else's leftovers.
-      //
-      // Every table this schema has, and the list is meant to stay that way. A
-      // claim on a payment left behind owns the fingerprint this run presents,
-      // and every purchase below is refused — a suite that passes once and
-      // never again, on a volume that outlives it. The merchant's row is here
-      // for the same reason before it has cost anybody an afternoon: it carries
-      // whether they are selling at all, so a run that ever pauses them would
-      // leave every later run's purchases turned away, and the failure would
-      // look like anything but its cause. A table added to `schema.ts` belongs
-      // in this list.
-      await pool.query(
-        "truncate table cards, orders, receipts, payment_claims, merchant_keys, merchants",
-      );
+      await pool.query(EMPTY_EVERY_TABLE);
       // And the queue's own tables, which are none of ours. They are dropped
       // rather than emptied, dropped before the gateway is up rather than
       // after, and dropped from an installation of this suite's own rather than
@@ -284,6 +311,7 @@ if (databaseUrl === null) {
       // middle leaves this behind, and the next run must not care.
       await pool.query(`drop schema if exists ${QUEUE_SCHEMA} cascade`);
       await pool.end();
+      await contract.pool.end();
     });
 
     afterEach(() => {
@@ -1411,25 +1439,30 @@ if (databaseUrl === null) {
      * Everything both stores promise, against the one that a merchant's money
      * actually rests on.
      *
-     * Inside this suite rather than beside it, because the store it hands over
-     * is the one `beforeAll` built and `afterAll` takes down: declared as a
-     * sibling it would run after the pool had been ended.
+     * Inside this suite rather than beside it, because what it needs — the
+     * migrated database, the pools, the emptied tables — is what `beforeAll`
+     * builds and `afterAll` takes down. Declared as a sibling it would run
+     * after the pools had been ended.
      *
-     * Each case is given an empty store, which here means the tables emptied.
-     * That is the same list `beforeAll` empties and it is meant to stay that
-     * way — a table added to `schema.ts` belongs in both. Emptying it takes the
-     * merchants this file's own `beforeEach` writes as well; the suite makes
-     * whatever it needs, and the next test in this file gets them back from
-     * that hook.
+     * A store and a pool of its own, and that is the part worth reading before
+     * it is changed back. The rest of this file's store shares its pool with a
+     * started gateway whose pg-boss workers are polling, and writes its
+     * envelopes onto a real stream. The contract needs neither — it never asks
+     * for a write alongside an order — and handing it that store would put its
+     * transactions and its truncates in the same pool as work nobody in the
+     * contract asked for. What the contract's pool does need is room for more
+     * than one transaction at a time: two of its cases hold a decision open
+     * while another runs, and on a pool of one they would wait for a connection
+     * rather than for a lock, which is a different thing that looks identical.
+     *
+     * Each case is given an empty store, which here means every table emptied.
+     * That takes the merchants this file's own `beforeEach` writes as well; the
+     * contract makes whatever it needs, and the next case in this file gets
+     * them back from that hook.
      */
     describeStore("the store on Postgres", async () => {
-      await pool.query(
-        "truncate table cards, orders, receipts, payment_claims, merchant_keys, merchants",
-      );
-      // The pool outlives one test, so ending it is the file's job rather than
-      // the suite's, and the store handed over is the one the rest of this file
-      // uses — envelopes and all.
-      return store;
+      await contract.pool.query(EMPTY_EVERY_TABLE);
+      return new PostgresStore(contract.db, countedIds());
     });
   });
 }
