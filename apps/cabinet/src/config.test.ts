@@ -107,6 +107,81 @@ describe("where the cabinet thinks it is mounted", () => {
   });
 });
 
+describe("where the cabinet's two messages go", () => {
+  it("sends nothing anywhere unless a deployment says where", () => {
+    // The whole flow — registering, confirming, losing a password — walks on a
+    // laptop with no provider account, no domain and no network, because the
+    // sandbox word writes every message to the log instead of sending it.
+    expect(loadConfig(given()).mailUrl).toBe("sandbox:log");
+  });
+
+  it("refuses a real credential beside the word that means nothing is sent", () => {
+    // The mistake worth catching is a production environment file copied onto a
+    // sandbox. A credential exists only to talk to a provider, so beside an
+    // address that sends nothing it is somebody's leftovers rather than a
+    // choice — and left unnoticed it sits there until one other line changes.
+    expect(() => loadConfig(given({ MAIL_API_KEY: "re_a_real_looking_key" }))).toThrow(
+      /MAIL_API_KEY/,
+    );
+  });
+
+  it("refuses a provider it could not authenticate against, or send from", () => {
+    // A cabinet that appears to send mail and silently does not is discovered
+    // by a merchant who has lost a password and is waiting for a link that was
+    // never accepted.
+    expect(() =>
+      loadConfig(
+        given({
+          MAIL_URL: "https://api.resend.com",
+          MAIL_FROM: "Coinslot <no-reply@mail.example.com>",
+          PUBLIC_BASE_URL: "https://coinslot.example.com",
+        }),
+      ),
+    ).toThrow(/MAIL_API_KEY/);
+    expect(() =>
+      loadConfig(
+        given({
+          MAIL_URL: "https://api.resend.com",
+          MAIL_API_KEY: "re_a_real_looking_key",
+          PUBLIC_BASE_URL: "https://coinslot.example.com",
+        }),
+      ),
+    ).toThrow(/MAIL_FROM/);
+  });
+
+  it("refuses to send real mail whose links point at the reader's own computer", () => {
+    // The public address defaults to a laptop so that the cabinet runs with
+    // nothing set. A deployment that turns mail on and leaves it there would
+    // send every merchant a link into their own machine, and the merchant
+    // reading it would have no way of knowing that is what happened.
+    expect(() =>
+      loadConfig(
+        given({
+          MAIL_URL: "https://api.resend.com",
+          MAIL_API_KEY: "re_a_real_looking_key",
+          MAIL_FROM: "Coinslot <no-reply@mail.example.com>",
+        }),
+      ),
+    ).toThrow(/PUBLIC_BASE_URL/);
+  });
+
+  it("takes a provider that is set up properly", () => {
+    const config = loadConfig(
+      given({
+        MAIL_URL: "https://api.resend.com",
+        MAIL_API_KEY: "re_a_real_looking_key",
+        MAIL_FROM: "Coinslot <no-reply@mail.example.com>",
+        PUBLIC_BASE_URL: "https://coinslot.example.com/",
+      }),
+    );
+
+    expect(config.mailUrl).toBe("https://api.resend.com");
+    // The trailing slash comes off, because a path is joined onto this and two
+    // slashes in the middle of a link is a link somebody has to think about.
+    expect(config.publicBaseUrl).toBe("https://coinslot.example.com");
+  });
+});
+
 describe("what the configuration says about itself", () => {
   it("does not put the database password into the sentence it throws", () => {
     // The startup failure goes to a log, and a log goes places the environment

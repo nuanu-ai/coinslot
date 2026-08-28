@@ -6,11 +6,10 @@
  * than one per restart.
  *
  * There is a database address here and there is exactly one thing it is for:
- * the people who sign into the cabinet and the sessions they are signed in
- * with (ADR-0009). ADR-0005 §3 still holds for everything else — every card,
- * order and receipt on every screen comes from the public API, because the
- * reason that section gives is dogfooding: a screen the cabinet cannot draw is
- * API the merchant does not have either.
+ * the people who sign into the cabinet and the sessions they are signed in with
+ * (ADR-0009). ADR-0005 §3 still holds for everything else — every card, order
+ * and receipt on every screen comes from the public API, because the reason that section gives is dogfooding: a screen
+ * the cabinet cannot draw is API the merchant does not have either.
  *
  * There is no merchant key here, and its absence is the point rather than an
  * omission. The cabinet used to read one at start-up and use it for the life of
@@ -24,6 +23,7 @@
  */
 
 import { z } from "zod";
+import { isSandboxMail, SANDBOX_MAIL } from "./mail.js";
 
 const absentOrWrong = (whenWrong: string) => (issue: { input: unknown }) =>
   issue.input === undefined ? "the variable is not set" : whenWrong;
@@ -37,12 +37,32 @@ function isPostgresUrl(value: string): boolean {
   return protocol === "postgres:" || protocol === "postgresql:";
 }
 
+function isHttpUrl(value: string): boolean {
+  if (!URL.canParse(value)) {
+    return false;
+  }
+  const { protocol } = new URL(value);
+  return protocol === "http:" || protocol === "https:";
+}
+
+/**
+ * Addresses a link in a message must not be built on.
+ *
+ * A message goes to somebody else's machine, and a link on this list is an
+ * address that means "this machine" wherever it is read. It is a real mistake
+ * and not a theoretical one: the public address defaults to localhost so that
+ * the cabinet runs on a laptop with nothing set, and a deployment that turns
+ * mail on without setting it would send every merchant a link into their own
+ * computer.
+ */
+const NOWHERE_ELSE = new Set(["localhost", "127.0.0.1", "[::1]", "::1", "0.0.0.0"]);
+
 const environmentSchema = z.object({
   /**
    * Where the cabinet's own accounts and sessions live.
    *
-   * The same Postgres as everything else (ADR-0003 §6), and two tables of the
-   * cabinet's own in it. Without one there is nowhere to look a session up, so
+   * The same Postgres as everything else (ADR-0003 §6), and the cabinet's own
+   * tables in it. Without one there is nowhere to look a session up, so
    * every visitor would be a stranger — a cabinet that draws a sign-in form and
    * can never accept one.
    */
@@ -98,6 +118,57 @@ const environmentSchema = z.object({
     .enum(["true", "false"])
     .default("false")
     .transform((value) => value === "true"),
+
+  /**
+   * The address a merchant reaches this cabinet at, from their own machine.
+   *
+   * It is what the links in our two messages are built on, and that is its only
+   * use — nothing else in the cabinet needs to know its own address, because
+   * every link on every page is relative. Behind a reverse proxy the address
+   * this process sees is not the address the merchant typed, so it is
+   * configuration rather than something read off a request.
+   *
+   * The default is a laptop, which is where the cabinet is developed and where
+   * `sandbox:log` prints the link into the terminal of the person who is about
+   * to click it. A deployment that sends real mail is refused with this
+   * unchanged, below, because every link it sent would point at the reader's own
+   * computer.
+   */
+  PUBLIC_BASE_URL: z
+    .string({ error: absentOrWrong("must be a string") })
+    .refine(isHttpUrl, "must be an address of the form https://coinslot.example.com")
+    .default("http://localhost:3001")
+    .transform((value) => value.replace(/\/+$/, "")),
+
+  /**
+   * Where a message goes, or the one address that means nowhere at all.
+   *
+   * One field with one value, the way the gateway names its facilitator: a
+   * deployment that names a provider cannot also be in the sandbox, because
+   * there is no second flag to disagree with the first. With the sandbox word
+   * every message is written to the log with its recipient and its link, so the
+   * whole flow walks with no account, no domain and no network.
+   */
+  MAIL_URL: z
+    .string({ error: absentOrWrong("must be a string") })
+    .refine(
+      (value) => isSandboxMail(value) || isHttpUrl(value),
+      `must be the address of a mail provider, or "${SANDBOX_MAIL}" for a cabinet that sends nothing`,
+    )
+    .default(SANDBOX_MAIL),
+
+  /** What the provider is called with. Nothing to set in the sandbox. */
+  MAIL_API_KEY: z.string().min(1).optional(),
+
+  /**
+   * What a message says it is from.
+   *
+   * Nothing reads mail sent back to it — there is no inbox behind this address
+   * and no bounce anybody looks at — so ADR-0009 asks that the address itself
+   * say so. A deployment that sends real mail has to name one; the sandbox does
+   * not, because the log is not delivered to anybody.
+   */
+  MAIL_FROM: z.string().min(1).optional(),
 });
 
 export interface CabinetConfig {
@@ -106,7 +177,21 @@ export interface CabinetConfig {
   readonly basePath: string;
   readonly cookieSecure: boolean;
   readonly databaseUrl: string;
+  /** What the links in the cabinet's two messages are built on. */
+  readonly publicBaseUrl: string;
+  readonly mailUrl: string;
+  readonly mailApiKey: string | null;
+  readonly mailFrom: string;
 }
+
+/**
+ * What a message says it is from when nothing sends one.
+ *
+ * Only ever used where `MAIL_URL` is the sandbox word, where the message is
+ * written to a log rather than delivered. It says out loud that nobody reads
+ * replies, which is the same thing the deployed address is asked to say.
+ */
+const NOBODY_READS_THIS = "Coinslot <no-reply@localhost>";
 
 export function loadConfig(environment: Record<string, string | undefined>): CabinetConfig {
   const parsed = environmentSchema.safeParse(environment);
@@ -121,14 +206,68 @@ export function loadConfig(environment: Record<string, string | undefined>): Cab
     );
   }
 
+  const values = parsed.data;
+  const sandboxMail = isSandboxMail(values.MAIL_URL);
+  const problems: string[] = [];
+
+  // The same door the gateway keeps between its sandbox and a real facilitator:
+  // a credential exists only to talk to a provider, so beside an address that
+  // sends nothing it is somebody's leftovers rather than a choice. The mistake
+  // worth catching is a production environment file copied onto a sandbox,
+  // where it would otherwise sit unused until somebody changed one other line.
+  if (sandboxMail && values.MAIL_API_KEY !== undefined) {
+    problems.push(
+      `MAIL_URL is ${JSON.stringify(SANDBOX_MAIL)}, which sends nothing anywhere, and` +
+        " MAIL_API_KEY is set — that credential talks to a real provider, so one of the two is" +
+        " left over from somewhere else",
+    );
+  }
+
+  // And the door the other way. A provider address with nothing to authenticate
+  // against it is a cabinet that appears to send mail and silently does not,
+  // which is the shape of failure a merchant discovers when they have lost a
+  // password and are waiting for a link that was never accepted.
+  if (!sandboxMail && values.MAIL_API_KEY === undefined) {
+    problems.push(
+      `MAIL_URL names a mail provider and MAIL_API_KEY is not set, so nothing would be accepted` +
+        ` by it; set MAIL_URL to ${JSON.stringify(SANDBOX_MAIL)} for a cabinet that sends nothing`,
+    );
+  }
+
+  if (!sandboxMail && values.MAIL_FROM === undefined) {
+    problems.push(
+      "MAIL_URL names a mail provider and MAIL_FROM is not set, so there is no address for a" +
+        " message to come from",
+    );
+  }
+
+  // A real provider on a public address that means "this machine". Every link
+  // in every message would point at the reader's own computer, and the merchant
+  // reading it would have no way of knowing that is what happened.
+  if (!sandboxMail && NOWHERE_ELSE.has(new URL(values.PUBLIC_BASE_URL).hostname)) {
+    problems.push(
+      `MAIL_URL names a mail provider and PUBLIC_BASE_URL is ${JSON.stringify(values.PUBLIC_BASE_URL)},` +
+        " which means this machine wherever it is read — every link sent would point at the" +
+        " reader's own computer",
+    );
+  }
+
+  if (problems.length > 0) {
+    throw new Error(`The cabinet cannot start, the mail is not set up — ${problems.join("; ")}`);
+  }
+
   return {
-    port: parsed.data.PORT,
+    port: values.PORT,
     // A trailing slash on the gateway address and the leading slash on every
     // contract path would make every call a double slash, which some proxies
     // route somewhere else entirely.
-    gatewayUrl: parsed.data.GATEWAY_URL.replace(/\/+$/, ""),
-    basePath: parsed.data.BASE_PATH,
-    cookieSecure: parsed.data.COOKIE_SECURE,
-    databaseUrl: parsed.data.DATABASE_URL,
+    gatewayUrl: values.GATEWAY_URL.replace(/\/+$/, ""),
+    basePath: values.BASE_PATH,
+    cookieSecure: values.COOKIE_SECURE,
+    databaseUrl: values.DATABASE_URL,
+    publicBaseUrl: values.PUBLIC_BASE_URL,
+    mailUrl: values.MAIL_URL,
+    mailApiKey: values.MAIL_API_KEY ?? null,
+    mailFrom: values.MAIL_FROM ?? NOBODY_READS_THIS,
   };
 }
