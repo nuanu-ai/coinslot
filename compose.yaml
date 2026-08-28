@@ -245,9 +245,11 @@ services:
       # gateway says so in one line at startup.
       FACILITATOR_URL: sandbox:scripted
       # A challenge has to name somewhere for the money to go or it cannot be
-      # built at all, so this is here to give the document a shape. Nothing ever
-      # arrives at it: it is the second well-known local-devnet account, public
-      # and valueless, and this gateway settles against nothing anyway.
+      # built at all, so this is here to give the document a shape where the
+      # merchant selling has set no address of their own — which is what a stack
+      # brought up from nothing looks like, and is allowed only here (ADR-0019).
+      # Nothing ever arrives at it: it is the second well-known local-devnet
+      # account, public and valueless, and this gateway settles against nothing.
       PAY_TO_ADDRESS: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
     depends_on:
       postgres:
