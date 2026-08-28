@@ -51,6 +51,15 @@ const PERSON = "dmitry@example.com";
  * account in the store.
  */
 const OTHER = "someone@example.com";
+/**
+ * A session identifier shaped like one this cabinet issues, for the one test
+ * that has to plant a live session rather than sign in for it.
+ *
+ * The shape matters: a value that is not shaped like an identifier we would
+ * have issued is never looked up at all, so a made-up word would test the
+ * cookie filter rather than the gate.
+ */
+const BEFORE_MERCHANTS = "a".repeat(43);
 const PASSWORD = "a-password-nobody-guesses";
 /**
  * Derived once for the whole file. A scrypt derivation is a tenth of a second
@@ -443,6 +452,80 @@ describe("getting into the cabinet", () => {
     // And the page says who is looking at it, which is the whole point of there
     // being a person in the system rather than a key.
     expect(readable(cards.html)).toContain(PERSON);
+  });
+
+  it("shows each person the catalogue of their own merchant and not of the other one", async () => {
+    // ADR-0014 §2, and the promise the whole change exists for. The cabinet used
+    // to reach the gateway with one key read at start-up, so a second account was
+    // a second person looking at the first merchant's money. The key comes off
+    // the row of whoever is signed in now, and this is against the real gateway
+    // with two merchants really seeded — a cabinet that still held one key would
+    // draw the same catalogue for both people and fail here.
+    const { browser, gateway, harnessed, accounts, another } = await started();
+    const theirs = await harnessed.addMerchant("The other merchant");
+    await publish(gateway, roomCard);
+    await gateway.call("POST", "/v0/catalog/publish", {
+      body: { ...esimCard, title: "A plan the other merchant sells" },
+      headers: { authorization: `Bearer ${theirs.key}` },
+    });
+    await accounts.add("theirs@example.com", PASSWORD_HASH, new Date(), {
+      id: theirs.id,
+      key: theirs.key,
+    });
+
+    const mine = readable((await browser.signIn()).html);
+    const otherBrowser = await another();
+    const other = readable((await otherBrowser.signIn("theirs@example.com")).html);
+
+    expect(mine).toContain("A room for the night");
+    expect(mine).not.toContain("A plan the other merchant sells");
+    expect(other).toContain("A plan the other merchant sells");
+    expect(other).not.toContain("A room for the night");
+  });
+
+  it("refuses an account made before accounts had a merchant, and says what to run", async () => {
+    // The one account on a deployed server predates the column, so it has no key
+    // and there is not a single screen it can be shown. Served an empty cabinet
+    // it would read as a merchant whose catalogue had been emptied; answered with
+    // an exception it would read as a broken cabinet. It is neither, and the
+    // sentence says which command makes an account that works.
+    const { browser, accounts } = await started();
+    await accounts.add("older@example.com", PASSWORD_HASH, new Date(), null);
+
+    const refused = await browser.post("/sign-in", {
+      email: "older@example.com",
+      password: PASSWORD,
+    });
+
+    expect(refused.status).toBe(403);
+    const text = readable(refused.html);
+    expect(text).toMatch(/before/i);
+    expect(text).toContain("account add");
+    // And nobody was signed in on the way past.
+    expect(refused.headers.getSetCookie()).toStrictEqual([]);
+    expect((await browser.get("/cards")).to).toBe("/sign-in");
+  });
+
+  it("stops an account that lost its merchant from using a session it already had", async () => {
+    // A session outlives a deployment, so somebody signed in on the cabinet as
+    // it was before this change arrives at the gate holding a live session for
+    // an account with no key on it. The gate is where that has to be caught: a
+    // handler below it would reach for a key that is not there.
+    const { browser, accounts } = await started();
+    await accounts.add("older@example.com", PASSWORD_HASH, new Date(), null);
+    const person = await accounts.byEmail("older@example.com");
+    const at = new Date();
+    await accounts.open(
+      fingerprintOf(BEFORE_MERCHANTS),
+      person?.id ?? "",
+      at,
+      new Date(+at + 12 * 60 * 60 * 1_000),
+    );
+
+    const answered = await browser.withRawCookie(`${COOKIE}=${BEFORE_MERCHANTS}`).get("/cards");
+
+    expect(answered.status).toBe(403);
+    expect(readable(answered.html)).toContain("account add");
   });
 
   it("answers a wrong password and an address nobody has in exactly the same way", async () => {

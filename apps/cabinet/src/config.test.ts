@@ -13,7 +13,6 @@ import { loadConfig } from "./config.js";
 /** What a deployment has to set for the cabinet to be able to do anything. */
 const REQUIRED = {
   DATABASE_URL: "postgres://coinslot:coinslot@postgres:5432/coinslot",
-  MERCHANT_API_KEY: "a-merchant-key-long-enough",
 };
 
 const given = (environment: Record<string, string> = {}): Record<string, string> => ({
@@ -31,20 +30,22 @@ describe("what the cabinet will not start without", () => {
     expect(() => loadConfig(withoutDatabase)).toThrow(/DATABASE_URL/);
   });
 
-  it("refuses to start with no merchant key to reach the gateway with", async () => {
-    // The key comes from the cabinet's own configuration now rather than out of
-    // a visitor's cookie (ADR-0009 §4). Without one, every screen is a 401 that
-    // no password can fix.
-    const { MERCHANT_API_KEY: _absent, ...withoutKey } = given();
-
-    expect(() => loadConfig(withoutKey)).toThrow(/MERCHANT_API_KEY/);
+  it("starts with no merchant key anywhere in its environment", () => {
+    // ADR-0014 §2: the key comes off the row of whoever is signed in, so there
+    // is no key in the configuration at all. A cabinet that still refused to
+    // start without one would be a deployment that cannot be brought up until
+    // somebody sets a variable nothing reads — and, worse, one whose operator
+    // reasonably believes that variable is what the screens are drawn with.
+    expect(loadConfig(given()).gatewayUrl).toBe("http://localhost:3000");
+    expect(Object.keys(loadConfig(given()))).not.toContain("merchantApiKey");
   });
 
-  it("refuses a merchant key short enough to guess", () => {
-    // The same floor the gateway holds its own key to. The comparison at the
-    // other end is constant-time over equal lengths, and a key short enough to
-    // walk through makes that care pointless.
-    expect(() => loadConfig(given({ MERCHANT_API_KEY: "short" }))).toThrow(/MERCHANT_API_KEY/);
+  it("does not refuse a key it is handed anyway, because it is not its business", () => {
+    // A deployment that has not had the variable taken out of its compose file
+    // yet must still come up. What used to be checked here — a floor under the
+    // key's length — is checked where a key is now taken in, which is the
+    // command that makes an account.
+    expect(() => loadConfig(given({ MERCHANT_API_KEY: "short" }))).not.toThrow();
   });
 });
 
@@ -94,7 +95,6 @@ describe("where the cabinet thinks it is mounted", () => {
     expect(said).toContain("PORT");
     expect(said).toContain("GATEWAY_URL");
     expect(said).toContain("DATABASE_URL");
-    expect(said).toContain("MERCHANT_API_KEY");
   });
 
   it("does not leave a double slash in front of every call it makes", () => {
@@ -108,16 +108,15 @@ describe("where the cabinet thinks it is mounted", () => {
 });
 
 describe("what the configuration says about itself", () => {
-  it("does not put the merchant key or the database password into the sentence it throws", () => {
+  it("does not put the database password into the sentence it throws", () => {
     // The startup failure goes to a log, and a log goes places the environment
-    // does not. A message quoting the value that was wrong would carry the two
-    // secrets in this file into every one of them.
+    // does not. A message quoting the value that was wrong would carry the one
+    // secret left in this file into every one of them.
     const thrown = (): string => {
       try {
         loadConfig({
           ...given({ PORT: "no" }),
           DATABASE_URL: "postgres://coinslot:s3cret-database-password@postgres:5432/coinslot",
-          MERCHANT_API_KEY: "a-very-secret-merchant-key",
         });
         return "";
       } catch (error) {
@@ -128,6 +127,5 @@ describe("what the configuration says about itself", () => {
     const said = thrown();
     expect(said).toContain("PORT");
     expect(said).not.toContain("s3cret-database-password");
-    expect(said).not.toContain("a-very-secret-merchant-key");
   });
 });
