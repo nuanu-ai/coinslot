@@ -15,6 +15,7 @@
 import type { AddressInfo } from "node:net";
 import type { HandlerAnswer, Order, QuoteResponse } from "@coinslot/contracts";
 import { decodePaymentRequiredHeader, encodePaymentSignatureHeader } from "@x402/core/http";
+import type { PaymentPayload } from "@x402/core/types";
 import { ScriptedFacilitator } from "../adapters/memory/facilitator.js";
 import { MemoryQueue } from "../adapters/memory/queue.js";
 import { MemoryStore } from "../adapters/memory/store.js";
@@ -23,7 +24,13 @@ import { issueKey, keyDigest, makeMerchant } from "../app/merchants.js";
 import type { Runtime } from "../app/runtime.js";
 import { type GatewayConfig, loadConfig } from "../config.js";
 import { buildApp } from "../http/server.js";
-import { PAYMENT_REQUIRED_HEADER, PAYMENT_SIGNATURE_HEADER } from "../http/x402.js";
+import {
+  PAYMENT_REQUIRED_HEADER,
+  PAYMENT_SIGNATURE_HEADER,
+  PaymentEdge,
+  paymentFingerprint,
+  X402_VERSION,
+} from "../http/x402.js";
 import type { Ids } from "../ports/clock.js";
 
 /** Identifiers a test can read: ord_1, item_1, env_3. */
@@ -362,6 +369,86 @@ const aFreshSignature = (() => {
     return `0xsigned${signed}`;
   };
 })();
+
+/**
+ * One wallet's authorisation, as it arrives on the wire, together with the
+ * fingerprint the purchase route takes of it.
+ *
+ * A test about whose purchase an order is cannot spell a payment however it
+ * likes. What the payment layer answers with is the address that actually
+ * signed, and it reads that address out of the payment — so a payment here is a
+ * real header, written by the protocol's own encoder, carrying the signer where
+ * the exact-EVM scheme puts one. Two authorisations from one wallet differ in
+ * their nonce, and so in their fingerprint, while agreeing on their payer: that
+ * is what a repeat is, and it is the one thing about a payment these tests
+ * cannot invent a shorthand for.
+ *
+ * The envelope is real and the contents are not, and the difference is worth
+ * being plain about. The header, the encoding and the place the signer sits are
+ * the protocol's own; what is written inside would be refused by a real
+ * deployment's door long before any of this mattered — priced at nothing,
+ * naming no order, signed with a string that is not hex, and missing the value
+ * and the validity window an EIP-3009 authorisation carries. It is enough for
+ * exactly one question — who signed this, and is it the same wallet as last
+ * time — and it is not a specimen of a valid payment. The route that reads an
+ * offer and the adapter that checks one against our own order are exercised
+ * elsewhere, over HTTP, against a challenge this gateway issued itself.
+ */
+export function authorisation(
+  worked: { readonly runtime: Runtime },
+  wallet: string,
+  nonce: string,
+): { readonly payment: string; readonly fingerprint: string } {
+  return encoded(worked, {
+    signature: aFreshSignature(),
+    authorization: { from: wallet, to: NOWHERE, nonce },
+  });
+}
+
+/**
+ * A payment that decodes perfectly and names nobody: a signature and no
+ * authorisation at all.
+ *
+ * This is not a malformed header, and that is the point of having it. It is the
+ * shape {@link buyOverHttp} sends and the shape any scheme sends that does not
+ * sign an EIP-3009 authorisation, so it arrives over the wire, passes the
+ * route's decode, and reaches the flows with no payer in it. What must hold
+ * then is that two of them are two buyers — the payment's fingerprint is all
+ * there is to tell them apart — and that one of them presented twice is one.
+ */
+export function paymentNamingNoPayer(worked: { readonly runtime: Runtime }): {
+  readonly payment: string;
+  readonly fingerprint: string;
+} {
+  return encoded(worked, { signature: aFreshSignature() });
+}
+
+function encoded(
+  worked: { readonly runtime: Runtime },
+  payload: Record<string, unknown>,
+): { readonly payment: string; readonly fingerprint: string } {
+  const { config } = worked.runtime;
+  // An address to be paid at, where the harness was given none: an offer has to
+  // name one, and nowhere is the honest answer for an offer nobody reads.
+  const edge = new PaymentEdge(
+    { ...config.payment, payTo: config.payment.payTo ?? NOWHERE },
+    config.publicBaseUrl,
+    config.payment.timeoutSeconds,
+  );
+  const signed: PaymentPayload = {
+    x402Version: X402_VERSION,
+    accepted: edge.requirementsFor({ amount: "0.00", currency: "USD" }, null),
+    payload,
+  };
+
+  return {
+    payment: encodePaymentSignatureHeader(signed),
+    fingerprint: paymentFingerprint(signed, edge.token()),
+  };
+}
+
+/** The zero address: an offer made out to nobody, in a payment nobody checks. */
+const NOWHERE = "0x0000000000000000000000000000000000000000";
 
 /** One call against a gateway actually listening on a port. */
 export interface Call {

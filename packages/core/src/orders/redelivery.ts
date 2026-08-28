@@ -19,8 +19,11 @@
  * make the machine untestable, and the delay is part of what an order does
  * with someone else's money.
  *
- * The numbers themselves belong to the policy, not to this file: how long we
- * wait and how many times we try are still open questions before the pilot.
+ * The numbers themselves belong to the policy, not to this file. How many times
+ * we try is published — the portal names it as the gateway's own setting,
+ * along with the deadlines a repeat runs into — while the pauses between the
+ * attempts stay ours: a merchant sizes nothing against them, because the
+ * repeating is automatic and is bounded by the two numbers that are named.
  */
 
 import type { RedeliveryPolicy } from "./model.js";

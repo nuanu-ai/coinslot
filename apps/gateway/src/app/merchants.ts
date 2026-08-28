@@ -248,9 +248,18 @@ export const SEEDED_SERVICE_NAME = "Coinslot sandbox";
 
 /** What seeding the sandbox's key came to, in a word somebody can print. */
 export type SeedOutcome =
-  /** There was no such key and now there is; here it is, the way it was given. */
-  | { readonly kind: "issued"; readonly merchantId: string }
-  /** The key is already there and works. No key was issued. */
+  /**
+   * There was no such key and now there is; here it is, the way it was given.
+   *
+   * `listedAs` is the name this run listed the merchant under, and null where
+   * it left the listing as it found it — because there was already a name on
+   * it, and that name is somebody's. It is carried out rather than left to be
+   * inferred because listing a seller is the part of this that other people can
+   * see: the name travels to a catalogue, and a start-up log that reported the
+   * key and not the listing would be quiet about the half that goes outside.
+   */
+  | { readonly kind: "issued"; readonly merchantId: string; readonly listedAs: string | null }
+  /** The key is already there and works. Nothing was written. */
   | { readonly kind: "already_there" }
   /** The key is there and somebody disabled it. It is left that way. */
   | { readonly kind: "disabled" };
@@ -262,10 +271,11 @@ export type SeedOutcome =
  * This is what lets `docker compose up` sell with no manual step: the key in
  * `compose.yaml` is handed to the cabinet and to the merchant process, and this
  * puts the matching row in the database so that the door recognises it. Run
- * again — a restart, a second replica — it issues no second key, because the
- * key is looked up by its digest before anything is issued. That is a promise
- * about keys and not about the whole call: the listing name below is restored
- * when it is missing, so a run that issues nothing can still write.
+ * again — a restart, a second replica — and nothing in the database changes:
+ * the merchant row is insert-if-absent, and everything after it hangs off the
+ * key lookup coming back empty. The listing name included, for the reason given
+ * where it is written: on a database that already has the key, a merchant with
+ * no listing name is a merchant somebody un-listed on purpose.
  *
  * A key that is there but disabled is left disabled and said out loud. Bringing
  * it back would make revocation a thing a restart undoes, and a key somebody
@@ -293,16 +303,6 @@ export async function seedSandboxKey(
 ): Promise<SeedOutcome> {
   const digest = keyDigest(secret);
   await store.addMerchant(SEEDED_MERCHANT, at);
-
-  // A sandbox that comes up undiscoverable is a sandbox that cannot show the
-  // thing it exists to show: without a listing name the challenge carries no
-  // declaration at all, and a catalogue has nothing to read. So the seeded
-  // merchant is given one — but only if it has none, because a name somebody
-  // set by hand is a choice and this is a default.
-  const merchant = await store.merchantById(SEEDED_MERCHANT.id);
-  if (merchant !== null && merchant.serviceName === null) {
-    await setServiceName(store, SEEDED_MERCHANT.id, SEEDED_SERVICE_NAME, at);
-  }
 
   // Looked up in whatever state it is in, not through the door's own lookup:
   // the door answers nothing for a disabled key, and issuing a second key with
@@ -334,7 +334,29 @@ export async function seedSandboxKey(
     }
     return standingOf(raced.disabledAt);
   }
-  return { kind: "issued", merchantId: SEEDED_MERCHANT.id };
+
+  // A sandbox that comes up undiscoverable is a sandbox that cannot show the
+  // thing it exists to show: without a listing name the challenge carries no
+  // declaration at all, and a catalogue has nothing to read. Nobody runs a
+  // command to fix that on a database that came up from nothing, so the run
+  // that issues the key writes the name too.
+  //
+  // Only that run, and this is the whole of why it is down here rather than
+  // above the lookup. A database that already has the key has been up before,
+  // and a merchant on it with no listing name is not a default nobody has got
+  // to yet — it is `merchant listed-as the_merchant --none`, which is how
+  // somebody takes the sandbox out of a catalogue. Writing the name back on the
+  // next boot would make that command something a restart undoes, silently, and
+  // the operator would find the sandbox listed again with nothing anywhere
+  // saying who listed it. A name that is already there is left alone for the
+  // matching reason: it is somebody's, and this is only a default.
+  const merchant = await store.merchantById(SEEDED_MERCHANT.id);
+  const listedAs = merchant !== null && merchant.serviceName === null ? SEEDED_SERVICE_NAME : null;
+  if (listedAs !== null) {
+    await setServiceName(store, SEEDED_MERCHANT.id, listedAs, at);
+  }
+
+  return { kind: "issued", merchantId: SEEDED_MERCHANT.id, listedAs };
 }
 
 /** Where a key that is already there stands, in the word the caller prints. */

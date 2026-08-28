@@ -4,8 +4,10 @@
 # would look at — the landing, the documentation, the cabinet and the
 # gateway, all on http://localhost:8080, with one Postgres behind them (ADR-0003 §6).
 # Nothing here needs a build on the host first: the documentation is built
-# inside its image and the two Node processes run their TypeScript through tsx,
-# the same way `pnpm --filter @coinslot/gateway start` does on a laptop.
+# inside its image, and the four services that share one image — the
+# migration, the gateway, the cabinet and the mock merchant — run their
+# TypeScript through tsx, the same way `pnpm --filter @coinslot/gateway start`
+# does on a laptop.
 #
 #   docker compose up --build
 #   open http://localhost:8080
@@ -25,7 +27,10 @@
 # `--wait` holds the command until the healthcheck below has passed, and naming
 # the service matters: `docker compose up -d` with nothing after it starts all
 # six of these. Nothing needs to be set for the suite to find its database — it
-# makes it if it is not there — and pointing DATABASE_URL at `coinslot` is
+# makes it if it is not there — as long as the server is on the 5432 this file
+# publishes it on. A host that publishes it somewhere else names it in
+# COINSLOT_TEST_DATABASE_URL, which the suite reads from the command rather than
+# from the `.env` below. Pointing either that or DATABASE_URL at `coinslot` is
 # refused rather than obeyed, because that is the database the cabinet is
 # showing and this suite empties what it is given.
 #
@@ -145,7 +150,10 @@ services:
       # — because the password above is in a repository and nothing off the host
       # has any business reaching this database. Not left empty: compose refuses
       # an empty entry rather than dropping it, so the variable always names a
-      # mapping and a deployment's answer is a narrower one.
+      # mapping and a deployment's answer is a narrower one. A suite run from a
+      # terminal on such a host is told the port it moved to in
+      # COINSLOT_TEST_DATABASE_URL; the release script runs it inside this
+      # network, where the port above is not involved at all.
       - "${COINSLOT_POSTGRES_PUBLISH:-5432:5432}"
     volumes:
       - coinslot-postgres:/var/lib/postgresql/data

@@ -15,12 +15,20 @@ import { defineConfig } from "vitest/config";
  * Naming the service matters: `docker compose up -d` with nothing after it
  * starts the whole stack, six services of it.
  *
- * There is nothing to set. The suite runs against `coinslot_test`, which is its
- * own database on that server and not the `coinslot` the gateway and the
- * cabinet use, and it makes that database if it is not there. DATABASE_URL
- * still overrides it, and naming `coinslot` is refused: this suite empties
- * every table it finds and drops the queue's schema, which is not a thing to do
- * quietly to the database somebody is watching.
+ * Nothing needs to be set on a laptop. The suite runs against `coinslot_test`,
+ * which is its own database on that server and not the `coinslot` the gateway
+ * and the cabinet use, and it makes that database if it is not there. A host
+ * that keeps its Postgres somewhere other than the 5432 `compose.yaml`
+ * publishes on a laptop — a deployment binds `127.0.0.1:55432` — has one thing
+ * to say, and says it to the command:
+ *
+ *   COINSLOT_TEST_DATABASE_URL=postgres://coinslot:coinslot@localhost:55432/coinslot_test \
+ *     pnpm test:db
+ *
+ * DATABASE_URL still overrides the default as well, and naming `coinslot` is
+ * refused whichever of the two names it: this suite empties every table it
+ * finds and drops the queue's schema, which is not a thing to do quietly to the
+ * database somebody is watching.
  */
 export default defineConfig({
   test: {

@@ -68,11 +68,14 @@ export const MoneySchema = z.strictObject({
 /**
  * A moment in time, ISO 8601, with its zone.
  *
- * The zone is not decoration. A price is trusted or distrusted by comparing
- * `as_of` with a freshness threshold, and a local time with no offset cannot
- * be compared with anything — it is an hour of the day, not a moment. Both an
- * explicit offset and `Z` are accepted; what a merchant's clock reports is
- * their business, as long as it names a point in time.
+ * The zone is not decoration. What arrives here is parsed into an instant and
+ * then kept — `as_of` travels into the order the merchant's handler is given
+ * and into the record of the sale, which is what somebody reconciles a charge
+ * against months later — and a local time with no offset is not an instant. It
+ * is an hour of the day, and two machines reading it would land on two
+ * different moments. Both an explicit offset and `Z` are accepted; what a
+ * merchant's clock reports is their business, as long as it names a point in
+ * time.
  */
 export const TimestampSchema = z.iso.datetime({ offset: true });
 

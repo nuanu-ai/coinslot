@@ -12,19 +12,56 @@
  */
 
 import type { PaymentVerificationFailure } from "@coinslot/core";
+import { decodePaymentSignatureHeader } from "@x402/core/http";
 import type { Charge, Facilitator, SettleOutcome, VerifyOutcome } from "../../ports/facilitator.js";
 
 /**
- * Who the payment layer would say paid, faked from the payment itself so a test
- * can model two buyers and a buyer's own repeat without a real signature.
+ * Who the payment layer would say paid: the wallet the authorisation names,
+ * read out of the payment the agent actually sent.
  *
- * The real facilitator returns the address that actually signed the payment;
- * here the payment string stands in for that signature, and the payer is the
- * part of it before a `#` or `:`. So "alice#first" and "alice#second" are one
- * wallet presenting two authorisations — a repeat — while "alice" and "bob" are
- * two different buyers. A payment with neither separator is its own payer.
+ * The real facilitator answers with the address that signed, and it answers
+ * with the agent's own spelling of it — `@x402/evm`'s exact-EVM facilitator
+ * returns `payload.authorization.from` verbatim, passing it through
+ * `getAddress` for its own chain calls and comparisons but never for the value
+ * it hands back. This does the same, from the same field, so the sandbox is
+ * wrong in the ways a real facilitator is wrong rather than tidier than one.
+ * Making one wallet one buyer is not this adapter's job and must not be, or the
+ * promise would hold under the sandbox and break under the real thing:
+ * `walletThatPaid` in `app/gateway.ts` reduces every layer's answer to one
+ * spelling, on the way in, for all of them at once.
+ *
+ * So: a payment header is base64 JSON, and an EIP-3009 authorisation — what the
+ * exact-EVM scheme signs for a token that supports one — names its signer at
+ * `payload.authorization.from`. That is one field and this reaches exactly that
+ * far. Nothing is verified, because this is the sandbox and no signature here
+ * is evidence of anything.
+ *
+ * This used to derive the payer from the shape of the payment string — the part
+ * before a `#` or `:` — which no real header has, so every fresh authorisation
+ * was a fresh owner and a buyer's own repeat was refused as a stranger's.
+ *
+ * A payment that will not decode, and one carrying no authorisation, name
+ * nobody, and `null` says so. Through the door only the second case arrives:
+ * an undecodable header is refused with a fresh challenge before anything
+ * calls this, so the decode branch stands for direct callers and tests, not
+ * as a defence the wire exercises. It is not a refusal: the port has a word for a
+ * verified payment whose payer is unnamed, the real adapter answers `null` in
+ * the same place when the layer vouches without naming an address, and the
+ * gateway's stand-in for it is the payment's own fingerprint. Naming a stand-in
+ * here instead would make every such payment one buyer, and hand the second
+ * sender the first one's purchase. A test that wants a refusal asks for one.
  */
-export const scriptedPayer = (payment: string): string => payment.split(/[#:]/, 1)[0] ?? payment;
+const scriptedPayer = (payment: string): string | null => {
+  let signed: unknown;
+  try {
+    signed = decodePaymentSignatureHeader(payment).payload;
+  } catch {
+    return null;
+  }
+
+  const from = (signed as { authorization?: { from?: unknown } } | undefined)?.authorization?.from;
+  return typeof from === "string" ? from : null;
+};
 
 export class ScriptedFacilitator implements Facilitator {
   readonly verifies: Charge[] = [];

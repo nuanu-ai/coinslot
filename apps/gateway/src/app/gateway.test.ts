@@ -6,8 +6,21 @@ import {
 } from "@coinslot/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { asTimestamp } from "../ports/clock.js";
-import { type Harness, harness, workOnce, workUntilStopped } from "../testing/harness.js";
+import {
+  authorisation,
+  type Harness,
+  harness,
+  paymentNamingNoPayer,
+  workOnce,
+  workUntilStopped,
+} from "../testing/harness.js";
 import { orderDocumentOf } from "./runner.js";
+
+/** Two wallets, for the tests that turn on which of them signed. */
+const ALICE = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const BOB = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+/** Alice's own address as another client would write it. One wallet, not two. */
+const ALICE_SHOUTED = "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
 const syncCard: Card = {
   merchant_item_id: "room-101",
@@ -359,16 +372,26 @@ describe("an asynchronous purchase", () => {
     if (offered.step !== "pay") throw new Error("no price was offered");
     const orderId = offered.order.order.id;
 
-    // Both payments are from the same wallet — "alice" before the "#" — so the
-    // repeat comes from the buyer who bought, carrying a fresh authorisation.
+    // Both payments are signed from one wallet, so the repeat comes from the
+    // buyer who bought — carrying a fresh authorisation, which is a different
+    // signed thing and a different fingerprint. The second spells the address
+    // in capitals, which is a thing clients differ on and the chain does not:
+    // a buyer refused their own repeat over the shift key would be this whole
+    // defect again, in miniature.
+    const first = authorisation(harnessed, ALICE, "0x01");
+    const second = authorisation(harnessed, ALICE_SHOUTED, "0x02");
     const worker = workUntilStopped(harnessed, {
       onOrder: () => ({ delivered: { access_code: "SESAME" } }),
     });
-    await harnessed.gateway.payPurchase(orderId, "alice#first", "alice#first");
+    await harnessed.gateway.payPurchase(orderId, first.payment, first.fingerprint);
     await worker.stop();
     expect((await harnessed.store.orderById(orderId))?.order.state).toBe("delivered_unpaid");
 
-    const repeated = await harnessed.gateway.payPurchase(orderId, "alice#second", "alice#second");
+    const repeated = await harnessed.gateway.payPurchase(
+      orderId,
+      second.payment,
+      second.fingerprint,
+    );
 
     expect(repeated.step).toBe("settled");
     if (repeated.step !== "settled") throw new Error("the repeat did not settle");
@@ -381,10 +404,10 @@ describe("an asynchronous purchase", () => {
     // authorisation had already failed, and charging it again would have taken
     // nothing while the one the agent sent was thrown away.
     expect(harnessed.facilitator.settles.map((charge) => charge.payment)).toStrictEqual([
-      "alice#first",
-      "alice#second",
+      first.payment,
+      second.payment,
     ]);
-    expect(harnessed.facilitator.verifies.at(-1)?.payment).toBe("alice#second");
+    expect(harnessed.facilitator.verifies.at(-1)?.payment).toBe(second.payment);
   });
 
   it("keeps the last few things the payment layer said, and counts what it dropped", async () => {
@@ -403,7 +426,7 @@ describe("an asynchronous purchase", () => {
     const worker = workUntilStopped(harnessed, {
       onOrder: () => ({ delivered: { access_code: "X" } }),
     });
-    await harnessed.gateway.payPurchase(orderId, "alice", "alice");
+    await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
     await worker.stop();
 
     const record = await harnessed.store.orderById(orderId);
@@ -435,15 +458,21 @@ describe("an asynchronous purchase", () => {
       onOrder: () => ({ delivered: { access_code: "SESAME" } }),
     });
     // The purchase comes back when the promised ceiling runs out. Both payments
-    // are from the same wallet, so the second reaches the repeat the machine
-    // refuses rather than being turned away as a stranger's.
-    await harnessed.gateway.payPurchase(orderId, "alice#first", "alice#first");
+    // are signed from the same wallet, so the second reaches the repeat the
+    // machine refuses rather than being turned away as a stranger's.
+    const first = authorisation(harnessed, ALICE, "0x01");
+    const second = authorisation(harnessed, ALICE, "0x02");
+    await harnessed.gateway.payPurchase(orderId, first.payment, first.fingerprint);
     await worker.stop();
 
     const stuck = await harnessed.store.orderById(orderId);
     expect(stuck?.order.payment).toBe("outcome_unknown");
 
-    const refused = await harnessed.gateway.payPurchase(orderId, "alice#second", "alice#second");
+    const refused = await harnessed.gateway.payPurchase(
+      orderId,
+      second.payment,
+      second.fingerprint,
+    );
 
     expect(refused.step).toBe("payment_not_taken");
     if (refused.step !== "payment_not_taken") throw new Error("the second payment was taken");
@@ -452,7 +481,7 @@ describe("an asynchronous purchase", () => {
     // Nothing was charged, and the record of the charge that went quiet is
     // exactly as it was.
     const after = await harnessed.store.orderById(orderId);
-    expect(after?.payment).toBe("alice#first");
+    expect(after?.payment).toBe(first.payment);
     expect(harnessed.facilitator.settles).toHaveLength(1);
   });
 
@@ -957,18 +986,24 @@ describe("two payments racing one order", () => {
     const firstOrder = first.order.order.id;
 
     // Alice pays and owns it.
-    const won = await harnessed.gateway.payPurchase(firstOrder, "alice", "alice-auth");
+    const hers = authorisation(harnessed, ALICE, "0x01");
+    const won = await harnessed.gateway.payPurchase(firstOrder, hers.payment, hers.fingerprint);
     expect(won.step).toBe("under_way");
 
     // Bob arrives second with his own signature and is turned away.
-    const lost = await harnessed.gateway.payPurchase(firstOrder, "bob", "bob-auth");
+    const his = authorisation(harnessed, BOB, "0x01");
+    const lost = await harnessed.gateway.payPurchase(firstOrder, his.payment, his.fingerprint);
     expect(lost.step).toBe("not_this_purchase");
 
     // The same signature, on an order of his own, buys. Without the release it
     // is answered "already spent" and pointed at Alice's order.
     const second = await harnessed.gateway.beginPurchase(itemId, {});
     if (second.step !== "pay") throw new Error("the second purchase did not reach a payment");
-    const again = await harnessed.gateway.payPurchase(second.order.order.id, "bob", "bob-auth");
+    const again = await harnessed.gateway.payPurchase(
+      second.order.order.id,
+      his.payment,
+      his.fingerprint,
+    );
 
     expect(again.step).toBe("under_way");
   });
@@ -999,10 +1034,12 @@ describe("two payments racing one order", () => {
     // Hold both verifications so the two calls reach the ownership decision at
     // the same instant. Released together, what decides between them is the
     // in-lock guard — not the order they happened to verify in.
+    const hers = authorisation(harnessed, ALICE, "0x01");
+    const his = authorisation(harnessed, BOB, "0x01");
     const release = harnessed.facilitator.holdVerification();
     const race = Promise.all([
-      harnessed.gateway.payPurchase(orderId, "alice", "alice-auth"),
-      harnessed.gateway.payPurchase(orderId, "bob", "bob-auth"),
+      harnessed.gateway.payPurchase(orderId, hers.payment, hers.fingerprint),
+      harnessed.gateway.payPurchase(orderId, his.payment, his.fingerprint),
     ]);
     for (let i = 0; i < 2_000 && harnessed.facilitator.verifies.length < 2; i += 1) {
       await Promise.resolve();
@@ -1025,12 +1062,16 @@ describe("two payments racing one order", () => {
     if (winner?.step !== "settled") throw new Error("nobody won the race");
     expect(winner.delivery).toStrictEqual({ access_code: "SESAME" });
 
-    // One owner, one charge, and the charge was the owner's payment.
+    // One owner, one charge, and the charge was the owner's payment. The owner
+    // is a wallet — the address the winning authorisation was signed from — and
+    // the charge carries that authorisation itself.
     const owned = await harnessed.store.orderById(orderId);
     expect(owned?.order.state).toBe("delivered");
-    expect(["alice", "bob"]).toContain(owned?.paidBy);
+    expect([ALICE, BOB]).toContain(owned?.paidBy);
     expect(harnessed.facilitator.settles).toHaveLength(1);
-    expect(harnessed.facilitator.settles[0]?.payment).toBe(owned?.paidBy);
+    expect(harnessed.facilitator.settles[0]?.payment).toBe(
+      owned?.paidBy === ALICE ? hers.payment : his.payment,
+    );
   });
 
   it("does not let a stranger's failed payment stop the buyer who was issued the challenge", async () => {
@@ -1062,6 +1103,76 @@ describe("two payments racing one order", () => {
     // The stranger was never charged; the buyer was, once.
     expect(harnessed.facilitator.settles).toHaveLength(1);
     expect(harnessed.facilitator.settles[0]?.payment).toBe("buyer");
+  });
+
+  it("does not make two payments that name no payer into one buyer", async () => {
+    // A payment can decode perfectly and still say nothing about who signed it:
+    // a scheme that does not sign an EIP-3009 authorisation sends a signature
+    // and no more, which is what an agent's client sends over HTTP today. It
+    // passes the route's decode and reaches the flows with no payer in it, so
+    // this is a wire case and not a malformed-input case.
+    //
+    // What has to hold then is that the fingerprint of what was signed carries
+    // the whole weight of telling buyers apart. A stand-in payer invented for
+    // the unnamed would be the same stand-in every time, and the second sender
+    // would be handed the first one's purchase — the defect this rule exists to
+    // stop, moved one branch over.
+    const harnessed = await started();
+    const itemId = await published(harnessed, asyncCard);
+    const offered = await harnessed.gateway.beginPurchase(itemId, {});
+    if (offered.step !== "pay") throw new Error("no price was offered");
+    const orderId = offered.order.order.id;
+
+    const mine = paymentNamingNoPayer(harnessed);
+    const theirs = paymentNamingNoPayer(harnessed);
+
+    const bought = await harnessed.gateway.payPurchase(orderId, mine.payment, mine.fingerprint);
+    expect(bought.step).toBe("under_way");
+
+    // Somebody else's payment, equally anonymous, is not this order's.
+    const meddling = await harnessed.gateway.payPurchase(
+      orderId,
+      theirs.payment,
+      theirs.fingerprint,
+    );
+    expect(meddling.step).toBe("not_this_purchase");
+    expect((await harnessed.store.orderById(orderId))?.paidBy).toBe(mine.fingerprint);
+
+    // And the other half, or the rule above would be a way of locking a buyer
+    // out of their own order: the same anonymous payment presented again is the
+    // same buyer, because it fingerprints the same.
+    const again = await harnessed.gateway.payPurchase(orderId, mine.payment, mine.fingerprint);
+    expect(again.step).not.toBe("not_this_purchase");
+  });
+
+  it("does not make two payments naming a blank signer into one buyer", async () => {
+    // The same promise where the authorisation is there and its signer is an
+    // empty string. It reaches a different line — the payer arrives as `""`
+    // rather than as nothing — and an empty string is an identity that every
+    // such payment would share. `walletThatPaid` turns it into nobody so the
+    // fingerprint stands in, which the `??` on its own would not do.
+    const harnessed = await started();
+    const itemId = await published(harnessed, asyncCard);
+    const offered = await harnessed.gateway.beginPurchase(itemId, {});
+    if (offered.step !== "pay") throw new Error("no price was offered");
+    const orderId = offered.order.order.id;
+
+    const nameless = authorisation(harnessed, "", "0x01");
+    const alsoNameless = authorisation(harnessed, "", "0x02");
+
+    const took = await harnessed.gateway.payPurchase(
+      orderId,
+      nameless.payment,
+      nameless.fingerprint,
+    );
+    expect(took.step).toBe("under_way");
+
+    const meddling = await harnessed.gateway.payPurchase(
+      orderId,
+      alsoNameless.payment,
+      alsoNameless.fingerprint,
+    );
+    expect(meddling.step).toBe("not_this_purchase");
   });
 });
 

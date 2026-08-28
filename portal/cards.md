@@ -43,19 +43,19 @@ asynchronous product is the moment of purchase — so the clock is already going
 when the order reaches your handler, and it covers every attempt we make to
 deliver that order to you. Name it, and the agent sees it before it buys.
 
-Leaving it out does not leave you off a clock. A default of ours applies
-instead, an order that runs past it is marked as needing a refund exactly as one
-past a number of your own would be, and the agent is shown no deadline at all —
-so the clock you are held to is one neither of you ever saw. That number is
-among the ones [not settled yet](#what-is-not-settled-yet), and until it is,
-naming your own is the only way either side knows what it is. What happens when
-a delivery deadline runs out is in [Time ran out](/orders).
+Leaving it out does not leave you off a clock. A day applies instead, an order
+that runs past it is marked as needing a refund exactly as one past a number of
+your own would be, and the agent is shown no deadline at all — so the clock you
+are held to is one the agent never saw. That day is ours to set rather than the
+card's, and naming your own is the only way the agent learns what it is. What
+happens when a delivery deadline runs out is in [Time ran out](/orders).
 
 A synchronous card has no such field, because how long to wait for a synchronous
-answer is set by us, the same for every product. That one runs from the moment
-of purchase rather than from the moment your handler is called, so the price
-question and the payment check come out of it first. The confirmation mode has a
-deadline of its own and it arrives together with the mode.
+answer is set by us, the same for every product: eight seconds. That one runs
+from the moment of purchase rather than from the moment your handler is called,
+so the price question and the payment check come out of it first. The
+confirmation mode has a deadline of its own — an hour, where the card names none
+— and it arrives together with the mode.
 
 ### A whole card
 
@@ -297,16 +297,22 @@ both is refused rather than read one way or the other:
 <<< @/examples/quote-response/unavailable.json
 
 An `available: false` answer to a purchase closes it before any money moves,
-and no order appears on your side. The price from an answer lives until
-`expires_at`: how long a price holds is set by us and is the same across the
-system, and what happens once it has passed is in [Time ran out](/orders).
+and no order appears on your side. A price you name holds for thirty seconds,
+counted from the moment your answer reaches us; that number is set by us and is
+the same across the system. The `expires_at` in the question is the outside edge
+of the same life rather than a second number — it is worked out when the
+question goes out, before anyone knows when your answer will land, so it falls a
+little later — and what happens once a price has run out is in [Time ran
+out](/orders).
 
-Nothing on our side holds down how often these questions go out. One purchase
-asks one question and that question is put on your stream once, so the rate
-your price handler meets is the rate agents buy at, and that is the number to
-size it against. The thresholds that would hold the rate down are among what is
-not settled below; until they exist there is nothing between a burst of
-purchases and your handler.
+We wait five seconds for an answer, and a question unanswered by then counts as
+silence, which costs different things in different modes ([What can go
+wrong](/failures)). Nothing on our side holds down how often these questions go
+out: one purchase asks one question and that question is put on your stream
+once, so the rate your price handler meets is the rate agents buy at, and that
+is the number to size it against. The thresholds that would hold the rate down
+are among what is not settled below; until they exist there is nothing between a
+burst of purchases and your handler.
 
 Coinslot keeps no stock counts: only you know how much of anything there is. So
 a product that can run out is worth listing with a check, because without one
@@ -364,10 +370,9 @@ what that ought to be is not settled.
   and the ban on addressing the buying program or instructing it.
 - The exact shape that describes the purchase parameters and the delivery
   result.
-- The delivery deadline's numbers: what it defaults to when a card leaves it
-  out, and how long it may be. And whether an asynchronous card ought to be
-  required to name one at all, rather than fall to a default that is shown to
-  neither the seller nor the buying program.
+- How long a delivery deadline may be, and whether an asynchronous card ought
+  to be required to name one at all, rather than fall to a default the buying
+  program is never shown.
 - The shape of the field a card declares a price check in and chooses a
   transport with.
 - Whether the vocabulary of recommended codes grows beyond three: we decide
@@ -377,8 +382,7 @@ what that ought to be is not settled.
   until the next poll, and no sale would go through on a poll's answer alone,
   because a question with money behind it is asked again — and nothing runs it
   yet.
-- The thresholds that limit how often price questions go out, and how long we
-  wait for an answer.
+- The thresholds that limit how often price questions go out.
 - Whether an answer whose `as_of` is too old is refused rather than honoured,
   what counts as too old, and what a sale does when one arrives.
 - The price hook. We do not call the address a card names, and when we do, your
