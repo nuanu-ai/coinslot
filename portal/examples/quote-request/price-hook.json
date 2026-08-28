@@ -1,0 +1,7 @@
+{
+  "merchant_item_id": "access-monthly",
+  "params": { "email": "buyer@example.com" },
+  "price_id": "prc_31a8c0",
+  "purpose": "purchase",
+  "expires_at": "2026-08-26T10:20:00Z"
+}

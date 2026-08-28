@@ -47,7 +47,7 @@ export type {
   PriceCheck,
 } from "./orders/create.js";
 export { CREATE_REJECTIONS, createOrder, MERCHANT_SELLING, PRICE_CHECKS } from "./orders/create.js";
-export { deadlines, fulfillmentDeadline, isArmed } from "./orders/deadlines.js";
+export { deadlines, fulfillmentDeadline } from "./orders/deadlines.js";
 export { transition } from "./orders/machine.js";
 export type {
   Closure,
@@ -81,7 +81,6 @@ export type {
 export {
   CLOSED_ORDER_STATES,
   DEADLINE_KINDS,
-  effectsOnQuoted,
   FULFILLMENT_MODES,
   isOpen,
   MERCHANT_ANSWER_ERRORS,

@@ -57,6 +57,14 @@ so the price question and the payment check come out of it first. The
 confirmation mode has a deadline of its own — an hour, where the card names none
 — and it arrives together with the mode.
 
+### A whole card
+
+The fields above, assembled into the one document they make: this is what
+publishing a card sends, and every field in it is described somewhere on this
+page.
+
+<<< @/examples/card/access-monthly.json
+
 ### Two identifiers
 
 A product has two keys, and they appear at the same moment. Our catalogue `id`
@@ -234,17 +242,10 @@ never once consulted, and an asynchronous one does not sell at all. So until
 the transport is served, a card whose price moves belongs behind a price
 handler.
 
-```http
-POST https://api.example.com/quote
+The question the hook receives is the body of a `POST` to the address the card
+names:
 
-{
-  "merchant_item_id": "access-monthly",
-  "params": { "email": "buyer@example.com" },
-  "price_id": "prc_31a8c0",
-  "purpose": "purchase",
-  "expires_at": "2026-08-26T10:20:00Z"
-}
-```
+<<< @/examples/quote-request/price-hook.json
 
 The field `purpose` says why we are asking. Today it always reads `"purchase"`:
 there is an agent behind the question, buying right now. Its other value,
@@ -272,13 +273,7 @@ The answer has three parts:
 
 In full it looks like this:
 
-```json
-{
-  "available": true,
-  "price": { "amount": "5.00", "currency": "USD" },
-  "as_of": "2026-08-26T10:15:00Z"
-}
-```
+<<< @/examples/quote-response/available.json
 
 The mark `as_of` says which moment the answer is true for, and it separates
 "went and checked just now" from "handed over what was in the cache". A price
@@ -295,6 +290,11 @@ exactly as long as one stamped a second ago, because a price's life runs from
 the moment your answer reached us rather than from the moment it says it was
 true. So nothing here catches a stale price on your behalf: a handler answering
 out of a cache is the one deciding how old that cache may get.
+
+The answer that there is none carries no price at all, and an answer carrying
+both is refused rather than read one way or the other:
+
+<<< @/examples/quote-response/unavailable.json
 
 An `available: false` answer to a purchase closes it before any money moves,
 and no order appears on your side. A price you name holds for thirty seconds,

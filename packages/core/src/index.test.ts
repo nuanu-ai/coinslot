@@ -26,15 +26,16 @@ describe("@coinslot/core", () => {
     expect(manifest.dependencies ?? {}).toStrictEqual({});
   });
 
-  it("hands the gateway everything it needs to run an order", () => {
-    // If this failed, the gateway would be reaching into the package's
-    // internals for something the package meant to be part of its surface.
-    //
-    // The list is what the gateway actually calls, not everything the index
-    // exports: `effectsOnQuoted` and `isArmed` are on the surface and have no
-    // caller outside this package, and a list that named them would be
-    // claiming a need that nobody has.
-    for (const name of [
+  it("hands the gateway everything it needs to run an order, and nothing more", () => {
+    // Two ways to fail, and the second is why this is an equality rather than a
+    // loop of `typeof`. A name missing means the gateway is reaching into the
+    // package's internals for something that was meant to be on the surface. A
+    // name that is here and not below means a function nobody outside this
+    // package calls, and every one of those is surface a stranger's engineer is
+    // now obliged to read. `effectsOnQuoted` and `isArmed` sat there for a
+    // while, and the comment that used to be here explained them instead of
+    // taking them off — so the rule is a machine now.
+    const called = [
       "createOrder",
       "transition",
       "deadlines",
@@ -47,9 +48,12 @@ describe("@coinslot/core", () => {
       "modeOf",
       "isOpen",
       "assertNever",
-    ]) {
-      expect(typeof (core as Record<string, unknown>)[name], name).toBe("function");
-    }
+    ];
+    const exported = Object.entries(core)
+      .filter(([, value]) => typeof value === "function")
+      .map(([name]) => name);
+
+    expect(exported.sort()).toStrictEqual([...called].sort());
   });
 
   it("keeps its own test fixtures to itself", () => {

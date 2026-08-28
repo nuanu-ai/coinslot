@@ -137,20 +137,40 @@
         <div class="span-5 hero__aside">
           <div class="panel">
             <div class="panel__label mono">publishing a product</div>
+            <!-- Rendered from portal/examples/card/access-monthly.json, which is the
+                 card itself: the card reference prints the same file as JSON. Edit it
+                 there; packages/contracts/src/landing-fixtures.test.ts renders it again
+                 and fails until this block is what it produced. -->
             <pre><code><span class="tok-key">await</span> coinslot.catalog.<span class="tok-call">publish</span>({
   merchant_item_id: <span class="tok-str">'access-monthly'</span>,
   title: <span class="tok-str">'One month of access to the service'</span>,
   description:
-    <span class="tok-str">'What the buyer gets, what it is good for, and what is not included.'</span>,
+    <span class="tok-str">'Access for 30 days from delivery, renewal not included'</span>,
   price: { amount: <span class="tok-str">'5.00'</span>, currency: <span class="tok-str">'USD'</span> },
-  result: { access_url: { type: <span class="tok-str">'string'</span> } },
+  params: {
+    email: {
+      type: <span class="tok-str">'string'</span>,
+      required: <span class="tok-key">true</span>,
+      title: <span class="tok-str">'Where to send it'</span>,
+    },
+  },
+  result: {
+    access_url: {
+      type: <span class="tok-str">'string'</span>,
+      title: <span class="tok-str">'The link to sign in with'</span>,
+    },
+    expires_at: {
+      type: <span class="tok-str">'string'</span>,
+      title: <span class="tok-str">'When it stops working'</span>,
+    },
+  },
   fulfillment: <span class="tok-str">'sync'</span>,
 })</code></pre>
           </div>
           <p class="caption">
-            The example is the one in the
-            <a href="/docs/quickstart">first test sale</a>, with the optional fields
-            dropped. Of the machine names in it only <span class="mono">merchant_item_id</span> is
+            The example is the whole card from the
+            <a href="/docs/cards">product card</a> reference, which prints the same
+            document as JSON. Of the machine names in it only <span class="mono">merchant_item_id</span> is
             settled; the package name, the function names and the rest of the fields are working
             names, because what is fixed so far is the integration model and not the signatures.
           </p>
