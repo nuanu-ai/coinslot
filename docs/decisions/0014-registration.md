@@ -70,8 +70,17 @@ that stops being enough, the fix is a secret store, not a cleverer column.
 gateway route that makes a merchant takes no key, because nobody registering
 has one yet; what stands in the door instead is one value out of the gateway's
 configuration, which a person is given along with the address of the site.
-Wrong code and right code answer the same way and take the same time, so the
-form is not an oracle for whether registration is open.
+A wrong code and a gateway with registration closed answer the same way, in the
+same words and under the same status, so the form does not tell anybody whether
+registration is open here — only whether the code they hold is the one. The
+comparison is made in constant time against a decoy where there is nothing to
+compare against, for the same reason the sign-in next door derives against one
+(ADR-0009 §2).
+
+An earlier draft of this paragraph said that a wrong code and a *right* one
+answer the same way, which cannot be true: a right code makes a merchant and
+hands back a key. The two answers that have to be indistinguishable are the two
+refusals.
 
 This is a door, not a door lock, and its whole justification is the paragraph
 above about the shared catalogue: it costs one configuration value and it means
