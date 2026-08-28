@@ -268,6 +268,29 @@ describe("loadConfig", () => {
     );
   });
 
+  it("refuses a poll window longer than the worker waiting on it will stay", () => {
+    // The promise: a deployment cannot set this to a number that makes the
+    // gateway hold a poll past the point where the worker on the other end has
+    // given up on it. That window is the answer a poll which named no window of
+    // its own is held for, and the SDK's worker abandons a poll at fifty
+    // seconds and reports it failed — so above that ceiling the gateway would
+    // be timing out its own callers, once per poll, with nothing on this side
+    // saying so. The refusal is at start-up, in front of whoever typed it,
+    // rather than a clamp that decides they did not mean what they wrote.
+    expect(() => loadConfig({ ...required, WORKER_POLL_WAIT_MS: "60000" })).toThrowError(
+      /WORKER_POLL_WAIT_MS: must be at most 40000ms/,
+    );
+    // Naming the ceiling alone would leave an operator to guess why it is
+    // there, so the number on the other side of the seam is in the sentence.
+    expect(() => loadConfig({ ...required, WORKER_POLL_WAIT_MS: "60000" })).toThrowError(/50000ms/);
+
+    // The ceiling itself starts: it is a bound and not a target, and an
+    // operator who reads the number out of the refusal must be able to use it.
+    expect(loadConfig({ ...required, WORKER_POLL_WAIT_MS: "40000" }).worker.pollWaitMs).toBe(
+      40_000,
+    );
+  });
+
   it("refuses a synchronous budget the two waits inside it do not fit into", () => {
     // The composition of `docs/research/16-order-state-machine.md`: the agent's
     // worst case in the synchronous mode is the merchant's answer plus the

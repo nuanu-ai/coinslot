@@ -416,6 +416,16 @@ export const POLL_WAIT_SECONDS = 25;
  * Twice the window, so a gateway that holds the full window and answers late is
  * never cut off, and a connection that has gone quiet costs one window of
  * silence rather than several minutes of it.
+ *
+ * The gateway in this repository is held to it from its own side: the window a
+ * deployment may configure there is refused above a ceiling set below this
+ * number (`WORKER_POLL_WAIT_CEILING_MS` in `apps/gateway/src/config.ts`), so no
+ * configuration of it can hold a poll past the moment this side stops waiting.
+ * That ceiling carries a copy of this number, because the gateway depends on
+ * the contracts and the core machine rather than on the SDK and so cannot read
+ * it. Nothing checks that the copy still matches: changing what is written here
+ * means changing it there in the same breath, and these two paragraphs are the
+ * whole of what keeps the pair together.
  */
 export const POLL_DEADLINE_MS = POLL_WAIT_SECONDS * 2 * 1_000;
 
