@@ -25,6 +25,7 @@ import {
   SEEDED_MERCHANT,
   SEEDED_SERVICE_NAME,
   seedSandboxKey,
+  setPayoutWallet,
   setServiceName,
 } from "./merchants.js";
 
@@ -64,6 +65,71 @@ describe("a key", () => {
     expect(keyDigest("a-key")).toBe(keyDigest("a-key"));
     expect(keyDigest("a-key")).not.toBe(keyDigest("a-keY"));
     expect(keyDigest("a-key")).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
+
+describe("the wallet a merchant is paid at", () => {
+  const seller = async () => {
+    const store = aStore();
+    await makeMerchant(store, countedIds(), "A merchant", 1_000, "mch_1");
+    return store;
+  };
+
+  it("is written in lower case, whichever spelling arrived", async () => {
+    // A wallet hands its owner the mixed-case spelling and a block explorer
+    // prints the lower-case one. Kept as they came, one address would be two
+    // strings — to every comparison, and to a merchant reading back something
+    // that does not look like what they typed.
+    const store = await seller();
+
+    const written = await setPayoutWallet(
+      store,
+      "mch_1",
+      "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed",
+      2_000,
+    );
+
+    expect(written?.payoutWallet).toBe("0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed");
+    expect((await store.merchantById("mch_1"))?.payoutWallet).toBe(
+      "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed",
+    );
+  });
+
+  it("refuses an address whose own letters disagree with it, and writes nothing", async () => {
+    // The one wrong answer available here, and it costs the merchant every
+    // sale they make afterwards: an address that is wrong is another perfectly
+    // good address belonging to somebody else, and a payment to it is gone.
+    const store = await seller();
+    await setPayoutWallet(store, "mch_1", "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed", 2_000);
+
+    await expect(
+      setPayoutWallet(store, "mch_1", "0x5aaeb6053F3E94C9b9A09f33669435E7Ef1BeAed", 3_000),
+    ).rejects.toThrow();
+
+    expect((await store.merchantById("mch_1"))?.payoutWallet).toBe(
+      "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed",
+    );
+  });
+
+  it("refuses something that is not an address at all", async () => {
+    const store = await seller();
+
+    await expect(setPayoutWallet(store, "mch_1", "0x1234", 2_000)).rejects.toThrow();
+    await expect(setPayoutWallet(store, "mch_1", "", 2_000)).rejects.toThrow();
+    expect((await store.merchantById("mch_1"))?.payoutWallet).toBeNull();
+  });
+
+  it("answers with nothing for a merchant who is not there", async () => {
+    const store = await seller();
+
+    expect(
+      await setPayoutWallet(
+        store,
+        "mch_nobody",
+        "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed",
+        2_000,
+      ),
+    ).toBeNull();
   });
 });
 
