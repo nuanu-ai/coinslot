@@ -1,11 +1,14 @@
 import { encodePaymentSignatureHeader } from "@x402/core/http";
 import type { FacilitatorClient } from "@x402/core/server";
-import type {
-  PaymentPayload,
-  PaymentRequirements,
-  SettleResponse,
-  SupportedResponse,
-  VerifyResponse,
+import {
+  FacilitatorTimeoutError,
+  type PaymentPayload,
+  type PaymentRequirements,
+  SettleError,
+  type SettleResponse,
+  type SupportedResponse,
+  VerifyError,
+  type VerifyResponse,
 } from "@x402/core/types";
 import { describe, expect, it } from "vitest";
 import { PaymentEdge } from "../../http/x402.js";
@@ -235,6 +238,48 @@ describe("verifying a payment", () => {
     const answered = await new X402Facilitator(new Answering(), edge).verify(charge("not base64"));
     expect(answered).toMatchObject({ verified: false, reason: "signature" });
   });
+
+  it("reads a verdict the facilitator sent with a refusing status as a verdict", async () => {
+    // A facilitator may answer "this payment is invalid, and here is why" with
+    // a 4xx rather than a 200, and the client turns that into a throw. Reported
+    // as "nobody knows", a refusal the facilitator was perfectly clear about
+    // becomes a purchase that hangs waiting for an answer that already came —
+    // and the agent is never told the thing it could act on.
+    const answered = await new X402Facilitator(
+      new Answering({
+        verify: new VerifyError(400, {
+          isValid: false,
+          invalidReason: "invalid_exact_evm_payload_authorization_value",
+          invalidMessage: "the authorised amount is not the amount asked for",
+        } as VerifyResponse),
+      }),
+      edge,
+    ).verify(charge(honest()));
+
+    expect(answered).toStrictEqual({
+      verified: false,
+      reason: "price_stale",
+      message: "the authorised amount is not the amount asked for",
+    });
+  });
+
+  it("keeps a verdict carried by a broken facilitator as no verdict at all", async () => {
+    // The same shape arriving with a 500 is not the same news. A facilitator
+    // answering out of its own failure has not judged the payment, and telling
+    // an agent its payment is bad on that evidence costs it a sale it could
+    // have made by asking again a moment later.
+    const answered = await new X402Facilitator(
+      new Answering({
+        verify: new VerifyError(500, {
+          isValid: false,
+          invalidReason: "internal_error",
+        } as VerifyResponse),
+      }),
+      edge,
+    ).verify(charge(honest()));
+
+    expect(answered).toMatchObject({ verified: "unknown" });
+  });
 });
 
 describe("executing a charge", () => {
@@ -270,5 +315,62 @@ describe("executing a charge", () => {
     ).settle(charge(honest()));
 
     expect(answered).toStrictEqual({ settled: "unknown", reason: "the facilitator timed out" });
+  });
+
+  it("reads a charge the facilitator refused outright as a charge that did not happen", async () => {
+    // A 4xx carrying the facilitator's own settlement verdict is the request
+    // turned away before any money moved — the spike met one of these,
+    // `self_send_not_allowed`, where the facilitator will not send a payer's
+    // money to the payer. Held as "unknown" it would park the order waiting for
+    // an answer that has already arrived, and somebody would reconcile a charge
+    // that was never attempted.
+    const answered = await new X402Facilitator(
+      new Answering({
+        settle: new SettleError(400, {
+          success: false,
+          transaction: "",
+          network: "eip155:84532",
+          errorReason: "self_send_not_allowed",
+        } as SettleResponse),
+      }),
+      edge,
+    ).settle(charge(honest()));
+
+    expect(answered).toStrictEqual({ settled: false, reason: "self_send_not_allowed" });
+  });
+
+  it("keeps a charge a broken facilitator could not report on as unknown", async () => {
+    // This is the branch above with the one difference that decides money. A
+    // facilitator failing inside itself may have moved the money before it
+    // fell over, so the same body under a 500 is not a verdict, and a gateway
+    // that read it as one would tell a buyer his purchase did not happen while
+    // his money was on its way.
+    const answered = await new X402Facilitator(
+      new Answering({
+        settle: new SettleError(503, {
+          success: false,
+          transaction: "",
+          network: "eip155:84532",
+          errorReason: "unexpected_settle_error",
+        } as SettleResponse),
+      }),
+      edge,
+    ).settle(charge(honest()));
+
+    expect(answered).toMatchObject({ settled: "unknown" });
+  });
+
+  it("keeps a charge that ran out of time as unknown, however the clock reports it", async () => {
+    // The protocol says this outright: a client-side timeout on settle is
+    // indeterminate, because the facilitator may have completed the settlement
+    // after the client stopped waiting. It is the one case the branch above
+    // must never swallow, so it is pinned with the library's own timeout rather
+    // than a plain error.
+    const answered = await new X402Facilitator(
+      new Answering({ settle: new FacilitatorTimeoutError("settle", 30_000) }),
+      edge,
+    ).settle(charge(honest()));
+
+    expect(answered).toMatchObject({ settled: "unknown" });
   });
 });

@@ -9,13 +9,21 @@
  * against a price the agent invented is checked against the price we issued and
  * fails, which is the point.
  *
- * Two things are worth reading before this is trusted.
+ * Three things are worth reading before this is trusted.
  *
  * A silence is not a no. Both calls answer "unknown" when the facilitator could
  * not be asked or did not answer, and the settle's silence in particular is the
  * one place where money may or may not have moved. Turning either into a
  * refusal here would put a guess where the order machine has a word for not
  * knowing.
+ *
+ * A no is not a silence either, and that is the other half of the same rule.
+ * The facilitator sends some of its verdicts with a refusing status, and the
+ * client raises those rather than returning them; read as silences they would
+ * leave an agent waiting on an answer that already arrived. So a 4xx carrying
+ * the facilitator's own verdict is read as the verdict it is, and everything
+ * else — a 5xx, a timeout, a connection that was never made — stays a silence.
+ * `refused` below is where that line is drawn and why.
  *
  * And the reason a verification failed is a best fit rather than a fact. The
  * order machine takes one of three reasons; a facilitator returns an open set
@@ -28,7 +36,12 @@
 import type { PaymentVerificationFailure } from "@coinslot/core";
 import { decodePaymentSignatureHeader } from "@x402/core/http";
 import type { FacilitatorClient } from "@x402/core/server";
-import type { SettleResponse, VerifyResponse } from "@x402/core/types";
+import {
+  SettleError,
+  type SettleResponse,
+  VerifyError,
+  type VerifyResponse,
+} from "@x402/core/types";
 import type { PaymentEdge } from "../../http/x402.js";
 import type { Charge, Facilitator, SettleOutcome, VerifyOutcome } from "../../ports/facilitator.js";
 
@@ -63,6 +76,14 @@ export class X402Facilitator implements Facilitator {
     try {
       answered = await this.#client.verify(asked.payload, asked.requirements);
     } catch (thrown) {
+      // A facilitator that judged the payment and said so with a refusing
+      // status has answered, and the answer is the same one it sends with a
+      // 200. Reported as a silence it would leave an agent waiting on a verdict
+      // that already arrived.
+      if (thrown instanceof VerifyError && refused(thrown.statusCode)) {
+        const said = thrown.invalidMessage ?? thrown.invalidReason ?? "no reason was given";
+        return { verified: false, reason: shapeOf(thrown.invalidReason), message: said };
+      }
       return { verified: "unknown", message: describe(thrown) };
     }
 
@@ -85,8 +106,21 @@ export class X402Facilitator implements Facilitator {
     try {
       answered = await this.#client.settle(asked.payload, asked.requirements);
     } catch (thrown) {
-      // A timeout here is an indeterminate outcome by the protocol's own
-      // account: the facilitator may have completed the settlement. Nothing is
+      // A charge the facilitator turned away is a charge that did not happen:
+      // it refused the request rather than failing inside one, so no money
+      // moved. The spike met one of these — `self_send_not_allowed`, a payer
+      // paying himself — and held as a silence it would park an order waiting
+      // on an answer that had already come.
+      if (thrown instanceof SettleError && refused(thrown.statusCode)) {
+        return {
+          settled: false,
+          reason: thrown.errorMessage ?? thrown.errorReason ?? "no reason was given",
+        };
+      }
+      // Everything else is a silence, and the difference is where the money
+      // is. A timeout is an indeterminate outcome by the protocol's own
+      // account, and so is a facilitator failing inside itself: either may have
+      // completed the settlement before it stopped answering. Nothing is
       // claimed and no second charge is sent.
       return { settled: "unknown", reason: describe(thrown) };
     }
@@ -175,6 +209,32 @@ function shapeOf(reason: string | undefined): PaymentVerificationFailure {
     return "price_stale";
   }
   return "signature";
+}
+
+/**
+ * Whether a status carries the facilitator's own decision about this request,
+ * as opposed to news about the facilitator.
+ *
+ * This is the line that decides which failures are answers and which are
+ * silences, and it is drawn at the one place HTTP already draws it: a 4xx is
+ * the facilitator declining the request, a 5xx is the facilitator failing
+ * inside one. A decline happened before anything moved; a failure may have
+ * happened after.
+ *
+ * Only a body the facilitator wrote in the shape of a verdict reaches either
+ * branch — the client throws its structured error only when the failing
+ * response parses as a verify or settle response — so a proxy's HTML error page
+ * or a rate limiter's empty 429 is a plain throw and stays a silence. What is
+ * being read here is a facilitator that answered, not a status seen on its own.
+ *
+ * The line is inferred from what the statuses mean, not measured against
+ * Coinbase's facilitator: no test here has ever spoken to one. If it turns out
+ * to answer a definite refusal with a 5xx, this reads that as "nobody knows",
+ * which is the safe direction to be wrong in — an order waits for a person
+ * instead of a buyer being told something false about his money.
+ */
+function refused(status: number): boolean {
+  return status >= 400 && status < 500;
 }
 
 function describe(thrown: unknown): string {

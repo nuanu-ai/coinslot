@@ -177,6 +177,75 @@ describe("loadConfig", () => {
     ).not.toThrow();
   });
 
+  it("refuses the CDP facilitator without the credentials it takes no request without", () => {
+    // The mirror of the door above, and the one that costs money rather than
+    // tidiness. The CDP facilitator answers nothing unsigned, so a deployment
+    // pointed at it without credentials verifies nothing and settles nothing —
+    // and it would discover that at the first purchase, in front of a buyer,
+    // rather than here. A knob that can silently take a deployment down is a
+    // defect in the knob.
+    const cdp = { ...required, FACILITATOR_URL: "https://api.cdp.coinbase.com/platform/v2/x402" };
+
+    // Which one is missing is the whole of what the operator needs, so each is
+    // named on its own rather than the pair being reported as "credentials".
+    const neither = refusalFor(cdp);
+    expect(neither).toContain("CDP_API_KEY_ID");
+    expect(neither).toContain("CDP_API_KEY_SECRET");
+
+    // Each of these names the one that is missing and not the one that is
+    // there: a refusal that listed both every time would send an operator who
+    // has half the pair looking for the half they already have.
+    const noSecret = refusalFor({ ...cdp, CDP_API_KEY_ID: "key-id" });
+    expect(noSecret).toContain("CDP_API_KEY_SECRET");
+    expect(noSecret).not.toContain("CDP_API_KEY_ID");
+
+    const noId = refusalFor({ ...cdp, CDP_API_KEY_SECRET: "secret" });
+    expect(noId).toContain("CDP_API_KEY_ID");
+    expect(noId).not.toContain("CDP_API_KEY_SECRET");
+
+    // Both there is a deployment that works, and it is the only spelling that
+    // gets past this door.
+    expect(() =>
+      loadConfig({ ...cdp, CDP_API_KEY_ID: "key-id", CDP_API_KEY_SECRET: "secret" }),
+    ).not.toThrow();
+  });
+
+  it("asks no credentials of the facilitators that take none", () => {
+    // The default is the x402.org testnet facilitator, which is unauthenticated,
+    // and the sandbox settles against nothing at all. Demanding credentials of
+    // either would make the local stack need an account before it could sell.
+    expect(() => loadConfig(required)).not.toThrow();
+    expect(() =>
+      loadConfig({ ...required, FACILITATOR_URL: "https://x402.org/facilitator" }),
+    ).not.toThrow();
+    expect(() => loadConfig({ ...required, FACILITATOR_URL: SANDBOX_FACILITATOR })).not.toThrow();
+  });
+
+  it("knows the CDP facilitator by its host, not by one exact spelling", () => {
+    // A trailing slash, a staging host, a path of another shape: each is the
+    // same facilitator with the same appetite for credentials. Reading only one
+    // exact string would let every other spelling through unauthenticated, to
+    // fail at the first purchase — which is the failure this door exists to
+    // move to startup.
+    for (const url of [
+      "https://api.cdp.coinbase.com/platform/v2/x402",
+      "https://api.cdp.coinbase.com/platform/v2/x402/",
+      "https://api.staging.cdp.coinbase.com/platform/v2/x402",
+    ]) {
+      expect(refusalFor({ ...required, FACILITATOR_URL: url })).toContain("CDP_API_KEY_ID");
+    }
+
+    // And a host that merely reads like it is not it. The rule is the domain,
+    // so a look-alike somebody else registered asks for nothing and is handed
+    // nothing — credentials do not travel to a host on somebody's say-so.
+    expect(() =>
+      loadConfig({
+        ...required,
+        FACILITATOR_URL: "https://api.cdp.coinbase.com.evil.example/x402",
+      }),
+    ).not.toThrow();
+  });
+
   it("does not let it start, names every problem at once and tells absent from wrong", () => {
     // The promise to the engineer: the whole list of what is missing arrives in
     // one go rather than one variable per restart, and "not set" sounds

@@ -47,6 +47,21 @@ real facilitator, so beside an address that settles against nothing they are
 somebody's leftovers rather than a choice, and the mistake they mark is a
 production environment file copied onto a sandbox.
 
+The same door stands the other way round. A deployment whose `FACILITATOR_URL`
+names Coinbase's facilitator — the one the pilot settles through, because a
+product reaches the Bazaar catalog only after a payment settles through it
+(ADR-0001) — refuses to start without both credentials and says which is
+missing, because that facilitator answers nothing unsigned and the gateway
+would otherwise come up healthy and fail at the first charge in front of a
+buyer. It is recognised by its host and not by one exact address: the same
+endpoint is reached on a staging host and with a trailing slash, and every
+spelling of it needs credentials.
+
+That address, and never whether credentials happen to be set, is also what
+decides who receives them. A bearer token is a key good for the account it was
+issued to, so credentials go to Coinbase or they go nowhere; a facilitator that
+takes none is sent nothing, whatever an environment file was left holding.
+
 `PAY_TO_ADDRESS` is deliberately not one of those doors, though the first draft
 of this decision made it one. The payment challenge cannot be built without an
 address (`apps/gateway/src/http/x402.ts` refuses rather than inventing one), so

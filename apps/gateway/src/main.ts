@@ -21,10 +21,10 @@
  * are published and belongs with the deployment step rather than here.
  */
 
-import { HTTPFacilitatorClient } from "@x402/core/server";
 import { ScriptedFacilitator } from "./adapters/memory/facilitator.js";
 import { queueOn } from "./adapters/pgboss/queue.js";
 import { connect, PostgresStore } from "./adapters/postgres/store.js";
+import { facilitatorClientFor, refuseUnlessCredentialsSign } from "./adapters/x402/client.js";
 import { X402Facilitator } from "./adapters/x402/facilitator.js";
 import { Gateway } from "./app/gateway.js";
 import { seedSandboxKey } from "./app/merchants.js";
@@ -64,8 +64,22 @@ const queue = queueOn(config.databaseUrl, {
  * `sandbox:scripted` verifies and settles against nothing, and says so at the
  * top of its log rather than leaving it to be inferred from a quiet purchase
  * that worked with no wallet.
+ *
+ * Which client a real address gets, and what it authenticates with, is decided
+ * in `adapters/x402/client.ts` rather than here, and that is not tidying. This
+ * file is wiring and has no tests, on the stated grounds that everything which
+ * could be got wrong lives behind a port — and the choice of credentials is
+ * something that can be got wrong: it was, silently, and the version before
+ * this one sent Coinbase a pair of headers that facilitator has never read.
+ * Nothing here failed, because nothing here is exercised until a real payment
+ * meets a real facilitator.
+ *
+ * The credentials are made to sign once before this returns, and the process
+ * stops if they cannot. It asks nobody anything — a token is arithmetic over
+ * the key — so an unreachable facilitator cannot stop the gateway starting,
+ * which is the failure the spike's server had.
  */
-function paymentLayer(): Facilitator {
+async function paymentLayer(): Promise<Facilitator> {
   if (isSandboxFacilitator(config.payment.facilitatorUrl)) {
     console.warn(
       "[gateway] SANDBOX: no chain behind this process — every payment it accepts is pretend, " +
@@ -74,26 +88,9 @@ function paymentLayer(): Facilitator {
     return new ScriptedFacilitator();
   }
 
-  return new X402Facilitator(
-    new HTTPFacilitatorClient({
-      url: config.payment.facilitatorUrl,
-      ...(config.payment.cdpApiKeyId === null || config.payment.cdpApiKeySecret === null
-        ? {}
-        : {
-            createAuthHeaders: async () => {
-              // The facilitator's own credentials, sent per path the way its
-              // client asks for them. A flat headers object is refused by the
-              // client rather than silently dropping auth on every request.
-              const headers = {
-                "CDP-Api-Key-Id": config.payment.cdpApiKeyId ?? "",
-                "CDP-Api-Key-Secret": config.payment.cdpApiKeySecret ?? "",
-              };
-              return { verify: headers, settle: headers, supported: headers };
-            },
-          }),
-    }),
-    edge,
-  );
+  const client = facilitatorClientFor(config.payment);
+  await refuseUnlessCredentialsSign(client);
+  return new X402Facilitator(client, edge);
 }
 
 const runtime: Runtime = {
@@ -104,7 +101,7 @@ const runtime: Runtime = {
   // (ADR-0013). Both live in the same Postgres, which is what makes it possible.
   store: new PostgresStore(db, randomIds, queue.envelopes()),
   queue,
-  facilitator: paymentLayer(),
+  facilitator: await paymentLayer(),
   clock: systemClock,
   ids: randomIds,
 };
