@@ -126,9 +126,14 @@ if (databaseUrl === null) {
 
       for (const line of said) {
         expect(line, line).not.toBe("");
+        // The merchant's key first of the three, which is an order rather than
+        // an accident: an assertion after another that fires on the same line
+        // is an assertion a mutation probe never reaches, and this is the one
+        // of the three that hands over what it holds rather than a derivation
+        // of it.
+        expect(line, line).not.toContain(merchantKey);
         expect(line, line).not.toContain(fingerprint);
         expect(line, line).not.toContain(stored);
-        expect(line, line).not.toContain(merchantKey);
         expect(line, line).not.toContain("VEhJUy1JUy1USEUtREVSSVZFRC1LRVk");
         // And no SQL either: a query's text names the tables, which is fine,
         // but drizzle's message is the query *and* the parameters together and
