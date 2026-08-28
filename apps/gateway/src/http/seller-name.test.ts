@@ -190,6 +190,92 @@ describe("the name a merchant is listed under", () => {
   });
 });
 
+describe("publishing before a name has been chosen", () => {
+  /** One publish call, whatever it came to. */
+  const publishing = (served: Served, key: string, card: Card) =>
+    served.call("POST", "/v0/catalog/publish", { body: card, headers: bearer(key) });
+
+  it("refuses a merchant who has set no name, and says where to set one", async () => {
+    // The rule this file exists for. A card published by a merchant with no
+    // name reaches a buyer's agent inside a payment request that names no
+    // seller at all, and the agent is invited to pay somebody the request does
+    // not name. This gateway has shipped that once.
+    const { served, harnessed } = await started();
+    const nameless = await harnessed.addMerchant("A merchant with no listing");
+    await setSellerName(served, nameless.key, null);
+
+    const refused = await publishing(served, nameless.key, cardFor("a-room", "A room"));
+
+    expect(refused.status).toBe(422);
+    const { errors } = refused.body as { errors: { code: string; message: string }[] };
+    // The words have to tell them what to do next. "Something is missing" would
+    // send a merchant through the fields of a card looking for a field that is
+    // not on the card at all — what is missing belongs to the merchant.
+    expect(errors.map((finding) => finding.code)).toContain("no_seller_name");
+    expect(errors.map((finding) => finding.message).join(" ")).toContain("/v0/seller-name");
+  });
+
+  it("publishes for a merchant who has one, which is what makes the refusal a rule", async () => {
+    // The other half. Asserted alone, the refusal above would pass against a
+    // gateway that had stopped publishing anything at all.
+    const { served, harnessed } = await started();
+    await setSellerName(served, harnessed.merchant.key, "Someone's shop");
+
+    const published = await publishing(served, harnessed.merchant.key, cardFor("a-room", "A room"));
+
+    expect(published.status).toBe(200);
+  });
+
+  it("writes nothing, so the card is not there afterwards", async () => {
+    // A refusal that had already written the card would be worse than no rule:
+    // the merchant would be told no and be selling anyway.
+    const { served, harnessed } = await started();
+    const nameless = await harnessed.addMerchant("A merchant with no listing");
+    await setSellerName(served, nameless.key, null);
+
+    await publishing(served, nameless.key, cardFor("a-room", "A room"));
+
+    const own = await served.call("GET", "/v0/cards", { headers: bearer(nameless.key) });
+    expect((own.body as { cards: unknown[] }).cards).toStrictEqual([]);
+  });
+
+  it("says what is wrong with the card as well, rather than one thing at a time", async () => {
+    // A merchant with no name and a card that is also wrong learns both in one
+    // answer. Told them one at a time, they fix the card, publish again, and
+    // only then find out about the name.
+    const { served, harnessed } = await started();
+    const nameless = await harnessed.addMerchant("A merchant with no listing");
+    await setSellerName(served, nameless.key, null);
+
+    const refused = await publishing(served, nameless.key, {
+      ...cardFor("a-room", "A room"),
+      price: { amount: "not a number", currency: "USD" },
+    });
+
+    expect(refused.status).toBe(422);
+    const { errors } = refused.body as { errors: { path: string[]; code: string }[] };
+    expect(errors.map((finding) => finding.code)).toContain("no_seller_name");
+    expect(errors.some((finding) => finding.path.includes("price"))).toBe(true);
+  });
+
+  it("lets a merchant publish as soon as they set one", async () => {
+    // The road out of the refusal, walked end to end. A rule a merchant cannot
+    // get past is not a rule, it is a wall.
+    const { served, harnessed } = await started();
+    const nameless = await harnessed.addMerchant("A merchant with no listing");
+    await setSellerName(served, nameless.key, null);
+    expect((await publishing(served, nameless.key, cardFor("a-room", "A room"))).status).toBe(422);
+
+    await setSellerName(served, nameless.key, "Their own shop");
+
+    const published = await publishing(served, nameless.key, cardFor("a-room", "A room"));
+    expect(published.status, JSON.stringify(published.body)).toBe(200);
+    expect(await sellerInTheChallenge(served, (published.body as { ok: { id: string } }).ok.id)).toBe(
+      "Their own shop",
+    );
+  });
+});
+
 const publish = async (served: Served, key: string, card: Card): Promise<string> => {
   const answered = await served.call("POST", "/v0/catalog/publish", {
     body: card,

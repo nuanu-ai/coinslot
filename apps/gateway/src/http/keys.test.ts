@@ -60,18 +60,26 @@ const bearer = (key: string): Record<string, string> => ({ authorization: `Beare
 
 interface Registered {
   readonly merchant_id: string;
-  readonly name: string;
   readonly key: { readonly id: string; readonly label: string };
   readonly secret: string;
 }
 
-const register = async (served: Served, name: string, invitation = INVITATION) =>
-  served.call("POST", "/v0/merchants", { body: { name, invitation } });
+const register = async (served: Served, invitation = INVITATION) =>
+  served.call("POST", "/v0/merchants", { body: { invitation } });
 
-const registered = async (served: Served, name: string): Promise<Registered> => {
-  const answered = await register(served, name);
+const registered = async (served: Served): Promise<Registered> => {
+  const answered = await register(served);
   expect(answered.status, JSON.stringify(answered.body)).toBe(200);
   return answered.body as Registered;
+};
+
+/** What this merchant's products are sold under, set the way a cabinet sets it. */
+const listAs = async (served: Served, key: string, name: string) => {
+  const answered = await served.call("POST", "/v0/seller-name", {
+    body: { seller_name: name },
+    headers: bearer(key),
+  });
+  expect(answered.status, JSON.stringify(answered.body)).toBe(200);
 };
 
 const keysWith = async (served: Served, key: string): Promise<MerchantKeyList> => {
@@ -116,20 +124,32 @@ describe("registering a merchant", () => {
     // back and does not work is the same as no registration at all.
     const { served } = await started();
 
-    const made = await registered(served, "Someone's shop");
+    const made = await registered(served);
 
     expect(made.merchant_id).not.toBe("");
-    expect(made.name).toBe("Someone's shop");
     expect(await opensTheDoor(served, made.secret)).toBe(true);
   });
 
-  it("lists the new merchant under the name they registered with", async () => {
-    // Not decoration. A merchant with no listing name publishes cards whose
-    // payment challenge carries no seller declaration at all, so a discovery
-    // catalog has nothing to read and the merchant is invisible with nothing
-    // anywhere saying why.
+  it("asks for no name and lists the merchant under none", async () => {
+    // The name buyers read is chosen on the screen after this one, where there
+    // is room to say what it is for. A merchant who has just registered is
+    // listed under nothing, and the call that says so is the one their cabinet
+    // draws the settings screen from.
     const { served } = await started();
-    const made = await registered(served, "Someone's shop");
+
+    const made = await registered(served);
+
+    const listed = await served.call("GET", "/v0/seller-name", { headers: bearer(made.secret) });
+    expect(listed.body).toStrictEqual({ seller_name: null });
+  });
+
+  it("lists the new merchant under the name they choose afterwards", async () => {
+    // Not decoration. A merchant with no name publishes nothing, and a card
+    // published under one carries it into the payment challenge a discovery
+    // catalogue reads — which is the whole road from registering to being found.
+    const { served } = await started();
+    const made = await registered(served);
+    await listAs(served, made.secret, "Someone's shop");
 
     const itemId = await publish(served, made.secret, cardFor("a-room", "A room"));
     const seller = await sellerInTheChallenge(served, itemId);
@@ -138,25 +158,11 @@ describe("registering a merchant", () => {
     expect(seller.extensions).toBeDefined();
   });
 
-  it("carries no seller for a merchant nobody named, which is what makes the above a claim", async () => {
-    // The negative control. The harness seeds its merchant the way the
-    // command-line verb does, with no listing name, and that merchant's
-    // challenge has no seller in it — so the assertion above is about
-    // registration having set one rather than about every challenge.
-    const { served, harnessed } = await started();
-    const anonymous = await harnessed.addMerchant("Nobody named this one");
-
-    const itemId = await publish(served, anonymous.key, cardFor("b-room", "Another room"));
-    const seller = await sellerInTheChallenge(served, itemId);
-
-    expect(seller.serviceName).toBeUndefined();
-  });
-
   it("turns away a wrong code, and writes nothing at all", async () => {
     const { served, harnessed } = await started();
     const before = (await harnessed.store.merchants()).length;
 
-    const refused = await register(served, "Someone's shop", "not-the-code");
+    const refused = await register(served, "not-the-code");
 
     expect(refused.status).toBe(403);
     expect((await harnessed.store.merchants()).length).toBe(before);
@@ -174,14 +180,14 @@ describe("registering a merchant", () => {
     // indistinguishable from an open one, and the override could quietly stop
     // taking effect without anything failing.
     const closed = await started({ REGISTRATION_INVITATION: "" });
-    const shut = await register(closed.served, "Someone's shop", INVITATION);
+    const shut = await register(closed.served, INVITATION);
     const merchantsThere = (await closed.harnessed.store.merchants()).length;
     await closed.served.close();
     await closed.harnessed.stop();
     open = null;
 
     const { served, harnessed } = await started();
-    const wrong = await register(served, "Someone's shop", "not-the-code");
+    const wrong = await register(served, "not-the-code");
 
     // Refused on both, in one status and one document. Said as three
     // assertions rather than two, because "the same answer either way" is also
@@ -200,8 +206,9 @@ describe("registering a merchant", () => {
     // first one's cards, orders and receipts on their first screen.
     const { served } = await started();
 
-    const first = await registered(served, "First shop");
-    const second = await registered(served, "Second shop");
+    const first = await registered(served);
+    const second = await registered(served);
+    await listAs(served, first.secret, "First shop");
     const itemId = await publish(served, first.secret, cardFor("a-room", "A room"));
 
     expect(second.merchant_id).not.toBe(first.merchant_id);
@@ -213,22 +220,24 @@ describe("registering a merchant", () => {
     ).toContain(itemId);
   });
 
-  it("refuses a name a discovery catalog would silently mangle", async () => {
-    // Held here rather than accepted and cut later: the catalog drops what it
-    // cannot render and tells nobody, so a merchant would trade under a word
-    // they did not choose.
+  it("refuses a registration carrying a name, rather than writing one down", async () => {
+    // A cabinet still sending the field it used to send has to be told, because
+    // the alternative is a name accepted, ignored and never shown again — and
+    // the person who typed it believing they had chosen what buyers would read.
     const { served } = await started();
 
-    const tooLong = await register(served, "x".repeat(33));
+    const withAName = await served.call("POST", "/v0/merchants", {
+      body: { name: "Someone's shop", invitation: INVITATION },
+    });
 
-    expect(tooLong.status).toBe(400);
+    expect(withAName.status).toBe(400);
   });
 });
 
 describe("the keys a merchant holds", () => {
   it("lists this merchant's keys and names the one the call was made with", async () => {
     const { served } = await started();
-    const made = await registered(served, "Someone's shop");
+    const made = await registered(served);
 
     const listed = await keysWith(served, made.secret);
 
@@ -244,7 +253,7 @@ describe("the keys a merchant holds", () => {
     // that works and offer it on the one the gateway answers 409 to, which is
     // the exact failure the field exists to prevent.
     const { served } = await started();
-    const made = await registered(served, "Someone's shop");
+    const made = await registered(served);
     const second = await issued(served, made.secret, "a second worker");
 
     const asTheFirst = await keysWith(served, made.secret);
@@ -262,8 +271,8 @@ describe("the keys a merchant holds", () => {
     // what each is called. Seeded with two, because a list scoped to nobody
     // passes every assertion one merchant can make about their own.
     const { served } = await started();
-    const first = await registered(served, "First shop");
-    const second = await registered(served, "Second shop");
+    const first = await registered(served);
+    const second = await registered(served);
 
     const ofFirst = await keysWith(served, first.secret);
     const ofSecond = await keysWith(served, second.secret);
@@ -276,7 +285,7 @@ describe("the keys a merchant holds", () => {
     // The question after an incident is when a key stopped working, and a list
     // that dropped the key answers nothing at all.
     const { served, harnessed } = await started();
-    const made = await registered(served, "Someone's shop");
+    const made = await registered(served);
     const second = await issued(served, made.secret, "a second worker");
 
     await served.call("POST", `/v0/keys/${second.key.id}/disable`, {
@@ -304,7 +313,7 @@ describe("issuing another key", () => {
   it("issues a key that opens the door, leaving the one that asked for it working", async () => {
     // The whole reason a key is a row: a merchant hands one to each worker.
     const { served } = await started();
-    const made = await registered(served, "Someone's shop");
+    const made = await registered(served);
 
     const second = await issued(served, made.secret, "a second worker");
 
@@ -315,8 +324,8 @@ describe("issuing another key", () => {
 
   it("issues the key to the merchant who asked and to nobody else", async () => {
     const { served } = await started();
-    const first = await registered(served, "First shop");
-    const second = await registered(served, "Second shop");
+    const first = await registered(served);
+    const second = await registered(served);
     const itemId = await publish(served, first.secret, cardFor("a-room", "A room"));
 
     const another = await issued(served, first.secret, "another of the first shop's");
@@ -332,7 +341,7 @@ describe("issuing another key", () => {
 
   it("shows the new key in the list, beside the one that asked for it", async () => {
     const { served } = await started();
-    const made = await registered(served, "Someone's shop");
+    const made = await registered(served);
 
     const second = await issued(served, made.secret, "a second worker");
 
@@ -347,7 +356,7 @@ describe("issuing another key", () => {
 describe("disabling a key", () => {
   it("stops the named key and leaves the one that asked for it working", async () => {
     const { served } = await started();
-    const made = await registered(served, "Someone's shop");
+    const made = await registered(served);
     const second = await issued(served, made.secret, "a second worker");
 
     const answered = await served.call("POST", `/v0/keys/${second.key.id}/disable`, {
@@ -367,7 +376,7 @@ describe("disabling a key", () => {
     // cabinet that answers every page with "the gateway will not take this
     // key", with no terminal to get back in through.
     const { served } = await started();
-    const made = await registered(served, "Someone's shop");
+    const made = await registered(served);
 
     const answered = await served.call("POST", `/v0/keys/${made.key.id}/disable`, {
       headers: bearer(made.secret),
@@ -387,7 +396,7 @@ describe("disabling a key", () => {
     // working key: a merchant with two keys still cannot disable the one their
     // cabinet is holding, because the cabinet holds exactly that one.
     const { served } = await started();
-    const made = await registered(served, "Someone's shop");
+    const made = await registered(served);
     await issued(served, made.secret, "a second worker");
 
     const answered = await served.call("POST", `/v0/keys/${made.key.id}/disable`, {
@@ -402,8 +411,8 @@ describe("disabling a key", () => {
     // Answered differently, this call would count somebody else's keys: a
     // stranger walking identifiers would learn which of them are real.
     const { served } = await started();
-    const first = await registered(served, "First shop");
-    const second = await registered(served, "Second shop");
+    const first = await registered(served);
+    const second = await registered(served);
 
     const theirs = await served.call("POST", `/v0/keys/${second.key.id}/disable`, {
       headers: bearer(first.secret),
@@ -423,7 +432,7 @@ describe("disabling a key", () => {
     // A retry after a dropped connection is safe, and the instant somebody
     // reconstructs an incident from is not moved by it.
     const { served, harnessed } = await started();
-    const made = await registered(served, "Someone's shop");
+    const made = await registered(served);
     const second = await issued(served, made.secret, "a second worker");
 
     const first = await served.call("POST", `/v0/keys/${second.key.id}/disable`, {
@@ -442,7 +451,7 @@ describe("disabling a key", () => {
     // The three key routes are behind the merchant's door like every other
     // merchant route, so a call with no key never reaches a handler.
     const { served } = await started();
-    const made = await registered(served, "Someone's shop");
+    const made = await registered(served);
 
     expect((await served.call("GET", "/v0/keys")).status).toBe(401);
     expect((await served.call("POST", "/v0/keys", { body: { label: "x" } })).status).toBe(401);

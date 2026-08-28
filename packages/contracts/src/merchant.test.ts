@@ -215,31 +215,25 @@ describe("a key that has been disabled", () => {
 });
 
 describe("registering a merchant", () => {
-  const asked = { name: "Someone's shop", invitation: "the-code-from-the-invitation" };
+  const asked = { invitation: "the-code-from-the-invitation" };
 
-  it("takes the name the seller trades under and the code they were given", () => {
+  it("takes the code they were given and nothing else", () => {
     expect(RegistrationRequestSchema.parse(asked)).toStrictEqual(asked);
   });
 
-  for (const field of ["name", "invitation"]) {
-    it(`refuses a registration without ${field} and names it`, () => {
-      expectMissingFieldRejected(RegistrationRequestSchema, asked, field);
-    });
-  }
+  it("refuses a registration without invitation and names it", () => {
+    expectMissingFieldRejected(RegistrationRequestSchema, asked, "invitation");
+  });
 
-  it("refuses a name a discovery catalog will not carry", () => {
-    // This name goes out to strangers through a catalog that carries at most
-    // thirty-two characters of printable ASCII and drops anything else without
-    // a word. Refused here, the merchant is told; accepted here, they trade
-    // under something nobody chose and nothing anywhere says so.
-    expect(RegistrationRequestSchema.safeParse({ ...asked, name: "" }).success).toBe(false);
-    expect(RegistrationRequestSchema.safeParse({ ...asked, name: "x".repeat(33) }).success).toBe(
-      false,
-    );
-    expect(RegistrationRequestSchema.safeParse({ ...asked, name: "Магазин" }).success).toBe(false);
-    expect(RegistrationRequestSchema.safeParse({ ...asked, name: " padded " }).success).toBe(false);
-    expect(RegistrationRequestSchema.safeParse({ ...asked, name: "x".repeat(32) }).success).toBe(
-      true,
+  it("does not ask for the name buyers will read", () => {
+    // The name is asked for on the screen after this one, where there is room
+    // to say what it is for and where it can be changed afterwards. Asked here,
+    // it was answered by somebody with no products, no catalogue seen and no
+    // idea what the name was for, and what they typed was then printed beside
+    // their products. Refusing the field is what stops a client sending one and
+    // believing it was written down.
+    expect(errorOf(RegistrationRequestSchema, { ...asked, name: "Someone's shop" })).toContain(
+      "name",
     );
   });
 
@@ -264,23 +258,32 @@ describe("registering a merchant", () => {
 describe("what registering answers with", () => {
   const registered = {
     merchant_id: "mch_4d21bb",
-    name: "Someone's shop",
     key: working,
     secret,
   };
 
   it("carries the merchant, their first key, and the secret once", () => {
-    // All four are needed by the one caller: it writes the merchant and the
+    // All three are needed by the one caller: it writes the merchant and the
     // secret onto the account it is creating, and shows the key's own row so
     // the person can see what they now hold.
     expect(RegisteredMerchantSchema.parse(registered)).toStrictEqual(registered);
   });
 
-  for (const field of ["merchant_id", "name", "key", "secret"]) {
+  for (const field of ["merchant_id", "key", "secret"]) {
     it(`refuses a registration answer without ${field} and names it`, () => {
       expectMissingFieldRejected(RegisteredMerchantSchema, registered, field);
     });
   }
+
+  it("names no seller, because registering chooses none", () => {
+    // A merchant who has just registered is listed under nothing at all, so
+    // there is no name here to read back. A field carrying one would be a name
+    // this call had written down, and the screen after it would show the
+    // merchant something nobody chose.
+    expect(errorOf(RegisteredMerchantSchema, { ...registered, name: "Someone's shop" })).toContain(
+      "name",
+    );
+  });
 
   it("names the merchant the account will be tied to", () => {
     // Without it the cabinet has a key and nothing to say whose it is, and an
@@ -291,11 +294,8 @@ describe("what registering answers with", () => {
     );
   });
 
-  it("holds the key to the key document and the name to the catalog's rule", () => {
+  it("holds the key to the key document", () => {
     expect(RegisteredMerchantSchema.safeParse({ ...registered, key: { id: "mk_1" } }).success).toBe(
-      false,
-    );
-    expect(RegisteredMerchantSchema.safeParse({ ...registered, name: "Магазин" }).success).toBe(
       false,
     );
   });

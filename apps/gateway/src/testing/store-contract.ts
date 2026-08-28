@@ -417,30 +417,40 @@ export function describeStore(name: string, open: () => Promise<Store>): void {
         expect(await store.setServiceName("mch_nobody", "Freeland", 5_000)).toBeNull();
       });
 
-      it("is registered with a listing name and a first key, all in one write", async () => {
-        // ADR-0014 §1. The three go down together because a merchant missing
-        // either of the other two is unreachable rather than incomplete: with no
-        // key nobody can call as them, and the identifier was generated inside
-        // this call, so nobody outside it ever held it and nothing afterwards
-        // points at it. With no listing name their cards publish a payment
-        // challenge that declares no seller at all.
+      it("is registered with a first key, both in one write", async () => {
+        // ADR-0014 §1. The two go down together because a merchant missing the
+        // key is unreachable rather than incomplete: nobody can call as them,
+        // and the identifier was generated inside this call, so nobody outside
+        // it ever held it and nothing afterwards points at it.
         const store = await fresh();
 
         const made = await store.registerMerchant(
-          { id: A, name: "Merchant A", serviceName: "Merchant A" },
+          { id: A, name: "Merchant A" },
           { id: "mk_a", label: "the first key", digest: "digest-a" },
           1_000,
         );
 
-        expect(made?.merchant).toMatchObject({
-          id: A,
-          name: "Merchant A",
-          serviceName: "Merchant A",
-          selling: "open",
-        });
+        expect(made?.merchant).toMatchObject({ id: A, name: "Merchant A", selling: "open" });
         expect(made?.key).toMatchObject({ id: "mk_a", merchantId: A, disabledAt: null });
         // And the key that came back is the one the door answers with.
         expect((await store.workingKey("digest-a"))?.id).toBe("mk_a");
+      });
+
+      it("is listed under nothing until somebody names them", async () => {
+        // Registering writes no listing name, because nobody has chosen one:
+        // the name buyers read is asked for afterwards, on a screen with room
+        // to say what it is for. Standing the row's own name in for it would
+        // list a seller under a word they never picked.
+        const store = await fresh();
+
+        const made = await store.registerMerchant(
+          { id: A, name: "Merchant A" },
+          { id: "mk_a", label: "the first key", digest: "digest-a" },
+          1_000,
+        );
+
+        expect(made?.merchant.serviceName).toBeNull();
+        expect((await store.merchantById(A))?.serviceName).toBeNull();
       });
 
       it("is not written at all where the key beside them cannot be", async () => {
@@ -456,14 +466,14 @@ export function describeStore(name: string, open: () => Promise<Store>): void {
         // registering.
         const store = await fresh();
         await store.registerMerchant(
-          { id: A, name: "Merchant A", serviceName: "Merchant A" },
+          { id: A, name: "Merchant A" },
           { id: "mk_a", label: "the first key", digest: "digest-a" },
           1_000,
         );
 
         const refused = await refusalOf(
           store.registerMerchant(
-            { id: B, name: "Merchant B", serviceName: "Merchant B" },
+            { id: B, name: "Merchant B" },
             { id: "mk_b", label: "the first key", digest: "digest-a" },
             2_000,
           ),
@@ -483,7 +493,7 @@ export function describeStore(name: string, open: () => Promise<Store>): void {
         await store.addMerchant({ id: A, name: "Merchant A" }, 1_000);
 
         const again = await store.registerMerchant(
-          { id: A, name: "Somebody else", serviceName: "Somebody else" },
+          { id: A, name: "Somebody else" },
           { id: "mk_a", label: "the first key", digest: "digest-a" },
           2_000,
         );

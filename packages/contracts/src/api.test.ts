@@ -1111,6 +1111,23 @@ describe("the route table", () => {
     expect(API_ROUTES.register_merchant.description).toContain("two merchants");
   });
 
+  it("sends whoever registers on to the call that names their seller", () => {
+    // Registering leaves a merchant listed under nothing, and a merchant listed
+    // under nothing cannot publish. Somebody reading only this row would build a
+    // cabinet that registers a person and takes them straight to a publish call
+    // the gateway refuses, so the road on is named where they are already
+    // reading.
+    expect(API_ROUTES.register_merchant.description).toContain("/v0/seller-name");
+  });
+
+  it("says where the name has to be set before a card can be published", () => {
+    // The publish call is the one that refuses, so it is the one that has to
+    // name the way out. A refusal that said only that something was missing
+    // would leave a merchant looking through their card for a field that is not
+    // in it, because what is missing is not on the card at all.
+    expect(API_ROUTES.publish_card.description).toContain("/v0/seller-name");
+  });
+
   it("says that a name can be taken away as well as set", () => {
     // A merchant who set a name and wants none again has one call for it, and
     // the shape says so by taking null rather than by having a second route.
