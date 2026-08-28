@@ -29,7 +29,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { type Accounts, memoryAccounts } from "./accounts.js";
 import { loadConfig } from "./config.js";
 import { fingerprintOf, hashPassword, passwordMatches } from "./credentials.js";
-import type { Answer, NewMerchant, Registrar } from "./gateway.js";
+import {
+  type Answer,
+  type GatewayClient,
+  gatewayFor,
+  type KeyList,
+  type MerchantKey,
+  type NewMerchant,
+  type Registrar,
+} from "./gateway.js";
 import { buildApp } from "./server.js";
 import { sessionFor } from "./testing/accounts-contract.js";
 
@@ -180,6 +188,16 @@ const started = async (
      * from real documents.
      */
     readonly registrar?: Registrar;
+    /**
+     * The real client, with some of its calls answered by the test instead.
+     *
+     * A decorator rather than a replacement, so that everything a test is not
+     * about still goes to the real gateway. The three key routes are what this
+     * is for: they are being added on another branch, so the cabinet's half of
+     * them is what can be held here, while the sign-in and the screens either
+     * side of the one under test stay real.
+     */
+    readonly client?: (real: GatewayClient) => GatewayClient;
   } = {},
 ): Promise<Running> => {
   const harnessed = await harness({ PAY_TO_ADDRESS: PAY_TO, ...options.gateway });
@@ -192,6 +210,7 @@ const started = async (
     accounts,
     options.cabinet,
     options.registrar,
+    options.client,
   );
   let stopped = false;
 
@@ -228,6 +247,7 @@ async function visiting(
   accounts: Accounts,
   environment: Record<string, string> = {},
   registrar?: Registrar,
+  client?: (real: GatewayClient) => GatewayClient,
 ): Promise<{ browser: Browser; url: string }> {
   // No merchant key in the environment, which is the point: the cabinet builds
   // its client from the key on the row of whoever is signed in, so what these
@@ -240,7 +260,13 @@ async function visiting(
       ...(basePath === "" ? {} : { BASE_PATH: basePath }),
       ...environment,
     }),
-    { accounts, ...(registrar === undefined ? {} : { registrar }) },
+    {
+      accounts,
+      ...(registrar === undefined ? {} : { registrar }),
+      ...(client === undefined
+        ? {}
+        : { gatewayFor: (key: string) => client(gatewayFor(gatewayUrl, key)) }),
+    },
   );
   const server = app.listen(0);
   await new Promise<void>((resolve) => server.once("listening", resolve));
@@ -447,7 +473,7 @@ describe("getting into the cabinet", () => {
     const { browser, gateway } = await started();
     const itemId = await publish(gateway, roomCard);
 
-    for (const path of ["/", "/cards", "/orders", "/receipts", "/password", "/nowhere"]) {
+    for (const path of ["/", "/cards", "/orders", "/receipts", "/keys", "/password", "/nowhere"]) {
       const answered = await browser.get(path);
       expect(answered.status, path).toBe(303);
       expect(answered.to, path).toBe("/sign-in");
@@ -1618,6 +1644,227 @@ describe("the receipts screen", () => {
     // on the screen that had been through a float. "Priced" rather than "paid",
     // because in stage one none of it was paid with real money.
     expect(text).toContain("priced in USD");
+  });
+});
+
+describe("the keys screen", () => {
+  const THIS_CALL: MerchantKey = {
+    id: "key_the_cabinet_is_using",
+    label: "the cabinet",
+    created_at: "2026-08-20T09:00:00.000Z",
+    disabled_at: null,
+  };
+  const ANOTHER: MerchantKey = {
+    id: "key_the_workers_use",
+    label: "the worker on the small box",
+    created_at: "2026-08-24T11:30:00.000Z",
+    disabled_at: null,
+  };
+  const REVOKED: MerchantKey = {
+    id: "key_the_laptop_had",
+    label: "the laptop that went missing",
+    created_at: "2026-07-01T08:00:00.000Z",
+    disabled_at: "2026-08-26T17:45:00.000Z",
+  };
+  const SECRET = "the-secret-shown-once-and-never-again";
+
+  /** The three key routes answered by the test, the rest by the real gateway. */
+  const withKeys = (
+    listed: readonly MerchantKey[] = [THIS_CALL, ANOTHER, REVOKED],
+  ): {
+    readonly disabled: string[];
+    readonly issued: string[];
+    readonly client: (real: GatewayClient) => GatewayClient;
+  } => {
+    const disabled: string[] = [];
+    const issued: string[] = [];
+    const keys: KeyList = { keys: [...listed], this_call: THIS_CALL.id };
+    return {
+      disabled,
+      issued,
+      client: (real) => ({
+        ...real,
+        keys: async () => ({ ok: true, document: keys }),
+        issueKey: async (label) => {
+          issued.push(label);
+          return {
+            ok: true,
+            document: {
+              key: { id: "key_the_new_one", label, created_at: NOW, disabled_at: null },
+              secret: SECRET,
+            },
+          };
+        },
+        disableKey: async (keyId) => {
+          disabled.push(keyId);
+          return { ok: true, document: { ...ANOTHER, disabled_at: NOW } };
+        },
+      }),
+    };
+  };
+  const NOW = "2026-08-28T12:00:00.000Z";
+
+  it("lists the keys this merchant has, the working ones and the revoked ones", async () => {
+    // ADR-0010 made a key a row so that one can be revoked without touching any
+    // other. A list that quietly dropped the revoked ones would answer "which
+    // key did I turn off last week" with silence, on the screen where that is
+    // the question somebody has.
+    const { browser } = await started({ client: withKeys().client });
+    await browser.signIn();
+
+    const text = readable((await browser.get("/keys")).html);
+
+    expect(text).toContain("the cabinet");
+    expect(text).toContain("the worker on the small box");
+    expect(text).toContain("the laptop that went missing");
+    expect(text).toMatch(/revoked/i);
+    expect(text).toContain("2026-08-26");
+  });
+
+  it("does not offer to disable the key this cabinet is holding", async () => {
+    // ADR-0014 §5: the gateway refuses that call, and one click would otherwise
+    // stand between a merchant and a cabinet that answers every page with "the
+    // gateway will not take this key" — with the way back through a terminal
+    // they do not have. So the control is not there to press, and the row says
+    // why rather than leaving a blank.
+    const { browser } = await started({ client: withKeys().client });
+    await browser.signIn();
+
+    const page = (await browser.get("/keys")).html;
+
+    expect(page).not.toContain(`/keys/${THIS_CALL.id}/disable`);
+    expect(page).toContain(`/keys/${ANOTHER.id}/disable`);
+    expect(readable(page)).toMatch(/this cabinet is using/i);
+  });
+
+  it("offers no control at all against a key that is already revoked", async () => {
+    const { browser } = await started({ client: withKeys().client });
+    await browser.signIn();
+
+    const page = (await browser.get("/keys")).html;
+
+    expect(page).not.toContain(`/keys/${REVOKED.id}/disable`);
+  });
+
+  it("issues a key, shows its secret once, and says that is the only time", async () => {
+    // The same promise the command makes and for the same reason: nothing keeps
+    // a readable copy, so a merchant who does not copy it has to issue another.
+    // Saying so on the page is the difference between that being a nuisance and
+    // being a surprise.
+    const keys = withKeys();
+    const { browser } = await started({ client: keys.client });
+    await browser.signIn();
+
+    const issued = await browser.post("/keys", { label: "the second worker" });
+
+    expect(keys.issued).toStrictEqual(["the second worker"]);
+    expect(issued.status).toBe(200);
+    expect(issued.html).toContain(SECRET);
+    expect(readable(issued.html)).toMatch(/only time|once/i);
+    // And it is gone from every page after it: the list is drawn from documents
+    // that do not carry a secret at all.
+    expect((await browser.get("/keys")).html).not.toContain(SECRET);
+  });
+
+  it("refuses to issue a key with no name, without asking the gateway", async () => {
+    // A key with no name is a key nobody can tell from another, on the screen
+    // whose whole job is telling them apart before revoking one.
+    const keys = withKeys();
+    const { browser } = await started({ client: keys.client });
+    await browser.signIn();
+
+    const refused = await browser.post("/keys", { label: "   " });
+
+    expect(refused.status).toBe(400);
+    expect(readable(refused.html)).toMatch(/name/i);
+    expect(keys.issued).toStrictEqual([]);
+  });
+
+  it("disables one key and comes back to the list", async () => {
+    // Answered with a redirect rather than a page, like every other switch
+    // here, so that a merchant who reloads does not press it again.
+    const keys = withKeys();
+    const { browser } = await started({ client: keys.client });
+    await browser.signIn();
+
+    const off = await browser.post(`/keys/${ANOTHER.id}/disable`);
+
+    expect(keys.disabled).toStrictEqual([ANOTHER.id]);
+    expect(off.status).toBe(303);
+    expect(off.to).toBe("/keys");
+  });
+
+  it("writes down who issued a key and who revoked one, and neither secret", async () => {
+    // ADR-0009 §7: every action that changes something names the person who did
+    // it. Issuing and revoking a key are two of the most consequential, and the
+    // secret itself must not travel with the sentence — a log goes places the
+    // database does not.
+    const said: string[] = [];
+    const collect = (...parts: unknown[]) => said.push(parts.map(String).join(" "));
+    const log = vi.spyOn(console, "log").mockImplementation(collect);
+    try {
+      const { browser } = await started({ client: withKeys().client });
+      await browser.signIn();
+
+      await browser.post("/keys", { label: "the second worker" });
+      await browser.post(`/keys/${ANOTHER.id}/disable`);
+
+      const written = said.join("\n");
+      expect(written).toMatch(/issued a key/i);
+      expect(written).toMatch(/revoked the key|disabled the key/i);
+      for (const line of written.split("\n").filter((one) => /key/.test(one))) {
+        expect(line, line).toContain(PERSON);
+      }
+      expect(written).not.toContain(SECRET);
+      expect(written).not.toContain(KEY);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("says what the gateway said when it refuses to disable a key", async () => {
+    // The route holds the rule about the cabinet's own key, and the screen not
+    // offering the control is a courtesy rather than the guard. A merchant who
+    // reaches the address anyway is told what the gateway answered rather than
+    // being shown a page that says nothing happened.
+    const { browser } = await started({
+      client: (real) => ({
+        ...real,
+        keys: async () => ({
+          ok: true,
+          document: { keys: [THIS_CALL], this_call: THIS_CALL.id },
+        }),
+        disableKey: async () => ({
+          ok: false,
+          status: 409,
+          why: "a merchant cannot disable the key their cabinet is holding",
+        }),
+      }),
+    });
+    await browser.signIn();
+
+    const refused = await browser.post(`/keys/${THIS_CALL.id}/disable`);
+
+    expect(refused.status).toBe(409);
+    expect(readable(refused.html)).toContain("cannot disable the key their cabinet is holding");
+  });
+});
+
+describe("what every screen says about the address", () => {
+  it("says the address on it is not confirmed by anybody", async () => {
+    // ADR-0014 §4. Nothing is sent anywhere and nobody has shown they hold the
+    // address they typed, so a merchant reading their own address in the corner
+    // of every page must not build on it — a password lost is answered by
+    // asking us, not by a link in their mail.
+    const { browser, gateway } = await started();
+    await publish(gateway, roomCard);
+    await browser.signIn();
+
+    for (const path of ["/cards", "/orders", "/receipts", "/password"]) {
+      const text = readable((await browser.get(path)).html);
+      expect(text, path).toContain(PERSON);
+      expect(text, path).toMatch(/not confirmed/i);
+    }
   });
 });
 
