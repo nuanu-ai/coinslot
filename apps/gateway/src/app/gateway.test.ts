@@ -10,6 +10,7 @@ import {
   authorisation,
   type Harness,
   harness,
+  paymentNamingNoPayer,
   workOnce,
   workUntilStopped,
 } from "../testing/harness.js";
@@ -1104,50 +1105,74 @@ describe("two payments racing one order", () => {
     expect(harnessed.facilitator.settles[0]?.payment).toBe("buyer");
   });
 
-  it("does not make two payments with nobody in them into one buyer", async () => {
-    // The sandbox reads who paid out of the payment, and the interesting case
-    // is the one where there is nobody to read. Naming nobody is the answer
-    // that keeps two of those apart: the gateway then stands the fingerprint of
-    // what was signed in for a payer, and two such payments are two of those. A
-    // stand-in invented here would be the same stand-in every time, and the
-    // second sender would be handed the first one's purchase — which is the
-    // defect this whole rule exists to stop, moved one branch over.
+  it("does not make two payments that name no payer into one buyer", async () => {
+    // A payment can decode perfectly and still say nothing about who signed it:
+    // a scheme that does not sign an EIP-3009 authorisation sends a signature
+    // and no more, which is what an agent's client sends over HTTP today. It
+    // passes the route's decode and reaches the flows with no payer in it, so
+    // this is a wire case and not a malformed-input case.
     //
-    // There are two ways to have nobody in you, and they are one case: a
-    // payment the sandbox cannot read at all, and a payment it reads perfectly
-    // well that names a blank signer. A blank is not a name.
+    // What has to hold then is that the fingerprint of what was signed carries
+    // the whole weight of telling buyers apart. A stand-in payer invented for
+    // the unnamed would be the same stand-in every time, and the second sender
+    // would be handed the first one's purchase — the defect this rule exists to
+    // stop, moved one branch over.
     const harnessed = await started();
     const itemId = await published(harnessed, asyncCard);
     const offered = await harnessed.gateway.beginPurchase(itemId, {});
     if (offered.step !== "pay") throw new Error("no price was offered");
     const orderId = offered.order.order.id;
 
-    const bought = await harnessed.gateway.payPurchase(orderId, "NOT-A-PAYMENT", "NOT-A-PAYMENT");
+    const mine = paymentNamingNoPayer(harnessed);
+    const theirs = paymentNamingNoPayer(harnessed);
+
+    const bought = await harnessed.gateway.payPurchase(orderId, mine.payment, mine.fingerprint);
     expect(bought.step).toBe("under_way");
 
-    const meddling = await harnessed.gateway.payPurchase(orderId, "NOR-IS-THIS", "NOR-IS-THIS");
-
+    // Somebody else's payment, equally anonymous, is not this order's.
+    const meddling = await harnessed.gateway.payPurchase(
+      orderId,
+      theirs.payment,
+      theirs.fingerprint,
+    );
     expect(meddling.step).toBe("not_this_purchase");
-    expect((await harnessed.store.orderById(orderId))?.paidBy).toBe("NOT-A-PAYMENT");
+    expect((await harnessed.store.orderById(orderId))?.paidBy).toBe(mine.fingerprint);
 
-    const second = await harnessed.gateway.beginPurchase(itemId, {});
-    if (second.step !== "pay") throw new Error("the second purchase did not reach a payment");
+    // And the other half, or the rule above would be a way of locking a buyer
+    // out of their own order: the same anonymous payment presented again is the
+    // same buyer, because it fingerprints the same.
+    const again = await harnessed.gateway.payPurchase(orderId, mine.payment, mine.fingerprint);
+    expect(again.step).not.toBe("not_this_purchase");
+  });
+
+  it("does not make two payments naming a blank signer into one buyer", async () => {
+    // The same promise where the authorisation is there and its signer is an
+    // empty string. It reaches a different line — the payer arrives as `""`
+    // rather than as nothing — and an empty string is an identity that every
+    // such payment would share. `walletThatPaid` turns it into nobody so the
+    // fingerprint stands in, which the `??` on its own would not do.
+    const harnessed = await started();
+    const itemId = await published(harnessed, asyncCard);
+    const offered = await harnessed.gateway.beginPurchase(itemId, {});
+    if (offered.step !== "pay") throw new Error("no price was offered");
+    const orderId = offered.order.order.id;
+
     const nameless = authorisation(harnessed, "", "0x01");
     const alsoNameless = authorisation(harnessed, "", "0x02");
 
     const took = await harnessed.gateway.payPurchase(
-      second.order.order.id,
+      orderId,
       nameless.payment,
       nameless.fingerprint,
     );
     expect(took.step).toBe("under_way");
 
-    const meddlingAgain = await harnessed.gateway.payPurchase(
-      second.order.order.id,
+    const meddling = await harnessed.gateway.payPurchase(
+      orderId,
       alsoNameless.payment,
       alsoNameless.fingerprint,
     );
-    expect(meddlingAgain.step).toBe("not_this_purchase");
+    expect(meddling.step).toBe("not_this_purchase");
   });
 });
 

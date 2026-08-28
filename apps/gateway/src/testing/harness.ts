@@ -371,18 +371,49 @@ const aFreshSignature = (() => {
  * is what a repeat is, and it is the one thing about a payment these tests
  * cannot invent a shorthand for.
  *
- * The offer inside names no order and is priced at nothing, and that is not an
- * oversight. Every caller drives the flows with the order already in hand, and
- * nothing on that path reads the agent's own copy of what it was asked to pay;
- * the route that does read it is exercised over HTTP, against a challenge this
- * gateway issued itself. It is still built by the edge rather than written out
- * here, so a payment from this helper is shaped the way a real one is even
- * where its contents say nothing.
+ * The envelope is real and the contents are not, and the difference is worth
+ * being plain about. The header, the encoding and the place the signer sits are
+ * the protocol's own; what is written inside would be refused by a real
+ * deployment's door long before any of this mattered — priced at nothing,
+ * naming no order, signed with a string that is not hex, and missing the value
+ * and the validity window an EIP-3009 authorisation carries. It is enough for
+ * exactly one question — who signed this, and is it the same wallet as last
+ * time — and it is not a specimen of a valid payment. The route that reads an
+ * offer and the adapter that checks one against our own order are exercised
+ * elsewhere, over HTTP, against a challenge this gateway issued itself.
  */
 export function authorisation(
   worked: { readonly runtime: Runtime },
   wallet: string,
   nonce: string,
+): { readonly payment: string; readonly fingerprint: string } {
+  return encoded(worked, {
+    signature: aFreshSignature(),
+    authorization: { from: wallet, to: NOWHERE, nonce },
+  });
+}
+
+/**
+ * A payment that decodes perfectly and names nobody: a signature and no
+ * authorisation at all.
+ *
+ * This is not a malformed header, and that is the point of having it. It is the
+ * shape {@link buyOverHttp} sends and the shape any scheme sends that does not
+ * sign an EIP-3009 authorisation, so it arrives over the wire, passes the
+ * route's decode, and reaches the flows with no payer in it. What must hold
+ * then is that two of them are two buyers — the payment's fingerprint is all
+ * there is to tell them apart — and that one of them presented twice is one.
+ */
+export function paymentNamingNoPayer(worked: { readonly runtime: Runtime }): {
+  readonly payment: string;
+  readonly fingerprint: string;
+} {
+  return encoded(worked, { signature: aFreshSignature() });
+}
+
+function encoded(
+  worked: { readonly runtime: Runtime },
+  payload: Record<string, unknown>,
 ): { readonly payment: string; readonly fingerprint: string } {
   const { config } = worked.runtime;
   // An address to be paid at, where the harness was given none: an offer has to
@@ -395,10 +426,7 @@ export function authorisation(
   const signed: PaymentPayload = {
     x402Version: X402_VERSION,
     accepted: edge.requirementsFor({ amount: "0.00", currency: "USD" }, null),
-    payload: {
-      signature: aFreshSignature(),
-      authorization: { from: wallet, to: NOWHERE, nonce },
-    },
+    payload,
   };
 
   return {

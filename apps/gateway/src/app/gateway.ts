@@ -695,7 +695,7 @@ export class Gateway {
     // verify. Where the layer vouches for a payment without naming a payer, the
     // payment's own fingerprint stands in — it is derived from what was signed,
     // so it is no more forgeable.
-    const owner = verified.payer ?? fingerprint;
+    const owner = walletThatPaid(verified.payer) ?? fingerprint;
 
     // One authorisation buys one order. This is a different guard from
     // ownership: it stops the same payment being spent on two different orders,
@@ -1417,6 +1417,34 @@ function refusedCall(rejection: TransitionRejection): OrderCallError {
       : `this order is in ${rejection.state}: ${rejection.message}`,
     retryable: rejection.retryable,
   };
+}
+
+/**
+ * One wallet in one spelling, or nobody.
+ *
+ * Every facilitator's answer about who paid passes through here, and none of
+ * them promises a canonical address. The official exact-EVM facilitator returns
+ * `authorization.from` exactly as the agent's client wrote it, and a client
+ * writes it checksummed — mixed case. Two spellings of one wallet reaching the
+ * ownership guard, which compares exactly, are two buyers, and the buyer who
+ * paid is refused their own repeat because their client changed its mind about
+ * capitals. So the address is lowercased once, here, where an outside answer
+ * becomes an identity this system decides ownership with — not in any one
+ * adapter, or the next adapter would need the rule again and the one that
+ * forgot it would be the one nobody tested.
+ *
+ * A blank is not a name, and it has to become nothing rather than survive as an
+ * empty string: the caller falls back to the payment's fingerprint with `??`,
+ * which an empty string does not trigger. Left as it is, `""` would be one
+ * identity shared by every payer nobody named, and the second sender of one
+ * would be handed the first sender's purchase.
+ *
+ * What comes out of here is the only thing ever written to `paidBy`, so the
+ * guard in `presentVerifiedPayment` compares normalised against normalised.
+ */
+function walletThatPaid(payer: string | null): string | null {
+  const wallet = (payer ?? "").trim().toLowerCase();
+  return wallet === "" ? null : wallet;
 }
 
 /**

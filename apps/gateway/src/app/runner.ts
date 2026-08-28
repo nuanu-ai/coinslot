@@ -367,6 +367,13 @@ export class OrderRunner {
    * order a repeat reopens, the `purchase_repeated` before it. The machine's
    * own request to verify (its `verify_payment` effect) is already answered and
    * is dropped when the effects run.
+   *
+   * The `owner` arrives already reduced to one spelling — `walletThatPaid` in
+   * `gateway.ts` does it, on the way out of the payment layer — and this is the
+   * only place that writes `paidBy`. That is what lets the guard below compare
+   * exactly: both sides of it came through that one seam. A caller that passed
+   * an address as a facilitator happened to spell it would make one wallet into
+   * two buyers here, and nothing in this method could tell.
    */
   async presentVerifiedPayment(
     orderId: string,
