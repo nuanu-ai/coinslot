@@ -1005,13 +1005,20 @@ describe("registering", () => {
     // The promise that survives being looked at: the address is only reached
     // after the gateway has accepted the invitation, so somebody without one
     // gets the same answer for an address that exists and one that does not.
-    const { browser } = await started({ registrar: registrarAnswering(refused("no")) });
+    const registrar = registrarAnswering(refused("no"));
+    const { browser } = await started({ registrar });
 
     const known = await browser.post("/register", { ...FORM, email: PERSON });
     const unknown = await browser.post("/register", { ...FORM, email: "nobody@example.com" });
 
     expect(readable(known.html)).toBe(readable(unknown.html));
     expect(known.status).toBe(unknown.status);
+    // Both went to the gateway, which is the half of this the page cannot show.
+    // Looking the address up first would answer the taken one without asking
+    // anybody — same words, and back sooner every time. The sign-in next door
+    // spends a derivation on an address nobody has for exactly this reason, and
+    // this form must not be the cheaper way to ask the same question.
+    expect(registrar.asked.length).toBe(2);
   });
 
   it("does not say it worked when the merchant was made and the account was not", async () => {
@@ -1027,10 +1034,17 @@ describe("registering", () => {
     const failed = await browser.post("/register", FORM);
 
     expect(failed.status).toBe(500);
+    // The page says both halves of what happened: a merchant exists, and there
+    // is no account naming it — with the next step, which is to register again.
     const text = readable(failed.html);
-    expect(text).toMatch(/not/i);
-    expect(text).not.toMatch(/signed in/i);
+    expect(text).toMatch(/created and your account was not/i);
+    expect(text).toMatch(/register again/i);
+    // And nothing that would let them believe otherwise: no session, and the
+    // address still free, which is what makes the second attempt work.
     expect(failed.headers.getSetCookie()).toStrictEqual([]);
+    expect(failed.to).toBeNull();
+    expect(browser.sessionToken()).toBeNull();
+    await expect(accounts.byEmail(FORM.email)).resolves.toBeNull();
   });
 
   it("refuses a form with a field missing, and asks the gateway for nothing", async () => {

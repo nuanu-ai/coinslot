@@ -33,10 +33,16 @@ import {
   newSessionToken,
   passwordMatches,
 } from "./credentials.js";
-import { type Answer, type GatewayClient, gatewayFor } from "./gateway.js";
+import {
+  type Answer,
+  type GatewayClient,
+  gatewayFor,
+  type Registrar,
+  registrarFor,
+} from "./gateway.js";
 import { bare, escaped } from "./html.js";
 import { cardsScreen, ordersScreen, receiptsScreen, type Viewer } from "./screens.js";
-import { passwordScreen, signInScreen } from "./sign-in.js";
+import { passwordScreen, registerScreen, signInScreen } from "./sign-in.js";
 
 /**
  * The name the session cookie travels under.
@@ -110,6 +116,71 @@ const NO_MERCHANT =
   " register below.";
 
 /**
+ * The one sentence a registration is refused with, whatever refused it.
+ *
+ * Three things can stop a registration after the form itself is in order: the
+ * invitation is not one the gateway accepts, registration is not open at all,
+ * and the address already has an account. The first two answer identically at
+ * the gateway by ADR-0014 §3, and the third joins them here — the sign-in next
+ * door derives against a decoy so that the time it takes says nothing about who
+ * has an account, and a registration form that answered "that address is taken"
+ * in words would be that same question answered outright.
+ *
+ * So the sentence names both of the things the person can act on and says
+ * nothing about which of them happened. That is a real cost to somebody who
+ * mistyped their invitation and now has two things to check, and it is the
+ * cheaper of the two costs.
+ */
+const REGISTRATION_REFUSED =
+  "This registration did not go through, and there are two things that stop one: the invitation" +
+  " may not be one we accept, and the address may already have an account here. Check the" +
+  " invitation you were given, and if the address is yours from an earlier registration, sign in" +
+  " with it instead.";
+
+/**
+ * A shape an address has to have before a merchant is made for it.
+ *
+ * Deliberately not an attempt at the real grammar of an address, which is
+ * larger than anybody thinks. What it catches is the mistakes somebody actually
+ * makes in a form — a missing half, a space in the middle, a bare word — and
+ * nothing in this system ever sends anything to the address anyway. It is the
+ * same shape the account command holds an address to, for the same reason.
+ */
+const LOOKS_LIKE_AN_ADDRESS = /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/;
+
+/**
+ * The longest name a merchant can be shown under.
+ *
+ * A number here rather than a guess at the gateway's own: it exists so that a
+ * paragraph pasted into the box is refused by the form rather than by a route
+ * whose sentence would then be shown as the invitation being wrong. It is
+ * generous, because a merchant's own name is theirs.
+ */
+const LONGEST_NAME = 200;
+
+/** What is wrong with a registration form, in a sentence, or null. */
+function whatIsWrongWith(form: {
+  email: string;
+  password: string;
+  name: string;
+  invitation: string;
+}): string | null {
+  if (form.email === "" || form.password === "" || form.name === "" || form.invitation === "") {
+    return "Every one of the four is needed: an address, a password, the name your products are sold under, and your invitation.";
+  }
+  if (!LOOKS_LIKE_AN_ADDRESS.test(form.email)) {
+    return "That is not an address of the shape someone@example.com.";
+  }
+  if (form.password.length < MINIMUM_PASSWORD_LENGTH) {
+    return `A password has to be at least ${MINIMUM_PASSWORD_LENGTH} characters.`;
+  }
+  if (form.name.length > LONGEST_NAME) {
+    return `The name your products are sold under has to be ${LONGEST_NAME} characters or fewer.`;
+  }
+  return null;
+}
+
+/**
  * The stylesheet the cabinet serves: the shared visual language, then the
  * cabinet's own layout. Read once at startup — neither changes while we run.
  *
@@ -165,6 +236,13 @@ export interface CabinetParts {
    * runs is the client that speaks the contract's route table.
    */
   readonly gatewayFor?: (key: string) => GatewayClient;
+  /**
+   * How a merchant is made, which is the one call the cabinet makes with no key.
+   *
+   * Its own part rather than a method on the client above, because somebody
+   * registering is not a merchant yet and there is no key to bind a client to.
+   */
+  readonly registrar?: Registrar;
 }
 
 /**
@@ -183,6 +261,7 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
   const base = config.basePath;
   const accounts = parts.accounts;
   const clientFor = parts.gatewayFor ?? ((key: string) => gatewayFor(config.gatewayUrl, key));
+  const registrar = parts.registrar ?? registrarFor(config.gatewayUrl);
   const cookiePath = base === "" ? "/" : base;
 
   /**
@@ -207,6 +286,37 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
 
   const forget = (response: Response): void => {
     response.clearCookie(SESSION, { path: cookiePath });
+  };
+
+  /**
+   * Opens a session for a person and puts its identifier in a cookie.
+   *
+   * One place rather than two, because signing in and registering both end
+   * here and the cookie's four settings are the ones a merchant's session
+   * actually rests on — a second copy of them is a second thing to get wrong,
+   * and the one most likely to be forgotten is the one that only matters in
+   * production.
+   *
+   * The identifier is fresh every time. Nothing here can adopt an identifier
+   * the visitor arrived holding, which is what makes a session handed to
+   * somebody in a link impossible rather than merely unlikely.
+   */
+  const beginSession = async (response: Response, person: Account): Promise<void> => {
+    const token = newSessionToken();
+    const now = new Date();
+    await accounts.open(
+      fingerprintOf(token),
+      person.id,
+      now,
+      new Date(+now + SESSION_HOURS * 60 * 60 * 1_000),
+    );
+    response.cookie(SESSION, token, {
+      httpOnly: true,
+      sameSite: "strict",
+      secure: config.cookieSecure,
+      path: cookiePath,
+      maxAge: SESSION_HOURS * 60 * 60 * 1_000,
+    });
   };
 
   app.disable("x-powered-by");
@@ -297,25 +407,137 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
       return;
     }
 
-    // A fresh identifier every time. Nothing here can adopt an identifier the
-    // visitor arrived holding, which is what makes a session handed to somebody
-    // in a link impossible rather than merely unlikely.
-    const token = newSessionToken();
-    const now = new Date();
-    await accounts.open(
-      fingerprintOf(token),
-      person.id,
-      now,
-      new Date(+now + SESSION_HOURS * 60 * 60 * 1_000),
-    );
-    response.cookie(SESSION, token, {
-      httpOnly: true,
-      sameSite: "strict",
-      secure: config.cookieSecure,
-      path: cookiePath,
-      maxAge: SESSION_HOURS * 60 * 60 * 1_000,
-    });
+    await beginSession(response, person);
     console.log(`[cabinet] ${person.email} signed in`);
+    response.redirect(303, `${base}/cards`);
+  });
+
+  app.get(`${base}/register`, async (request, response) => {
+    if ((await whoseSession(request, accounts)) !== null) {
+      // Somebody already signed in has a merchant. A second registration from
+      // the same browser would make a second one and leave them holding a
+      // session for the first, which is a confusing way to say nothing.
+      response.redirect(303, `${base}/cards`);
+      return;
+    }
+    response.type("html").send(registerScreen(base, MINIMUM_PASSWORD_LENGTH));
+  });
+
+  app.post(`${base}/register`, async (request, response) => {
+    const form = (request.body ?? {}) as {
+      email?: unknown;
+      password?: unknown;
+      name?: unknown;
+      invitation?: unknown;
+    };
+    const email = typeof form.email === "string" ? form.email.trim() : "";
+    const password = typeof form.password === "string" ? form.password : "";
+    const name = typeof form.name === "string" ? form.name.trim() : "";
+    const invitation = typeof form.invitation === "string" ? form.invitation.trim() : "";
+
+    // Everything about what was typed is settled before the gateway is called,
+    // because a merchant made for a form that was never going to produce an
+    // account is litter somebody has to argue about later. ADR-0014 §1 accepts
+    // that litter where it cannot be avoided; this is where it can.
+    const wrong = whatIsWrongWith({ email, password, name, invitation });
+    if (wrong !== null) {
+      response
+        .status(400)
+        .type("html")
+        .send(registerScreen(base, MINIMUM_PASSWORD_LENGTH, wrong));
+      return;
+    }
+
+    // The derivation happens before anything is asked of anybody, so that every
+    // road through this handler costs the same tenth of a second. It is also
+    // the whole of the rate limiting there is, which ADR-0009 argues for at the
+    // sign-in and which holds here for the same reason: a lockout would hand
+    // anybody who knows an address a way to shut a merchant out.
+    const passwordHash = await hashPassword(password);
+
+    // The gateway first, and the address afterwards. Not for the gateway's
+    // convenience: it is what keeps this form from answering "that address has
+    // an account" to somebody who has no invitation at all. Behind an
+    // invitation the gateway has accepted, the address is answered the same way
+    // a refused invitation is — one sentence, below.
+    const made = await registrar.register(name, invitation);
+    if (!made.ok) {
+      if (made.status === 0 || made.status >= 500) {
+        // Nothing was made and nothing is wrong with what they typed. Sending
+        // them off to find a better invitation would be a wrong errand.
+        console.error(`[cabinet] a registration could not be made: ${made.why}`);
+        response
+          .status(502)
+          .type("html")
+          .send(
+            registerScreen(
+              base,
+              MINIMUM_PASSWORD_LENGTH,
+              "Nothing was made: the part of Coinslot that creates a merchant did not answer." +
+                " Nothing you typed is at fault, and trying again in a moment is the right move.",
+            ),
+          );
+        return;
+      }
+      // Every refusal the gateway makes is this one sentence. ADR-0014 §3 has
+      // the gateway answer a wrong invitation and a closed registration
+      // identically, and a screen that unpacked its words into two of its own
+      // would undo that at the last step.
+      console.log("[cabinet] a registration was refused by the gateway");
+      response
+        .status(403)
+        .type("html")
+        .send(registerScreen(base, MINIMUM_PASSWORD_LENGTH, REGISTRATION_REFUSED));
+      return;
+    }
+
+    let person: Account | null;
+    try {
+      person = await accounts.add(email, passwordHash, new Date(), {
+        id: made.document.merchant_id,
+        key: made.document.secret,
+      });
+    } catch (thrown) {
+      // The merchant exists at the gateway and there is no account naming it.
+      // ADR-0014 §1 calls that litter rather than damage — the address is free
+      // and the next attempt makes a new merchant — but the person in front of
+      // this page must not be told it worked. The exception is not shown: it is
+      // ours, and the sentence they can act on is the one below.
+      console.error(
+        "[cabinet] a registration made a merchant and could not write the account",
+        thrown,
+      );
+      response
+        .status(500)
+        .type("html")
+        .send(
+          registerScreen(
+            base,
+            MINIMUM_PASSWORD_LENGTH,
+            "Your merchant was created and your account was not, so there is nothing here to" +
+              " sign into yet. Nothing was charged and nothing else was changed. Register again:" +
+              " the address is still free, and a fresh merchant is made for it.",
+          ),
+        );
+      return;
+    }
+
+    if (person === null) {
+      // The address already has an account. Answered with the sentence a
+      // refused invitation gets, and with nothing that distinguishes the two —
+      // the sign-in next door derives against a decoy so that its timing does
+      // not say who has an account here, and this form saying so outright would
+      // be that same question answered in words.
+      console.log("[cabinet] a registration was refused: that address already has an account");
+      response
+        .status(403)
+        .type("html")
+        .send(registerScreen(base, MINIMUM_PASSWORD_LENGTH, REGISTRATION_REFUSED));
+      return;
+    }
+
+    await beginSession(response, person);
+    console.log(`[cabinet] ${person.email} registered and signed in`);
     response.redirect(303, `${base}/cards`);
   });
 
