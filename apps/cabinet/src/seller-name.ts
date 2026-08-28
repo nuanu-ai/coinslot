@@ -151,14 +151,15 @@ export const settingsScreen = (viewer: Viewer, problem?: string): string => {
     <div>
       <h1>Settings</h1>
       <p>${escaped(
-        // What the page holds, said as facts rather than as a count of what is
-        // below. A sentence that numbered the sections would be one more thing
-        // to remember to change on the day a third is added.
-        `${
-          name === null
-            ? "You have not chosen the name your products are sold under. Until you do, publishing a card is refused."
-            : `Your products are sold under ${name}.`
-        } The account you sign in with is here too.`,
+        // The one thing on this page a merchant can be caught out by, and
+        // nothing else. What else is here is under headings a few lines down,
+        // and a sentence listing them would be a table of contents for a page
+        // that fits on a screen — one more thing to rewrite the day a third
+        // section is added, and one more line between somebody and the box
+        // they came to fill in.
+        name === null
+          ? "You have not chosen the name your products are sold under. Until you do, publishing a card is refused."
+          : `Your products are sold under ${name}.`,
       )}</p>
     </div>
   </div>
