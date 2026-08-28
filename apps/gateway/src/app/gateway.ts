@@ -162,9 +162,15 @@ export class Gateway {
     await this.runtime.queue.start();
 
     // Claims on payments are swept by the queue's own scheduler rather than by
-    // a timer of ours: it survives a restart and does not run twice when there
-    // are two processes. Registering the same name replaces what was there, so
-    // a restart does not accumulate schedules.
+    // a timer of ours: it survives a restart, and one tick of the schedule puts
+    // one job on the queue however many gateways are running, which a timer in
+    // each of them would not. Registering the same name replaces what was
+    // there, so a restart does not accumulate schedules.
+    //
+    // What that does not promise is that the job is only ever handled once.
+    // Nothing here needs it to be — forgetting claims older than an instant is
+    // the same work whoever does it and however often — but the sweep below
+    // does, and the paragraph there says why the promise is not available.
     await this.runtime.queue.everyDay(SWEEP_CLAIMS, () => this.forgetOldClaims());
 
     // And what the orders are still owed, on the same scheduler and for the
@@ -172,15 +178,23 @@ export class Gateway {
     // rather than keeping a second record of what was meant to happen, and it
     // is written to be safe run twice, because it will be.
     //
-    // Twice at once, in fact, and not only one after another — and the reason
-    // is a second gateway rather than anything this one does to itself. Inside
-    // a process there is one worker on this queue and it waits for the handler
-    // to return before it fetches again, so however long a run takes, the next
-    // one cannot start beside it here. Two processes have no such arrangement,
-    // and the argument that covers a second run afterwards does not cover them:
-    // every arm reads the world and then acts on what it read, so two at once
-    // both find the same thing missing and both do it. The sweep takes the work
-    // under a name for that, and the run that finds the name held does nothing.
+    // Twice at once, in fact, and not only one after another. One process
+    // cannot do that to itself: there is one worker on this queue and it waits
+    // for the handler to return before it fetches again, so however long a run
+    // takes, the next one cannot start beside it here. What reaches two at once
+    // is two gateways, and the road there is the queue's expiry. A job is
+    // active from the moment it is fetched, the library fails an active job
+    // once it has been running longer than its expiry — fifteen minutes, on the
+    // defaults this job takes — and a failed job with retries left goes back on
+    // the queue rather than to a dead letter. The default allows two. So a
+    // sweep that runs past fifteen minutes is offered again while it is still
+    // going, and the idle worker in the other process takes it.
+    //
+    // That is not survivable by the argument that covers a second run
+    // afterwards: every arm reads the world and then acts on what it read, so
+    // two at once both find the same thing missing and both do it. The sweep
+    // takes the work under a name for that, and the run that finds the name
+    // held does nothing.
     //
     // The lock is in the sweep rather than here on purpose. Registering with a
     // queue policy would leave it to a call whose settings the library writes

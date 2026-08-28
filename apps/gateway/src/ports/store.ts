@@ -524,7 +524,10 @@ export interface Store {
    * overlap that makes it necessary is two gateways running the same work at
    * the same time. One gateway on its own does not need it: the queue's worker
    * waits for the handler before it fetches anything else, so a second run
-   * cannot start inside a process where the first has not returned.
+   * cannot start inside a process where the first has not returned. What puts
+   * one run in two processes is the queue's expiry — a run that outlasts it has
+   * its job failed for taking too long and offered again while it is still
+   * going, and the other process's idle worker takes it.
    *
    * It is a lock and not a record: nothing about having run is written down and
    * nothing has to be cleaned up afterwards.
