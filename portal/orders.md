@@ -539,7 +539,6 @@ failed, and your side never hears about it — no order appears at all.
 - What other events we send. The three named here are a minimum, and we add to
   the catalogue as cases turn up where your side would otherwise learn of
   something only by reconciling by hand.
-- The delay before we resend an order that never reached you.
 - The transport for confirmations, for sellers with no API — together with the
   path where an order arrives as a message, after the pilot.
 - How your side learns that a refund on an order has gone out: together with
