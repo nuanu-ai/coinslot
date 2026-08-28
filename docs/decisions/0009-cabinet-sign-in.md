@@ -235,28 +235,6 @@ What this does **not** protect against, said plainly:
 - **Losing a password.** There is no reset by mail. The answer is the command
   that sets a new one, run by us, which also ends every session that person had.
 
-**"No self-serve sign-up" describes this month; it does not decide the
-product**, and §1 does not say so. It was written while the pilot had one
-merchant whose account we would make by hand, and with no horizon on it the
-sentence reads as a refusal — which is how it was then read out loud: asked why
-the deployed cabinet has no registration screen, the answer given was "there is
-none and there will be none, that is ADR-0009". This decision is not entitled to
-say that. ADR-0010 records Dmitry's own settlement of the product's shape — a
-merchant registers with an email address, comes to the cabinet, makes a key and
-integrates against the SDK — and fixes the order the road is built in by the
-danger rather than by taste: tenancy, then keys a merchant can make and disable,
-then registration with mail, then the generator. Registration is the third step
-of that road, and it is not built. The sentence that belongs here is "not yet,
-and this is what has to exist first" — never "not at all".
-
-What has to exist first, of that road: tenancy is done (ADR-0010). The key
-screens in the cabinet are not — the commands exist, and `merchant-command.ts`
-says in its own opening paragraph that the screens are the step after it. Mail
-is not: ADR-0010 names it as the next decision and nothing has taken it, which
-bears on this file directly, because the rejected alternative below turns on it
-and because a sign-up nobody can confirm hands an account to an address nobody
-has shown they own.
-
 ## Alternatives rejected
 
 **A one-time link sent by mail, or a mail-based reset.** The better shape in the
