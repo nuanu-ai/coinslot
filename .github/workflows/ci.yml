@@ -59,6 +59,40 @@ jobs:
       # so a service container here fails before the first step and proves
       # nothing about a migration.
 
+  # The portal is a job of its own because it is a project of its own: a
+  # separate vitepress build with its own lockfile, deliberately outside the
+  # workspace so that releasing the documentation is not tied to releasing the
+  # code. Folding it into the gate would install it twice and undo that.
+  portal:
+    name: portal
+    runs-on: [self-hosted, comino]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - run: corepack enable
+
+      # `--ignore-workspace` is not decoration. pnpm searches upwards for a
+      # workspace file, finds the repository's, and installs the eight packages
+      # of the monorepo instead of vitepress — leaving the build with nothing to
+      # run and the failure two steps away from its cause.
+      - run: pnpm install --frozen-lockfile --ignore-workspace
+        working-directory: portal
+
+      - run: pnpm run docs:build
+        working-directory: portal
+
+      # The build's exit code says the site compiled, not that it kept its
+      # examples. The pages carry theirs by reference — one file, read by the
+      # merchant and by `portal-fixtures.test.ts` — and a snippet syntax that
+      # changed under an upgrade would print the reference as text while every
+      # test stayed green. This is the step the job exists for.
+      - run: node scripts/check-portal-render.mjs
+
   # The decision log needs neither Node nor dependencies — only bash and files.
   decisions:
     name: decisions
@@ -69,7 +103,9 @@ jobs:
 
   deploy:
     name: deploy coinslot.nuanu.ai
-    needs: [gate, decisions]
+    # The portal ships with this commit, so a portal whose examples went
+    # missing is not a commit fit to release.
+    needs: [gate, portal, decisions]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: [self-hosted, comino]
     steps:
