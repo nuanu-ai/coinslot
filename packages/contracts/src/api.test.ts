@@ -663,10 +663,7 @@ describe("the answer a handler returned, on its way back", () => {
     return answerRoute.request ?? z.never();
   };
 
-  const answer = (): ZodType => {
-    expect("document" in answerRoute.response).toBe(true);
-    return "document" in answerRoute.response ? answerRoute.response.document : z.never();
-  };
+  const answer = (): ZodType => answerRoute.response.document;
 
   it("carries each of the three things a handler can return", () => {
     expect(verdictOf(body(), { delivered: { access_url: "https://example.com/a/9f2c4a" } })).toBe(
