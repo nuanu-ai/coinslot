@@ -130,6 +130,21 @@ const codeBlocksOf = (html: string): string[] =>
     (block) => block[1] ?? "",
   );
 
+/** The source a visitor reads: the highlighting off, the entities turned back. */
+const sourceOf = (block: string): string =>
+  block
+    .replace(/<[^>]+>/g, "")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    // Last, so an escaped `&lt;` in the card's own text keeps its ampersand.
+    .replaceAll("&amp;", "&");
+
+/** Every name and every value a card is made of. */
+const wordsOf = (value: unknown): string[] =>
+  isRecord(value)
+    ? Object.entries(value).flatMap(([name, child]) => [name, ...wordsOf(child)])
+    : [String(value)];
+
 describe("the landing's code example", () => {
   it("is the card the portal publishes, written as the call that publishes it", () => {
     // If this fails, the only code a stranger sees before deciding whether we
@@ -143,6 +158,20 @@ describe("the landing's code example", () => {
 
     expect(shown, `${LANDING} shows no code at all`).toBeDefined();
     expect(shown).toBe(exampleFor(card as Record<string, unknown>));
+  });
+
+  it("shows every name and every value the card carries", () => {
+    // The control on the rendering, read off the page rather than off the
+    // renderer. Everything above passes just as well if the renderer quietly
+    // lost a field: the page would carry exactly what it produced, and the two
+    // would agree with each other about a card that neither of them shows. A
+    // shortened card on this page is the defect this file was written for, and
+    // this is the check that does not go through the renderer to find it.
+    const card: unknown = JSON.parse(fileOf(CARD));
+    const [shown = ""] = codeBlocksOf(fileOf(LANDING));
+    const missing = wordsOf(card).filter((word) => !sourceOf(shown).includes(word));
+
+    expect(missing, `${LANDING} shows a card with these left out`).toStrictEqual([]);
   });
 
   it("is the only code the page shows", () => {
