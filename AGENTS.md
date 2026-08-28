@@ -124,6 +124,13 @@ that there is none".
   examples (a card, a hook response) must pass the contracts schemas, and the
   portal's tables ("time ran out", "how an order can end") must be test cases
   of the state machine. Documentation and code cannot drift apart silently.
+- Delete first. Until the first external merchant, backward compatibility is
+  not a value: a refactor removes the old shape in the same change rather than
+  keeping it beside the new one — no deprecated aliases, no migration shims,
+  no fields kept "just in case". "It is already written" is not an argument
+  for keeping anything; git is the archive. Compatibility begins with the
+  first consumer we do not control, and from that day it is a written
+  decision, not a habit.
 - A rule is moved into a machine (a hook, CI) after it has slipped past
   people; until then it is text. The lessons are written in the header of the
   file that grew out of them.

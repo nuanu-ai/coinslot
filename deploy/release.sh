@@ -57,7 +57,7 @@ staged_compose=(
 
 "${staged_compose[@]}" config --quiet
 "${staged_compose[@]}" build
-"${staged_compose[@]}" run --rm --no-deps \
+"${staged_compose[@]}" run --rm --no-deps --user root \
   -e DATABASE_URL=postgres://coinslot:coinslot@postgres:5432/coinslot_test \
   gateway pnpm test:db
 
