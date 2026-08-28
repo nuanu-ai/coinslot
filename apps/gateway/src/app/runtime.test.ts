@@ -3,11 +3,18 @@
  *
  * A merchant can stop selling altogether and can take one card off sale, and
  * the machine has exactly one guard for both. `sellingFor` is where the two
- * become the one, and it is tested here directly rather than only through a
- * purchase because one of its cases cannot be reached over HTTP at all: nothing
- * in the pilot sets a merchant to `departed`, so a defect in that branch would
- * sit in the code with every route green — and the day departure is wired up,
- * it would be a merchant who had left going on selling.
+ * become the one.
+ *
+ * What is here is only what a purchase cannot reach. Every combination of the
+ * two switches that a merchant can actually get into is bought against in
+ * `http/server.test.ts`, where the answer is a price or a refusal rather than a
+ * word — and a fold that got any of them wrong dies there. Two cases are left,
+ * and neither of them can be reached over HTTP: nothing in the pilot sets a
+ * merchant to `departed`, so a defect in that branch would sit in the code with
+ * every route green and surface the day departure is wired up as a merchant who
+ * had left going on selling; and no route can ask for a combination the type
+ * admits and the product does not yet produce, which is what the totality loop
+ * is for.
  */
 
 import type { Card } from "@coinslot/contracts";
@@ -34,19 +41,6 @@ const stored = (paused: boolean): StoredCard => ({
 });
 
 describe("what the order machine is told about one card", () => {
-  it("sells only when the merchant is selling and the card is not paused", () => {
-    expect(sellingFor("open", stored(false))).toBe("open");
-  });
-
-  it("refuses a card its merchant took off sale", () => {
-    expect(sellingFor("open", stored(true))).toBe("paused");
-  });
-
-  it("refuses every card while the merchant is paused, whatever the card says", () => {
-    expect(sellingFor("paused", stored(false))).toBe("paused");
-    expect(sellingFor("paused", stored(true))).toBe("paused");
-  });
-
   it("keeps a merchant who left apart from one who is merely paused", () => {
     // Leaving is not a heavier pause. A pause takes the cards off sale and the
     // orders already accepted play out; leaving closes those orders and leaves
