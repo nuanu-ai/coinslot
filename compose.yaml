@@ -56,6 +56,31 @@
 # stack holds a developer's own test orders and talks to a test network, and a
 # secret that has to be found somewhere else to bring up a sandbox is a secret
 # people paste into chat. Nothing here is a value any deployment reuses.
+#
+# ## The same file on a server
+#
+# Every value a deployment has to change is a variable with the laptop's answer
+# as its default, and a deployment sets them in a `.env` beside this file rather
+# than editing a copy of it — the same shape deploy/Caddyfile already uses.
+#
+#   COINSLOT_SITE_ADDRESS   what Caddy listens on            :8080
+#   COINSLOT_PUBLIC_ORIGIN  what a browser types             http://localhost:8080
+#   COINSLOT_WEB_PUBLISH    the published port of the door   8080:8080
+#   COINSLOT_COOKIE_SECURE  Secure on the session cookie     false
+#   COINSLOT_MERCHANT_KEY   the key the cabinet reaches      local-sandbox-merchant-key
+#                           the gateway with
+#   COINSLOT_POSTGRES_PUBLISH  the published port of the     5432:5432
+#                           database, or "" to publish none
+#
+# The first three move together and there is no arithmetic between them: an
+# origin behind an edge that terminates TLS elsewhere is not derivable from a
+# published port. Setting one and forgetting another is the mistake this file
+# has already made once — a challenge naming a door that answers nothing — so
+# they are written next to each other in one file where the mismatch is visible.
+#
+# On a host reached over https, COINSLOT_COOKIE_SECURE must be "true", and the
+# key must not be the one printed above: it is in a repository, and a merchant
+# key opens that merchant's cards, orders and receipts.
 
 # One image behind four of the services below. They are four entry points into
 # one workspace and share every dependency below their own file, so which one a
@@ -80,7 +105,13 @@ services:
       # Published so that `pnpm test:db` and a psql from the terminal reach this
       # server. They reach a different database on it: the suite empties what it
       # is given, and `coinslot` is what the cabinet is showing.
-      - "5432:5432"
+      #
+      # A deployment binds it to the loopback instead — `127.0.0.1:55432:5432`
+      # — because the password above is in a repository and nothing off the host
+      # has any business reaching this database. Not left empty: compose refuses
+      # an empty entry rather than dropping it, so the variable always names a
+      # mapping and a deployment's answer is a narrower one.
+      - "${COINSLOT_POSTGRES_PUBLISH:-5432:5432}"
     volumes:
       - coinslot-postgres:/var/lib/postgresql/data
       # Makes `coinslot_test` beside `coinslot` on a volume that is new. On one
@@ -128,7 +159,7 @@ services:
       # second boot writes nothing, and a key disabled at a terminal stays
       # disabled. No deployment sets this — a key in an environment cannot be
       # revoked without a deployment, which is what moving keys into rows fixed.
-      SANDBOX_MERCHANT_KEY: local-sandbox-merchant-key
+      SANDBOX_MERCHANT_KEY: "${COINSLOT_MERCHANT_KEY:-local-sandbox-merchant-key}"
       # The address an agent is sent back to in order to pay, which is the door
       # Caddy answers and not the port this process listens on. Given the
       # process's own port here, a payment challenge would name a door that is
@@ -137,7 +168,12 @@ services:
       # is what a payment challenge tells an agent to come back to, and what a
       # catalogue keys a listing on. Left at 8080 while the stack was moved to
       # another port, every challenge named a door that answers nothing.
-      PUBLIC_BASE_URL: http://localhost:${COINSLOT_HOST_PORT:-8080}
+      #
+      # Behind an edge that terminates TLS somewhere else this stops following
+      # the port at all — the origin is https on 443 and the host publishes
+      # whatever it publishes — which is why a deployment names the origin
+      # itself rather than a number this line does arithmetic on.
+      PUBLIC_BASE_URL: "${COINSLOT_PUBLIC_ORIGIN:-http://localhost:${COINSLOT_HOST_PORT:-8080}}"
       # No chain behind this stack (ADR-0008). Payments are verified and settled
       # against nothing, so a purchase completes here with no network, no wallet
       # and no faucet — which is what makes the cabinet worth opening. The
@@ -188,14 +224,12 @@ services:
       # and receipts these screens show. It is here rather than typed into a
       # form by whoever is signing in: machine to machine, out of configuration.
       # Rotating it is now a separate act from signing anybody out.
-      MERCHANT_API_KEY: local-sandbox-merchant-key
-      # Off, and named rather than left to the default, because this is the one
-      # line a deployment has to change. This stack is plain http on localhost,
-      # where a Secure cookie is never sent back and nobody can sign in at all;
-      # anywhere the cabinet is reached over https this is "true", and a server
-      # that leaves it off is handing a merchant's session to anybody on the
-      # path.
-      COOKIE_SECURE: "false"
+      MERCHANT_API_KEY: "${COINSLOT_MERCHANT_KEY:-local-sandbox-merchant-key}"
+      # Off by default, because this stack is plain http on localhost, where a
+      # Secure cookie is never sent back and nobody can sign in at all. Anywhere
+      # the cabinet is reached over https this is "true", and a server that
+      # leaves it off is handing a merchant's session to anybody on the path.
+      COOKIE_SECURE: "${COINSLOT_COOKIE_SECURE:-false}"
       # Its own process, reaching the gateway over the same public API a
       # merchant's own code uses (ADR-0005 §2) — this is the service name on the
       # internal network, not the origin a browser types.
@@ -240,7 +274,11 @@ services:
     command: ["pnpm", "--filter", "@coinslot/slice", "serve"]
     environment:
       GATEWAY_URL: http://gateway:3000
-      MERCHANT_API_KEY: local-sandbox-merchant-key
+      # The same key the gateway seeded and the cabinet reaches it with: one
+      # merchant, one key, three services. Left behind when the other two became
+      # a variable, this service would go on presenting a key the gateway no
+      # longer knows and the catalogue would come up empty.
+      MERCHANT_API_KEY: "${COINSLOT_MERCHANT_KEY:-local-sandbox-merchant-key}"
     depends_on:
       gateway:
         condition: service_healthy
@@ -255,13 +293,31 @@ services:
       # 127.0.0.1 wins over Docker's wildcard for anything typed as localhost —
       # so the stack looks broken while being perfectly healthy. Set
       # COINSLOT_HOST_PORT to move it; the inside of the network never changes.
-      - "${COINSLOT_HOST_PORT:-8080}:8080"
+      #
+      # A deployment sets the whole mapping instead, because both halves move at
+      # once: Caddy listens on 443 rather than 8080 as soon as the address below
+      # is a hostname, and the host side is one interface rather than every one
+      # — `10.20.10.20:443:443` is a door open to the edge that passes SNI to it
+      # and to nothing else on the machine.
+      - "${COINSLOT_WEB_PUBLISH:-${COINSLOT_HOST_PORT:-8080}:8080}"
+    environment:
+      # A bare port locally, which is what keeps Caddy's automatic HTTPS off; a
+      # hostname on a server, which is what turns it on. deploy/Caddyfile says
+      # why TLS-ALPN is the only challenge that can reach it here.
+      COINSLOT_SITE_ADDRESS: "${COINSLOT_SITE_ADDRESS:-:8080}"
     volumes:
       # The landing and the routing are mounted over the copies baked into the
       # image so that editing either shows up on reload. The documentation is
       # not: it is a build, and it comes from the image.
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./apps/landing/public:/srv/landing:ro
+      # Where Caddy keeps the certificate and the ACME account key. A named
+      # volume rather than the container's own layer because recreating the
+      # container is a thing that happens, and a certificate authority counts
+      # issuances: five for the same name in a week, and the sixth is refused
+      # for the rest of it. Locally this directory stays empty — a bare port
+      # runs no ACME at all.
+      - coinslot-caddy:/data
     # Waited for, but not required. Caddy in front of a process that has not
     # finished starting answers 502 to the first person who looks, so waiting
     # for a health check rather than for a container is right — and a service
@@ -284,3 +340,4 @@ services:
 
 volumes:
   coinslot-postgres:
+  coinslot-caddy:

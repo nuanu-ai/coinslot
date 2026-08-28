@@ -15,11 +15,10 @@
 #   COINSLOT_GATEWAY_UPSTREAM  host:port of the gateway process   gateway:3000
 #
 # The defaults are the container's view of the world, because ADR-0005 §7 wants
-# the whole chain to come up from `docker compose up`. It does not yet: the
-# compose file in this repository brings up Postgres and nothing else, and the
-# services these defaults name — caddy, cabinet, gateway — still have to be
-# added to it. Until they are, the way to run this file is from a checkout,
-# outside Docker, with the roots pointed at the repository:
+# the whole chain to come up from `docker compose up`, and it does: the compose
+# file in this repository brings up all of it, and the services these defaults
+# name are the service names on its network. Running this file from a checkout
+# outside Docker still works, with the roots pointed at the repository:
 #
 #   COINSLOT_LANDING_ROOT=apps/landing/public \
 #   COINSLOT_PORTAL_ROOT=portal/.vitepress/dist \
