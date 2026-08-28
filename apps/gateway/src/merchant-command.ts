@@ -195,12 +195,30 @@ async function listMerchants(store: Store, say: (line: string) => void): Promise
     const keys = await store.keysOf(merchant.id);
     const working = keys.filter((key) => key.disabledAt === null).length;
     const counted = working === 1 ? "1 key works" : `${working} keys work`;
+    // The name a merchant is known by to everybody else is the one their
+    // products are sold under, so that is the one printed where they have
+    // chosen it. Where they have not, the row falls back to the name in the
+    // merchants table and says which of the two this is — a merchant made by
+    // registering has a row name nobody typed, so a listing that showed only
+    // that column would read identically down every row of them, and being
+    // unlisted is the more useful fact anyway: it is why they cannot publish.
+    const [whichName, name] =
+      merchant.serviceName === null
+        ? ["unlisted", merchant.name]
+        : ["sold as", merchant.serviceName];
     say(
-      `${merchant.id.padEnd(widest)}  ${dayOf(merchant.createdAt)}  ${merchant.selling.padEnd(8)}  ${counted}  ${merchant.name}`,
+      `${merchant.id.padEnd(widest)}  ${dayOf(merchant.createdAt)}  ${merchant.selling.padEnd(8)}  ${counted.padEnd(COUNT_WIDTH)}  ${whichName.padEnd(8)}  ${name}`,
     );
   }
   return 0;
 }
+
+/**
+ * How wide the count of working keys is printed, so the columns after it line
+ * up. "12 keys work" is the widest a merchant is likely to reach; past a
+ * hundred keys the row goes ragged rather than wrong.
+ */
+const COUNT_WIDTH = 12;
 
 async function addKey(
   store: Store,

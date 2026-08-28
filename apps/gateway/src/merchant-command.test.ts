@@ -77,7 +77,50 @@ describe("making a merchant", () => {
     expect(await terminal.run("list")).toBe(0);
     expect(terminal.text()).toContain("no merchants");
   });
+
+  it("shows what buyers read, for the merchants who have chosen it", async () => {
+    // The list is what somebody at a terminal reads to find a merchant, and the
+    // name that identifies one to everybody else is the name their products are
+    // sold under. A merchant who registered has no name of their own worth
+    // printing — nobody typed one — so a list that showed only that column
+    // would read identically down every row of them.
+    const terminal = aTerminal();
+    await terminal.run("add", "Someone's shop");
+    const [made] = await terminal.store.merchants();
+    await terminal.run("listed-as", made?.id ?? "", "The shop on the corner");
+
+    const listed = await theListing(terminal);
+
+    expect(listed).toContain("The shop on the corner");
+  });
+
+  it("still names a merchant who has chosen none, rather than leaving the row blank", async () => {
+    // The other half. A merchant with no listing name is the ordinary state
+    // between registering and choosing, and their row still has to say which
+    // merchant it is — otherwise the change above would have replaced one name
+    // with nothing at all for every merchant who has not chosen yet.
+    const terminal = aTerminal();
+    await terminal.run("add", "Someone's shop");
+
+    const listed = await theListing(terminal);
+
+    expect(listed).toContain("Someone's shop");
+  });
 });
+
+/**
+ * What `list` alone printed.
+ *
+ * Read off the lines this one run added rather than off everything the terminal
+ * has ever said: the verb that sets a listing name prints that name back, so a
+ * test reading the whole transcript would find it there and pass against a
+ * listing that shows nothing of the sort.
+ */
+async function theListing(terminal: ReturnType<typeof aTerminal>): Promise<string> {
+  const before = terminal.said.length;
+  expect(await terminal.run("list")).toBe(0);
+  return terminal.said.slice(before).join("\n");
+}
 
 describe("issuing a key", () => {
   it("prints a key that opens the door, once", async () => {
