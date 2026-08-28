@@ -756,7 +756,7 @@ export const API_ROUTES = Object.freeze({
     path: "/v0/orders",
     auth: "merchant_key",
     description:
-      "Orders and the states they are in. With open=true, only the ones still owed something — which includes the two that stay open after the purchase itself is over, an order owing a refund and one delivered but never paid for.",
+      "Orders and the states they are in. With open=true, only the ones still owed something — which includes the two that stay open after the purchase itself is over, an order owing a refund and one delivered but never paid for. One kind of order is not in this list at all, with or without the flag: one that closed before anybody named a price for it, because the product was gone or a price question went unanswered. Every row here is written in a document that carries a sale price and those orders have none, so they are readable one at a time by their identifier, where the refusal says what became of them. A merchant reconciling against this list is reconciling against the orders that were priced.",
     query: OrderListQuerySchema,
     response: { document: OrderListSchema },
   },
