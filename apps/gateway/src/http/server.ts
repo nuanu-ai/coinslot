@@ -142,6 +142,15 @@ export function buildApp(
   // route runs, so nothing in the mounting loop ever sees it. Without this it
   // comes back as express's own HTML page — from a surface whose every other
   // refusal is a document, to a client that only reads documents.
+  //
+  // The parser refuses a body over the limit with the same kind of throw, and
+  // the two are told apart here because the answer is what the caller acts on.
+  // A document that is perfectly good JSON and merely too long, answered "could
+  // not be read as JSON", sends its sender to re-encode something already
+  // correct; it will get the same answer every time. So the size case says so,
+  // under the status the web already has for it, and it names the limit —
+  // "too large" without a number leaves the caller to find the edge by
+  // bisection against a live gateway.
   app.use(
     (thrown: unknown, _request: Request, response: Response, next: (error?: unknown) => void) => {
       if (response.headersSent) {
@@ -152,6 +161,17 @@ export function buildApp(
         typeof thrown === "object" && thrown !== null && "type" in thrown && "status" in thrown;
 
       if (fromTheParser) {
+        if ((thrown as { type: unknown }).type === "entity.too.large") {
+          response
+            .status(413)
+            .json(
+              refusal(
+                "body_too_large",
+                `this call's body is over the ${BODY_LIMIT} a call may carry`,
+              ),
+            );
+          return;
+        }
         response
           .status(400)
           .json(refusal("malformed_body", "this call's body could not be read as JSON"));
