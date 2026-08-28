@@ -386,10 +386,24 @@ export interface Served {
  * Nothing is stubbed between the request and the flows: the mounting loop, the
  * body checks, the door and the payment exchange all run. A test that went
  * through a fake request object would be testing the fake.
+ *
+ * It listens on the address it then calls, and the difference is not cosmetic.
+ * `listen(0)` without a host binds the IPv6 wildcard: the number is taken for
+ * `[::]` and left free on 127.0.0.1, so the kernel hands that same number to
+ * the next process asking for an ephemeral port on that address — and a
+ * specific address beats a wildcard, so every call this harness makes then goes
+ * to the other process's server. Several suites in this repository do bind
+ * 127.0.0.1 by name, one of them a server that drops every connection without
+ * answering, on purpose. Measured on this machine, a wildcard sweep of the
+ * ephemeral range landed on a port another process was holding on 127.0.0.1
+ * four hundred times in forty thousand binds. From in here it looked like
+ * `fetch failed / SocketError: other side closed` out of a gateway that had
+ * answered every other call in the file, on a connection its own server never
+ * saw. It needs two processes, which is why one suite alone never shows it.
  */
 export async function serve(harnessed: { readonly gateway: Gateway }): Promise<Served> {
   const app = buildApp(harnessed.gateway);
-  const server = app.listen(0);
+  const server = app.listen(0, "127.0.0.1");
   await new Promise<void>((resolve) => server.once("listening", resolve));
   const { port } = server.address() as AddressInfo;
   const url = `http://127.0.0.1:${port}`;

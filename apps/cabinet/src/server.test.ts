@@ -261,7 +261,10 @@ async function visiting(
         : { gatewayFor: (key: string) => client(gatewayFor(gatewayUrl, key)) }),
     },
   );
-  const server = app.listen(0);
+  // On the address it is called at, not on the wildcard: `serve` in the
+  // gateway's harness says at length what a wildcard bind costs, and this
+  // cabinet is called the same way from the same worker.
+  const server = app.listen(0, "127.0.0.1");
   await new Promise<void>((resolve) => server.once("listening", resolve));
   const { port } = server.address() as AddressInfo;
 
@@ -2027,7 +2030,7 @@ describe("when something goes wrong that the merchant has to get out of", () => 
           }) as never,
       },
     );
-    const server = app.listen(0);
+    const server = app.listen(0, "127.0.0.1");
     await new Promise<void>((resolve) => server.once("listening", resolve));
     const { port } = server.address() as AddressInfo;
     return {

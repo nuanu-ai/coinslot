@@ -81,7 +81,8 @@ async function aGatewayOnAPort() {
   });
   await gateway.start();
 
-  const server = buildApp(gateway).listen(0);
+  // On the address it is called at; `serve` in the harness says why.
+  const server = buildApp(gateway).listen(0, "127.0.0.1");
   await new Promise<void>((resolve) => server.once("listening", resolve));
   const { port } = server.address() as AddressInfo;
 
