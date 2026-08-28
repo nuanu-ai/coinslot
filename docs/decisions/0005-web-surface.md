@@ -20,10 +20,21 @@ page for a person, so the shape of that is a decision rather than a detail.
 ## Decision
 
 1. **One origin locally.** Caddy, in Docker, is the only door: `/` is the
-   landing, `/docs` the portal, `/cabinet` the cabinet, `/v0/*` the gateway.
-   A merchant's engineer sees one address and never reasons about ports. The
-   same file describes the server later, so what is demonstrated locally is
-   what gets deployed.
+   landing, `/docs` the portal, `/cabinet` the cabinet, `/v0/*` the gateway,
+   and `/healthz` the gateway's own probe. A merchant's engineer sees one
+   address and never reasons about ports. The same file describes the server
+   later, so what is demonstrated locally is what gets deployed.
+
+   `/healthz` is the fifth path and the only one that is not a surface anybody
+   integrates against. Whether the door is open has to be answerable from
+   outside it, and the landing and the portal are files Caddy serves itself, so
+   the only process whose health the door can report is the gateway's. It sits
+   outside `/v0` because that prefix is the contract, and an operational probe
+   is not part of what a merchant's code calls. It answers for the gateway
+   alone: not for the cabinet, which reports itself at `/cabinet/healthz`, and
+   not for Postgres. There is deliberately no aggregate health document — a
+   single verdict over several services is read as one and is wrong the first
+   time one of them goes down by itself.
 
 2. **The cabinet is its own process (`apps/cabinet`), not a part of the
    gateway.** The gateway is the money path: a resident process whose surface

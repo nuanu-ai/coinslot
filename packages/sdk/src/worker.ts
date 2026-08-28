@@ -432,6 +432,15 @@ export const POLL_WAIT_SECONDS = 25;
  * gateway depends on the contracts and the core machine rather than on the SDK,
  * so it cannot read it, and nothing checks that the copy still matches:
  * changing what is written here means changing it there in the same breath.
+ *
+ * It is also the reason two poll failures can be a minute and a half apart,
+ * which matters to anybody counting them from outside. A gateway that refuses
+ * connections fails a poll at once and the backoff is the whole gap; one that
+ * accepts and never answers fails only when this deadline runs out, so the gap
+ * is this plus the backoff. `DOUBT_MS` in packages/slice/src/subscription.ts is
+ * that sum, and it is named here because raising this number silently narrows
+ * it — and a window too narrow reads the quiet between two failures as a
+ * recovery.
  */
 export const POLL_DEADLINE_MS = POLL_WAIT_SECONDS * 2 * 1_000;
 
