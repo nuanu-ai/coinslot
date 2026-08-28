@@ -162,24 +162,13 @@ const EFFECTS_WORTH_REACHING: readonly Effect["kind"][] = [
  */
 function anEvent(next: () => number, order: Order, at: number): OrderEvent {
   const all = everyEvent(at);
-  const advancing = all.filter((event) => {
-    const result = transition(order, event);
-    return result.ok && result.order !== order;
-  });
-  const keepsItOpen = advancing.filter((event) => {
-    const result = transition(order, event);
-    return result.ok && isOpen(result.order.state);
-  });
+  const advancing: OrderEvent[] = [];
+  const keepsItOpen: OrderEvent[] = [];
   // Preferring events that keep an order alive is what gets the walk to the
   // far side of the machine, but on its own it starves exactly the paying and
   // closing events the effect checks below are written about — measured over
   // six seeds, the goods went out once and a debt was written once.
-  const spendsOrHandsOver = advancing.filter((event) => {
-    const result = transition(order, event);
-    return (
-      result.ok && result.effects.some((effect) => EFFECTS_WORTH_REACHING.includes(effect.kind))
-    );
-  });
+  const spendsOrHandsOver: OrderEvent[] = [];
   // And preferring those in turn starved every clock in the machine. In a
   // settling state the only events that move the order at all are the settle's
   // own two outcomes, so a walk that reaches for them takes them at once and
@@ -187,11 +176,35 @@ function anEvent(next: () => number, order: Order, at: number): OrderEvent {
   // expiries across the seeds that carry the money assertions, and the
   // double-charge check those assertions are for could not be reached from any
   // of them. A walk that never lets time pass is only testing half the machine.
-  const timeDriven = advancing.filter((event) => event.kind === "deadline_expired");
+  const timeDriven: OrderEvent[] = [];
   // Waiting is a move too, and the only one that gets a deadline anywhere near
   // coming due. These are the events the machine will refuse: taking one costs
   // the order nothing and lets its clock run.
-  const idles = all.filter((event) => !transition(order, event).ok);
+  const idles: OrderEvent[] = [];
+
+  // One question per event, asked once, with every pool reading that same
+  // answer. The machine is a function of the order and the event, so a pool
+  // that asked again would be buying an answer it already had — and these
+  // questions are the whole cost of the walk, thirty-one of them at every
+  // step. So the sorting happens here, where the answers arrive, rather than
+  // in a filter per pool.
+  for (const event of all) {
+    const result = transition(order, event);
+    if (!result.ok) {
+      idles.push(event);
+      continue;
+    }
+    // The machine answered and handed the order straight back, the same object
+    // it was given. Nothing moved, so this belongs in no pool.
+    if (result.order === order) continue;
+    advancing.push(event);
+    if (isOpen(result.order.state)) keepsItOpen.push(event);
+    if (result.effects.some((effect) => EFFECTS_WORTH_REACHING.includes(effect.kind))) {
+      spendsOrHandsOver.push(event);
+    }
+    if (event.kind === "deadline_expired") timeDriven.push(event);
+  }
+
   const waitingOnSomething = deadlines(order).length > 0;
 
   const die = next();
@@ -459,17 +472,18 @@ describe("a long walk over the machine", () => {
    *
    * The work is four hundred orders of two hundred steps each. Choosing one
    * step's event asks the machine what every event would do — thirty-one of
-   * them, since several kinds have more than one shape — so the walk runs
-   * about five million transitions, and the accounting makes roughly a hundred
-   * and forty thousand assertions over the twenty thousand steps the machine
-   * accepted. The cost is linear in the seed count: twelve and a half thousand
-   * transitions per seed, flat from fifty seeds to four hundred. Nothing here
-   * grows faster than the coverage does.
+   * them, since several kinds have more than one shape — and the step then
+   * takes the one it chose, so a step costs exactly thirty-two transitions
+   * whatever state it is in and the walk runs two and a half million of them.
+   * The accounting makes roughly a hundred and forty thousand assertions over
+   * the twenty thousand steps the machine accepted. The cost is linear in the
+   * seed count, at six thousand four hundred transitions per seed. Nothing
+   * here grows faster than the coverage does.
    *
-   * Measured on an M4: the body itself costs 877ms, of which 204ms is the walk
-   * and 627ms is vitest's `expect` machinery — the same accounting written as
-   * plain conditions runs in 2ms. Run as the only file, the test lands between
-   * 871 and 900ms over eight runs.
+   * Measured on an M4: the body itself costs about 775ms, of which 147ms is
+   * the walk and 630ms is vitest's `expect` machinery — the same accounting
+   * written as plain conditions runs in 2ms. Run as the only file, the test
+   * lands between 762 and 788ms over eight runs.
    *
    * The accounting has since been rewritten into exactly those plain
    * conditions (expect is called where one breaks), so the figures above are
@@ -483,14 +497,17 @@ describe("a long walk over the machine", () => {
    * whatever contention the machine has: 1,494ms on a quiet one, 6,683 to
    * 12,812ms alongside two other suites — seven full-suite runs in ten failed
    * the 5,000ms default in that condition — and 14,494 to 24,763ms once the
-   * load average passed a hundred, where all ten of ten failed. The failure is
-   * not a hang: the body is synchronous, so the timer cannot fire inside it
-   * and the duration vitest prints on a timeout is the true cost of the work,
-   * not the point at which it was cut off.
+   * load average passed a hundred, where all ten of ten failed. Those figures
+   * were taken while the body cost 877ms rather than the 775ms it costs now,
+   * and they have not been taken again since: they bound what this test costs
+   * under contention, they no longer describe it. The failure is not a hang:
+   * the body is synchronous, so the timer cannot fire inside it and the
+   * duration vitest prints on a timeout is the true cost of the work, not the
+   * point at which it was cut off.
    *
    * Fifty seconds is twice the worst of those measurements. It is a bet on how
    * oversubscribed a machine can get rather than a statement about the test,
-   * which is why it is so far above the 877ms the work actually takes; a
+   * which is why it is so far above the 775ms the work actually takes; a
    * wall-clock limit is a poor instrument for a CPU-bound test, and the only
    * honest thing to do is set it above the contention we have seen and say so.
    * It still catches what a timeout is for: this test does not loop, and a
