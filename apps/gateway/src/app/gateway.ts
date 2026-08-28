@@ -825,6 +825,11 @@ export class Gateway {
       priceId: null,
       delivery: null,
       payment: null,
+      // Nothing has been verified yet, so there is no address this order's money
+      // was promised to. It arrives with the payment and not before: a challenge
+      // is an invitation, and the merchant may still move their wallet between
+      // this moment and the one an agent pays in.
+      payTo: null,
       paidBy: null,
       settlement: null,
       paymentWords: [],
@@ -877,16 +882,20 @@ export class Gateway {
     // for. The order stays open and ends on its own deadline; the agent is told
     // what the layer said and may present a better payment while the quote
     // still stands.
+    // Where this order's own merchant is paid, read once, here. What the
+    // payment is checked against has to be this merchant's address and nobody
+    // else's — a payment made out to anything else is not a payment for this
+    // sale, whatever else is right about it — and the same string is then kept
+    // on the order for the charge, so the money goes where the payer signed for
+    // it to go rather than wherever the merchant's wallet has got to by then.
+    const payTo = (await this.runtime.store.merchantById(before.merchantId))?.payoutWallet ?? null;
+
     const verified = await this.runtime.facilitator.verify({
       orderId,
       amount: price.amount,
       currency: price.currency,
       payment,
-      // Read from this order's own merchant, so that what the payment is
-      // checked against is the address the challenge for this order actually
-      // named. A payment made out to anything else is not a payment for this
-      // sale, whatever else is right about it.
-      payTo: (await this.runtime.store.merchantById(before.merchantId))?.payoutWallet ?? null,
+      payTo,
     });
 
     if (verified.verified !== true) {
@@ -949,6 +958,7 @@ export class Gateway {
       orderId,
       owner,
       payment,
+      payTo,
       this.runtime.clock(),
     );
 

@@ -98,6 +98,25 @@ export interface StoredOrder {
   /** What the agent presented to pay with, verbatim, until the charge is done. */
   readonly payment: string | null;
   /**
+   * The address that payment was checked against, kept beside it from the
+   * moment it was verified.
+   *
+   * It is written here rather than read again at the charge because a payment
+   * is an authorisation to send money to one address, and the two happen at
+   * different times: in the synchronous mode the whole of the merchant's
+   * fulfilment sits between them. A merchant who moves their wallet in that
+   * window — which they may, and for the best of reasons (ADR-0019) — would
+   * have the charge sent against an address the buyer never signed for, refused
+   * by the payment layer after the goods had already gone out. Carried, the
+   * charge is the one the payer agreed to, and the new address governs the next
+   * sale rather than this one.
+   *
+   * Null until a payment has been verified for this order, and null on a
+   * deployment that asks for no address at all — the sandbox, which settles
+   * against nothing (ADR-0008).
+   */
+  readonly payTo: string | null;
+  /**
    * Who this order belongs to: the payer the payment layer named when it
    * verified the first payment presented for it.
    *

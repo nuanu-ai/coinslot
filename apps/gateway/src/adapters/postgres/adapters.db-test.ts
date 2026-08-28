@@ -175,6 +175,13 @@ async function backendPid(of: Pool): Promise<number> {
   return pid;
 }
 
+/**
+ * The address the payments below were checked against, carried onto the order
+ * with them. Nothing in this file turns on which address it is; what matters
+ * elsewhere is that the charge is sent to the one the payer signed for.
+ */
+const PAID_AT = "0x0000000000000000000000000000000000000009";
+
 const syncCard: Card = {
   merchant_item_id: "room-101",
   title: "A room for the night",
@@ -1348,7 +1355,7 @@ if (databaseUrl === null) {
         const orderId = offered.order.order.id;
 
         const paid = `swept-${randomUUID()}`;
-        await gateway.runner.presentVerifiedPayment(orderId, paid, paid, now);
+        await gateway.runner.presentVerifiedPayment(orderId, paid, paid, PAID_AT, now);
         expect((await store.orderById(orderId))?.order.state).toBe("paid");
 
         // The envelope this sale wrote is drawn off the stream and thrown away.
@@ -1388,7 +1395,7 @@ if (databaseUrl === null) {
         const orderId = offered.order.order.id;
 
         const paid = `swept-r-${randomUUID()}`;
-        await gateway.runner.presentVerifiedPayment(orderId, paid, paid, now);
+        await gateway.runner.presentVerifiedPayment(orderId, paid, paid, PAID_AT, now);
         const worker = workUntilStopped(
           { gateway, merchant: { id: A, name: "", key: "", keyId: "", wallet: "" } },
           { onOrder: () => ({ delivered: { activation_code: "CODE" } }) },
