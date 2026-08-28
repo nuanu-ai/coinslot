@@ -7,6 +7,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "smoke": "tsx src/smoke.ts",
+    "bootstrap": "tsx src/bootstrap.ts",
     "serve": "tsx src/serve.ts",
     "buy": "tsx src/buy.ts"
   },
