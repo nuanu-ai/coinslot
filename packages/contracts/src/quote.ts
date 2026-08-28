@@ -9,9 +9,10 @@
  * without touching the code that answers.
  *
  * What the schema deliberately does not describe is silence. A missing answer,
- * a timeout, a broken connection and an answer too old to trust are all the
- * same thing to the gateway, and what it does about them depends on the card's
- * mode rather than on the shape of anything on this page.
+ * a timeout, a broken connection and an answer that did not parse against the
+ * shape below are all the same thing to the gateway, and what it does about
+ * them depends on the card's mode rather than on the shape of anything on this
+ * page.
  *
  * One field an order has and this does not: a price question carries no test
  * marker. For a card with a price check the question rides the same channel as
@@ -78,9 +79,13 @@ export const QuoteRequestSchema = z.strictObject({
  * fall back to the price in the card, at a price the merchant never quoted.
  *
  * `as_of` is on both branches because it is what separates "I went and looked"
- * from "here is what was in the cache". The gateway decides how far it trusts
- * an answer by comparing that moment against a freshness threshold, and the
- * same moment ends up in the record of the sale.
+ * from "here is what was in the cache". The gateway carries that moment and
+ * does not weigh it: it travels into the order the handler is given and into
+ * the record of the sale, so whoever reconciles a charge afterwards can see how
+ * old the number behind it was, and nothing anywhere compares it against
+ * anything. A price's life runs from the moment the answer reached us rather
+ * than from the moment it says it was true, so an answer stamped a year ago is
+ * honoured exactly as long as one stamped a second ago.
  */
 export const QuoteResponseSchema = z.discriminatedUnion("available", [
   z.strictObject({

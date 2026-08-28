@@ -247,8 +247,9 @@ describe("the merchant's two deadlines", () => {
   });
 
   it("accepts a card that names neither deadline", () => {
-    // The default values are among the numbers named before the pilot, so a
-    // card is allowed to leave both out and take ours.
+    // The defaults live in the gateway's configuration, where the portal
+    // publishes them as that deployment's settings, so a card is allowed to
+    // leave both out and take ours.
     expect(CardSchema.safeParse({ ...syncCard, fulfillment: "async" }).success).toBe(true);
   });
 });

@@ -263,10 +263,11 @@ const CardFieldsSchema = z.strictObject({
   /**
    * How long the merchant may take to answer a confirmation request.
    *
-   * The seconds themselves — the default, the ceiling — are among the numbers
-   * named before the pilot and belong to the gateway. This schema takes any
-   * whole positive number of seconds rather than inventing a limit that would
-   * read as a decision nobody took.
+   * The seconds themselves belong to the gateway. What a card that names none
+   * is held to is set there and published on the portal — an hour — while the
+   * ceiling on what a card may name is genuinely undecided. So this schema
+   * takes any whole positive number of seconds rather than inventing a limit
+   * that would read as a decision nobody took.
    */
   confirm_deadline_seconds: z.int().positive().optional(),
 
