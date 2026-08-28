@@ -1098,6 +1098,30 @@ describe("two payments racing one order", () => {
     expect(harnessed.facilitator.settles).toHaveLength(1);
     expect(harnessed.facilitator.settles[0]?.payment).toBe("buyer");
   });
+
+  it("does not make two payments the sandbox cannot read into one buyer", async () => {
+    // The sandbox reads who paid out of the payment, and the interesting case
+    // is the one where there is nothing to read. Naming nobody is the answer
+    // that keeps the two apart: the gateway then stands the fingerprint of what
+    // was signed in for a payer, and two unreadable payments are two of those.
+    // A stand-in invented here would be the same stand-in for every unreadable
+    // payment, and the second sender would be handed the first one's purchase —
+    // which is the defect this whole rule exists to stop, moved one branch
+    // over.
+    const harnessed = await started();
+    const itemId = await published(harnessed, asyncCard);
+    const offered = await harnessed.gateway.beginPurchase(itemId, {});
+    if (offered.step !== "pay") throw new Error("no price was offered");
+    const orderId = offered.order.order.id;
+
+    const bought = await harnessed.gateway.payPurchase(orderId, "NOT-A-PAYMENT", "NOT-A-PAYMENT");
+    expect(bought.step).toBe("under_way");
+
+    const meddling = await harnessed.gateway.payPurchase(orderId, "NOR-IS-THIS", "NOR-IS-THIS");
+
+    expect(meddling.step).toBe("not_this_purchase");
+    expect((await harnessed.store.orderById(orderId))?.paidBy).toBe("NOT-A-PAYMENT");
+  });
 });
 
 describe("the price question", () => {
