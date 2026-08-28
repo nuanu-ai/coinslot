@@ -12,7 +12,9 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # A main run may already be replacing containers. Let it finish, then deliver
+  # the newer commit; pull-request feedback may still discard an obsolete run.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # The jobs run on the org's own comino build pool: GitHub-hosted runners are
 # unavailable on this org's Actions billing. The repo is private, so
@@ -64,3 +66,36 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: ./scripts/check-decisions.sh
+
+  deploy:
+    name: deploy coinslot.nuanu.ai
+    needs: [gate, decisions]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, comino]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Deliver the green commit
+        env:
+          DEPLOY_KEY: ${{ secrets.COINSLOT_PREVIEW_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          key="${RUNNER_TEMP}/coinslot-preview-key"
+          known_hosts="${RUNNER_TEMP}/coinslot-known-hosts"
+          install -m 600 /dev/null "${key}"
+          printf '%s\n' "${DEPLOY_KEY}" > "${key}"
+          unset DEPLOY_KEY
+          printf '%s\n' '[103.165.204.236]:22130 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEQIT814RTQJApGFR91u2TyN5o9WMePvqREYgOjNWSsO' > "${known_hosts}"
+          trap 'rm -f "${key}" "${known_hosts}"' EXIT
+          ssh_options=(-i "${key}" -p 22130 -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=${known_hosts}")
+
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          # The green SHA intentionally expands here; the server receives only
+          # the resulting `release <sha>` forced command.
+          # shellcheck disable=SC2029
+          git archive --format=tar HEAD | \
+            ssh "${ssh_options[@]}" dmitry@103.165.204.236 "release ${GITHUB_SHA}"
+
+          for path in / /docs/ /cabinet/healthz /v0/catalog; do
+            curl -fsS --retry 5 --retry-all-errors --max-time 20 "https://coinslot.nuanu.ai${path}" >/dev/null
+          done

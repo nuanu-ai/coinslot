@@ -120,11 +120,13 @@ x-app: &app
   build:
     context: .
     dockerfile: deploy/Dockerfile.app
-  image: coinslot-app
+  image: "${COINSLOT_APP_IMAGE:-coinslot-app}"
+  restart: unless-stopped
 
 services:
   postgres:
     image: postgres:17-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: coinslot
       POSTGRES_PASSWORD: coinslot
@@ -336,6 +338,8 @@ services:
     build:
       context: .
       dockerfile: deploy/Dockerfile.web
+    image: "${COINSLOT_WEB_IMAGE:-coinslot-web}"
+    restart: unless-stopped
     ports:
       # The host side is a variable because a laptop is not ours alone: an ssh
       # tunnel or another project can already hold 8080, and a tunnel bound to
