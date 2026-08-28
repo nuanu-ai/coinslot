@@ -28,8 +28,8 @@ The gateway settles against nothing locally (ADR-0008), so a purchase completes
 with no wallet, no network and no faucet, and it says so in its first line of
 log. Nothing here moves money.
 
-To sign into the cabinet, make an account — there is no sign-up page, by
-decision (ADR-0009):
+To sign into the cabinet, make an account — there is no sign-up page yet
+(ADR-0009; registration is third on the road ADR-0010 fixes):
 
 ```
 docker compose exec cabinet pnpm --filter @coinslot/cabinet account add you@example.com

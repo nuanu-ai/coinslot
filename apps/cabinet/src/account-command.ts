@@ -1,9 +1,11 @@
 /**
  * The command that makes an account, and the three that keep one.
  *
- * ADR-0009: no self-serve sign-up and no reset by mail. Registration with an
- * address is a decision nobody has taken (ADR-0010), so an account exists
- * because somebody ran this. That makes it the only door into the cabinet,
+ * ADR-0009: no self-serve sign-up and no reset by mail *yet*. Registration is
+ * settled — ADR-0010 records it as the product's shape, third on a road whose
+ * order is fixed by the danger — and what is not settled is the mail it needs.
+ * Until that road reaches it, an account exists because somebody ran this. That
+ * makes this command the only door into the cabinet,
  * which is why it is a tested module with the terminal handed to it rather than
  * a script that prints as it goes.
  *
@@ -35,8 +37,8 @@ const USAGE = [
   "  revoke <address>    end every session that person has, keeping the account",
   "  list                the accounts there are, and how many sessions are open",
   "",
-  "There is no sign-up page and no reset by mail (ADR-0009): an account exists",
-  "because somebody ran this.",
+  "There is no sign-up page and no reset by mail yet (ADR-0009, ADR-0010): an",
+  "account exists because somebody ran this.",
 ];
 
 /**

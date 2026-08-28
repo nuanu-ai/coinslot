@@ -1,8 +1,9 @@
 /**
  * The command that makes an account, because there is no other way to get one.
  *
- * ADR-0009: no self-serve sign-up and no reset by mail. That makes this command
- * the only door into the cabinet, and a broken one is a cabinet nobody can open
+ * ADR-0009: no self-serve sign-up and no reset by mail yet. That makes this
+ * command the only door into the cabinet, and a broken one is a cabinet nobody
+ * can open
  * — which is why it is tested at all rather than left as a script.
  *
  * The tests are about what a person reading a terminal gets and what the store

@@ -34,8 +34,8 @@
 # under the other. One run at a time, per database.
 #
 # Nobody can sign into the cabinet until somebody makes an account. There is no
-# sign-up page and no reset by mail (ADR-0009): one merchant, and we make the
-# account by hand. One command, against the stack that is already up, which
+# sign-up page and no reset by mail yet (ADR-0009): one merchant, and we make
+# the account by hand. One command, against the stack that is already up, which
 # prints a generated password once:
 #
 #   docker compose exec cabinet \
