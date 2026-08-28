@@ -83,25 +83,33 @@
         <a href="/docs/">Documentation</a>
         <a href="/docs/money">How the money moves</a>
         <a class="button--small" href="/cabinet/">Cabinet</a>
-        <!-- Three named choices rather than one button that toggles, because a
-             toggle has to be labelled with either where you are or where it
-             takes you, and a single word in a bar is read as both. "Dark" was
-             read as "you are in dark mode" by the first person who saw it. Here
-             every state is on the page and the one in force is marked, so
-             nothing has to be inferred — and following the system stays
-             available instead of being lost the moment somebody chooses once.
+        <!-- The same switch the documentation carries, because a reader crosses
+             between the two on one origin and a control that changes shape
+             halfway reads as two different products. Its measurements are
+             VitePress's own: a 40 by 22 track, an 18 pixel knob that travels 18,
+             the sun and the moon riding inside it.
 
-             In the markup rather than built by the script so that its place in
-             the bar is decided by the same file as the rest of the bar, and
-             hidden until the script has wired it, because a control that does
-             nothing when pressed is worse than one that is not there. A reader
-             with no script keeps the theme their system asks for, which is what
-             this page did before any of this existed. -->
-        <div id="theme" class="theme" role="group" aria-label="Theme" hidden>
-          <button type="button" data-choice="system">System</button>
-          <button type="button" data-choice="light">Light</button>
-          <button type="button" data-choice="dark">Dark</button>
-        </div>
+             This is why there is no word on it. A word has to say either where
+             you are or where the press takes you, and one word in a bar is read
+             as both — "Dark" was read as "you are in dark mode" by the first
+             person who saw the version before this. A switch has a shape people
+             already know, and the sentence that would have been ambiguous lives
+             in the title where it can be as long as it needs to be.
+
+             Hidden until the script has wired it: a control that does nothing
+             when pressed is worse than one that is not there, and a reader with
+             no script keeps the theme their system asks for. -->
+        <button id="theme" class="switch" type="button" role="switch" aria-checked="false" hidden>
+          <span class="switch__knob">
+            <svg class="switch__sun" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="4.2" />
+              <path d="M12 2.6v2.6M12 18.8v2.6M2.6 12h2.6M18.8 12h2.6M5.4 5.4l1.8 1.8M16.8 16.8l1.8 1.8M18.6 5.4l-1.8 1.8M7.2 16.8l-1.8 1.8" />
+            </svg>
+            <svg class="switch__moon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M20 14.2A8.4 8.4 0 0 1 9.8 4a8.4 8.4 0 1 0 10.2 10.2z" />
+            </svg>
+          </span>
+        </button>
       </nav>
     </header>
 
@@ -394,51 +402,57 @@
     </footer>
 
     <!-- The theme control.
-         `system` is stored as the absence of a stored value rather than as the
-         word, so the head of this document has one thing to check and a page
-         that has never been touched behaves the same as one switched back. -->
+         Two visible states and three real ones, which is how the documentation's
+         own switch behaves and is worth knowing before somebody calls it a bug.
+         A choice that lands on what the operating system already asks for is
+         stored as nothing at all, so the page goes back to following that system
+         rather than pinning today's answer for ever. Storing the word instead
+         would leave a reader who switches their machine to dark in the evening
+         looking at a light page and no way to explain it. -->
     <script>
       (function () {
-        var root = document.documentElement;
-        var group = document.getElementById("theme");
-        var buttons = group.querySelectorAll("button");
+        const root = document.documentElement;
+        const button = document.getElementById("theme");
+        const system = window.matchMedia("(prefers-color-scheme: dark)");
 
-        function chosen() {
-          return root.dataset.theme || "system";
+        const dark = () => (root.dataset.theme || (system.matches ? "dark" : "light")) === "dark";
+
+        function show() {
+          button.setAttribute("aria-checked", dark() ? "true" : "false");
+          button.title = dark() ? "Switch to the light theme" : "Switch to the dark theme";
         }
 
-        function mark() {
-          var now = chosen();
-          for (let i = 0; i < buttons.length; i += 1) {
-            // aria-pressed rather than a class alone: the marking has to reach
-            // somebody who cannot see which of the three is darker.
-            const mine = buttons[i].dataset.choice === now;
-            buttons[i].setAttribute("aria-pressed", mine ? "true" : "false");
-          }
-        }
+        button.hidden = false;
+        show();
 
-        group.hidden = false;
-        mark();
-
-        group.addEventListener("click", function (pressed) {
-          var choice = pressed.target.dataset && pressed.target.dataset.choice;
-          if (!choice) {
-            return;
-          }
-          if (choice === "system") {
+        button.addEventListener("click", () => {
+          const wanted = dark() ? "light" : "dark";
+          const asked = wanted === (system.matches ? "dark" : "light");
+          // Landing back on what the system asks for takes the attribute off as
+          // well as the stored word, so the page goes on following that system
+          // instead of being pinned to what it happened to say at this moment.
+          if (asked) {
             delete root.dataset.theme;
           } else {
-            root.dataset.theme = choice;
+            root.dataset.theme = wanted;
           }
-          mark();
+          show();
           try {
-            if (choice === "system") {
+            if (asked) {
               localStorage.removeItem("coinslot-theme");
             } else {
-              localStorage.setItem("coinslot-theme", choice);
+              localStorage.setItem("coinslot-theme", wanted);
             }
           } catch {
             /* The page still changes; it just will not remember. */
+          }
+        });
+
+        // The system changing under an open page moves the switch with it, for
+        // a reader who never made a choice of their own.
+        system.addEventListener("change", () => {
+          if (!root.dataset.theme) {
+            show();
           }
         });
       })();

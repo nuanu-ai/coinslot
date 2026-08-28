@@ -103,48 +103,74 @@
   min-height: 24px;
 }
 
-/* The only controls in the header that are not links: they change this page
-   rather than going to another. Three joined segments, because the choice in
-   force has to be visible — a single button would have to be labelled either
-   with the state or with the action, and one word in a bar is read as both.
+/* The theme switch, in the documentation's own measurements: a 40 by 22 track,
+   an 18 pixel knob that travels 18. A reader crosses between the two surfaces on
+   one origin, and a control that changes shape halfway reads as two products.
+   The one thing that is ours rather than theirs is the colour, which comes from
+   the tokens like everything else on the page.
 
-   The font is named because a button takes neither face nor size from the page
-   on its own: left out, these arrive in the browser's own type, a head taller
-   than the words beside them. */
-.theme {
-  display: inline-flex;
-  border: var(--hairline) solid var(--line);
-  border-radius: var(--radius);
-  overflow: hidden;
-}
-
-.theme button {
-  min-height: 24px;
-  padding: 6px 10px;
-  font: inherit;
-  font-size: 13px;
-  color: var(--muted);
-  background: none;
-  border: 0;
-  border-left: var(--hairline) solid var(--line);
-  cursor: pointer;
-}
-
-.theme button:first-child {
-  border-left: 0;
-}
-
-.theme button:hover {
-  color: var(--fg);
-}
-
-/* The one in force. Colour alone would carry it for most people and not for
-   everyone, so it also carries weight — and the button says so in aria-pressed,
-   which is what reaches a reader who gets neither. */
-.theme button[aria-pressed="true"] {
-  color: var(--fg);
-  font-weight: 500;
+   Everything about the track is stated rather than inherited: a button takes
+   neither size nor background from the page on its own, and the square corners
+   the rest of the site uses would make this read as a box and not as a switch,
+   so it is the one place with a full radius. */
+.switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 40px;
+  height: 22px;
+  padding: 0;
   background: var(--raised);
+  border: var(--hairline) solid var(--line);
+  border-radius: 11px;
+  cursor: pointer;
+  transition: border-color 0.25s;
+}
+
+.switch:hover {
+  border-color: var(--line-strong);
+}
+
+.switch__knob {
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  background: var(--surface);
+  border-radius: 50%;
+  /* The travel is the one thing that has to be animated: it is what says the
+     press did something, on a control whose two states otherwise differ by a
+     glyph most people will not look at. */
+  transition: transform 0.25s;
+}
+
+.switch[aria-checked="true"] .switch__knob {
+  transform: translateX(18px);
+}
+
+.switch svg {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+
+.switch__moon {
+  fill: var(--muted);
+  stroke: none;
+}
+
+/* One of the two, never both: the knob shows the state the page is in, and the
+   title on the button says where a press would take it. */
+.switch[aria-checked="true"] .switch__sun,
+.switch:not([aria-checked="true"]) .switch__moon {
+  display: none;
 }
 
 /* Buttons here are links: every one of them goes to a page, and none of them
