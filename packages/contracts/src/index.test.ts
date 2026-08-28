@@ -246,7 +246,11 @@ describe("the contract as JSON Schema", () => {
   });
 
   it("describes an enumeration as its values and nothing else", () => {
-    expect(toJsonSchemas().fulfillment.enum).toStrictEqual(["sync", "async", "confirm"]);
+    // One enumeration is enough to show how an enumeration renders. The
+    // fulfillment modes were here too and are asserted in `card.test.ts`,
+    // where the words themselves are the claim: the mode that cannot be
+    // published during the pilot still has to appear in the document an
+    // engineer generates a client from.
     expect(toJsonSchemas().receipt_outcome.enum).toStrictEqual([
       "in_progress",
       "delivered",
