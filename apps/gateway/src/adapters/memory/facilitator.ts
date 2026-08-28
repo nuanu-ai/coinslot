@@ -41,7 +41,10 @@ import type { Charge, Facilitator, SettleOutcome, VerifyOutcome } from "../../po
  * was a fresh owner and a buyer's own repeat was refused as a stranger's.
  *
  * A payment that will not decode, and one carrying no authorisation, name
- * nobody, and `null` says so. It is not a refusal: the port has a word for a
+ * nobody, and `null` says so. Through the door only the second case arrives:
+ * an undecodable header is refused with a fresh challenge before anything
+ * calls this, so the decode branch stands for direct callers and tests, not
+ * as a defence the wire exercises. It is not a refusal: the port has a word for a
  * verified payment whose payer is unnamed, the real adapter answers `null` in
  * the same place when the layer vouches without naming an address, and the
  * gateway's stand-in for it is the payment's own fingerprint. Naming a stand-in

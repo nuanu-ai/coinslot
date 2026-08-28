@@ -1443,7 +1443,7 @@ function refusedCall(rejection: TransitionRejection): OrderCallError {
  * guard in `presentVerifiedPayment` compares normalised against normalised.
  */
 function walletThatPaid(payer: string | null): string | null {
-  const wallet = (payer ?? "").trim().toLowerCase();
+  const wallet = (payer ?? "").toLowerCase();
   return wallet === "" ? null : wallet;
 }
 
