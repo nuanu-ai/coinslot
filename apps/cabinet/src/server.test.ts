@@ -23,13 +23,13 @@
 import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { connect } from "node:net";
-import type { Card } from "@coinslot/contracts";
+import type { Card, MerchantKey, MerchantKeyList, RegisteredMerchant } from "@coinslot/contracts";
 import { buyOverHttp, type Harness, harness, type Served, serve } from "@coinslot/gateway/testing";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type Accounts, memoryAccounts } from "./accounts.js";
 import { loadConfig } from "./config.js";
-import { fingerprintOf, hashPassword } from "./credentials.js";
-import type { Answer } from "./gateway.js";
+import { fingerprintOf, hashPassword, passwordMatches } from "./credentials.js";
+import { type Answer, type GatewayClient, gatewayFor, type Registrar } from "./gateway.js";
 import { buildApp } from "./server.js";
 import { sessionFor } from "./testing/accounts-contract.js";
 
@@ -51,6 +51,15 @@ const PERSON = "dmitry@example.com";
  * account in the store.
  */
 const OTHER = "someone@example.com";
+/**
+ * A session identifier shaped like one this cabinet issues, for the one test
+ * that has to plant a live session rather than sign in for it.
+ *
+ * The shape matters: a value that is not shaped like an identifier we would
+ * have issued is never looked up at all, so a made-up word would test the
+ * cookie filter rather than the gate.
+ */
+const BEFORE_MERCHANTS = "a".repeat(43);
 const PASSWORD = "a-password-nobody-guesses";
 /**
  * Derived once for the whole file. A scrypt derivation is a tenth of a second
@@ -59,11 +68,22 @@ const PASSWORD = "a-password-nobody-guesses";
  */
 const PASSWORD_HASH = await hashPassword(PASSWORD);
 
+/**
+ * The merchant both of those accounts sign in as.
+ *
+ * One merchant with two people at it, which ADR-0009 §9 names as a shape the
+ * cabinet does not really have — it is here because "somebody else's session"
+ * cannot be tested with one account, and because the key on both rows is the
+ * one the harness seeded, so every screen these tests read is drawn from the
+ * real gateway.
+ */
+const THE_MERCHANT = { id: "mer_the_merchant", key: KEY };
+
 /** The store a cabinet under test signs people in against, with two accounts. */
 const withAccounts = async (): Promise<Accounts> => {
   const accounts = memoryAccounts();
-  await accounts.add(PERSON, PASSWORD_HASH, new Date());
-  await accounts.add(OTHER, PASSWORD_HASH, new Date());
+  await accounts.add(PERSON, PASSWORD_HASH, new Date(), THE_MERCHANT);
+  await accounts.add(OTHER, PASSWORD_HASH, new Date(), THE_MERCHANT);
   return accounts;
 };
 
@@ -148,13 +168,42 @@ const started = async (
     readonly base?: string;
     readonly gateway?: Record<string, string>;
     readonly cabinet?: Record<string, string>;
+    /**
+     * How the route that makes a merchant answers.
+     *
+     * Stubbed rather than real, and this is the one seam in this file that is
+     * not: the gateway route behind it is being added on another branch, so
+     * what these tests hold is the cabinet's half — what it does with an answer
+     * of each shape. What it makes of a successful one is checked against the
+     * real gateway anyway, because the key such an answer carries is the key
+     * the harness seeded, so the screens that follow the redirect are drawn
+     * from real documents.
+     */
+    readonly registrar?: Registrar;
+    /**
+     * The real client, with some of its calls answered by the test instead.
+     *
+     * A decorator rather than a replacement, so that everything a test is not
+     * about still goes to the real gateway. The three key routes are what this
+     * is for: they are being added on another branch, so the cabinet's half of
+     * them is what can be held here, while the sign-in and the screens either
+     * side of the one under test stay real.
+     */
+    readonly client?: (real: GatewayClient) => GatewayClient;
   } = {},
 ): Promise<Running> => {
   const harnessed = await harness({ PAY_TO_ADDRESS: PAY_TO, ...options.gateway });
   const gateway = await serve(harnessed);
   const accounts = await withAccounts();
   const basePath = options.base ?? "";
-  const { browser, url } = await visiting(gateway.url, basePath, accounts, options.cabinet);
+  const { browser, url } = await visiting(
+    gateway.url,
+    basePath,
+    accounts,
+    options.cabinet,
+    options.registrar,
+    options.client,
+  );
   let stopped = false;
 
   open = {
@@ -189,16 +238,27 @@ async function visiting(
   basePath: string,
   accounts: Accounts,
   environment: Record<string, string> = {},
+  registrar?: Registrar,
+  client?: (real: GatewayClient) => GatewayClient,
 ): Promise<{ browser: Browser; url: string }> {
+  // No merchant key in the environment, which is the point: the cabinet builds
+  // its client from the key on the row of whoever is signed in, so what these
+  // tests drive is the real client against the real gateway with the key the
+  // harness seeded (ADR-0014 §2).
   const app = buildApp(
     loadConfig({
       GATEWAY_URL: gatewayUrl,
       DATABASE_URL: "postgres://nobody@nowhere:5432/unused",
-      MERCHANT_API_KEY: KEY,
       ...(basePath === "" ? {} : { BASE_PATH: basePath }),
       ...environment,
     }),
-    { accounts },
+    {
+      accounts,
+      ...(registrar === undefined ? {} : { registrar }),
+      ...(client === undefined
+        ? {}
+        : { gatewayFor: (key: string) => client(gatewayFor(gatewayUrl, key)) }),
+    },
   );
   const server = app.listen(0);
   await new Promise<void>((resolve) => server.once("listening", resolve));
@@ -210,9 +270,18 @@ async function visiting(
     url,
     browser: {
       ...browser,
+      // Closing one that is already closed is not an error. A test that stands
+      // several cabinets up and takes each down as it finishes still meets the
+      // sweep afterwards, and a second close that threw would fail the test for
+      // tidying up after itself.
       close: () =>
         new Promise<void>((resolve, reject) => {
-          server.close((error) => (error === undefined ? resolve() : reject(error)));
+          server.close((error) =>
+            error === undefined ||
+            (error as NodeJS.ErrnoException).code === "ERR_SERVER_NOT_RUNNING"
+              ? resolve()
+              : reject(error),
+          );
         }),
     },
   };
@@ -405,7 +474,7 @@ describe("getting into the cabinet", () => {
     const { browser, gateway } = await started();
     const itemId = await publish(gateway, roomCard);
 
-    for (const path of ["/", "/cards", "/orders", "/receipts", "/password", "/nowhere"]) {
+    for (const path of ["/", "/cards", "/orders", "/receipts", "/keys", "/password", "/nowhere"]) {
       const answered = await browser.get(path);
       expect(answered.status, path).toBe(303);
       expect(answered.to, path).toBe("/sign-in");
@@ -432,6 +501,90 @@ describe("getting into the cabinet", () => {
     // And the page says who is looking at it, which is the whole point of there
     // being a person in the system rather than a key.
     expect(readable(cards.html)).toContain(PERSON);
+  });
+
+  it("shows each person the catalogue of their own merchant and not of the other one", async () => {
+    // ADR-0014 §2, and the promise the whole change exists for. The cabinet used
+    // to reach the gateway with one key read at start-up, so a second account was
+    // a second person looking at the first merchant's money. The key comes off
+    // the row of whoever is signed in now, and this is against the real gateway
+    // with two merchants really seeded — a cabinet that still held one key would
+    // draw the same catalogue for both people and fail here.
+    const { browser, gateway, harnessed, accounts, another } = await started();
+    const theirs = await harnessed.addMerchant("The other merchant");
+    await publish(gateway, roomCard);
+    await gateway.call("POST", "/v0/catalog/publish", {
+      body: { ...esimCard, title: "A plan the other merchant sells" },
+      headers: { authorization: `Bearer ${theirs.key}` },
+    });
+    await accounts.add("theirs@example.com", PASSWORD_HASH, new Date(), {
+      id: theirs.id,
+      key: theirs.key,
+    });
+
+    const mine = readable((await browser.signIn()).html);
+    const otherBrowser = await another();
+    const other = readable((await otherBrowser.signIn("theirs@example.com")).html);
+
+    expect(mine).toContain("A room for the night");
+    expect(mine).not.toContain("A plan the other merchant sells");
+    expect(other).toContain("A plan the other merchant sells");
+    expect(other).not.toContain("A room for the night");
+  });
+
+  it("refuses an account made before accounts had a merchant, and says what to run", async () => {
+    // The one account on a deployed server predates the column, so it has no key
+    // and there is not a single screen it can be shown. Served an empty cabinet
+    // it would read as a merchant whose catalogue had been emptied; answered with
+    // an exception it would read as a broken cabinet. It is neither, and the
+    // sentence says which command makes an account that works.
+    const { browser, accounts } = await started();
+    await accounts.add("older@example.com", PASSWORD_HASH, new Date(), null);
+
+    const refused = await browser.post("/sign-in", {
+      email: "older@example.com",
+      password: PASSWORD,
+    });
+
+    expect(refused.status).toBe(403);
+    const text = readable(refused.html);
+    expect(text).toMatch(/before/i);
+    expect(text).toContain("account add");
+    // And nobody was signed in on the way past.
+    expect(refused.headers.getSetCookie()).toStrictEqual([]);
+    expect((await browser.get("/cards")).to).toBe("/sign-in");
+  });
+
+  it("stops an account that lost its merchant from using a session it already had", async () => {
+    // A session outlives a deployment, so somebody signed in on the cabinet as
+    // it was before this change arrives at the gate holding a live session for
+    // an account with no key on it. The gate is where that has to be caught: a
+    // handler below it would reach for a key that is not there.
+    const { browser, accounts } = await started();
+    await accounts.add("older@example.com", PASSWORD_HASH, new Date(), null);
+    const person = await accounts.byEmail("older@example.com");
+    const at = new Date();
+    await accounts.open(
+      fingerprintOf(BEFORE_MERCHANTS),
+      person?.id ?? "",
+      at,
+      new Date(+at + 12 * 60 * 60 * 1_000),
+    );
+
+    const answered = await browser.withRawCookie(`${COOKIE}=${BEFORE_MERCHANTS}`).get("/cards");
+
+    expect(answered.status).toBe(403);
+    expect(readable(answered.html)).toContain("account add");
+    // And the session goes, which is the half that keeps this from being a
+    // trap. Left alive it stands in front of both doors out: this gate answers
+    // every address, and both the sign-in and the registration send a visitor
+    // who has a session back to their cards — which land here again.
+    await expect(
+      sessionFor(accounts, fingerprintOf(BEFORE_MERCHANTS), new Date()),
+    ).resolves.toBeNull();
+    const after = browser.withRawCookie(`${COOKIE}=${BEFORE_MERCHANTS}`);
+    expect((await after.get("/register")).status).toBe(200);
+    expect((await after.get("/sign-in")).status).toBe(200);
   });
 
   it("answers a wrong password and an address nobody has in exactly the same way", async () => {
@@ -579,35 +732,30 @@ describe("getting into the cabinet", () => {
     ).resolves.toBeNull();
   });
 
-  it("keeps a person signed in when the merchant key is rotated under them", async () => {
-    // The promise this whole decision was written for. Before it, the key in
-    // the cabinet was the person's password: rotating it signed the human out
+  it("keeps a person signed in when the key their cabinet holds stops working", async () => {
+    // The promise ADR-0009 was written for, held against the real gateway now
+    // that a key is a row there too. Before that decision, the key in the
+    // cabinet was the person's password: taking it away signed the human out
     // and broke the merchant's own code in the same instant, and neither could
-    // be done alone. Here the key changes and the session does not notice.
-    const { browser, accounts, gateway } = await started();
+    // be done alone. Here the gateway really stops accepting the key — the same
+    // act ADR-0014 §5 puts behind a control on the keys screen — and the
+    // session does not notice.
+    const { browser, gateway, harnessed } = await started();
     await publish(gateway, roomCard);
     await browser.signIn();
-    const held = browser.sessionToken() ?? "";
 
-    // The same cabinet, restarted with a different key — and the same store,
-    // because the sessions are rows and not something the process holds.
-    const rotated = await visiting(gateway.url, "", accounts, {
-      MERCHANT_API_KEY: "a-different-merchant-key",
-    });
-    try {
-      const after = await rotated.browser.withRawCookie(`${COOKIE}=${held}`).get("/cards");
+    await harnessed.disableKey(harnessed.merchant.keyId);
+    const after = await browser.get("/cards");
 
-      // Still signed in: the session survived a key it never held.
-      expect(after.status).not.toBe(303);
-      expect(after.to).toBeNull();
-      // The gateway does not know the new key, so the cabinet says its own key
-      // is not accepted — and says nothing about the person's sign-in.
-      expect(after.status).toBe(502);
-      expect(readable(after.html)).toMatch(/key/i);
-      expect(after.headers.getSetCookie().join(" ")).not.toContain(`${COOKIE}=;`);
-    } finally {
-      await rotated.browser.close();
-    }
+    // Still signed in: the session is a row of the cabinet's and has nothing to
+    // do with what the gateway thinks of a key.
+    expect(after.to).toBeNull();
+    expect(after.status).toBe(502);
+    expect(readable(after.html)).toMatch(/key/i);
+    expect(after.headers.getSetCookie().join(" ")).not.toContain(`${COOKIE}=;`);
+    // And it says there is no page here that fixes it, which is true: rotating
+    // the key a cabinet holds is named in ADR-0014 §5 as not built.
+    expect(readable(after.html)).toMatch(/no page in this cabinet/i);
   });
 
   it("clears the old cookie that used to hold a live merchant key", async () => {
@@ -777,6 +925,349 @@ describe("getting into the cabinet", () => {
 
     expect(sheet.html).not.toContain("@import");
     expect(sheet.html).not.toMatch(/https?:\/\//);
+  });
+});
+
+describe("registering", () => {
+  const FORM = {
+    email: "fresh@example.com",
+    password: "a-password-of-their-own",
+    name: "A merchant with a name",
+    invitation: "the-invitation-we-handed-out",
+  };
+
+  /**
+   * A registrar that answers as the test says and remembers what it was asked.
+   *
+   * The successful answer carries the key the harness seeded, so a registration
+   * that goes through leaves an account whose screens are drawn from the real
+   * gateway — which is what makes the redirect at the end of it worth anything.
+   */
+  const registrarAnswering = (
+    answer: Answer<RegisteredMerchant>,
+  ): Registrar & { asked: { name: string; invitation: string }[] } => {
+    const asked: { name: string; invitation: string }[] = [];
+    return {
+      asked,
+      register: async (name, invitation) => {
+        asked.push({ name, invitation });
+        return answer;
+      },
+    };
+  };
+
+  const madeAMerchant = (): Answer<RegisteredMerchant> => ({
+    ok: true,
+    document: {
+      merchant_id: "mer_the_merchant",
+      name: FORM.name,
+      key: {
+        id: "key_the_first_one",
+        label: "the first key",
+        created_at: "2026-08-28T09:00:00.000Z",
+        disabled_at: null,
+      },
+      secret: KEY,
+    },
+  });
+
+  /** The gateway refusing, which is a wrong invitation and a closed door alike. */
+  const refused = (why: string): Answer<RegisteredMerchant> => ({ ok: false, status: 403, why });
+
+  it("makes a merchant, writes the account and signs the person in where they stand", async () => {
+    // ADR-0014 §1: one form, one act, and what comes back is a session. A
+    // registration that ended at the sign-in page would be a password typed
+    // twice for no reason.
+    const registrar = registrarAnswering(madeAMerchant());
+    const { browser, gateway, accounts } = await started({ registrar });
+    await publish(gateway, roomCard);
+
+    const registered = await browser.post("/register", FORM);
+
+    expect(registered.status).toBe(303);
+    expect(registered.to).toBe("/cards");
+    expect(registrar.asked).toStrictEqual([{ name: FORM.name, invitation: FORM.invitation }]);
+    // The account is there, pointed at the merchant the gateway made, and the
+    // password typed into the form is the one that works.
+    const made = await accounts.byEmail(FORM.email);
+    expect(made?.merchant).toStrictEqual({ id: "mer_the_merchant", key: KEY });
+    await expect(passwordMatches(FORM.password, made?.passwordHash ?? "")).resolves.toBe(true);
+    // And they are signed in already: the next page is a real screen drawn from
+    // the real gateway, not another form.
+    expect(browser.sessionToken()).not.toBeNull();
+    const cards = await browser.get("/cards");
+    expect(cards.status).toBe(200);
+    expect(readable(cards.html)).toContain(FORM.email);
+  });
+
+  it("answers a refused invitation and a closed door with one sentence, not two", async () => {
+    // ADR-0014 §3: wrong code and a registration that is not open answer the
+    // same way at the gateway, and a screen that turned the gateway's two
+    // sentences into two of its own would undo that at the last step.
+    const wrong = await started({
+      registrar: registrarAnswering(refused("that code is not one we accept")),
+    });
+    const one = await wrong.browser.post("/register", { ...FORM, invitation: "not-the-code" });
+    await wrong.browser.close();
+    await wrong.accounts.close();
+    await wrong.stopGateway();
+
+    const closed = await started({
+      registrar: registrarAnswering(refused("registration is closed")),
+    });
+    const other = await closed.browser.post("/register", FORM);
+
+    expect(one.status).toBe(other.status);
+    expect(readable(one.html)).toBe(readable(other.html));
+    expect(one.headers.getSetCookie()).toStrictEqual([]);
+  });
+
+  it("refuses an address that already has an account without saying that is why", async () => {
+    // The sign-in next door derives against a decoy so that its timing does not
+    // say who has an account here. A registration that answered "that address is
+    // taken" in its own words would be the same question answered outright, so
+    // the refusal is the one the invitation gets and nothing else.
+    const { browser } = await started({ registrar: registrarAnswering(madeAMerchant()) });
+
+    const taken = await browser.post("/register", { ...FORM, email: PERSON });
+    const bad = await started({ registrar: registrarAnswering(refused("no")) });
+    const invitation = await bad.browser.post("/register", FORM);
+
+    expect(taken.status).toBe(invitation.status);
+    expect(readable(taken.html)).toBe(readable(invitation.html));
+    expect(taken.headers.getSetCookie()).toStrictEqual([]);
+  });
+
+  it("tells nobody without an invitation which addresses have accounts", async () => {
+    // The promise that survives being looked at: the address is only reached
+    // after the gateway has accepted the invitation, so somebody without one
+    // gets the same answer for an address that exists and one that does not.
+    const registrar = registrarAnswering(refused("no"));
+    const { browser } = await started({ registrar });
+
+    const known = await browser.post("/register", { ...FORM, email: PERSON });
+    const unknown = await browser.post("/register", { ...FORM, email: "nobody@example.com" });
+
+    expect(readable(known.html)).toBe(readable(unknown.html));
+    expect(known.status).toBe(unknown.status);
+    // Both went to the gateway, which is the half of this the page cannot show.
+    // Looking the address up first would answer the taken one without asking
+    // anybody — same words, and back sooner every time. The sign-in next door
+    // spends a derivation on an address nobody has for exactly this reason, and
+    // this form must not be the cheaper way to ask the same question.
+    expect(registrar.asked.length).toBe(2);
+  });
+
+  it("does not say it worked when the merchant was made and the account was not", async () => {
+    // ADR-0014 §1 calls this litter rather than damage — the address is free
+    // and the next attempt makes a new merchant — but the person on the other
+    // end must not be told it went through.
+    const registrar = registrarAnswering(madeAMerchant());
+    const { browser, accounts } = await started({ registrar });
+    accounts.add = async () => {
+      throw new Error("the cabinet's account was not answered by the database");
+    };
+
+    const failed = await browser.post("/register", FORM);
+
+    expect(failed.status).toBe(500);
+    // The page says both halves of what happened: a merchant exists, and there
+    // is no account naming it — with the next step, which is to register again.
+    const text = readable(failed.html);
+    expect(text).toMatch(/created and your account was not/i);
+    expect(text).toMatch(/register again/i);
+    // And nothing that would let them believe otherwise: no session, and the
+    // address still free, which is what makes the second attempt work.
+    expect(failed.headers.getSetCookie()).toStrictEqual([]);
+    expect(failed.to).toBeNull();
+    expect(browser.sessionToken()).toBeNull();
+    await expect(accounts.byEmail(FORM.email)).resolves.toBeNull();
+  });
+
+  it("refuses a form with a field missing, and asks the gateway for nothing", async () => {
+    // Every one of the four is required, and a merchant is not made for a form
+    // that was never going to produce an account. Litter that can be avoided by
+    // reading the form is litter nobody has to argue about afterwards.
+    const registrar = registrarAnswering(madeAMerchant());
+    const { browser, accounts } = await started({ registrar });
+
+    for (const missing of ["email", "password", "name", "invitation"] as const) {
+      const { [missing]: _absent, ...rest } = FORM;
+      const answered = await browser.post("/register", rest);
+      expect(answered.status, missing).toBe(400);
+      expect(readable(answered.html), missing).toMatch(/every|all four|each/i);
+      expect(answered.headers.getSetCookie(), missing).toStrictEqual([]);
+    }
+    expect(registrar.asked).toStrictEqual([]);
+    await expect(accounts.byEmail(FORM.email)).resolves.toBeNull();
+  });
+
+  it("refuses a password too short to be worth having, before making anything", async () => {
+    const registrar = registrarAnswering(madeAMerchant());
+    const { browser } = await started({ registrar });
+
+    const answered = await browser.post("/register", { ...FORM, password: "short" });
+
+    expect(answered.status).toBe(400);
+    expect(readable(answered.html)).toMatch(/12 characters/);
+    expect(registrar.asked).toStrictEqual([]);
+  });
+
+  it("refuses something that is not an address before it makes a merchant", async () => {
+    const registrar = registrarAnswering(madeAMerchant());
+    const { browser } = await started({ registrar });
+
+    const answered = await browser.post("/register", { ...FORM, email: "not-an-address" });
+
+    expect(answered.status).toBe(400);
+    expect(readable(answered.html)).toMatch(/address/i);
+    expect(registrar.asked).toStrictEqual([]);
+  });
+
+  it("says on the page that nobody has confirmed the address", async () => {
+    // ADR-0014 §4. Nothing is sent anywhere, so a merchant who registers has
+    // shown they hold an invitation and not that they hold the address they
+    // typed. Every screen that shows the address says so, and this is the first
+    // of them.
+    const { browser } = await started({ registrar: registrarAnswering(madeAMerchant()) });
+
+    const form = readable((await browser.get("/register")).html);
+
+    expect(form).toMatch(/not confirmed|nobody confirms|no.*sent to it/i);
+  });
+
+  it("is reachable without a session, and is linked from the sign-in", async () => {
+    // ADR-0009 §5 puts every other address behind the gate. This one cannot be:
+    // somebody registering has no session by definition. The sign-in's own
+    // comment used to say a link here would be a door onto a corridor that was
+    // never built — the corridor is built.
+    const { browser } = await started({ registrar: registrarAnswering(madeAMerchant()) });
+
+    const form = await browser.get("/register");
+    const signIn = await browser.get("/sign-in");
+
+    expect(form.status).toBe(200);
+    expect(readable(form.html)).toMatch(/register/i);
+    expect(signIn.html).toContain('href="/register"');
+  });
+
+  it("puts neither the password nor the merchant's key on the page or in the log", async () => {
+    // The key comes back from the gateway once and goes onto the row. A page or
+    // a log carrying it would be the secret loose in exactly the two places
+    // ADR-0014 §2 says it must not reach.
+    const said: string[] = [];
+    const collect = (...parts: unknown[]) => said.push(parts.map(String).join(" "));
+    const log = vi.spyOn(console, "log").mockImplementation(collect);
+    const error = vi.spyOn(console, "error").mockImplementation(collect);
+    try {
+      const { browser, gateway } = await started({
+        registrar: registrarAnswering(madeAMerchant()),
+      });
+      await publish(gateway, roomCard);
+
+      const registered = await browser.post("/register", FORM);
+      const after = await browser.get("/cards");
+
+      expect(registered.html).not.toContain(KEY);
+      expect(registered.html).not.toContain(FORM.password);
+      expect(after.html).not.toContain(KEY);
+      expect(said.join("\n")).not.toContain(KEY);
+      expect(said.join("\n")).not.toContain(FORM.password);
+    } finally {
+      log.mockRestore();
+      error.mockRestore();
+    }
+  });
+
+  it("turns away a registration posted from another site", async () => {
+    // A public form that makes a merchant is worth the same second lock every
+    // other form here has: a page elsewhere must not be able to make somebody's
+    // browser register an account the page's author then signs into.
+    const registrar = registrarAnswering(madeAMerchant());
+    const { browser } = await started({ registrar });
+
+    const forged = await browser.from("https://evil.example.com").post("/register", FORM);
+
+    expect(forged.status).toBe(403);
+    expect(registrar.asked).toStrictEqual([]);
+  });
+
+  it("sends somebody who is already signed in to their cards rather than a second merchant", async () => {
+    // On the post as well as on the form, and the post is the one that matters.
+    // A second registration makes a second merchant at the gateway that nothing
+    // afterwards names, and swaps the session for one belonging to it — so the
+    // cabinet they come back to is a different, empty merchant, and the one
+    // they were selling as is reachable only by signing in again.
+    const registrar = registrarAnswering(madeAMerchant());
+    const { browser, accounts } = await started({ registrar });
+    await browser.signIn();
+
+    const form = await browser.get("/register");
+    const posted = await browser.post("/register", FORM);
+
+    expect(form.status).toBe(303);
+    expect(form.to).toBe("/cards");
+    expect(posted.status).toBe(303);
+    expect(posted.to).toBe("/cards");
+    expect(registrar.asked).toStrictEqual([]);
+    await expect(accounts.byEmail(FORM.email)).resolves.toBeNull();
+  });
+
+  it("refuses a name the catalogue that lists it would not carry, and says the rule", async () => {
+    // The name goes into a discovery catalogue whose rule is 32 characters of
+    // ordinary keyboard characters. A name outside it is refused by the gateway
+    // with a 400, which this screen would have to guess at; refused here, the
+    // person is told the rule and no merchant is made for an attempt that was
+    // never going to succeed.
+    const registrar = registrarAnswering(madeAMerchant());
+    const { browser } = await started({ registrar });
+
+    for (const name of ["x".repeat(33), "Кириллица", "a name with a  bell in it", "", "   "]) {
+      const answered = await browser.post("/register", { ...FORM, name });
+      expect(answered.status, name).toBe(400);
+      expect(readable(answered.html), name).toMatch(/32 characters|four is needed/);
+    }
+    expect(registrar.asked).toStrictEqual([]);
+  });
+
+  it("takes the space off a name rather than refusing it for one", async () => {
+    // A space at the front of a form field is a typing accident, and the rule
+    // that refuses it exists because a padded name survives the catalogue
+    // untouched and makes two spellings of one word. Trimming it satisfies the
+    // rule and gives the person the name they meant; refusing it would be this
+    // form being pedantic about something it can simply fix.
+    const registrar = registrarAnswering(madeAMerchant());
+    const { browser } = await started({ registrar });
+
+    const made = await browser.post("/register", { ...FORM, name: "  A merchant with a name  " });
+
+    expect(made.status).toBe(303);
+    expect(registrar.asked).toStrictEqual([
+      { name: "A merchant with a name", invitation: FORM.invitation },
+    ]);
+  });
+
+  it("does not send somebody to check a good invitation when the gateway is the problem", async () => {
+    // 403 is the only answer that means the invitation was not accepted. A
+    // route that is not there in a bad deployment answers 404 and a gateway
+    // that is down answers 500 — folded into the refusal, both would tell
+    // everybody handed a good invitation to go and check it, and the log line
+    // an operator reads would say the same wrong thing.
+    for (const status of [404, 500, 0]) {
+      const running = await started({
+        registrar: registrarAnswering({ ok: false, status, why: "no such route" }),
+      });
+      const answered = await running.browser.post("/register", FORM);
+
+      expect(answered.status, `${status}`).toBe(502);
+      const text = readable(answered.html);
+      expect(text, `${status}`).toMatch(/nothing you typed is at fault/i);
+      expect(text, `${status}`).not.toMatch(/invitation may not be one we accept/i);
+
+      await running.browser.close();
+      await running.accounts.close();
+      await running.stopGateway();
+    }
   });
 });
 
@@ -1235,6 +1726,279 @@ describe("the receipts screen", () => {
   });
 });
 
+describe("the keys screen", () => {
+  const THIS_CALL: MerchantKey = {
+    id: "key_the_cabinet_is_using",
+    label: "the cabinet",
+    created_at: "2026-08-20T09:00:00.000Z",
+    disabled_at: null,
+  };
+  const ANOTHER: MerchantKey = {
+    id: "key_the_workers_use",
+    label: "the worker on the small box",
+    created_at: "2026-08-24T11:30:00.000Z",
+    disabled_at: null,
+  };
+  const REVOKED: MerchantKey = {
+    id: "key_the_laptop_had",
+    label: "the laptop that went missing",
+    created_at: "2026-07-01T08:00:00.000Z",
+    disabled_at: "2026-08-26T17:45:00.000Z",
+  };
+  const SECRET = "the-secret-shown-once-and-never-again";
+
+  /** The three key routes answered by the test, the rest by the real gateway. */
+  const withKeys = (
+    listed: readonly MerchantKey[] = [THIS_CALL, ANOTHER, REVOKED],
+  ): {
+    readonly disabled: string[];
+    readonly issued: string[];
+    readonly client: (real: GatewayClient) => GatewayClient;
+  } => {
+    const disabled: string[] = [];
+    const issued: string[] = [];
+    const keys: MerchantKeyList = { keys: [...listed], this_call: THIS_CALL.id };
+    return {
+      disabled,
+      issued,
+      client: (real) => ({
+        ...real,
+        keys: async () => ({ ok: true, document: keys }),
+        issueKey: async (label) => {
+          issued.push(label);
+          return {
+            ok: true,
+            document: {
+              key: { id: "key_the_new_one", label, created_at: NOW, disabled_at: null },
+              secret: SECRET,
+            },
+          };
+        },
+        disableKey: async (keyId) => {
+          disabled.push(keyId);
+          return { ok: true, document: { ...ANOTHER, disabled_at: NOW } };
+        },
+      }),
+    };
+  };
+  const NOW = "2026-08-28T12:00:00.000Z";
+
+  it("lists the keys this merchant has, the working ones and the revoked ones", async () => {
+    // ADR-0010 made a key a row so that one can be revoked without touching any
+    // other. A list that quietly dropped the revoked ones would answer "which
+    // key did I turn off last week" with silence, on the screen where that is
+    // the question somebody has.
+    const { browser } = await started({ client: withKeys().client });
+    await browser.signIn();
+
+    const text = readable((await browser.get("/keys")).html);
+
+    expect(text).toContain("the cabinet");
+    expect(text).toContain("the worker on the small box");
+    expect(text).toContain("the laptop that went missing");
+    expect(text).toMatch(/revoked/i);
+    expect(text).toContain("2026-08-26");
+  });
+
+  it("does not offer to disable the key this cabinet is holding", async () => {
+    // ADR-0014 §5: the gateway refuses that call, and one click would otherwise
+    // stand between a merchant and a cabinet that answers every page with "the
+    // gateway will not take this key" — with the way back through a terminal
+    // they do not have. So the control is not there to press, and the row says
+    // why rather than leaving a blank.
+    const { browser } = await started({ client: withKeys().client });
+    await browser.signIn();
+
+    const page = (await browser.get("/keys")).html;
+
+    expect(page).not.toContain(`/keys/${THIS_CALL.id}/disable`);
+    expect(page).toContain(`/keys/${ANOTHER.id}/disable`);
+    expect(readable(page)).toMatch(/this cabinet is using/i);
+  });
+
+  it("offers no control at all against a key that is already revoked", async () => {
+    const { browser } = await started({ client: withKeys().client });
+    await browser.signIn();
+
+    const page = (await browser.get("/keys")).html;
+
+    expect(page).not.toContain(`/keys/${REVOKED.id}/disable`);
+  });
+
+  it("issues a key, shows its secret once, and says that is the only time", async () => {
+    // The same promise the command makes and for the same reason: nothing keeps
+    // a readable copy, so a merchant who does not copy it has to issue another.
+    // Saying so on the page is the difference between that being a nuisance and
+    // being a surprise.
+    const keys = withKeys();
+    const { browser } = await started({ client: keys.client });
+    await browser.signIn();
+
+    const issued = await browser.post("/keys", { label: "the second worker" });
+
+    expect(keys.issued).toStrictEqual(["the second worker"]);
+    expect(issued.status).toBe(200);
+    expect(issued.html).toContain(SECRET);
+    expect(readable(issued.html)).toMatch(/only time|once/i);
+    // And it is gone from every page after it: the list is drawn from documents
+    // that do not carry a secret at all.
+    expect((await browser.get("/keys")).html).not.toContain(SECRET);
+  });
+
+  it("refuses to issue a key with no name, without asking the gateway", async () => {
+    // A key with no name is a key nobody can tell from another, on the screen
+    // whose whole job is telling them apart before revoking one.
+    const keys = withKeys();
+    const { browser } = await started({ client: keys.client });
+    await browser.signIn();
+
+    const refused = await browser.post("/keys", { label: "   " });
+
+    expect(refused.status).toBe(400);
+    expect(readable(refused.html)).toMatch(/name/i);
+    expect(keys.issued).toStrictEqual([]);
+  });
+
+  it("disables one key and comes back to the list", async () => {
+    // Answered with a redirect rather than a page, like every other switch
+    // here, so that a merchant who reloads does not press it again.
+    const keys = withKeys();
+    const { browser } = await started({ client: keys.client });
+    await browser.signIn();
+
+    const off = await browser.post(`/keys/${ANOTHER.id}/disable`);
+
+    expect(keys.disabled).toStrictEqual([ANOTHER.id]);
+    expect(off.status).toBe(303);
+    expect(off.to).toBe("/keys");
+  });
+
+  it("writes down who issued a key and who revoked one, and neither secret", async () => {
+    // ADR-0009 §7: every action that changes something names the person who did
+    // it. Issuing and revoking a key are two of the most consequential, and the
+    // secret itself must not travel with the sentence — a log goes places the
+    // database does not.
+    const said: string[] = [];
+    const collect = (...parts: unknown[]) => said.push(parts.map(String).join(" "));
+    const log = vi.spyOn(console, "log").mockImplementation(collect);
+    try {
+      const { browser } = await started({ client: withKeys().client });
+      await browser.signIn();
+
+      await browser.post("/keys", { label: "the second worker" });
+      await browser.post(`/keys/${ANOTHER.id}/disable`);
+
+      const written = said.join("\n");
+      expect(written).toMatch(/issued a key/i);
+      expect(written).toMatch(/revoked the key|disabled the key/i);
+      for (const line of written.split("\n").filter((one) => /key/.test(one))) {
+        expect(line, line).toContain(PERSON);
+      }
+      expect(written).not.toContain(SECRET);
+      expect(written).not.toContain(KEY);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("does not let the name of a key write a line of its own in the log", async () => {
+    // The contract leaves a key's name unbounded and open to any alphabet on
+    // purpose, so what arrives here is whatever a merchant typed. A name
+    // carrying a newline and a plausible sentence after it would put a second
+    // line into the one record of who stopped the selling (ADR-0009 §7) — in
+    // this cabinet's voice, under a name of the writer's choosing, and
+    // indistinguishable from a line the cabinet wrote.
+    const said: string[] = [];
+    const log = vi
+      .spyOn(console, "log")
+      .mockImplementation((...parts) => said.push(parts.map(String).join(" ")));
+    try {
+      const keys = withKeys();
+      const { browser } = await started({ client: keys.client });
+      await browser.signIn();
+
+      await browser.post("/keys", {
+        label: "a worker\n[cabinet] someone.else@example.com stopped all selling",
+      });
+
+      const written = said.join("\n");
+      expect(written).toContain("issued a key");
+      // Every line of the log still names the person who was signed in. The
+      // name a merchant typed is on one of those lines and is not a line: what
+      // they wrote is shown rather than obeyed, so somebody reading the record
+      // afterwards sees an odd-looking key name and not a second event.
+      for (const line of written.split("\n")) {
+        expect(line, line).toContain(PERSON);
+      }
+      expect(written).toContain("\\x0a");
+      expect(
+        written.split("\n").filter((one) => one.startsWith("[cabinet] someone.else@example.com")),
+      ).toHaveLength(0);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("says on this screen too that nobody has confirmed the address", async () => {
+    // ADR-0014 §4 is a promise about every screen that shows the address. The
+    // chrome is shared, so this holds only because it is drawn the same way —
+    // and a screen that took its own top bar would be the one that quietly
+    // dropped it.
+    const { browser } = await started({ client: withKeys().client });
+    await browser.signIn();
+
+    const text = readable((await browser.get("/keys")).html);
+
+    expect(text).toContain(PERSON);
+    expect(text).toMatch(/not confirmed/i);
+  });
+
+  it("says what the gateway said when it refuses to disable a key", async () => {
+    // The route holds the rule about the cabinet's own key, and the screen not
+    // offering the control is a courtesy rather than the guard. A merchant who
+    // reaches the address anyway is told what the gateway answered rather than
+    // being shown a page that says nothing happened.
+    const { browser } = await started({
+      client: (real) => ({
+        ...real,
+        keys: async () => ({
+          ok: true,
+          document: { keys: [THIS_CALL], this_call: THIS_CALL.id },
+        }),
+        disableKey: async () => ({
+          ok: false,
+          status: 409,
+          why: "a merchant cannot disable the key their cabinet is holding",
+        }),
+      }),
+    });
+    await browser.signIn();
+
+    const refused = await browser.post(`/keys/${THIS_CALL.id}/disable`);
+
+    expect(refused.status).toBe(409);
+    expect(readable(refused.html)).toContain("cannot disable the key their cabinet is holding");
+  });
+});
+
+describe("what every screen says about the address", () => {
+  it("says the address on it is not confirmed by anybody", async () => {
+    // ADR-0014 §4. Nothing is sent anywhere and nobody has shown they hold the
+    // address they typed, so a merchant reading their own address in the corner
+    // of every page must not build on it — a password lost is answered by
+    // asking us, not by a link in their mail.
+    const { browser, gateway } = await started();
+    await publish(gateway, roomCard);
+    await browser.signIn();
+
+    for (const path of ["/cards", "/orders", "/receipts", "/password"]) {
+      const text = readable((await browser.get(path)).html);
+      expect(text, path).toContain(PERSON);
+      expect(text, path).toMatch(/not confirmed/i);
+    }
+  });
+});
+
 describe("when something goes wrong that the merchant has to get out of", () => {
   /**
    * A cabinet whose gateway answers however this test says.
@@ -1254,17 +2018,17 @@ describe("when something goes wrong that the merchant has to get out of", () => 
       loadConfig({
         GATEWAY_URL: "http://127.0.0.1:1",
         DATABASE_URL: "postgres://nobody@nowhere:5432/unused",
-        MERCHANT_API_KEY: KEY,
       }),
       {
         accounts,
-        gateway: {
-          cards: answer,
-          pauseCard: answer,
-          setSelling: answer,
-          orders: answer,
-          receipts: answer,
-        } as never,
+        gatewayFor: () =>
+          ({
+            cards: answer,
+            pauseCard: answer,
+            setSelling: answer,
+            orders: answer,
+            receipts: answer,
+          }) as never,
       },
     );
     const server = app.listen(0);

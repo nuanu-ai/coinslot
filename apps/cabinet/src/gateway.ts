@@ -17,17 +17,25 @@
 
 import {
   API_ROUTES,
+  DisabledKeySchema,
   expandPath,
+  type IssuedKey,
+  IssuedKeySchema,
   MERCHANT_KEY_HEADER,
   type MerchantCard,
   type MerchantCardList,
   MerchantCardListSchema,
   MerchantCardSchema,
+  type MerchantKey,
+  type MerchantKeyList,
+  MerchantKeyListSchema,
   merchantKeyHeaderValue,
   type OrderList,
   OrderListSchema,
   type ReceiptList,
   ReceiptListSchema,
+  type RegisteredMerchant,
+  RegisteredMerchantSchema,
 } from "@coinslot/contracts";
 
 /** What a call came to, in the two shapes a page has to draw differently. */
@@ -47,19 +55,24 @@ export interface GatewayClient {
   setSelling(selling: boolean): Promise<Answer<MerchantCardList>>;
   orders(open: boolean): Promise<Answer<OrderList>>;
   receipts(): Promise<Answer<ReceiptList>>;
+  keys(): Promise<Answer<MerchantKeyList>>;
+  issueKey(label: string): Promise<Answer<IssuedKey>>;
+  disableKey(keyId: string): Promise<Answer<MerchantKey>>;
 }
 
 /**
- * A client bound to one merchant's key.
+ * The one call the cabinet makes with no key at all.
  *
- * The key is a parameter rather than something this module reads, so a client
- * can be built per request the day the cabinet has a key per request. It does
- * not today: `buildApp` builds one from `MERCHANT_API_KEY` for the life of the
- * process, so this cabinet serves the one merchant that key resolves to at the
- * gateway. What changes that is accounts naming their own merchant, which is a
- * step still to come (ADR-0010); the shape here is what makes it a change to
- * where the key comes from rather than to this file.
+ * Separate from the client above rather than a method on it, because it is a
+ * different thing: every other call is made as some merchant, and this one is
+ * made by somebody who is not a merchant yet. A `register` sitting on a client
+ * bound to a key would be a method whose key is ignored, which is the kind of
+ * shape somebody later reads as an accident.
  */
+export interface Registrar {
+  register(name: string, invitation: string): Promise<Answer<RegisteredMerchant>>;
+}
+
 /**
  * How long the cabinet waits for the gateway before giving up on one call.
  *
@@ -74,24 +87,41 @@ export interface GatewayClient {
  */
 const ANSWER_WITHIN_MS = 10_000;
 
-export const gatewayFor = (
-  baseUrl: string,
-  key: string,
-  answerWithinMs: number = ANSWER_WITHIN_MS,
-): GatewayClient => {
-  const call = async <T>(
+/** What one call needs beyond its route and the shape of its answer. */
+interface Sending {
+  /** The values for a path that names parameters, such as `:key_id`. */
+  readonly values?: Readonly<Record<string, string>>;
+  readonly query?: string;
+  /** A document to send, for the routes that take one. */
+  readonly body?: unknown;
+}
+
+/**
+ * One caller, bound to a key or to nothing at all.
+ *
+ * A null key means no key header on the request, which is registration and
+ * nothing else. It is spelled as an absence rather than as an empty string
+ * because the gateway would read an empty bearer token as a key it does not
+ * know, and a 401 is a worse answer than the one a keyless route gives.
+ */
+const caller =
+  (baseUrl: string, key: string | null, answerWithinMs: number) =>
+  async <T>(
     route: { readonly method: string; readonly path: string },
     schema: { parse: (value: unknown) => T },
-    values: Readonly<Record<string, string>> = {},
-    query = "",
+    sending: Sending = {},
   ): Promise<Answer<T>> => {
-    const url = `${baseUrl}${expandPath(route.path, values)}${query}`;
+    const url = `${baseUrl}${expandPath(route.path, sending.values ?? {})}${sending.query ?? ""}`;
 
     let answered: Response;
     try {
       answered = await fetch(url, {
         method: route.method,
-        headers: { [MERCHANT_KEY_HEADER]: merchantKeyHeaderValue(key) },
+        headers: {
+          ...(key === null ? {} : { [MERCHANT_KEY_HEADER]: merchantKeyHeaderValue(key) }),
+          ...(sending.body === undefined ? {} : { "content-type": "application/json" }),
+        },
+        ...(sending.body === undefined ? {} : { body: JSON.stringify(sending.body) }),
         signal: AbortSignal.timeout(answerWithinMs),
       });
     } catch (thrown) {
@@ -117,16 +147,66 @@ export const gatewayFor = (
     return { ok: true, document };
   };
 
+/**
+ * A client bound to one merchant's key.
+ *
+ * The key is a parameter rather than something this module reads, and the
+ * cabinet builds one of these per request from the key on the row of whoever is
+ * signed in (ADR-0014 §2). Two people signed into one cabinet are therefore two
+ * merchants, which is what a client held for the life of the process could
+ * never be.
+ */
+export const gatewayFor = (
+  baseUrl: string,
+  key: string,
+  answerWithinMs: number = ANSWER_WITHIN_MS,
+): GatewayClient => {
+  const call = caller(baseUrl, key, answerWithinMs);
+
   return {
     cards: () => call(API_ROUTES.list_merchant_cards, MerchantCardListSchema),
     pauseCard: (itemId, paused) =>
       call(paused ? API_ROUTES.pause_card : API_ROUTES.resume_card, MerchantCardSchema, {
-        item_id: itemId,
+        values: { item_id: itemId },
       }),
     setSelling: (selling) =>
       call(selling ? API_ROUTES.resume_selling : API_ROUTES.pause_selling, MerchantCardListSchema),
-    orders: (open) => call(API_ROUTES.list_orders, OrderListSchema, {}, open ? "?open=true" : ""),
+    orders: (open) =>
+      call(API_ROUTES.list_orders, OrderListSchema, { query: open ? "?open=true" : "" }),
     receipts: () => call(API_ROUTES.list_receipts, ReceiptListSchema),
+    keys: () => call(API_ROUTES.list_keys, MerchantKeyListSchema),
+    issueKey: (label) => call(API_ROUTES.issue_key, IssuedKeySchema, { body: { label } }),
+    disableKey: async (keyId) => {
+      // Unwrapped here rather than at the screen. The contract wraps the key in
+      // an object so that the answer can grow a field beside it without
+      // changing shape under every reader; what the one screen that draws it
+      // needs is the key, and a page reaching through a wrapper is a page that
+      // has to be edited the day the wrapper grows.
+      const answered = await call(API_ROUTES.disable_key, DisabledKeySchema, {
+        values: { key_id: keyId },
+      });
+      return answered.ok ? { ok: true, document: answered.document.key } : answered;
+    },
+  };
+};
+
+/**
+ * A caller with no key, which can do exactly one thing.
+ *
+ * The invitation is not the cabinet's to check and is not in its configuration:
+ * it is one value out of the gateway's, handed to a merchant along with the
+ * address of the site (ADR-0014 §3). What arrives here is whatever was typed
+ * into the form, and what comes back says only that it was accepted or that it
+ * was not.
+ */
+export const registrarFor = (
+  baseUrl: string,
+  answerWithinMs: number = ANSWER_WITHIN_MS,
+): Registrar => {
+  const call = caller(baseUrl, null, answerWithinMs);
+  return {
+    register: (name, invitation) =>
+      call(API_ROUTES.register_merchant, RegisteredMerchantSchema, { body: { name, invitation } }),
   };
 };
 

@@ -28,12 +28,22 @@ The gateway settles against nothing locally (ADR-0008), so a purchase completes
 with no wallet, no network and no faucet, and it says so in its first line of
 log. Nothing here moves money.
 
-To sign into the cabinet, make an account — there is no sign-up page yet
-(ADR-0009; registration is third on the road ADR-0010 fixes):
+To sign into the cabinet, make an account for the merchant this stack seeded.
+An account names the merchant it signs in as and holds that merchant's key
+(ADR-0014), and the key is read from standard input rather than given as an
+argument — an argument is in the shell's history and in the process list of
+everybody on the machine:
 
 ```
-docker compose exec cabinet pnpm --filter @coinslot/cabinet account add you@example.com
+printf %s local-sandbox-merchant-key | docker compose exec -T cabinet \
+  pnpm --filter @coinslot/cabinet account add you@example.com the_merchant
 ```
+
+That key is the sandbox value `compose.yaml` seeds and is a value in a file
+like the database password beside it; a stack brought up with
+`COINSLOT_MERCHANT_KEY` set takes that instead. A merchant who has been given
+an invitation registers from the cabinet's own page rather than running any of
+this — the command is the way in when the merchant already exists.
 
 If port 8080 is taken, `COINSLOT_HOST_PORT=8090 docker compose up` moves the
 whole thing, address in the payment challenge included.
@@ -41,7 +51,7 @@ whole thing, address in the payment challenge included.
 ## What is here
 
 - `apps/gateway` — the payment edge, the order machine's runner, the queue
-- `apps/cabinet` — the merchant's screens: cards, orders, receipts
+- `apps/cabinet` — the merchant's screens: cards, orders, receipts, keys
 - `apps/landing` — the public page, static
 - `packages/contracts` — every shape that crosses a boundary, and the route
   table both sides read

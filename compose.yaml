@@ -67,8 +67,8 @@
 #   COINSLOT_PUBLIC_ORIGIN  what a browser types             http://localhost:8080
 #   COINSLOT_WEB_PUBLISH    the published port of the door   8080:8080
 #   COINSLOT_COOKIE_SECURE  Secure on the session cookie     false
-#   COINSLOT_MERCHANT_KEY   the key the cabinet reaches      local-sandbox-merchant-key
-#                           the gateway with
+#   COINSLOT_MERCHANT_KEY   the key the mock merchant        local-sandbox-merchant-key
+#                           sells with
 #   COINSLOT_SEED_KEY       the key the gateway writes at    local-sandbox-merchant-key
 #                           start-up, or nothing at all
 #   COINSLOT_INVITATION     the code registration is         register-on-this-laptop
@@ -270,12 +270,14 @@ services:
       # nothing about a merchant's data — every card, order and receipt on every
       # screen still comes from the API.
       DATABASE_URL: postgres://coinslot:coinslot@postgres:5432/coinslot
-      # The key the cabinet reaches the gateway with — the one the gateway
-      # seeded above, which is what makes it resolve to the merchant whose cards
-      # and receipts these screens show. It is here rather than typed into a
-      # form by whoever is signing in: machine to machine, out of configuration.
-      # Rotating it is now a separate act from signing anybody out.
-      MERCHANT_API_KEY: "${COINSLOT_MERCHANT_KEY:-local-sandbox-merchant-key}"
+      # There is no merchant key here, and its absence is the point rather than
+      # an omission. The cabinet used to be given one and use it for the life of
+      # the process, so every screen showed that merchant's money whoever was
+      # signed in; the key is on the row of the person signed in now (ADR-0014
+      # §2), which is what makes two accounts here two merchants. A stack that
+      # still sets MERCHANT_API_KEY on this service is setting a name nothing
+      # reads.
+      #
       # Off by default, because this stack is plain http on localhost, where a
       # Secure cookie is never sent back and nobody can sign in at all. Anywhere
       # the cabinet is reached over https this is "true", and a server that

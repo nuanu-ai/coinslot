@@ -1,15 +1,19 @@
 /**
- * The account command, wired to the database.
+ * The account command, wired to the database and to standard input.
  *
- * This is the only way an account comes into being (ADR-0009). In the local
- * stack it is one line, run against the cabinet that is already up:
+ * A merchant registers for themselves now (ADR-0014), so this is not the only
+ * way an account comes into being. It is the way one is made for a merchant
+ * that already exists at the gateway — the first account on a deployed server —
+ * and it is still the answer to a lost password. In the local stack it is one
+ * line, run against the cabinet that is already up, with the merchant's key
+ * arriving on standard input rather than on the command line:
  *
- *   docker compose exec cabinet \
- *     pnpm --filter @coinslot/cabinet account add you@example.com
+ *   docker compose exec -T cabinet \
+ *     pnpm --filter @coinslot/cabinet account add you@example.com mer_x
  *
  * Outside Docker it needs the same DATABASE_URL the cabinet itself is given and
- * nothing else — not the merchant key, because nothing here talks to the
- * gateway:
+ * nothing else — the key comes in on standard input, and nothing here talks to
+ * the gateway:
  *
  *   DATABASE_URL=postgres://coinslot:coinslot@localhost:5432/coinslot \
  *     pnpm --filter @coinslot/cabinet account list
@@ -30,11 +34,34 @@ if (databaseUrl === undefined || databaseUrl === "") {
   process.exit(1);
 }
 
+/**
+ * Everything on standard input, as one string.
+ *
+ * Read only when a verb asks for it, so that the three verbs with no key to
+ * take do not sit waiting on a terminal nobody is piping into. Where standard
+ * input is a terminal rather than a pipe, that wait is what a person would see,
+ * so it is said out loud first — otherwise the command looks hung.
+ */
+const readStandardInput = async (): Promise<string> => {
+  if (process.stdin.isTTY === true) {
+    console.log("Waiting for the merchant's key on standard input. Ctrl-D when it is in.");
+  }
+  process.stdin.setEncoding("utf8");
+  let said = "";
+  for await (const chunk of process.stdin) {
+    said += chunk;
+  }
+  return said;
+};
+
 const accounts = postgresAccounts(connect(databaseUrl));
 let code = 1;
 try {
-  code = await runAccount(process.argv.slice(2), accounts, (line) => {
-    console.log(line);
+  code = await runAccount(process.argv.slice(2), accounts, {
+    say: (line) => {
+      console.log(line);
+    },
+    readKey: readStandardInput,
   });
 } catch (thrown) {
   // Whatever the command did not have a better sentence for. The one failure
