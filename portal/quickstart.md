@@ -102,9 +102,10 @@ deliberate. A price goes as one string, the amount and the currency code with a
 space between them, or as the two fields written out. A declared field that
 needs no title and no `required` mark goes as its type word — `email` above
 needs both, so it is written out. And a card that names no fulfillment mode is
-synchronous, which is what this one is. The long spelling of every one of them
-is in the [card reference](/cards), and what you write is opened out into it
-when the card arrives.
+synchronous, which is what this one is. The [card reference](/cards) starts
+from a card with no purchase parameter on it at all and adds a field at a time,
+each under the need for it; the long spelling of all three is there, and what
+you write is opened out into it when the card arrives.
 
 An invalid card raises no exception. In place of `ok` the call answers with
 `errors`: a list of the fields at fault, each with an explanation of what is
@@ -131,26 +132,18 @@ unchanged.
 A price in the card is required in every case: it is what the agent sees in the
 catalogue while it is choosing. If your price is worked out on the fly — from a
 rate, from a supplier's cost, from what is available at that minute — you add a
-price check to the card, and then the two work together. When the check
-answers, the sale goes through at the price it named. When it is silent, what
-happens depends on the mode: a synchronous product sells at the price in the
-card, and an asynchronous one does not sell at all, because its buyer is
-charged at the moment of purchase and we will not take money for stock nobody
-has confirmed. You will answer that question in code on the next step; the
-fields of the question and of the answer are in the [card reference](/cards),
-and what silence leads to is on [What can go wrong](/failures).
+price check to the card and answer it in code on the next step, and the sale
+then goes through at the price your answer named. What a check that stays
+silent costs is on [What can go wrong](/failures), and the fields of the
+question and of the answer are in the [card reference](/cards).
 
 The field `fulfillment` declares the mode, and a card that leaves it out is
 synchronous. With `'sync'` the goods go to the agent in the answer to the
 purchase; with `'async'` they go later, and a card that sells that way names the
-mode. There is a third mode, `'confirm'`, where you say first that you will
-deliver and the buyer is charged only after that — a card cannot be published in
-it during the pilot, because the request that asks you has no shape on the wire
-yet and your handler could not tell one from a paid order. The product decides
-which mode it takes, and the channel only narrows the choice: an API delivers
-both synchronously and asynchronously — issuing an eSIM, for one, is paid for at
-once while the profile arrives later — and an order that arrived as a message
-is never synchronous.
+mode. Which of the two your product takes decides which handler you write on
+the next step. There is a third mode as well, and it cannot be published during
+the pilot. That one, and the reason a product rather than a channel picks its
+mode, are in the [card reference](/cards).
 
 The step is done when the call has returned a catalogue `id`. The card is not
 visible outside yet: it goes into the catalogues on step 6.

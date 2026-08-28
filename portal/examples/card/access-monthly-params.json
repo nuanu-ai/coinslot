@@ -1,0 +1,10 @@
+{
+  "merchant_item_id": "access-monthly",
+  "title": "One month of access to the service",
+  "description": "Access for 30 days from delivery, renewal not included",
+  "price": "5.00 USD",
+  "params": {
+    "email": { "type": "string", "required": true, "title": "Where to send the link" }
+  },
+  "result": { "access_url": "string", "expires_at": "string" }
+}

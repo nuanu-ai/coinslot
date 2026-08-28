@@ -15,6 +15,11 @@ the requirement that runs through every field at once — an agent has to be abl
 to buy from the card, which means assembling a correct purchase and getting
 back what it expected.
 
+The page begins at the smallest card that sells and adds one field at a time,
+each of them under the need that asks for it. If what you came for is a lookup
+rather than a first reading, [every field of a card](#every-field-of-a-card) is
+in one table at the end.
+
 ::: warning The field names are preliminary
 What is fixed is the model and not the signatures. Of the machine names `id`,
 `merchant_item_id` and `as_of` are final; the package name, the function names
@@ -22,70 +27,26 @@ and the rest of the names in this reference are working names and can still
 change before the pilot.
 :::
 
-## Fields
-
-| Field | Type | Required | Example |
-| --- | --- | --- | --- |
-| `id` | string | not yours to fill in: we issue it at publication | `itm_9f2c4a` |
-| `merchant_item_id` | string | required | `access-monthly` |
-| `title` | string | required | `One month of access to the service` |
-| `description` | string, up to 500 characters | required | `Access for 30 days from delivery, renewal not included` |
-| `price` | an amount as a string, and a currency; or the two as one string | required | `{ amount: '5.00', currency: 'USD' }`, or `'5.00 USD'` |
-| `price_check` | what to ask the price and availability with: a handler, or an address we do not call yet | optional | `'handler'` |
-| `params` | the shape of the purchase parameters | required where the delivery needs input | `{ email: { type: 'string', required: true } }` |
-| `result` | the shape of what the agent receives on delivery | required | `{ access_url: { type: 'string' } }`, or `{ access_url: 'string' }` |
-| `tags` | words that describe this product in a catalogue: at most five, each 1 to 32 characters of plain typewriter text — unaccented letters, digits, spaces and the punctuation on a keyboard, so a curly quote or a long dash is refused — with no space at either end and no two the same but for their case. A card with no tags leaves the field out rather than sending an empty list | optional | `['esim', 'telecom']` |
-| `fulfillment` | `'sync'` or `'async'`; `'confirm'` is not published during the pilot | optional; a card that names no mode is `'sync'` | `'sync'` |
-| `fulfill_deadline_seconds` | how long you may take to deliver | optional, and only on an asynchronous card | `86400` |
-
-An asynchronous card can carry one deadline of your own: how long you may take
-to deliver. It runs from the moment the buyer is charged, which for an
-asynchronous product is the moment of purchase — so the clock is already going
-when the order reaches your handler, and it covers every attempt we make to
-deliver that order to you. Name it, and the agent sees it before it buys.
-
-Leaving it out does not leave you off a clock. A day applies instead, an order
-that runs past it is marked as needing a refund exactly as one past a number of
-your own would be, and the agent is shown no deadline at all — so the clock you
-are held to is one the agent never saw. That day is ours to set rather than the
-card's, and naming your own is the only way the agent learns what it is. What
-happens when a delivery deadline runs out is in [Time ran out](/orders).
-
-A synchronous card has no such field, because how long to wait for a synchronous
-answer is set by us, the same for every product: eight seconds. That one runs
-from the moment of purchase rather than from the moment your handler is called,
-so the price question and the payment check come out of it first. The
-confirmation mode has a deadline of its own — an hour, where the card names none
-— and it arrives together with the mode.
-
-### A whole card
-
-The required fields above, assembled into the one document they make. This is
-what publishing a card sends; the optional fields are added to it as the product
-needs them, and each one is described further down this page.
-
-<<< @/examples/card/access-monthly.json
-
-### The same card, written short
-
-Three of those fields take a shorter spelling, and a card that needs none of the
-options can be written with all three. The price goes as one string, the amount
-and the currency code with a single space between them. A declared field that
-carries no title and no `required` mark goes as its type word alone. A card that
-names no fulfillment mode is synchronous.
+## The smallest card that sells
 
 <<< @/examples/card/access-monthly-short.json
 
-That is the same card as the one above, and it is the same card after we accept
-it: the short spellings are opened out when the card arrives, so what we store,
-what an agent reads in a catalogue and what your delivery is held to are the
-long form either way. Reading a card back gives you the long form, whichever way
-you wrote it.
+That is a whole card, and there are three facts in it: what you sell, at what
+price, and what the agent receives. Published as it stands it sells — an agent
+finds it in a catalogue, buys it, and your handler delivers against it. Nothing
+further down this page is needed for a product that works like this one.
 
-The shorter spellings belong to fields rather than to cards, so one card mixes
-them. Put a title on the field that needs one and leave its neighbours as type
-words; write the price short and the purchase parameters in full. There is no
-mode to switch on, and nothing about the card changes when you do.
+All five of its fields are required, and no card goes without them.
+`merchant_item_id` is your own key for the product. `title` and `description`
+are what the agent reads while it is choosing. `price` is what it pays.
+`result` is the shape of what it receives once you have delivered.
+
+The five sections below take those fields one at a time, and the last of them
+is where a declared field grows a longer spelling. After that the card itself
+starts to grow, and every addition arrives under the need behind it: input the
+agent has to send you, goods that leave later than the answer to the purchase,
+a price worked out at the moment of purchase, and words that help an agent find
+the card at all.
 
 ### Two identifiers
 
@@ -130,34 +91,14 @@ catalogue while it is choosing, and it is what ends up in the receipt when the
 sale goes through at it. For a product with a fixed price that is the whole
 story — the price is true until you change it.
 
-If your price is worked out on the fly, you add a price check to the card and
-the two work together. The check's answer is stronger than the card's price:
-when it answers, the sale goes at the price it named; when it is silent, we
-take the price from the card, and what follows depends on the fulfillment mode
-([What can go wrong](/failures)).
+A price is an amount and a currency, and `'5.00 USD'` above is those two
+written as one string, with a single space between them. Either spelling can be
+written on a card; the longer one is in [the same card, written out in
+full](#the-same-card-written-out-in-full).
 
-On an asynchronous product with a check, the card's price is there for exactly
-one purpose: to show the agent roughly what the purchase will cost while it is
-choosing in the catalogue. The sale itself goes only at the price the check
-named, because the buyer is charged at the moment of purchase, so a silent
-check starts no purchase and the card's price is not a fallback. Put the
-ordinary price of the product there rather than a zero or a placeholder: the
-agent decides from it whether to look any further.
-
-### Purchase parameters
-
-The list of what the agent has to give at purchase: an email address, a
-country, a period, any other input without which the delivery is impossible.
-Each parameter has a type — `string`, `number`, `integer` or `boolean` — a mark
-saying whether it is required, and an explanation a person can read of what it
-is for. Those four are the whole language today, so a date, a list or a choice
-from a set travels as one of them.
-
-Nothing checks this field against your delivery, and it is where the card's
-main requirement breaks. A parameter your delivery needs and the card does not
-name produces a purchase you cannot fulfil — and instead of a sale you get a
-refusal. No check of ours can see that, because neither we nor the contract
-know what your delivery needs; getting it right is yours.
+Where the price is not fixed but worked out when somebody buys, the card
+carries a price check as well, and that is [further down this
+page](#a-price-worked-out-at-the-moment-of-purchase).
 
 ### Delivery result
 
@@ -165,6 +106,24 @@ The shape of what the agent receives once the delivery has gone through: a
 link, a key, a number, a set of fields. It sits in the card next to the
 purchase parameters, and it is how the agent sees before paying what it is
 actually buying.
+
+A declared field is a name and a type, and the type may be `string`, `number`,
+`integer` or `boolean`. Those four are the whole language, so a date, a list or
+a choice from a set travels as one of them. Where the name says enough,
+`access_url: 'string'` is the whole declaration. Where it does not, write the
+field out and give it a `title`, a line of human words that the agent reads
+beside the name:
+
+```ts
+result: {
+  access_url: { type: 'string', title: 'The link to sign in with' },
+  expires_at: { type: 'string', title: 'When it stops working' },
+}
+```
+
+Those two spellings declare the same field. A title is worth writing wherever
+`expires_at` could be read as a date, a duration or a number of seconds — the
+agent has your field name and nothing else to go on.
 
 We pass the delivery to the agent as it is: the handler returns JSON to this
 shape, and we neither rewrite it nor rename anything in it. So the declaration
@@ -192,31 +151,59 @@ Every field of the result is required until you mark it `required: false`. The
 result is a promise, and a delivery missing a promised field does not go
 through as a delivery; a promised string that arrives empty counts as missing,
 because an empty access code is not a shorter access code but nothing under the
-name of something. Purchase parameters run the other way round: a parameter is
-required only where it is marked `required: true`, and one the agent leaves
-empty is left empty, since that is input it chose to give.
+name of something.
 
 A card declares at least one field here, and at least one of them has to arrive
 every time. A result that might be entirely absent tells the agent nothing
 about what it is paying for, and a card carrying one is refused at publication.
 
-```ts
-result: {
-  access_url: { type: 'string', title: 'The link to sign in with' },
-  expires_at: { type: 'string', title: 'When it stops working' },
-}
-```
+## Input the agent has to send you
 
-### Fulfillment mode
+Some purchases cannot be carried out from the card alone. An email address to
+send the link to, a country, a period, a name to put on a licence — whatever
+your delivery needs that only the agent can give goes in `params`, and the
+agent is shown it before it buys. A product whose delivery needs nothing leaves
+the field out, as the card at the top of this page does.
 
-The value of `fulfillment` declares the mode, and the agent sees it before it
-pays. With `'sync'` the goods leave in the answer to the purchase; with
-`'async'` they leave later. The mode decides when the buyer is charged and how
-the sale behaves when something fails.
+<<< @/examples/card/access-monthly-params.json
 
-A card that names no mode is synchronous, and it is stored and shown as though
-it had said so. Leave the field out where the goods go back in the answer to the
-purchase; name it where they do not.
+That is the same product with one parameter added. A parameter is declared in
+the same small language as a delivered field: the same four types, and the same
+choice between the type word alone and the field written out. This one is
+written out because it carries two things a type word cannot — the mark saying
+the agent has to supply it, and the line of words saying what it is for.
+Everything else on the card is unchanged, which is the rule about the shorter
+spellings: they belong to fields rather than to cards, so writing one field out
+leaves its neighbours alone.
+
+The `required` mark means the opposite here from what it means in the delivery
+result. A declared result field arrives unless you say otherwise, because it is
+a promise you made before the money moved; a parameter is one the agent may
+leave out unless you mark it `required: true`, because it is something you are
+asking for. A parameter the agent sends empty stays empty on its way to you,
+since that is input it chose to give.
+
+Nothing checks this field against your delivery, and it is where the card's
+main requirement breaks. A parameter your delivery needs and the card does not
+name produces a purchase you cannot fulfil — and instead of a sale you get a
+refusal. No check of ours can see that, because neither we nor the contract
+know what your delivery needs; getting it right is yours.
+
+## Goods that leave later than the answer
+
+A card that names no fulfillment mode is synchronous, and it is stored and
+shown as though it had said so: the goods go to the agent in the answer to the
+purchase, which is what both cards above do. Where they cannot go back that
+quickly — a profile that has to be provisioned, a supplier who has to be asked
+— the card carries `fulfillment: 'async'` instead, and the agent sees the mode
+before it pays. The mode decides when the buyer is charged and how the sale
+behaves when something fails; what happens inside each of them is on [Orders
+and fulfillment modes](/orders).
+
+The product decides the mode. The channel only narrows the choice: an order
+that arrived as a message is never synchronous, while a connected API delivers
+both ways — an eSIM is paid for at the moment of purchase and its profile
+arrives afterwards.
 
 A third mode, `'confirm'`, puts your confirmation before the delivery: you are
 asked whether you will deliver, and the buyer is charged after your yes. A card
@@ -224,12 +211,43 @@ cannot be published in it during the pilot — the request that asks you has no
 shape on the wire yet, so a handler could not tell one from a paid order, and
 publishing such a card would sell you a mode we cannot serve.
 
-The product decides the mode. The channel only narrows the choice: an order
-that arrived as a message is never synchronous, while a connected API delivers
-both synchronously and asynchronously. What happens inside each mode is on
-[Orders and fulfillment modes](/orders).
+An asynchronous card can carry one deadline of its own,
+`fulfill_deadline_seconds`: how long you may take to deliver. It runs from the
+moment the buyer is charged, which for an asynchronous product is the moment of
+purchase — so the clock is already going when the order reaches your handler,
+and it covers every attempt we make to deliver that order to you. Name it, and
+the agent sees it before it buys.
 
-## Asking the price and availability
+Leaving it out does not leave you off a clock. A day applies instead, an order
+that runs past it is marked as needing a refund exactly as one past a number of
+your own would be, and the agent is shown no deadline at all — so the clock you
+are held to is one the agent never saw. That day is ours to set rather than the
+card's, and naming your own is the only way the agent learns what it is. What
+happens when a delivery deadline runs out is in [Time ran out](/orders).
+
+A synchronous card has no such field, because how long to wait for a synchronous
+answer is set by us, the same for every product: eight seconds. That one runs
+from the moment of purchase rather than from the moment your handler is called,
+so the price question and the payment check come out of it first. The
+confirmation mode has a deadline of its own — an hour, where the card names none
+— and it arrives together with the mode.
+
+## A price worked out at the moment of purchase
+
+Where the price is not fixed — it comes off a rate, off a supplier's cost, off
+what is in stock this minute — you add a price check to the card, and the check
+and the card's price work together. The check's answer is stronger than the
+card's price: when it answers, the sale goes at the price it named; when it is
+silent, we take the price from the card, and what follows depends on the
+fulfillment mode ([What can go wrong](/failures)).
+
+On an asynchronous product with a check, the card's price is there for exactly
+one purpose: to show the agent roughly what the purchase will cost while it is
+choosing in the catalogue. The sale itself goes only at the price the check
+named, because the buyer is charged at the moment of purchase, so a silent
+check starts no purchase and the card's price is not a fallback. Put the
+ordinary price of the product there rather than a zero or a placeholder: the
+agent decides from it whether to look any further.
 
 The check answers one question: what the product costs and whether it is there
 right now. We ask it at the moment of purchase. It has two transports, the
@@ -344,6 +362,67 @@ Coinslot keeps no stock counts: only you know how much of anything there is. So
 a product that can run out is worth listing with a check, because without one
 we sell at the card's price and hear that it has run out only from your refusal
 at delivery.
+
+## Words that help an agent find the card
+
+The catalogues outside ours are listings other people run, where an agent
+searches for what it needs. A card can carry `tags` — words describing the
+product for that search — and they go out with the card into those listings,
+beside the description.
+
+A card carries at most five of them, each between 1 and 32 characters of plain
+typewriter text — unaccented letters, digits, spaces and the punctuation on a
+keyboard, so a curly quote or a long dash is refused — with no space at either
+end, and no two the same but for their case. Those limits belong to the
+listings rather than to us, and they are checked here because what a listing
+does past them is drop the word without telling anybody.
+
+A card with no tags leaves the field out rather than sending an empty list, and
+we invent none for it.
+
+## The same card, written out in full
+
+Three fields on this page have a shorter spelling and a longer one, and a card
+that uses none of the shorter ones says exactly what the card at the top says.
+Here is that product again with nothing written short:
+
+<<< @/examples/card/access-monthly.json
+
+Three spellings have changed and nothing about the product has. The price is
+the amount and the currency, which is what `'5.00 USD'` stood for. Each field
+of `result` is `{ type: 'string' }`, which is what a bare type word stands for.
+And `fulfillment: 'sync'` is written down instead of left silent.
+
+The two are also one card after we accept it: the short spellings are opened
+out when the card arrives, so what we store, what an agent reads in a catalogue
+and what your delivery is held to are the long form either way. Reading a card
+back gives you the long form, whichever way you wrote it.
+
+Write whichever suits the way your cards are made. A card assembled by a
+program has no use for the shorter spellings and is easier to generate without
+them; a card written by hand is shorter and plainer with them. Neither is a
+mode you switch on, and one card mixes them field by field — write the price
+short and the purchase parameters in full, put a title on the field that needs
+one and leave its neighbours as type words.
+
+## Every field of a card
+
+The sections above unfold these one at a time. Here they are together, the
+required fields first.
+
+| Field | Type | Required | Example |
+| --- | --- | --- | --- |
+| `id` | string | not yours to fill in: we issue it at publication | `itm_9f2c4a` |
+| `merchant_item_id` | string | required | `access-monthly` |
+| `title` | string | required | `One month of access to the service` |
+| `description` | string, up to 500 characters | required | `Access for 30 days from delivery, renewal not included` |
+| `price` | an amount as a string, and a currency; or the two as one string | required | `{ amount: '5.00', currency: 'USD' }`, or `'5.00 USD'` |
+| `result` | the shape of what the agent receives on delivery | required | `{ access_url: { type: 'string' } }`, or `{ access_url: 'string' }` |
+| `params` | the shape of the purchase parameters | required where the delivery needs input | `{ email: { type: 'string', required: true } }` |
+| `fulfillment` | `'sync'` or `'async'`; `'confirm'` is not published during the pilot | optional; a card that names no mode is `'sync'` | `'sync'` |
+| `fulfill_deadline_seconds` | how long you may take to deliver | optional, and only on an asynchronous card | `86400` |
+| `price_check` | what to ask the price and availability with: a handler, or an address we do not call yet | optional | `'handler'` |
+| `tags` | words describing the product for an agent's search, at most five | optional | `['esim', 'telecom']` |
 
 ## Refusal codes
 
