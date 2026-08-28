@@ -858,6 +858,58 @@ describe("the worker's calls over HTTP", () => {
     expect(error.message).toContain("256kb");
   });
 
+  it("says an encoding was refused rather than that the body could not be read", async () => {
+    // The promise: an error text is a claim somebody else's agent acts on, and
+    // "could not be read as JSON" is a false claim here. The body was never
+    // read at all — its content-encoding was turned away before a byte of it
+    // was decompressed, and the document inside may be perfectly good JSON. An
+    // agent told its JSON is bad re-encodes a document that was already right
+    // and sends it again under the same encoding, and gets the same answer
+    // every time.
+    //
+    // All three refusals the parser raises are read here, in one gateway,
+    // because they arrive as one throw and this fork is the only place they
+    // are still distinguishable. A fork widened until it swallows its
+    // neighbours is the same defect pointing the other way, and a test that
+    // only looked at the new branch would not see it.
+    const { served } = await started();
+
+    // `compress` is a content coding the HTTP specification registers and this
+    // parser has no decompressor for. Gzip, deflate and brotli it does inflate,
+    // so a body under any of those never reaches this branch at all.
+    const refusedEncoding = await served.call("POST", "/v0/quotes/prc_1/answer", {
+      body: { available: true },
+      headers: { ...asMerchant, "content-encoding": "compress" },
+    });
+    const badJson = await fetch(`${served.url}/v0/quotes/prc_1/answer`, {
+      method: "POST",
+      headers: { ...asMerchant, "content-type": "application/json" },
+      body: "{ this is not json",
+    });
+    const tooLarge = await served.call("POST", "/v0/quotes/prc_1/answer", {
+      body: { available: true, note: "x".repeat(300_000) },
+      headers: asMerchant,
+    });
+
+    expect(refusedEncoding.status).toBe(415);
+    const { error } = refusedEncoding.body as { error: { code: string; message: string } };
+    expect(error.code).toBe("encoding_unsupported");
+    // The subject, because an agent not told what was refused has only the body
+    // left to suspect and the body was fine; and the way out, because sending
+    // it uncompressed is the one thing that always works and the caller should
+    // not have to find that by trying encodings against a live gateway.
+    expect(error.message).toContain("content-encoding");
+    expect(error.message).toContain("uncompressed");
+    expect(error.message).not.toContain("could not be read as JSON");
+
+    expect(badJson.status).toBe(400);
+    expect((await badJson.json()) as { error: { code: string } }).toMatchObject({
+      error: { code: "malformed_body" },
+    });
+    expect(tooLarge.status).toBe(413);
+    expect((tooLarge.body as { error: { code: string } }).error.code).toBe("body_too_large");
+  });
+
   it("answers a call about an order nobody made with a plain not found", async () => {
     const { served } = await started();
 
