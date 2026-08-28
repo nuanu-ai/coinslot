@@ -206,17 +206,46 @@ export class Gateway {
       return;
     }
 
-    // A delivery went unanswered. It only counts if it is still the delivery
-    // the order is waiting on: the merchant who answered the one he was given
-    // must not be sent the order again for a reminder left against it.
-    const record = await this.runtime.store.orderById(reminder.orderId);
-    if (record === null || record.openDeliveryId !== reminder.handOver) {
-      return;
-    }
-    await this.runner.apply(reminder.orderId, {
-      kind: "handler_undelivered",
-      at: this.runtime.clock(),
-    });
+    // A delivery went unanswered. It only counts while it is still the delivery
+    // the order is waiting on — the merchant who answered the one he was given
+    // must not be sent the order again for a reminder left against it — and it
+    // stops being that delivery here, in the same write, because giving up on a
+    // hand-over is the last thing that happens to it.
+    //
+    // Both halves are one call, and the reason is that this is the only place
+    // in the gateway where reading the order and acting on what was read are
+    // the same decision. Everything that can happen between the two is a change
+    // to the very thing being checked. The merchant's answer lands and clears
+    // the hand-over, and a redelivery goes out to a merchant who is already
+    // working on the order. A worker draws the order and records a hand-over of
+    // its own, and a clearing written on top of that takes away the hand-over
+    // the order is now waiting on, so the silence on it is noticed by nobody.
+    // Another delivery of this same reminder does the whole thing once already,
+    // and the second one does it again.
+    //
+    // That last one is the one the queue produces on its own. Reminders go on
+    // it with the library's own retries where envelopes go on with none, so a
+    // reminder whose delivery was never completed — the process took it and
+    // died, the completion never reached the database — is handed out again
+    // carrying the same hand-over. Two envelopes for one silence spend two of
+    // the order's deliveries, running out of deliveries closes the order, and
+    // closing an order that has been paid for is a debt: the merchant loses a
+    // sale he could still have made and owes the money back.
+    //
+    // What is written is the same fact the three answer routes write when they
+    // pass `openDeliveryId: null`, reached from the other side. There the
+    // hand-over is over because the merchant answered it; here it is over
+    // because we have stopped waiting for him. It does not shut the guard for
+    // good: the redelivery this decides on mints a hand-over of its own the
+    // moment a worker draws it and arms its own reminder against that one, so
+    // the next silence is worth a delivery in its turn.
+    await this.runner.apply(
+      reminder.orderId,
+      { kind: "handler_undelivered", at: this.runtime.clock() },
+      { openDeliveryId: null },
+      undefined,
+      reminder.handOver,
+    );
   }
 
   /**
@@ -1210,6 +1239,16 @@ export class Gateway {
     }
     if (applied.outcome === "refused") {
       return { ok: false, error: refusedCall(applied.rejection) };
+    }
+    if (applied.outcome === "moved_on") {
+      // Only a caller that held the order to a hand-over is ever told this, and
+      // that is the reminder rather than any of the merchant's calls. Reaching
+      // it means somebody added a hand-over to one of those calls and left the
+      // merchant's answer to be worked out here; saying so is cheaper than
+      // guessing a word for him.
+      throw new Error(
+        `a merchant's ${landed} was held to a hand-over, and there is no answer written for an order that moved on`,
+      );
     }
     if (applied.answer === null) {
       // The machine took the event and had nothing to say back about it.

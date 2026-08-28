@@ -788,7 +788,7 @@ function fromDispatched(order: Order, event: StateEvent): TransitionResult {
       // the gateway. What stops the order being sent out again is the gateway
       // clearing the hand-over it was waiting on when it applies this event, so
       // that the reminder left against that hand-over finds it is no longer the
-      // open one (`openDeliveryId`, apps/gateway/src/app/gateway.ts:186).
+      // open one (`openDeliveryId`, read by `Gateway#onReminder`).
       return ok({ ...order, dispatch: { ...order.dispatch, accepted: true } }, [ACCEPTANCE_LANDED]);
     case "handler_delivered":
       return deliverGoods(order, event.at);

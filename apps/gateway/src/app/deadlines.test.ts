@@ -1,5 +1,6 @@
 import type { Card } from "@coinslot/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { Reminder } from "../ports/queue.js";
 import { type Harness, harness, workUntilStopped } from "../testing/harness.js";
 
 /**
@@ -420,6 +421,90 @@ describe("when a delivery goes unanswered", () => {
     await taking.stop();
 
     expect((await state(harnessed, orderId))?.dispatch.attempts).toBe(1);
+  });
+
+  it("spends one delivery on one silence, though the same reminder arrives twice", async () => {
+    // The queue hands a reminder out again when the process that took it never
+    // answered — it died, or the completion never reached the database. That is
+    // not a failure mode invented here: reminders are published with the
+    // library's own retries, where envelopes are published with none, and the
+    // queue adapter's database test watches a taken-and-unanswered reminder
+    // come back as the same job carrying the same payload.
+    //
+    // What must not follow is a second redelivery. Every hand-over is counted
+    // against the order's attempt cap, the order closes the moment the cap is
+    // reached, and closing an order that has been paid for is a debt: the
+    // merchant loses the sale and owes the money back. So a second arrival of
+    // one reminder has to cost nothing, or a silence the merchant had once
+    // spends two of the deliveries he was owed.
+    const harnessed = await started({
+      // Long enough that the gateway's own reminder for this hand-over does not
+      // fire inside the test: the two arrivals below are the whole of the input.
+      HANDLER_ANSWER_MS: "60000",
+      REDELIVERY_BASE_DELAY_MS: "5",
+      DEFAULT_ASYNC_FULFILLMENT_MS: "60000",
+    });
+    const orderId = await bought(harnessed, asyncCard);
+    await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
+
+    // One hand-over, drawn and answered by nobody.
+    const handed = await harnessed.gateway.poll(harnessed.merchant.id, 10, 1_000);
+    expect(handed.envelopes).toHaveLength(1);
+    const handOver = (await harnessed.store.orderById(orderId))?.openDeliveryId ?? null;
+    if (handOver === null) {
+      throw new Error("the hand-over was not recorded, so there is nothing to remind against");
+    }
+
+    // The reminder for that hand-over, and then the same one over again. It is
+    // put on the queue twice rather than repeated from inside it because what
+    // reaches the gateway is the same either way: one payload, naming one
+    // hand-over. The in-memory queue repeats a reminder only when the handler
+    // throws, and a handler that got as far as deciding on a redelivery did not
+    // throw — so its own repeat is the one path that cannot produce this.
+    const unanswered: Reminder = { kind: "delivery_unanswered", orderId, handOver };
+    await harnessed.queue.remind(unanswered, 0);
+    await vi.waitFor(
+      async () =>
+        expect(await harnessed.queue.holdsOrder(harnessed.merchant.id, orderId)).toBe(true),
+      { timeout: 2_000, interval: 5 },
+    );
+    await harnessed.queue.remind(unanswered, 0);
+    // Long enough for the second arrival to have been dealt with and for
+    // anything it decided on to have come off its redelivery delay.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    // One silence, one repeat. Two envelopes here is the merchant being asked
+    // twice for goods he was asked for once, and two of his five attempts gone.
+    const again = await harnessed.gateway.poll(harnessed.merchant.id, 10, 100);
+    expect(again.envelopes).toHaveLength(1);
+    expect((await state(harnessed, orderId))?.dispatch.attempts).toBe(2);
+  });
+
+  it("sends the order again when the next hand-over goes quiet in its turn", async () => {
+    // The other side of the guard, and the one an over-eager fix breaks. A
+    // hand-over that has been given up on is finished, but the order is not:
+    // the redelivery arms a hand-over of its own when it is drawn, and the
+    // silence after that one has to be worth another delivery. A guard shut for
+    // good would leave the order sitting in `dispatched` with nobody working on
+    // it and nothing sending it out again — its attempts would stop at two, and
+    // it would run to its deadline instead.
+    const harnessed = await started({
+      HANDLER_ANSWER_MS: "10",
+      REDELIVERY_BASE_DELAY_MS: "5",
+      DEFAULT_ASYNC_FULFILLMENT_MS: "60000",
+    });
+    const orderId = await bought(harnessed, asyncCard);
+    await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
+
+    // A worker that draws its stream and answers nothing, silence after silence.
+    const silent = workUntilStopped(harnessed, {});
+    await vi.waitFor(
+      async () => expect((await state(harnessed, orderId))?.dispatch.attempts).toBeGreaterThan(2),
+      { timeout: 2_000, interval: 5 },
+    );
+    await silent.stop();
+
+    expect((await state(harnessed, orderId))?.state).toBe("dispatched");
   });
 });
 
