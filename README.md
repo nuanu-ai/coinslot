@@ -17,9 +17,12 @@ at `/docs`, the merchant's cabinet at `/cabinet`, and the gateway at `/v0` —
 one origin, one port, with Postgres behind them. A merchant process comes up
 beside it and publishes two cards, so there is something to buy.
 
-Nothing buys by itself. A sale in the cabinet is one somebody made:
+Nothing buys by itself. A sale in the cabinet is one somebody made — and the
+buyer is the one thing here that runs on the host rather than in the stack, so
+the workspace needs its dependencies before it can:
 
 ```
+pnpm install
 pnpm buy                      # the first card in the catalogue
 pnpm buy esim                 # the one delivered later
 ```
@@ -46,7 +49,10 @@ an invitation registers from the cabinet's own page rather than running any of
 this — the command is the way in when the merchant already exists.
 
 If port 8080 is taken, `COINSLOT_HOST_PORT=8090 docker compose up` moves the
-whole thing, address in the payment challenge included.
+whole thing, address in the payment challenge included. It moves the stack and
+nothing else: the buy command runs on the host, reads none of the stack's
+variables, and goes to `http://localhost:8080` unless `GATEWAY_URL` sends it
+somewhere else — `GATEWAY_URL=http://localhost:8090 pnpm buy`.
 
 ## What is here
 

@@ -50,7 +50,7 @@
 # made:
 #
 #   pnpm buy                      # the first card in the catalogue
-#   pnpm buy esim-eu-5gb-30d      # the asynchronous one
+#   pnpm buy esim                 # the asynchronous one
 #
 # The passwords and the key are in this file and that is deliberate. This
 # stack holds a developer's own test orders and talks to a test network, and a
@@ -348,6 +348,12 @@ services:
       # 127.0.0.1 wins over Docker's wildcard for anything typed as localhost —
       # so the stack looks broken while being perfectly healthy. Set
       # COINSLOT_HOST_PORT to move it; the inside of the network never changes.
+      #
+      # It moves the stack and nothing else. The buy command above runs on the
+      # host rather than in this file and reads none of these variables: it goes
+      # to http://localhost:8080 unless GATEWAY_URL sends it somewhere else.
+      #
+      #   GATEWAY_URL=http://localhost:8090 pnpm buy
       #
       # A deployment sets the whole mapping instead, because both halves move at
       # once: Caddy listens on 443 rather than 8080 as soon as the address below
