@@ -14,7 +14,7 @@ import {
   serve,
   workUntilStopped,
 } from "../testing/harness.js";
-import { buildApp } from "./server.js";
+import { buildApp, refusal } from "./server.js";
 import { ORDER_ID_IN_EXTRA, PAYMENT_REQUIRED_HEADER, PAYMENT_SIGNATURE_HEADER } from "./x402.js";
 
 const KEY = "a-merchant-key-long-enough";
@@ -222,6 +222,23 @@ describe("what a call answers with", () => {
     } finally {
       server.close();
     }
+  });
+
+  it("will not let a refusal's own detail take the place of its reason", () => {
+    // The detail a refusal carries comes from somewhere else — a payment
+    // layer, a validator, a schema's findings — and a field called "message"
+    // is exactly what such a place calls its own text. Spread over the two
+    // required fields it would replace the sentence the caller was meant to
+    // read, and nothing would say the real one ever existed: the parameter is
+    // typed unknown, so a string fits it and the compiler is content.
+    const refused = refusal("payment_not_verified", "the payment layer would not vouch for this", {
+      message: "the facilitator's own words about its own call",
+      retryable: true,
+    });
+
+    expect(refused.error.message).toBe("the payment layer would not vouch for this");
+    expect(refused.error.code).toBe("payment_not_verified");
+    expect(refused.error.retryable).toBe(true);
   });
 });
 

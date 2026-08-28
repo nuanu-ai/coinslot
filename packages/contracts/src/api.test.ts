@@ -1311,6 +1311,22 @@ describe("the envelope every call refuses in", () => {
     expect(ErrorEnvelopeSchema.safeParse(null).success).toBe(false);
   });
 
+  it("is refused by every route's own document, so recognising one cannot swallow an answer", () => {
+    // The invariant the SDK's recognition actually rests on. It reads an
+    // answer as a refusal when the route's document will not have it, and that
+    // is only safe while no document of this surface would accept an envelope
+    // — otherwise a call that worked, or one whose refusal is a document in
+    // its own right, would come back as a failure with the gateway's words
+    // attached to it. Reading the two in the other order would not save it;
+    // this is what does, so this is where it is checked.
+    for (const [name, route] of Object.entries(API_ROUTES) as [string, RouteDefinition][]) {
+      expect(
+        route.response.document.safeParse(refused).success,
+        `${name} answers with a document that accepts a refusal envelope, so a refusal to this call cannot be told from an answer to it`,
+      ).toBe(false);
+    }
+  });
+
   it("is published, because it is the one answer every caller has to be able to read", () => {
     // The reader furthest from us has the JSON Schema export. A refusal shape
     // that lived only in TypeScript would leave them with the successes of

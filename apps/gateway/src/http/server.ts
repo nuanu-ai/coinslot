@@ -549,6 +549,13 @@ function hold(schema: ZodType, value: unknown): Held {
  * read the two that are always there — and because a body carrying anything at
  * the top level but `error` is not a refusal at all.
  *
+ * It is spread first, so the code and the sentence win. Spread last it would
+ * be a way of replacing them: a detail that happened to carry a `message` —
+ * a field named after the thing it describes, arriving from a payment layer or
+ * a validator — would silently become the refusal's own sentence, and the one
+ * the caller was meant to read would be gone with nothing to say it ever
+ * existed. The type does not catch it, because `unknown` fits a string.
+ *
  * Every refusal this gateway sends goes through here. Three of them used to be
  * written out as object literals with findings and no sentence at all, which
  * left the caller a code to search our source for and an empty space where the
@@ -559,5 +566,5 @@ export function refusal(
   message: string,
   detail?: Readonly<Record<string, unknown>>,
 ): ErrorEnvelope {
-  return { error: { code, message, ...detail } };
+  return { error: { ...detail, code, message } };
 }

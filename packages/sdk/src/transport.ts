@@ -242,10 +242,13 @@ const failure = (
  * What is known about a failed call, in a clause that can be dropped into a
  * sentence about whatever the call was carrying.
  *
- * It lives here rather than in each caller so that the three states are
- * described in one place and cannot drift into three different vocabularies.
+ * It lives here rather than in each caller so that the four cases are
+ * described in one place and cannot drift into four different vocabularies.
+ * Three of them are the reaches; the fourth is a refusal the gateway wrote in
+ * words we recognise, which is the one failure here that is not a silence and
+ * so does not belong to any of them.
  *
- * Each clause is held to what its own reach actually knows, and the third one
+ * Each clause is held to what its own case actually knows, and the last reach
  * is the one that has to be written carefully, because it is one sentence in
  * front of three different situations. A call abandoned on an abort throws
  * with no code at all and may never have left this process. A connection that
@@ -260,12 +263,12 @@ const failure = (
  * immediately after this clause and which names the road it came down.
  */
 export const whatIsKnown = (failure: TransportFailure): string => {
-  // A refusal we could read is the one failure that is not a silence. The
-  // three clauses below all say some version of "we cannot tell you what this
-  // call did"; here the gateway told us, in a shape we recognise, that it
-  // would not do it. Sending a merchant "what came back could not be read" in
-  // front of a reason we are about to quote is the message arguing with
-  // itself, and the half they believe is the first one.
+  // The fourth case, ahead of the three reaches. Each of those says some
+  // version of "we cannot tell you what this call did"; here the gateway told
+  // us, in a shape we recognise, that it would not do it. Sending a merchant
+  // "what came back could not be read" in front of a reason we are about to
+  // quote is the message arguing with itself, and the half they believe is the
+  // first one.
   if (failure.refusal !== undefined) {
     return "it reached us and the answer says the call did not go through";
   }
@@ -359,15 +362,22 @@ export const callRoute = async <N extends RouteName>(
     return { ok: true, document: parsed.data as DocumentOf<N> };
   }
 
-  // The document first and the refusal second, in that order and never the
-  // other way round. Some of this surface's own documents are refusals — an
-  // order call that did not go through says so inside the shape the route
-  // promises — and those are answers, not failures. Only a body that is not
-  // the document at all is asked whether it is the envelope every route says
-  // no in, and then what the caller is handed is what the gateway said, not
-  // our complaint about being unable to read it. That is the difference
-  // between telling a merchant their order is over and sending them to read
-  // our schemas.
+  // A body that is not the route's document is asked whether it is the
+  // envelope every route says no in, and if it is, the caller is handed what
+  // the gateway said rather than our complaint about being unable to read it.
+  // That is the difference between telling a merchant their order is over and
+  // sending them to read our schemas.
+  //
+  // What keeps this from swallowing one of the surface's own documents is not
+  // the order of these two reads. Some of those documents are refusals — an
+  // order call that did not go through says so inside the shape its route
+  // promises — and the envelope declines them on its own: its outer object is
+  // strict, so a body carrying anything beside `error` is not one, and the
+  // `ok` discriminator those answers lead with is exactly such a field. The
+  // guarantee is held where it can be checked rather than here, by a case in
+  // `api.test.ts` that puts an envelope to every route's document and demands
+  // a refusal from each. Reversing these two reads is not what would break it,
+  // which is why this paragraph does not claim the order is load-bearing.
   //
   // The status is not consulted, here or above. Which refusals of this surface
   // arrive under which code is the gateway's to decide and is written down
