@@ -18,7 +18,12 @@
  * work does not.
  */
 
-import { type Card, deliveryCheckFor, ReceiptSchema } from "@coinslot/contracts";
+import {
+  AgentOrderStatusSchema,
+  type Card,
+  deliveryCheckFor,
+  ReceiptSchema,
+} from "@coinslot/contracts";
 import { ScriptedFacilitator } from "@coinslot/gateway";
 import { WORKER_PROBLEM_KINDS } from "@coinslot/sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -270,6 +275,64 @@ describe("the stage-one gate: a sandbox purchase, green from catalog to receipt"
     expect(fields(collected.body).test).toBe(true);
   }, 20_000);
 
+  it("answers a purchase with the document its status door answers with, and no other", async () => {
+    // One concept — where your order stands — and one shape for it, whichever
+    // door an agent came through. Two shapes for one thing is two readers to
+    // write and two chances to read the same sale two ways: an agent that
+    // bought and an agent that came back later were being handed different
+    // documents about the same order, and only one of them was published.
+    const catalog = await buyer.catalog();
+    const esim = catalog.find((card) => card.title === EUROPE_ESIM.title);
+    if (esim === undefined) throw new Error("the eSIM is not in the catalog");
+
+    const bought = await buyer.buy(esim.id, { email: "buyer@example.com" });
+    expect(bought.status).toBe(200);
+
+    const purchased = fields(bought.body);
+    const orderId = purchased.order_id;
+    if (typeof orderId !== "string") throw new Error("the purchase named no order");
+
+    // Nothing moves this order between the two reads: the eSIM is delivered by
+    // an explicit call this test has not made, so both doors are describing the
+    // same standing order and every field may be compared.
+    const collected = await buyer.status(orderId);
+
+    expect(() => AgentOrderStatusSchema.parse(bought.body)).not.toThrow();
+    expect(() => AgentOrderStatusSchema.parse(collected.body)).not.toThrow();
+    expect(purchased).toStrictEqual(fields(collected.body));
+  }, 20_000);
+
+  it("hands the merchant's own key for the product and the buyer's answers through neither door", async () => {
+    // The status door was already built by addition rather than by
+    // subtraction, and the purchase was not: it answered with the merchant's
+    // own document for the order, which carries their key for the product and
+    // the parameters the buyer sent. Whoever holds an order's identifier can
+    // read that order (ADR-0011), so an answer assembled from the merchant's
+    // record hands all of it to whoever guessed one.
+    const catalog = await buyer.catalog();
+    const esim = catalog.find((card) => card.title === EUROPE_ESIM.title);
+    if (esim === undefined) throw new Error("the eSIM is not in the catalog");
+
+    const email = "buyer@example.com";
+    const bought = await buyer.buy(esim.id, { email });
+    const purchased = fields(bought.body);
+    const orderId = purchased.order_id;
+    if (typeof orderId !== "string") throw new Error("the purchase named no order");
+
+    const collected = await buyer.status(orderId);
+    const five = ["delivered", "order_id", "price", "status", "test"];
+
+    expect(Object.keys(purchased).sort()).toStrictEqual(five);
+    expect(Object.keys(fields(collected.body)).sort()).toStrictEqual(five);
+
+    // Read off the whole body rather than off a field name, because the cost
+    // is the value escaping and not the name it escaped under.
+    for (const answer of [bought.body, collected.body]) {
+      expect(JSON.stringify(answer)).not.toContain(EUROPE_ESIM.merchant_item_id);
+      expect(JSON.stringify(answer)).not.toContain(email);
+    }
+  }, 20_000);
+
   it("refuses an order identifier that names nothing, in the words the contract promises", async () => {
     // The negative control for the agent's door. An identifier that resolves
     // to no order is answered with one refusal and no detail — and a second
@@ -288,6 +351,52 @@ describe("the stage-one gate: a sandbox purchase, green from catalog to receipt"
     const another = await buyer.status("ord_nor_this_one");
     expect(another.status).toBe(invented.status);
     expect(another.body).toStrictEqual(invented.body);
+  }, 20_000);
+
+  it("gives the merchant the gateway's own reason for an order it will not describe", async () => {
+    // The whole road, with nothing stubbed on it: a real gateway refuses a
+    // real SDK call in words of its own, and the merchant reads those words.
+    //
+    // The order is one that closed before anybody named a price for it — the
+    // card is price-checked and this merchant's desk does not price it, so the
+    // honest answer is "there is none" and the purchase ends there. The
+    // merchant's own read of that order cannot come back in the shape it
+    // promises, because that shape carries a sale price and this sale has
+    // none. What the gateway sends instead is a refusal with a reason in it,
+    // and a merchant told only that we could not parse something would go
+    // reading our schemas about an order that is simply over.
+    const unpriceable: Card = {
+      ...EUROPE_ESIM,
+      merchant_item_id: "esim-eu-no-desk-prices-it",
+      title: "Europe eSIM, from a supplier this desk does not price",
+      price_check: "handler",
+    };
+    const published = await merchant.client.catalog.publish(unpriceable);
+    if (!("ok" in published)) {
+      throw new Error(`publishing the unpriceable card was refused: ${JSON.stringify(published)}`);
+    }
+
+    const listed = (await buyer.catalog()).find((card) => card.title === unpriceable.title);
+    if (listed === undefined) throw new Error("the unpriceable card is not in the catalog");
+
+    const bought = await buyer.buy(listed.id, { email: "buyer@example.com" });
+
+    // The purchase is over before any money moved, and it says so in the same
+    // document a purchase that worked would have used.
+    expect(bought.status).toBe(409);
+    const refusedPurchase = AgentOrderStatusSchema.parse(bought.body);
+    expect(refusedPurchase.status).toBe("rejected");
+    expect(refusedPurchase.price).toBeNull();
+    expect(facilitator.settles).toStrictEqual([]);
+
+    const said = await merchant.client.orders.get(refusedPurchase.order_id).then(
+      () => null,
+      (thrown: unknown) => (thrown instanceof Error ? thrown.message : String(thrown)),
+    );
+
+    expect(said).toContain("order_closed_before_it_was_priced");
+    expect(said).toContain("no sale to describe");
+    expect(said).not.toContain("is not the document it promises");
   }, 20_000);
 
   it("a refused payment moves no money and hands over no goods: the synchronous refusal is free", async () => {

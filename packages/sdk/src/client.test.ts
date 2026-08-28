@@ -447,6 +447,106 @@ describe("closing an order the merchant took on", () => {
   });
 });
 
+describe("a refusal the gateway put into words", () => {
+  /**
+   * The refusal the real gateway answers `get_order` with when the order
+   * closed before anybody named a price for it — the shape and the sentence
+   * `apps/gateway/src/http/routes.ts` writes, and the one
+   * `apps/gateway/src/http/server.test.ts` holds it to.
+   *
+   * It is scripted as text rather than as a document because it is not the
+   * document this route promises, which is the whole situation: the gateway
+   * had something to say and no way to say it in the shape the table names.
+   */
+  const closedBeforePriced = JSON.stringify({
+    error: {
+      code: "order_closed_before_it_was_priced",
+      message:
+        "this order ended as rejected before anybody named a price for it, so there is no sale to describe",
+      status: "rejected",
+    },
+  });
+
+  it("tells the merchant what the gateway said, not that we could not parse it", async () => {
+    // The promise: a refusal reaches the caller in the server's own words. The
+    // merchant reading this has to be able to act on it, and "answered 409
+    // with something that is not the document it promises" sends them to read
+    // our schemas about an order that is simply over.
+    const coinslot = await gatewayServing({
+      get_order: () => ({ status: 409, text: closedBeforePriced }),
+    });
+
+    const refused = await coinslot.orders.get("order-1").then(
+      () => null,
+      (thrown: unknown) => (thrown instanceof Error ? thrown.message : String(thrown)),
+    );
+
+    expect(refused).toContain("order_closed_before_it_was_priced");
+    expect(refused).toContain("no sale to describe");
+    expect(refused).not.toContain("is not the document it promises");
+  });
+
+  it("hands an order call the gateway's own refusal instead of a word we invented", async () => {
+    // The same answer reaching the other consumer. An order call does not
+    // throw — the merchant is expected to branch on it — so the refusal has to
+    // arrive as the failure it is, and the clause in front of it must not say
+    // the answer could not be read when it was read perfectly well.
+    const coinslot = await gatewayServing({
+      deliver_order: () => ({
+        status: 404,
+        text: JSON.stringify({
+          error: { code: "no_such_order", message: "there is no such order" },
+        }),
+      }),
+    });
+
+    const result = await coinslot.orders.forId("order-1").deliver({
+      access_url: "https://a.example",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.error.message).toContain("no_such_order");
+    expect(result.ok === false && result.error.message).toContain("there is no such order");
+    expect(result.ok === false && result.error.message).not.toMatch(/could not be read/);
+  });
+
+  it("still says what came back when the answer is not a refusal either", async () => {
+    // The negative control, and it is the reason recognising a refusal cannot
+    // be done by looking at the status alone. A body that is JSON and is
+    // neither the document nor a refusal has to come back quoted, so that a
+    // person can see what the gateway actually sent.
+    const coinslot = await gatewayServing({
+      get_order: () => ({ status: 409, text: JSON.stringify({ trouble: "no code, no words" }) }),
+    });
+
+    const refused = await coinslot.orders.get("order-1").then(
+      () => null,
+      (thrown: unknown) => (thrown instanceof Error ? thrown.message : String(thrown)),
+    );
+
+    expect(refused).toContain("is not the document it promises");
+    expect(refused).toContain("no code, no words");
+  });
+
+  it("does not read a half-written refusal as a refusal", async () => {
+    // A refusal with a code and no words is not something a caller can act on,
+    // and treating it as one would print an empty sentence where the reason
+    // belongs. What is left in that case is the honest complaint with the body
+    // quoted inside it.
+    const coinslot = await gatewayServing({
+      get_order: () => ({ status: 409, text: JSON.stringify({ error: { code: "no_message" } }) }),
+    });
+
+    const refused = await coinslot.orders.get("order-1").then(
+      () => null,
+      (thrown: unknown) => (thrown instanceof Error ? thrown.message : String(thrown)),
+    );
+
+    expect(refused).toContain("is not the document it promises");
+    expect(refused).toContain("no_message");
+  });
+});
+
 describe("the door on every call", () => {
   it("presents the merchant's key on the calls that are behind it", async () => {
     // The fake gateway refuses a call behind the merchant's door that arrives
