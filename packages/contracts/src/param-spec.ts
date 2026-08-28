@@ -106,11 +106,12 @@ export type FieldSpec = z.infer<typeof FieldSpecSchema>;
 export type ParamSpec = z.infer<typeof ParamSpecSchema>;
 
 /**
- * One declared field as a merchant may write it: the whole spec, or the type
- * word alone.
+ * One declared field as a merchant may write it on a card: the whole spec, or
+ * the type word alone.
  *
- * The short form is opened out at the publish door (`shorthand.ts`), so this
- * type describes what may be written and never what is stored or read back.
+ * The short form belongs to the card and is opened out where a card is parsed,
+ * so this type says what may be written and never what is stored or read back.
+ * The rule and the reasons are in `card.ts`, beside the other two short forms.
  */
 export type FieldSpecInput = FieldSpec | ParamType;
 

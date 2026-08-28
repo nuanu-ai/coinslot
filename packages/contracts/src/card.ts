@@ -364,9 +364,8 @@ const CardFieldsSchema = z.strictObject({
    * The price in the catalog. Always required, even for a card with a price
    * check: this is what the agent compares when it is choosing.
    *
-   * Written as the two fields, or as the one string that becomes them
-   * (`shorthand.ts`). What is stored and what an agent reads are the two
-   * fields either way.
+   * Written as the two fields, or as the one string that becomes them. What is
+   * stored and what an agent reads are the two fields either way.
    */
   price: CardPriceSchema,
 
