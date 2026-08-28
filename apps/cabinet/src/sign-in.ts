@@ -67,7 +67,7 @@ export const registerScreen = (base: string, minimum: number, problem?: string):
     `<div class="gate">
 <form method="post" action="${escaped(base)}/register">
   <h1>Coinslot</h1>
-  <p>Registering makes your merchant, its first key and your account together. You are signed in at the end of it.</p>
+  <p>Registering makes your merchant, its first key and your account together. You are signed in at the end of it, and the one thing left to choose is asked for on the next page.</p>
   <label for="email">Email</label>
   <input id="email" name="email" type="email" autocomplete="username" autocapitalize="off" spellcheck="false" autofocus required>
   <label for="password">Password</label>

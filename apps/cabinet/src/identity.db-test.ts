@@ -256,7 +256,7 @@ if (databaseUrl === null) {
     it("registers, signs in and reads the session back off the cookie", async () => {
       const identity = identityOn();
 
-      const made = await identity.register("dmitry@example.com", PASSWORD, "A shop", MERCHANT);
+      const made = await identity.register("dmitry@example.com", PASSWORD, MERCHANT);
 
       expect(made.ok).toBe(true);
       expect(made.ok && made.opened.person.merchant).toStrictEqual(MERCHANT);
@@ -279,9 +279,9 @@ if (databaseUrl === null) {
       // statements with a gap between them, and two registrations at once fit
       // inside that gap.
       const identity = identityOn();
-      await identity.register("dmitry@example.com", PASSWORD, "A shop", MERCHANT);
+      await identity.register("dmitry@example.com", PASSWORD, MERCHANT);
 
-      const again = await identity.register("Dmitry@Example.com ", PASSWORD, "A shop", MERCHANT);
+      const again = await identity.register("Dmitry@Example.com ", PASSWORD, MERCHANT);
 
       expect(again.ok).toBe(false);
       expect(again.ok === false && again.why).toBe("taken");
@@ -294,7 +294,7 @@ if (databaseUrl === null) {
       // path happened to delete the account. A session that outlived its owner
       // would be a row nothing can resolve and a query that fails on a join.
       const identity = identityOn();
-      await identity.register("dmitry@example.com", PASSWORD, "A shop", MERCHANT);
+      await identity.register("dmitry@example.com", PASSWORD, MERCHANT);
       await identity.signIn("dmitry@example.com", PASSWORD);
 
       await pool.query("delete from cabinet_accounts where email = $1", ["dmitry@example.com"]);
@@ -307,7 +307,7 @@ if (databaseUrl === null) {
 
     it("sends a link that replaces a password, and ends every session with it", async () => {
       const identity = identityOn();
-      await identity.register("dmitry@example.com", PASSWORD, "A shop", MERCHANT);
+      await identity.register("dmitry@example.com", PASSWORD, MERCHANT);
       await identity.signIn("dmitry@example.com", PASSWORD);
       await identity.askToConfirm("dmitry@example.com");
       const confirming = /token=([^\s&]+)/.exec(mails.at(-1)?.body ?? "")?.[1] ?? "";
@@ -329,7 +329,7 @@ if (databaseUrl === null) {
 
     it("sends nothing to an address nobody has confirmed", async () => {
       const identity = identityOn();
-      await identity.register("dmitry@example.com", PASSWORD, "A shop", MERCHANT);
+      await identity.register("dmitry@example.com", PASSWORD, MERCHANT);
 
       await identity.askForANewPassword("dmitry@example.com");
 
@@ -351,9 +351,7 @@ if (databaseUrl === null) {
       const identity = identityOn();
       await emptyEverything();
 
-      await expect(
-        identity.register("dmitry@example.com", PASSWORD, "A shop", MERCHANT),
-      ).rejects.toThrow();
+      await expect(identity.register("dmitry@example.com", PASSWORD, MERCHANT)).rejects.toThrow();
       await expect(identity.signIn("dmitry@example.com", PASSWORD)).rejects.toThrow();
       await expect(identity.setPasswordFrom("a-token", PASSWORD)).rejects.toThrow();
       // The two that answer without asking the database at all, and still
@@ -375,7 +373,7 @@ if (databaseUrl === null) {
       // of sight — and because the component looks a session up one identifier
       // at a time, so there is no batch to hide the cost in.
       const identity = identityOn();
-      await identity.register("dmitry@example.com", PASSWORD, "A shop", MERCHANT);
+      await identity.register("dmitry@example.com", PASSWORD, MERCHANT);
       const signed = await identity.signIn("dmitry@example.com", PASSWORD);
       const mine = (signed.ok ? signed.opened.cookies : [])
         .map((line) => line.split(";")[0])

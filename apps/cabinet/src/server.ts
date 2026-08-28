@@ -1,6 +1,7 @@
 /**
- * The cabinet's own HTTP surface: four screens, a sign-in, a registration, the
- * pages a password is set on, and the four switches that stop and start selling.
+ * The cabinet's own HTTP surface: the screens with navigation on them, a
+ * sign-in, a registration, the pages a password is set on, the settings, and
+ * the switches that stop and start selling.
  *
  * It is server-rendered with no client framework and no build step, which is
  * ADR-0005 §4. Every page is one GET and every change is one form post
@@ -11,10 +12,9 @@
  * on the cookie it produces, so nothing on any of these pages needs JavaScript.
  *
  * Nothing here decides anything about a card, an order or the money. Each
- * handler is a translation between one request and one or two calls on the
- * gateway's public API, and the pages are drawn from what those calls answered
- * (ADR-0005 §3). A screen that cannot be drawn is API the merchant does not
- * have either.
+ * handler is a translation between one request and a few calls on the gateway's
+ * public API, and the pages are drawn from what those calls answered (ADR-0005
+ * §3). A screen that cannot be drawn is API the merchant does not have either.
  *
  * Who is allowed in is one middleware and not a check per handler, and that is
  * ADR-0009 §5. The gate sits above every route below it, so a page added later
@@ -39,6 +39,13 @@ import type { Identity, Person } from "./identity.js";
 import { keysScreen, newKeyScreen } from "./keys.js";
 import { printable } from "./printable.js";
 import { cardsScreen, ordersScreen, receiptsScreen, type Viewer } from "./screens.js";
+import {
+  chooseNameScreen,
+  NAME_CANNOT_BE_TAKEN_AWAY,
+  NAME_NEEDED,
+  settingsScreen,
+  whatIsWrongWithTheName,
+} from "./seller-name.js";
 import {
   confirmedScreen,
   forgotScreen,
@@ -395,12 +402,10 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
     const form = (request.body ?? {}) as {
       email?: unknown;
       password?: unknown;
-      name?: unknown;
       invitation?: unknown;
     };
     const email = typeof form.email === "string" ? form.email.trim() : "";
     const password = typeof form.password === "string" ? form.password : "";
-    const name = typeof form.name === "string" ? form.name.trim() : "";
     const invitation = typeof form.invitation === "string" ? form.invitation.trim() : "";
 
     // Everything about what was typed is settled before the gateway is called,
@@ -464,7 +469,7 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
       return;
     }
 
-    const registered = await identity.register(email, password, name, {
+    const registered = await identity.register(email, password, {
       id: made.document.merchant_id,
       key: made.document.secret,
     });
@@ -512,7 +517,10 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
 
     carryCookies(response, registered.opened.cookies);
     console.log(`[cabinet] ${registered.opened.person.email} registered and signed in`);
-    response.redirect(303, `${base}/cards`);
+    // On to the one question the form no longer asks. It is the last step of
+    // registering rather than a page inside the cabinet, which is why it is
+    // reached by a redirect from here and linked from nowhere else.
+    response.redirect(303, `${base}/choose-name`);
   });
 
   app.get(`${base}/password/forgot`, (_request, response) => {
@@ -726,12 +734,90 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
     response.redirect(303, `${base}/sign-in`);
   });
 
+  /**
+   * The screen the last step of registering lands on.
+   *
+   * It asks the gateway for nothing. A merchant arrives here in the second
+   * after their account was made, so there is no name to draw, and a call whose
+   * answer is known would be one more thing between registering and the box
+   * they came here to fill in. Somebody who comes back to this address later
+   * gets the same form, and using it sets the name the same way the settings
+   * page does.
+   */
+  app.get(`${base}/choose-name`, (_request, response) => {
+    response.type("html").send(chooseNameScreen(base));
+  });
+
+  app.post(`${base}/choose-name`, async (request, response) => {
+    const typed = nameIn(request);
+    // Empty is somebody who pressed the button with nothing in the box, and
+    // they are told so rather than sent to read the catalogue's rule — the
+    // rule is not what they broke, and the way past this screen is on it.
+    const wrong = typed === "" ? NAME_NEEDED : whatIsWrongWithTheName(typed);
+    if (wrong !== null) {
+      response.status(400).type("html").send(chooseNameScreen(base, wrong));
+      return;
+    }
+
+    const set = await gatewayAs(request).setSellerName(typed);
+    if (!set.ok) {
+      return trouble(response, base, set);
+    }
+    noted(whoIs(request), "chose the name their products are sold under");
+    response.redirect(303, `${base}/cards`);
+  });
+
+  app.get(`${base}/settings`, async (request, response) => {
+    const name = await gatewayAs(request).sellerName();
+    if (!name.ok) {
+      return trouble(response, base, name);
+    }
+    response.type("html").send(settingsScreen(viewing(request, base, name.document)));
+  });
+
+  app.post(`${base}/settings`, async (request, response) => {
+    const typed = nameIn(request);
+    // Empty is a merchant trying to stop being listed, and the sentence names
+    // the control that actually does that. The route below would refuse it
+    // anyway; refused here, the answer is about what they were trying to do
+    // rather than about a document the gateway would not take.
+    const wrong = typed === "" ? NAME_CANNOT_BE_TAKEN_AWAY : whatIsWrongWithTheName(typed);
+    if (wrong !== null) {
+      // The page is drawn from what the gateway has rather than from what was
+      // typed, the way the keys screen redraws its list after a refusal: a
+      // merchant reading a refused name in the box under "the name buyers read"
+      // is reading something they are not listed under.
+      const name = await gatewayAs(request).sellerName();
+      if (!name.ok) {
+        return trouble(response, base, name);
+      }
+      response
+        .status(400)
+        .type("html")
+        .send(settingsScreen(viewing(request, base, name.document), wrong));
+      return;
+    }
+
+    const set = await gatewayAs(request).setSellerName(typed);
+    if (!set.ok) {
+      return trouble(response, base, set);
+    }
+    noted(whoIs(request), "changed the name their products are sold under");
+    // Back to the page rather than answered with one, so that a reload does not
+    // send the name again.
+    response.redirect(303, `${base}/settings`);
+  });
+
   app.get(`${base}/cards`, async (request, response) => {
-    const cards = await gatewayAs(request).cards();
+    const gateway = gatewayAs(request);
+    const [cards, name] = await Promise.all([gateway.cards(), gateway.sellerName()]);
     if (!cards.ok) {
       return trouble(response, base, cards);
     }
-    response.type("html").send(cardsScreen(viewing(request, base), cards.document));
+    if (!name.ok) {
+      return trouble(response, base, name);
+    }
+    response.type("html").send(cardsScreen(viewing(request, base, name.document), cards.document));
   });
 
   app.get(`${base}/orders`, async (request, response) => {
@@ -739,30 +825,48 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
     // and what a merchant reconciling their books relies on.
     const open = request.query.open === "true";
     const gateway = gatewayAs(request);
-    const [cards, orders] = await Promise.all([gateway.cards(), gateway.orders(open)]);
+    const [cards, orders, name] = await Promise.all([
+      gateway.cards(),
+      gateway.orders(open),
+      gateway.sellerName(),
+    ]);
     if (!cards.ok) {
       return trouble(response, base, cards);
     }
     if (!orders.ok) {
       return trouble(response, base, orders);
     }
+    if (!name.ok) {
+      return trouble(response, base, name);
+    }
     response
       .type("html")
-      .send(ordersScreen(viewing(request, base), cards.document, orders.document, open));
+      .send(
+        ordersScreen(viewing(request, base, name.document), cards.document, orders.document, open),
+      );
   });
 
   app.get(`${base}/receipts`, async (request, response) => {
     const gateway = gatewayAs(request);
-    const [cards, receipts] = await Promise.all([gateway.cards(), gateway.receipts()]);
+    const [cards, receipts, name] = await Promise.all([
+      gateway.cards(),
+      gateway.receipts(),
+      gateway.sellerName(),
+    ]);
     if (!cards.ok) {
       return trouble(response, base, cards);
     }
     if (!receipts.ok) {
       return trouble(response, base, receipts);
     }
+    if (!name.ok) {
+      return trouble(response, base, name);
+    }
     response
       .type("html")
-      .send(receiptsScreen(viewing(request, base), cards.document, receipts.document));
+      .send(
+        receiptsScreen(viewing(request, base, name.document), cards.document, receipts.document),
+      );
   });
 
   for (const [verb, paused] of [
@@ -1030,10 +1134,31 @@ function whoIs(request: Request): Person {
   return person;
 }
 
-/** Who is looking at this page, and where the cabinet is mounted. */
-const viewing = (request: Request, base: string): Viewer => {
+/**
+ * Who is looking at this page, where the cabinet is mounted, and what buyers
+ * are told this merchant is called.
+ *
+ * The name is passed by the screens that asked the gateway for it and left out
+ * by the ones that did not. That difference is the point: a screen drawing the
+ * line about an unset name has to have asked, and a screen that has not asked
+ * must not draw a line either way about it.
+ */
+const viewing = (request: Request, base: string, sellerName?: string | null): Viewer => {
   const person = whoIs(request);
-  return { base, who: person.email, confirmed: person.confirmed };
+  return { base, who: person.email, confirmed: person.confirmed, sellerName };
+};
+
+/**
+ * The name in a form post, with the space at either end taken off.
+ *
+ * Trimmed rather than refused for a space, because the catalogue's rule turns a
+ * padded name into two spellings of one word and a space at the front of a form
+ * field is a typing accident. A field that never arrived reads the same as one
+ * left empty: both are somebody who typed no name.
+ */
+const nameIn = (request: Request): string => {
+  const form = (request.body ?? {}) as { seller_name?: unknown };
+  return typeof form.seller_name === "string" ? form.seller_name.trim() : "";
 };
 
 /**

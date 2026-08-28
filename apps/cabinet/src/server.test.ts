@@ -528,6 +528,27 @@ const purchasable = async (gateway: Served, itemId: string): Promise<boolean> =>
   (await gateway.call("POST", `/v0/items/${itemId}/purchase`, { body: { params: {} } })).status ===
   402;
 
+/**
+ * Takes the name buyers read off the merchant every test in this file signs in
+ * as.
+ *
+ * Through the store rather than through the route, and that is not a shortcut:
+ * the route refuses to take a name away on purpose, so no door in the cabinet
+ * leads back to this state. What it makes is the merchant a person has in the
+ * minute after they register, which is the state the screens below exist for.
+ */
+const unname = async (running: Running): Promise<void> => {
+  await running.harnessed.store.setServiceName(
+    running.harnessed.merchant.id,
+    null,
+    running.harnessed.now(),
+  );
+};
+
+/** What the gateway has this merchant listed as, read out of its store. */
+const listedAs = async (running: Running): Promise<string | null> =>
+  (await running.harnessed.store.merchantById(running.harnessed.merchant.id))?.serviceName ?? null;
+
 describe("getting into the cabinet", () => {
   it("shows a visitor with no session the sign-in and nothing else at all", async () => {
     // ADR-0009 §5: the gate denies by default, and every address answers the
@@ -1048,12 +1069,12 @@ describe("registering", () => {
    */
   const registrarAnswering = (
     answer: Answer<RegisteredMerchant>,
-  ): Registrar & { asked: { invitation: string }[] } => {
-    const asked: { invitation: string }[] = [];
+  ): Registrar & { asked: string[] } => {
+    const asked: string[] = [];
     return {
       asked,
       register: async (invitation) => {
-        asked.push({ invitation });
+        asked.push(invitation);
         return answer;
       },
     };
@@ -1087,8 +1108,7 @@ describe("registering", () => {
     const registered = await browser.post("/register", FORM);
 
     expect(registered.status).toBe(303);
-    expect(registered.to).toBe("/cards");
-    expect(registrar.asked).toStrictEqual([{ invitation: FORM.invitation }]);
+    expect(registrar.asked).toStrictEqual([FORM.invitation]);
     // The account is there, pointed at the merchant the gateway made, and the
     // password typed into the form is the one that works.
     const made = await identity.byEmail(FORM.email);
@@ -1100,6 +1120,21 @@ describe("registering", () => {
     const cards = await browser.get("/cards");
     expect(cards.status).toBe(200);
     expect(readable(cards.html)).toContain(FORM.email);
+  });
+
+  it("sends the person who has just registered to the screen that asks for their name", async () => {
+    // The name buyers read is not on this form any more, and the reason is what
+    // decides where they land next: it is a public answer demanded at the one
+    // moment a merchant knows least. Asked on a screen of its own it has room
+    // to say what it is for, and a merchant who has nothing to say yet can walk
+    // past it.
+    const registrar = registrarAnswering(madeAMerchant());
+    const { browser } = await started({ registrar });
+
+    const registered = await browser.post("/register", FORM);
+
+    expect(registered.status).toBe(303);
+    expect(registered.to).toBe("/choose-name");
   });
 
   it("answers a refused invitation and a closed door with one sentence, not two", async () => {
@@ -1208,6 +1243,22 @@ describe("registering", () => {
     }
     expect(registrar.asked).toStrictEqual([]);
     await expect(identity.byEmail(FORM.email)).resolves.toBeNull();
+  });
+
+  it("asks for three things and no longer for the name buyers read", async () => {
+    // The form that collects a public, unchangeable-feeling answer at the one
+    // moment a merchant knows least collects "some stuff", and "some stuff" is
+    // what then sits beside their products. The field is gone from here; where
+    // it went is said on the screen after this one.
+    const { browser } = await started({ registrar: registrarAnswering(madeAMerchant()) });
+
+    const form = await browser.get("/register");
+
+    expect(form.status).toBe(200);
+    expect(form.html).toContain('name="email"');
+    expect(form.html).toContain('name="password"');
+    expect(form.html).toContain('name="invitation"');
+    expect(form.html).not.toContain('name="name"');
   });
 
   it("refuses a password too short to be worth having, before making anything", async () => {
@@ -1323,14 +1374,6 @@ describe("registering", () => {
     await expect(identity.byEmail(FORM.email)).resolves.toBeNull();
   });
 
-  // Two tests stood here and are gone with the field they were about: one
-  // refused a name the catalogue would not carry, and one took the space off a
-  // padded one. Both described this form checking a name, and this form no
-  // longer asks for one — the screen that does is where those promises are
-  // made now, and where the tests for them belong. Deleting them here rather
-  // than leaving them passing against nothing is the point: a test that
-  // survives the behaviour it described is the one that later gets believed.
-
   it("does not send somebody to check a good invitation when the gateway is the problem", async () => {
     // 403 is the only answer that means the invitation was not accepted. A
     // route that is not there in a bad deployment answers 404 and a gateway
@@ -1352,6 +1395,307 @@ describe("registering", () => {
       await running.identity.close();
       await running.stopGateway();
     }
+  });
+});
+
+describe("choosing the name buyers read", () => {
+  it("asks for the name on a screen of its own, with room to say what it is for", async () => {
+    // The whole reason the field left the registration form. Here it can say
+    // what the name does, show what one looks like, and promise that it can be
+    // changed — none of which fits beside a password box, and all of which
+    // decides whether what arrives is a name or "some stuff".
+    const running = await started();
+    await unname(running);
+    await running.browser.signIn();
+
+    const screen = await running.browser.get("/choose-name");
+    const text = readable(screen.html);
+
+    expect(screen.status).toBe(200);
+    expect(screen.html).toContain('name="seller_name"');
+    // What it is for, in terms somebody who has never seen a catalogue can act
+    // on: buyers read it, beside the products.
+    expect(text).toMatch(/buyers/i);
+    // One example of what a name looks like.
+    expect(text).toMatch(/eSIM/i);
+    // The rule the catalogue holds it to, before anybody types rather than
+    // after a refusal.
+    expect(text).toMatch(/32 characters/);
+    // That it can be changed, and where.
+    expect(text).toMatch(/change/i);
+    expect(screen.html).toContain('href="/settings"');
+    // And a way past it, for somebody who has not decided.
+    expect(screen.html).toContain('href="/cards"');
+  });
+
+  it("writes the name and takes the merchant on to their cards", async () => {
+    const running = await started();
+    await unname(running);
+    await running.browser.signIn();
+
+    const chosen = await running.browser.post("/choose-name", { seller_name: "Bright Data Plans" });
+
+    expect(chosen.status).toBe(303);
+    expect(chosen.to).toBe("/cards");
+    expect(await listedAs(running)).toBe("Bright Data Plans");
+  });
+
+  it("lets a merchant walk past it, and says on their cards what that costs", async () => {
+    // Skipping is allowed because a name demanded before somebody can answer it
+    // is a name nobody means. What is not allowed is skipping it silently: a
+    // merchant whose code then publishes a card meets a refusal, and the
+    // cabinet says so before that happens.
+    const running = await started();
+    await unname(running);
+    await running.browser.signIn();
+
+    const cards = await running.browser.get("/cards");
+    const text = readable(cards.html);
+
+    expect(cards.status).toBe(200);
+    expect(text).toMatch(/cannot go on sale/i);
+    expect(cards.html).toContain('href="/settings"');
+    expect(await listedAs(running)).toBeNull();
+  });
+
+  it("refuses a name the catalogue that lists it would not carry, and says the rule", async () => {
+    // The catalogue's rule is thirty-two characters of ordinary keyboard
+    // characters with no space at either end. A name outside it is refused by
+    // the gateway with a sentence written for whoever reads an API response;
+    // refused here, the person is told the rule in the words of the screen they
+    // are looking at, and nothing is written.
+    const running = await started();
+    await unname(running);
+    await running.browser.signIn();
+
+    for (const name of ["x".repeat(33), "Кириллица", "  "]) {
+      const answered = await running.browser.post("/choose-name", { seller_name: name });
+      expect(answered.status, name).toBe(400);
+      expect(readable(answered.html), name).toMatch(/not saved|name is needed/i);
+      expect(await listedAs(running), name).toBeNull();
+    }
+  });
+
+  it("refuses a post with no name in it at all, and says the field is the one thing needed", async () => {
+    // The field can arrive empty or not arrive, and a form posted by something
+    // that is not this page does the second. Both are somebody who has typed no
+    // name, and the screen says so rather than writing an empty one.
+    const running = await started();
+    await unname(running);
+    await running.browser.signIn();
+
+    const answered = await running.browser.post("/choose-name");
+
+    expect(answered.status).toBe(400);
+    expect(readable(answered.html)).toMatch(/name is needed/i);
+    // And it still says the way past, because that is what somebody with
+    // nothing to type needs.
+    expect(answered.html).toContain('href="/cards"');
+    expect(await listedAs(running)).toBeNull();
+  });
+
+  it("takes the space off a name rather than refusing it for one", async () => {
+    // A space at the front of a form field is a typing accident, and the rule
+    // that refuses it exists because a padded name survives the catalogue
+    // untouched and makes two spellings of one word. Trimming it gives the
+    // person the name they meant.
+    const running = await started();
+    await unname(running);
+    await running.browser.signIn();
+
+    const chosen = await running.browser.post("/choose-name", {
+      seller_name: "  Bright Data Plans  ",
+    });
+
+    expect(chosen.status).toBe(303);
+    expect(await listedAs(running)).toBe("Bright Data Plans");
+  });
+
+  it("is behind the gate, like every other screen in the cabinet", async () => {
+    const running = await started();
+
+    const screen = await running.browser.get("/choose-name");
+    const posted = await running.browser.post("/choose-name", { seller_name: "Anybody At All" });
+
+    expect(screen.to).toBe("/sign-in");
+    expect(posted.to).toBe("/sign-in");
+  });
+});
+
+describe("the settings screen", () => {
+  it("is reachable from every screen a merchant works on", async () => {
+    // It holds the name today and it is where the next such thing goes, so a
+    // merchant has to be able to find it without being sent a link.
+    const { browser, gateway } = await started();
+    await publish(gateway, roomCard);
+    await browser.signIn();
+
+    for (const path of ["/cards", "/orders", "/receipts", "/keys"]) {
+      const screen = await browser.get(path);
+      expect(screen.status, path).toBe(200);
+      expect(screen.html, path).toContain('href="/settings"');
+    }
+  });
+
+  it("shows the name this merchant is listed under", async () => {
+    const { browser, harnessed } = await started();
+    await browser.signIn();
+
+    const screen = await browser.get("/settings");
+
+    expect(screen.status).toBe(200);
+    expect(screen.html).toContain(`value="${harnessed.merchant.name}"`);
+  });
+
+  it("changes the name, and the gateway has the new one afterwards", async () => {
+    const running = await started();
+    await running.browser.signIn();
+
+    const saved = await running.browser.post("/settings", { seller_name: "Bright Data Plans" });
+
+    expect(saved.status).toBe(303);
+    expect(saved.to).toBe("/settings");
+    expect(await listedAs(running)).toBe("Bright Data Plans");
+    const after = await running.browser.get("/settings");
+    expect(after.html).toContain('value="Bright Data Plans"');
+  });
+
+  it("refuses to take the name away, and says what to do instead", async () => {
+    // A merchant who wants to stop being listed stops their selling, which
+    // leaves their cards where they are and lets them start again. Emptying the
+    // name would leave the cards on sale under nobody, so the route refuses it
+    // and the screen says the thing that actually works.
+    const running = await started();
+    await running.browser.signIn();
+
+    for (const form of [{ seller_name: "" }, {}] as Record<string, string>[]) {
+      const emptied = await running.browser.post("/settings", form);
+      expect(emptied.status).toBe(400);
+      expect(readable(emptied.html)).toMatch(/stop.*selling/i);
+      expect(await listedAs(running)).toBe(running.harnessed.merchant.name);
+    }
+  });
+
+  it("offers no control that removes the name", async () => {
+    // Not a gap somebody should fill in later: the refusal is the rule, and a
+    // button that provoked it would be a control whose whole result is a
+    // refusal page.
+    const { browser } = await started();
+    await browser.signIn();
+
+    const text = readable((await browser.get("/settings")).html);
+
+    expect(text).toMatch(/cannot|never/i);
+    expect(text).toMatch(/stop.*selling/i);
+    // And the rule, on the page rather than only in a refusal.
+    expect(text).toMatch(/32 characters/);
+  });
+
+  it("refuses a name outside the rule and leaves the one there was", async () => {
+    const running = await started();
+    await running.browser.signIn();
+
+    const answered = await running.browser.post("/settings", { seller_name: "x".repeat(33) });
+
+    expect(answered.status).toBe(400);
+    // What was refused, and that nothing was written — the second half is the
+    // one a merchant cannot see for themselves, and the page still shows what
+    // they are actually listed under.
+    expect(readable(answered.html)).toMatch(/not saved/i);
+    expect(readable(answered.html)).toContain(running.harnessed.merchant.name);
+    expect(await listedAs(running)).toBe(running.harnessed.merchant.name);
+  });
+
+  it("answers an emptied box with the control that does what they meant", async () => {
+    // Emptying this box is a merchant trying to stop being listed. The route
+    // refuses it either way, so the question is which sentence they read: the
+    // rule the catalogue keeps, which is about a name they did not type, or
+    // what to do instead. Told the rule, somebody tries a shorter name; told
+    // about the selling switch, they find the control that leaves their cards
+    // where they can put them back.
+    const running = await started();
+    await running.browser.signIn();
+
+    const answered = await running.browser.post("/settings", { seller_name: "   " });
+
+    expect(answered.status).toBe(400);
+    expect(readable(answered.html)).toMatch(/stop your selling/i);
+    // And not the other sentence, which is the one the mutation that found this
+    // gap swapped in: both refuse, and only one of them is an answer.
+    expect(readable(answered.html)).not.toMatch(/not a name the catalogue will carry/i);
+    expect(await listedAs(running)).toBe(running.harnessed.merchant.name);
+  });
+
+  it("says the gateway would not answer rather than drawing a page with no name on it", async () => {
+    const running = await started();
+    await running.browser.signIn();
+    await running.stopGateway();
+
+    const screen = await running.browser.get("/settings");
+
+    expect(screen.status).toBe(502);
+    expect(readable(screen.html)).toMatch(/did not answer/i);
+  });
+});
+
+describe("a merchant who has chosen no name", () => {
+  it("is told on every screen they work on that nothing of theirs can go on sale", async () => {
+    const running = await started();
+    await publish(running.gateway, roomCard);
+    await unname(running);
+    await running.browser.signIn();
+
+    for (const path of ["/cards", "/orders", "/receipts"]) {
+      const screen = await running.browser.get(path);
+      const text = readable(screen.html);
+      expect(screen.status, path).toBe(200);
+      expect(text, path).toMatch(/cannot go on sale/i);
+    }
+    // And the page it sends them to is the one that fixes it: a sentence with
+    // nowhere to go is a sentence that leaves a merchant hunting.
+    const settings = await running.browser.get("/settings");
+    expect(settings.status).toBe(200);
+    expect(settings.html).toContain('name="seller_name"');
+  });
+
+  it("is told nothing of the sort once the name is chosen", async () => {
+    // A banner that never leaves is a banner nobody reads, and this one is
+    // about a state a merchant can be out of in one form post.
+    const running = await started();
+    await publish(running.gateway, roomCard);
+    await running.browser.signIn();
+
+    for (const path of ["/cards", "/orders", "/receipts"]) {
+      const text = readable((await running.browser.get(path)).html);
+      expect(text, path).not.toMatch(/cannot go on sale/i);
+    }
+  });
+
+  it("reads the refusal their own code meets in the cabinet's words, not the gateway's", async () => {
+    // The refusal a merchant's code gets names the route that fixes it, because
+    // it is written for whoever is holding the response. A person in a cabinet
+    // cannot make that call and should not be told to: the screen says what the
+    // missing thing is and points at the page that sets it.
+    const running = await started();
+    await unname(running);
+    const refused = await running.gateway.call("POST", "/v0/catalog/publish", {
+      body: roomCard,
+      headers: { authorization: `Bearer ${KEY}` },
+    });
+    const finding = (refused.body as { errors: { code: string; message: string }[] }).errors[0];
+    await running.browser.signIn();
+
+    const cards = await running.browser.get("/cards");
+    const text = readable(cards.html);
+
+    // The gateway really did refuse, for this reason, in those words.
+    expect(refused.status).toBe(422);
+    expect(finding?.code).toBe("no_seller_name");
+    expect(finding?.message).toContain("POST /v0/seller-name");
+    // And the cabinet says the same thing without sending anybody to a route.
+    expect(text).toMatch(/cannot go on sale/i);
+    expect(cards.html).toContain('href="/settings"');
+    expect(text).not.toContain("POST /v0/seller-name");
   });
 });
 
@@ -2135,6 +2479,8 @@ describe("when something goes wrong that the merchant has to get out of", () => 
           setSelling: answer,
           orders: answer,
           receipts: answer,
+          sellerName: answer,
+          setSellerName: answer,
         }) as never,
     });
     const server = app.listen(0, "127.0.0.1");
