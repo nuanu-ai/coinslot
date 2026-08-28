@@ -41,14 +41,23 @@ const CONFIRMED =
  *
  * The cost only shows up on the day the password is gone, which is a day this
  * page cannot be read — so it is said here while there is still time, and it is
- * said with the way out rather than as a bare refusal. There is a way out: the
- * person who handed over the address of this site can set a new password from a
- * terminal. A page that said only "we cannot send you a link" would leave a
- * merchant believing a lost password ends the account.
+ * said with the way out rather than as a bare refusal. A page that said only
+ * "we cannot send you a link" would leave a merchant believing a lost password
+ * ends the account.
+ *
+ * There are two ways out and this names both, in the order somebody would take
+ * them. The first is the control at the top of every page, which is named here
+ * by the words on it: a page reading "we cannot send you a link" a few lines
+ * under a button reading "Send me the link" is a page that contradicts itself
+ * to anybody who does not already know the two links are different things. The
+ * second is the person who handed over the address of this site, who can set a
+ * new password from a terminal — the answer for somebody whose password is
+ * already gone, who cannot do the first.
  */
 const NOT_CONFIRMED =
   "Nobody has answered from that address, so we cannot send you a link to replace a lost" +
-  " password. Until somebody does, the person who gave you the address of this site is the one" +
+  " password. Press Send me the link at the top of this page and answer the mail it sends, and" +
+  " we can. Until somebody answers, the person who gave you the address of this site is the one" +
   " who can set a new password for you.";
 
 /**

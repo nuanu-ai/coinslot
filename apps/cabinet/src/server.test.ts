@@ -1724,6 +1724,29 @@ describe("the account on the settings screen", () => {
     expect(text).not.toMatch(/we can send you a link/i);
     expect(text).toMatch(/gave you the address of this site/i);
   });
+
+  it("names the control that fixes it by the words written on that control", async () => {
+    // The two links are different things — one confirms the address, the other
+    // replaces a password — and nobody reading this page knows that. So a
+    // section saying "we cannot send you a link" a few lines under a button
+    // saying "Send me the link" reads as a page arguing with itself, and the
+    // fix is for the section to name the button rather than for the page to
+    // carry a second one.
+    //
+    // The label is read off the page rather than written out here, so renaming
+    // the button breaks this instead of quietly leaving a sentence pointing at
+    // a control that no longer says that.
+    const { browser } = await started();
+    await browser.signIn();
+
+    const screen = await browser.get("/settings");
+    const label = /action="\/confirm">\s*<button type="submit">([^<]+)<\/button>/.exec(
+      screen.html,
+    )?.[1];
+
+    expect(label, "the confirm button is on an unconfirmed merchant's page").toBeDefined();
+    expect(readable(screen.html)).toContain(`Press ${label} at the top of this page`);
+  });
 });
 
 describe("a merchant who has chosen no name", () => {
