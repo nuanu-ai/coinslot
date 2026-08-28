@@ -35,10 +35,25 @@ create. Waiting for it would stop the road at a step that is not ours to take.
 ## Decision
 
 **1. Registering makes a merchant, its first key and an account, or it makes
-none of them.** One form, one act: an address, a password, and the name the
-merchant is shown under. What comes back is a session — the person is signed in
-where they stand, because a registration that ends at a sign-in page is a
-password typed twice for no reason.
+none of them.** The form asks for three things a person can answer on the day
+they arrive: an address, a password, and their invitation. What comes back is a
+session — the person is signed in where they stand, because a registration that
+ends at a sign-in page is a password typed twice for no reason.
+
+The name buyers see beside the products is asked for on the screen after that,
+and it is asked for again in the cabinet's settings whenever they want to change
+it. It was on the registration form until somebody read that form: it is a
+public and, as first built, unchangeable answer, demanded at the one moment a
+merchant knows least — no products, no catalogue seen, no idea what the name is
+for. What a form like that collects is "some stuff", and "some stuff" is then
+printed beside their products. A field nobody can answer yet belongs after the
+account exists, where it has room to say why it matters and where it can be
+changed.
+
+Publishing a card while that name is unset is refused, with a sentence naming
+where to set it. That is the half worth being firm about: a card published with
+no seller reaches an agent inside a payment challenge that names nobody, which
+is a thing this repository has already shipped once.
 
 The three are written in one transaction each side of the boundary, and the
 boundary is crossed once: the gateway makes the merchant and the key, and the
