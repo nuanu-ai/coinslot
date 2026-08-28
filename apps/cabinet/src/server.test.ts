@@ -77,11 +77,12 @@ const THE_MERCHANT = { id: "mer_the_merchant", key: KEY };
 
 /**
  * The cabinet's identity under test: the real component on its memory store,
- * with three accounts already in it.
+ * with the account almost every test signs in as already in it.
  *
- * The rows are handed in rather than kept inside, so that the third account can
- * be put into the state the deployed one is in, and so that a test can read
- * what the component actually wrote.
+ * The rows are handed in rather than kept inside so that a test can put an
+ * account into a state no door produces, and can read what the component
+ * actually wrote. The few tests that need another person make that person
+ * themselves instead of making every test derive three passwords.
  */
 const withIdentity = async (
   config: CabinetConfig,
@@ -98,9 +99,7 @@ const withIdentity = async (
     cabinet_verifications: [],
   };
   const identity = identityFor(config, { rows, postman });
-  for (const who of [PERSON, OTHER, BEFORE_MERCHANTS]) {
-    await identity.make(who, PASSWORD, THE_MERCHANT);
-  }
+  await identity.make(PERSON, PASSWORD, THE_MERCHANT);
   const forgetMerchant = (email: string): void => {
     for (const row of rows.cabinet_accounts ?? []) {
       if (row.email === email) {
@@ -109,7 +108,6 @@ const withIdentity = async (
       }
     }
   };
-  forgetMerchant(BEFORE_MERCHANTS);
   return { identity, forgetMerchant, rows };
 };
 
@@ -619,7 +617,9 @@ describe("getting into the cabinet", () => {
     // it would read as a merchant whose catalogue had been emptied; answered with
     // an exception it would read as a broken cabinet. It is neither, and the
     // sentence says which command makes an account that works.
-    const { browser } = await started();
+    const { browser, identity, forgetMerchant } = await started();
+    await identity.make(BEFORE_MERCHANTS, PASSWORD, THE_MERCHANT);
+    forgetMerchant(BEFORE_MERCHANTS);
 
     const refused = await browser.post("/sign-in", {
       email: BEFORE_MERCHANTS,
@@ -2686,7 +2686,8 @@ describe("when something goes wrong that the merchant has to get out of", () => 
     // merchant would never reach the control that stops their selling again.
     // Ending them means the planted value stops being a session, and the next
     // sign-in works.
-    const { browser, another } = await started();
+    const { browser, another, identity } = await started();
+    await identity.make(OTHER, PASSWORD, THE_MERCHANT);
     await browser.signIn();
     const mine = browser.sessionToken() ?? "";
     const somebody = await another();
@@ -3033,6 +3034,7 @@ describe("confirming the address on an account", () => {
     // A page that said "confirmed" whatever it was handed would leave a
     // merchant believing they can be sent a new password when they cannot.
     const { browser, mails, identity } = await started();
+    await identity.make(OTHER, PASSWORD, THE_MERCHANT);
     await browser.signIn();
     await browser.post("/confirm");
     const link = new URL(linkIn(mails));
