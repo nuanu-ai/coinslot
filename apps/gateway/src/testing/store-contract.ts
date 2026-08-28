@@ -162,6 +162,41 @@ async function answeredWithin<T>(ms: number, work: Promise<T>): Promise<T | "sti
   }
 }
 
+/**
+ * What a call that had to be refused was refused with.
+ *
+ * It fails rather than answering when nothing was refused, so that a store
+ * which quietly accepted the write is reported as the defect it is instead of
+ * as an assertion about `undefined`.
+ */
+async function refusalOf(work: Promise<unknown>): Promise<unknown> {
+  try {
+    await work;
+  } catch (thrown) {
+    return thrown;
+  }
+  throw new Error("nothing was refused, and being refused is what this is about");
+}
+
+/**
+ * Everything an unhandled failure would put in a log.
+ *
+ * `console.error` prints an exception's causes as well as its own message, so
+ * the whole chain is what actually reaches whatever collects the log — and the
+ * whole chain is what a test about something that must not be written down has
+ * to read. A refusal that carried the driver's own error as its cause would
+ * pass a test that only read the top message.
+ */
+function asLogged(thrown: unknown): string {
+  const said: string[] = [];
+  let at: unknown = thrown;
+  for (let deep = 0; deep < 8 && at !== null && at !== undefined; deep += 1) {
+    said.push(String(at), JSON.stringify(at) ?? "");
+    at = typeof at === "object" && "cause" in at ? (at as { cause: unknown }).cause : null;
+  }
+  return said.join(" ");
+}
+
 /** Runs the whole contract against one store. */
 export function describeStore(name: string, open: () => Promise<Store>): void {
   describe(name, () => {
@@ -449,6 +484,70 @@ export function describeStore(name: string, open: () => Promise<Store>): void {
           store.addKey({ id: "mk_1", merchantId: "mch_nobody", label: "one", digest: "d" }, 1_000),
         ).rejects.toThrow();
         expect(await store.merchantForKey("d")).toBeNull();
+      });
+
+      it("is refused under an identifier another key already has", async () => {
+        // The identifiers are ours, so a clash is a defect in whatever issues
+        // them rather than anything a merchant can cause. What it must never be
+        // is a silent overwrite: one merchant's key replaced by another's, the
+        // first still in somebody's configuration and no longer opening
+        // anything, and nobody told.
+        const store = await twoMerchants();
+        await store.addKey({ id: "mk_1", merchantId: A, label: "one", digest: "digest-1" }, 1_000);
+
+        await expect(
+          store.addKey({ id: "mk_1", merchantId: B, label: "theirs", digest: "digest-2" }, 2_000),
+        ).rejects.toThrow(/the key mk_1 is already written down/);
+
+        // The key that was there still opens its own door, and the one that was
+        // refused opens none.
+        expect(await store.merchantForKey("digest-1")).toBe(A);
+        expect(await store.merchantForKey("digest-2")).toBeNull();
+      });
+
+      it("is refused under a digest another key already has", async () => {
+        // The door resolves a request by the digest alone, so two keys carrying
+        // one digest would be one secret opening two merchants' doors — and
+        // which merchant a request reached would come down to which row the
+        // database happened to hand back. The command that issues keys asks
+        // `keyByDigest` before it writes; this is what stands behind that when
+        // two issues race, and it is the database's own rule rather than a
+        // check somebody remembered.
+        const store = await twoMerchants();
+        await store.addKey({ id: "mk_1", merchantId: A, label: "one", digest: "digest-1" }, 1_000);
+
+        await expect(
+          store.addKey({ id: "mk_2", merchantId: B, label: "theirs", digest: "digest-1" }, 2_000),
+        ).rejects.toThrow(/a key with that digest is already written down/);
+
+        expect(await store.merchantForKey("digest-1")).toBe(A);
+        expect((await store.keysOf(B)).map((key) => key.id)).toStrictEqual([]);
+      });
+
+      it("is refused without ever saying the digest out loud", async () => {
+        // A digest is the stored form of a secret its owner was shown once and
+        // nothing can read back, and a refusal is the one moment the store has
+        // it in hand with something going wrong. The database's own refusal
+        // carries it twice over — in the statement's bound parameters and in
+        // the detail line naming the value that clashed — so a store that
+        // passed the driver's error along, or hung it on a refusal of its own as
+        // a cause, would put every merchant's stored secret into whatever
+        // collects the log the first time a key was issued twice.
+        //
+        // Both routes to a refusal are read, because the parameters of the
+        // insert carry the digest whichever of the two rules turned it away.
+        const store = await twoMerchants();
+        await store.addKey({ id: "mk_1", merchantId: A, label: "one", digest: "digest-1" }, 1_000);
+
+        const forTheIdentifier = await refusalOf(
+          store.addKey({ id: "mk_1", merchantId: B, label: "theirs", digest: "digest-2" }, 2_000),
+        );
+        const forTheDigest = await refusalOf(
+          store.addKey({ id: "mk_2", merchantId: B, label: "theirs", digest: "digest-1" }, 3_000),
+        );
+
+        expect(asLogged(forTheIdentifier)).not.toContain("digest-2");
+        expect(asLogged(forTheDigest)).not.toContain("digest-1");
       });
     });
 
