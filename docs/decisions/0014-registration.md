@@ -5,188 +5,73 @@ Status: accepted (Dmitry, 2026-08-28: "разрабатывай экраны, р
 
 ## Context
 
-ADR-0010 settled the product's shape and the order it is built in: tenancy,
-then keys a merchant can make and disable, then registration with mail, then
-the card generator. Tenancy is done. The keys exist as commands somebody runs
-at a terminal, and `merchant-command.ts` says in its opening paragraph that the
-screens are the step after it. Registration is not built at all, and ADR-0009
-said so in a sentence with no horizon on it, which was then read out loud as a
-refusal — corrected there.
-
-Two things stand between here and a merchant who can sign up.
-
-The first is that the cabinet serves exactly one merchant. It reaches the
-gateway with `MERCHANT_API_KEY`, read once at start-up and used for the life of
-the process, so every screen shows that merchant's cards whoever is signed in.
-The client is already shaped for the change — the key is a parameter — and the
-comment beside it names what has to happen: accounts naming their own merchant.
-Until that happens, a second account is a second person looking at the first
-merchant's money.
-
-The second is that the public catalogue is one across merchants, by decision
-(ADR-0010): that is the product. A registration form nobody has to get past
-therefore does not just make accounts, it puts a stranger's words on the page
-every buyer reads, and their resource in front of every crawler that lists us.
-
-Mail would answer the second by confirming an address, and mail is ADR-0010's
-next decision — it needs a provider account nobody in this repository can
-create. Waiting for it would stop the road at a step that is not ours to take.
+The cabinet served exactly one merchant, through one key read at start-up, so
+a second account was a second person looking at the first merchant's money.
+And the public catalogue is one across merchants by decision (ADR-0010), so a
+registration form nobody has to get past puts a stranger's words in front of
+every buyer. Registration therefore needs tenancy and a door, and neither may
+wait for perfection: the road's order is ADR-0010's.
 
 ## Decision
 
-**1. Registering makes a merchant, its first key and an account, or it makes
-none of them.** The form asks for three things a person can answer on the day
-they arrive: an address, a password, and their invitation. What comes back is a
-session — the person is signed in where they stand, because a registration that
-ends at a sign-in page is a password typed twice for no reason.
+**1. Registering makes a merchant, its first key and an account — or none of
+them.** The form asks what a person can answer on arrival: address, password,
+invitation. They are signed in where they stand. Each side of the boundary
+writes in one transaction and the boundary is crossed once: the gateway makes
+the merchant and the key, the cabinet writes the account. A cabinet that fails
+after the gateway answered leaves a merchant nobody can sign in as — litter,
+not damage; the address is free and the next attempt makes a new one. The
+reverse order cannot exist: the account has nothing to name until the merchant
+does.
 
-The name buyers see beside the products is asked for on the screen after that,
-and it is asked for again in the cabinet's settings whenever they want to change
-it. It was on the registration form until somebody read that form: it is a
-public and, as first built, unchangeable answer, demanded at the one moment a
-merchant knows least — no products, no catalogue seen, no idea what the name is
-for. What a form like that collects is "some stuff", and "some stuff" is then
-printed beside their products. A field nobody can answer yet belongs after the
-account exists, where it has room to say why it matters and where it can be
-changed.
+**2. An account names its merchant and holds that merchant's key.** The
+cabinet builds its gateway client per request from the signed-in account's
+row; `MERCHANT_API_KEY` leaves the configuration. The key is stored as issued:
+the same secret that sat in an environment variable, moved into a row — the
+exposure is not new, and the row buys revocation one merchant at a time. It
+does not protect against a copy of the database; the database is a boundary
+against the network, not against a host, and the day that stops being enough
+the fix is a secret store, not a cleverer column.
 
-Publishing a card while that name is unset is refused, with a sentence naming
-where to set it. That is the half worth being firm about: a card published with
-no seller reaches an agent inside a payment challenge that names nobody, which
-is a thing this repository has already shipped once.
+**3. The registration route is public, behind an invitation code.** The route
+takes no key — nobody registering has one. A wrong code and a closed
+registration answer identically, in constant time against a decoy (the two
+answers that must be indistinguishable are the two refusals), so the form does
+not say whether registration is open, only whether this code is the one. The
+door retires when a confirmed address replaces it (ADR-0009).
 
-The three are written in one transaction each side of the boundary, and the
-boundary is crossed once: the gateway makes the merchant and the key, and the
-cabinet writes the account. A cabinet that fails after the gateway has answered
-leaves a merchant nobody can sign in as, which is litter rather than damage —
-the address is free again and the next attempt makes a new one. The reverse
-order cannot be built: the account has nothing to name until the merchant
-exists.
+**4. The name buyers see is asked for after registering, never on the form.**
+It is a public answer demanded at the moment a merchant knows least, so it
+lives on its own screen and in settings, changeable. Publishing a card while
+it is unset is refused with a sentence naming where to set it: a card with no
+seller reaches an agent inside a payment challenge that names nobody.
 
-**2. An account names its merchant and holds that merchant's key.** The cabinet
-builds its gateway client per request, from the key on the signed-in account's
-row, and `MERCHANT_API_KEY` leaves the cabinet's configuration. This is the
-change the client was shaped for, and it is what makes two accounts two
-merchants rather than two people at one.
-
-The key is stored as it was issued, which is a secret at rest in our database,
-and that is worth saying rather than passing over. It is the same secret that
-sits in plain text in the cabinet's environment today, moved from a file into a
-row — the exposure is not new, and what the row buys is that it can be revoked
-one merchant at a time instead of by a deployment. What it does not buy is
-protection from a copy of the database: unlike a password, which is a
-derivation, and unlike a session, which is a fingerprint, this column hands over
-what it holds. Whoever reads it can act as every merchant in it. The answer to
-that is the same answer as for the environment variable it replaces — the
-database is a boundary against the network, not against a host — and the day
-that stops being enough, the fix is a secret store, not a cleverer column.
-
-**3. The registration route is public, and behind an invitation code.** The
-gateway route that makes a merchant takes no key, because nobody registering
-has one yet; what stands in the door instead is one value out of the gateway's
-configuration, which a person is given along with the address of the site.
-A wrong code and a gateway with registration closed answer the same way, in the
-same words and under the same status, so the form does not tell anybody whether
-registration is open here — only whether the code they hold is the one. The
-comparison is made in constant time against a decoy where there is nothing to
-compare against, for the same reason the sign-in next door derives against one
-(ADR-0009 §2).
-
-An earlier draft of this paragraph said that a wrong code and a *right* one
-answer the same way, which cannot be true: a right code makes a merchant and
-hands back a key. The two answers that have to be indistinguishable are the two
-refusals.
-
-This is a door, not a door lock, and its whole justification is the paragraph
-above about the shared catalogue: it costs one configuration value and it means
-the pilot's sandbox cannot be filled with a stranger's cards by anybody who
-finds the hostname. It retires the day an address is confirmed by mail, and the
-decision that brings mail is the decision that removes it.
-
-**4. The address is not confirmed, and the cabinet says so where a person can
-see it.** Nothing is sent anywhere: ADR-0009 §1 already says the address is a
-name rather than a channel, and that stays true for one more decision. A
-merchant who registers has proved they hold an invitation, not that they hold
-the address they typed. Every screen that shows the address says it is
-unconfirmed, so nobody builds on it, and losing a password is still answered by
-the command that sets a new one.
-
-**5. Keys are made and disabled from the cabinet, which is what ADR-0010 said
-they would be.** Three routes the gateway does not have yet — list this
-merchant's keys, issue one, disable one — each scoped to the merchant the
-caller's key resolves to, like every other merchant route. The secret is shown
-once on the screen that issued it and never again, the same promise the command
-makes, and for the same reason.
-
-A merchant cannot disable the key their own call was made with. That is a rule
-in the route rather than a warning on the screen: it is one click between a
-merchant and a cabinet that answers every page with "the gateway will not take
-this key", and the way back is a terminal they do not have. Rotating that key is
-its own act and is not built here.
-
-The rule is the key on the call and not the key the cabinet is signed in with,
-and the difference is worth writing down rather than leaving to whoever reads
-the route. Which key a cabinet holds is a column on the other side of the
-boundary and no call carries it, so the gateway cannot recognise it; what it can
-see is the key in front of it. A merchant with a second key can therefore still
-disable the one their cabinet is using, and two calls made at one moment with
-two keys, each naming the other, leave them with none. Neither is refused. The
-wider rule that would refuse them is "a merchant may not disable their last
-working key", which is a different thing to decide — it takes away a merchant's
-own ability to shut off every key they hold — and nobody has decided it. The
-click is what this refuses, and the click is what the paragraph above is about.
+**5. Keys are made and disabled from the cabinet.** Three merchant-scoped
+routes: list, issue, disable. The secret is shown once, like the command's
+promise. A merchant cannot disable the key their own call was made with — a
+rule in the route, not a warning, because that click leaves them a cabinet no
+page of which works and no terminal to fix it. The rule sees the key on the
+call, not the key the cabinet holds: two keys disabling each other in one
+moment leave a merchant with none, and refusing that would be "may not disable
+the last working key" — a rule nobody has decided, and this one does not.
 
 ## Consequences
 
-The cabinet stops being single-tenant, and the two things that made it so are
-gone: the process-wide client and the environment variable behind it. What
-replaces the variable is a column, so a deployment has one less thing to set and
-one more thing to back up.
-
-Registration is reachable by anybody who has the code and the hostname, which is
-the pilot's shape: we hand out the code. It is not open sign-up and does not
-pretend to be — the road's third step arrives when mail does.
-
-An account and a merchant are one-to-one from here. A merchant with two people
-and a person at two merchants are both refused by that shape rather than by a
-check, and both are named in ADR-0009 §9 as the trigger for buying an
-authentication component. This decision does not move that trigger; it makes one
-more thing that will have to change when it fires.
-
-What is not built and is not pretended to be: confirming an address, resetting a
-password by mail, a second person at a merchant, roles, deleting a merchant or
-their account, and rotating the key the cabinet itself holds. The first two are
-the mail decision. The rest wait for a reason.
+The cabinet is multi-tenant; the process-wide client and its variable are
+gone. An account and a merchant are one-to-one. Not built and not pretended:
+a second person at a merchant, roles, deleting a merchant, rotating the key
+the cabinet itself holds.
 
 ## Alternatives rejected
 
-**Open registration, with nothing in the door.** Honest self-service and the
-thing the road is heading for, and it cannot be had before an address means
-something. The catalogue is shared by decision; an open form puts words nobody
-answers for in front of every buyer, and the first cost is not ours to pay but
-theirs.
-
-**Wait for mail, and build nothing now.** It stops the road at the one step that
-needs an account somebody outside this repository has to create, and it leaves
-the cabinet single-tenant for as long as that takes. Everything in this decision
-is needed whether the door is a code or a confirmed address; only the door
-changes.
-
-**One privileged key for the cabinet, naming the merchant per request.** No key
-stored per account, and a smaller-looking secret. It is the same secret: a
-cabinet that can act as any merchant is a cabinet whose compromise is every
-merchant, which is exactly what the column already is. What it adds is a second
-authentication mode on the money path, which ADR-0005 §2 exists to keep thin,
-and a route surface where "which merchant" is a parameter somebody can forget to
-check.
-
-**Encrypting the stored key.** The question it raises is where the encryption
-key lives, and every answer available today puts it in the same process
-configuration the merchant key is in now — so it moves the secret one step and
-calls it protected. A secret store is the real answer, and it is bought when
-there is something to protect that is not a sandbox.
-
-**Registration on the gateway, with the cabinet redirecting to it.** It would
-save the cabinet a call. It also puts a public form, a password and a rate
-limit on the money path, which is what ADR-0005 §2 says not to do, and the
-gateway would then need the account table this decision keeps on the other side.
+**Open registration.** Not before an address means something: the catalogue is
+shared, and the first cost of a stranger's words is the buyer's, not ours.
+**Wait for mail, build nothing.** Everything here is needed whichever the door
+is; only the door changes. **One privileged cabinet key naming the merchant
+per request.** The same secret with a second authentication mode on the money
+path (ADR-0005 §2), plus a "which merchant" parameter somebody forgets to
+check. **Encrypting the stored key.** Moves the secret into the same process
+configuration and calls it protected; a secret store is the real answer, bought
+when there is something to protect that is not a sandbox. **Registration on
+the gateway.** A public form, a password and a rate limit on the money path,
+and the gateway would need the account table this decision keeps out of it.
