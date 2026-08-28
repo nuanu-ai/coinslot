@@ -89,6 +89,8 @@ interface MerchantRow {
   selling: MerchantSelling;
   /** The name this seller is listed under in a catalog, where one is named. */
   serviceName: string | null;
+  /** Where this merchant's sales are paid, in lower case, where one is set. */
+  payoutWallet: string | null;
 }
 
 export class MemoryStore implements Store {
@@ -137,6 +139,7 @@ export class MemoryStore implements Store {
       createdAt: at,
       selling: "open",
       serviceName: null,
+      payoutWallet: null,
     };
     this.#merchants.set(merchant.id, row);
     return storedMerchantOf(row);
@@ -150,15 +153,16 @@ export class MemoryStore implements Store {
     if (this.#merchants.has(merchant.id)) {
       return null;
     }
-    // Listed under nothing, exactly as a merchant made at a terminal is. The
-    // name buyers read is chosen afterwards, and until it is, this merchant
-    // publishes nothing.
+    // Listed under nothing and paid nowhere, exactly as a merchant made at a
+    // terminal is. Both are chosen afterwards, and until they are, this
+    // merchant publishes nothing.
     const row: MerchantRow = {
       id: merchant.id,
       name: merchant.name,
       createdAt: at,
       selling: "open",
       serviceName: null,
+      payoutWallet: null,
     };
     this.#merchants.set(merchant.id, row);
 
@@ -196,6 +200,19 @@ export class MemoryStore implements Store {
       return null;
     }
     row.serviceName = serviceName;
+    return storedMerchantOf(row);
+  }
+
+  async setPayoutWallet(
+    id: string,
+    payoutWallet: string,
+    _at: number,
+  ): Promise<StoredMerchant | null> {
+    const row = this.#merchants.get(id);
+    if (row === undefined) {
+      return null;
+    }
+    row.payoutWallet = payoutWallet;
     return storedMerchantOf(row);
   }
 
@@ -613,6 +630,7 @@ function storedMerchantOf(row: MerchantRow): StoredMerchant {
     id: row.id,
     name: row.name,
     serviceName: row.serviceName,
+    payoutWallet: row.payoutWallet,
     selling: row.selling,
     createdAt: row.createdAt,
   };

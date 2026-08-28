@@ -280,6 +280,30 @@ export interface StoredMerchant {
    * name anybody chose to trade under.
    */
   readonly serviceName: string | null;
+  /**
+   * The address on the chain that this merchant's sales are paid into, or
+   * nothing at all where nobody has set one.
+   *
+   * It is here because there is nowhere else it could be. The money never
+   * passes through us — a buyer's agent pays this address directly, and it is
+   * what goes into the `payTo` of every payment request written for one of this
+   * merchant's cards — so the gateway has to know it and has to know whose it
+   * is. It is a column on the merchant rather than a field on each card because
+   * it is a fact about the seller: a merchant with fifty products is paid at
+   * one address, and fifty copies of it is forty-nine chances for one of them
+   * to be somebody else's.
+   *
+   * It is written in lower case, always, whichever of the two spellings an
+   * address may be written in arrived. One address with two spellings would be
+   * two strings to every comparison, and the answer a merchant reads back would
+   * depend on which of them they last sent.
+   *
+   * Null is the ordinary state and it means what it says: nobody has said where
+   * the money goes. It is never filled in from the gateway's own configured
+   * address, because that address is the operator's and paying a merchant's
+   * sales into it is the custodial arrangement this whole design refuses.
+   */
+  readonly payoutWallet: string | null;
   readonly selling: MerchantSelling;
   readonly createdAt: number;
 }
@@ -375,6 +399,22 @@ export interface Store {
     serviceName: string | null,
     at: number,
   ): Promise<StoredMerchant | null>;
+
+  /**
+   * Sets the address one merchant's sales are paid into, and hands back the
+   * merchant as they now stand. Null where there is no such merchant.
+   *
+   * The value is expected to be an address already, written in lower case; the
+   * caller that makes it so is `setPayoutWallet` in `app/merchants.ts`, which is
+   * the one place an address is checked and lowered before it is written.
+   *
+   * There is no clearing it, and the absence of a null is the difference from
+   * the listing name beside it. A merchant whose address was taken away keeps
+   * every card they published on sale, and a payment request for one of them
+   * cannot be written at all — so the products would stop being buyable with
+   * nothing anywhere saying why.
+   */
+  setPayoutWallet(id: string, payoutWallet: string, at: number): Promise<StoredMerchant | null>;
 
   /** Writes down one key of one merchant. The digest is what is kept, not the key. */
   addKey(
