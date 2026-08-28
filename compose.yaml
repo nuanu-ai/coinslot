@@ -327,11 +327,20 @@ services:
     command: ["pnpm", "--filter", "@coinslot/slice", "serve"]
     environment:
       GATEWAY_URL: http://gateway:3000
-      # The same key the gateway seeded and the cabinet reaches it with: one
-      # merchant, one key, three services. Left behind when the other two became
-      # a variable, this service would go on presenting a key the gateway no
+      # The same key the gateway seeds above: one merchant, one key, and on a
+      # laptop one string in both places. Left behind when the other became a
+      # variable, this service would go on presenting a key the gateway no
       # longer knows and the catalogue would come up empty.
-      MERCHANT_API_KEY: "${COINSLOT_MERCHANT_KEY:-local-sandbox-merchant-key}"
+      #
+      # The dash carries no colon for the reason SANDBOX_MERCHANT_KEY and
+      # REGISTRATION_INVITATION give above, and the three part company on what
+      # an empty value then means. Seeding set to nothing writes no key, and an
+      # invitation set to nothing takes no registrations; this has no such mode.
+      # Named with nothing after it, the merchant refuses to start —
+      # "MERCHANT_API_KEY is not set … there is no default for it" — which is
+      # what a deployment that emptied the variable should get, rather than the
+      # key printed in this file quietly selling on a server.
+      MERCHANT_API_KEY: "${COINSLOT_MERCHANT_KEY-local-sandbox-merchant-key}"
     depends_on:
       gateway:
         condition: service_healthy
