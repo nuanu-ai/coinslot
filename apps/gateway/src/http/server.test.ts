@@ -923,7 +923,10 @@ describe("the worker's calls over HTTP", () => {
       // content-type rather than the coding the body arrived under. The parser
       // has a word of its own for this one too, and the bytes are never turned
       // into text, so nothing about the JSON is known here either.
-      charsetRefused = await refusedFor({ "content-type": "application/json; charset=utf-77" }, "{}");
+      charsetRefused = await refusedFor(
+        { "content-type": "application/json; charset=utf-77" },
+        "{}",
+      );
       // The negative control for the branch above it. This body declares the
       // very same header and decompresses perfectly; what is wrong is the JSON
       // inside it. A fork that read the header instead of the failure would
