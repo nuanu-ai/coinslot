@@ -287,6 +287,34 @@ describe("loadConfig", () => {
     );
   });
 
+  it("refuses a poll window longer than a caller it cannot ask will wait", () => {
+    // The promise: a deployment cannot set this to a number that leaves the
+    // gateway holding a poll past the point where the client on the other end
+    // has given up. Which client that is matters, and getting it wrong here
+    // would put a false reason in front of an operator. A worker that names the
+    // window it wants is safe by arithmetic, whatever this is set to — the
+    // gateway holds a poll for the smaller of the two. The window is optional
+    // on the wire, and a poll that names none is held for this number instead,
+    // with nothing here knowing when its caller stops waiting. That is what the
+    // ceiling is for, and it is what the refusal has to say.
+    expect(() => loadConfig({ ...required, WORKER_POLL_WAIT_MS: "60000" })).toThrowError(
+      /WORKER_POLL_WAIT_MS: must be at most 40000ms/,
+    );
+    expect(() => loadConfig({ ...required, WORKER_POLL_WAIT_MS: "60000" })).toThrowError(
+      /a poll that named no window of its own/,
+    );
+    // Naming the ceiling alone would leave an operator to guess where the
+    // number came from, so the figure it was derived from is in the sentence —
+    // as the provenance of the bound, not as a claim about who is calling.
+    expect(() => loadConfig({ ...required, WORKER_POLL_WAIT_MS: "60000" })).toThrowError(/50000ms/);
+
+    // The ceiling itself starts: it is a bound and not a target, and an
+    // operator who reads the number out of the refusal must be able to use it.
+    expect(loadConfig({ ...required, WORKER_POLL_WAIT_MS: "40000" }).worker.pollWaitMs).toBe(
+      40_000,
+    );
+  });
+
   it("refuses a synchronous budget the two waits inside it do not fit into", () => {
     // The composition of `docs/research/16-order-state-machine.md`: the agent's
     // worst case in the synchronous mode is the merchant's answer plus the

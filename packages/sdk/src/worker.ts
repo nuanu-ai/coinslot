@@ -416,6 +416,22 @@ export const POLL_WAIT_SECONDS = 25;
  * Twice the window, so a gateway that holds the full window and answers late is
  * never cut off, and a connection that has gone quiet costs one window of
  * silence rather than several minutes of it.
+ *
+ * This worker never comes near it against the gateway in this repository, and
+ * that is not luck: every poll names the window it wants, and that gateway
+ * holds a poll for the smaller of the window asked for and its own, so the wait
+ * is bounded by the twenty-five seconds above however the gateway is
+ * configured. Naming the window is this side's guarantee. The deadline is for
+ * the other case — a connection that died without saying so.
+ *
+ * A second belt exists on the gateway's side, and it is not for this worker.
+ * The window is optional on the wire, and a poll that names none is held for
+ * the gateway's whole configured window instead; that window is refused above a
+ * ceiling set under this number (`WORKER_POLL_WAIT_CEILING_MS` in
+ * `apps/gateway/src/config.ts`), which is where this figure is copied. The
+ * gateway depends on the contracts and the core machine rather than on the SDK,
+ * so it cannot read it, and nothing checks that the copy still matches:
+ * changing what is written here means changing it there in the same breath.
  */
 export const POLL_DEADLINE_MS = POLL_WAIT_SECONDS * 2 * 1_000;
 

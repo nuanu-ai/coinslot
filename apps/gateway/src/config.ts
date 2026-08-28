@@ -68,6 +68,48 @@ const countAbove = (fallback: number) =>
     .default(fallback);
 
 /**
+ * How long the SDK's worker will wait for a poll before it abandons the request
+ * and reports the poll failed — `POLL_DEADLINE_MS` in
+ * `packages/sdk/src/worker.ts`, which derives it from the window that worker
+ * asks for.
+ *
+ * It is written down here rather than imported: the gateway depends on the
+ * contracts and on the core machine, and not on its own client library, so
+ * importing it would point the server at the SDK to learn a number. The price
+ * of writing it down is that the two can drift apart in silence, and what is
+ * paid against that is a comment on each side of the seam naming the other —
+ * this one, and the paragraph above `POLL_DEADLINE_MS`.
+ *
+ * Nothing reads this at run time. It is where the ceiling's number comes from
+ * rather than the thing the ceiling protects, and the refusal says so out loud
+ * so that an operator who runs into the ceiling is not left guessing.
+ */
+const SDK_WORKER_POLL_DEADLINE_MS = 50_000;
+
+/**
+ * The longest window a deployment may tell the gateway to hold a poll open for.
+ *
+ * The window below is what a poll that named no window of its own is held for
+ * (`http/routes.ts`, `poll_worker`), and it is also the cap on what a poll that
+ * did name one can ask for. A worker that names its window is safe from this
+ * number by arithmetic — the gateway holds the smaller of the two — so what the
+ * ceiling protects is the poll that named none: held past the deadline of the
+ * worker waiting on it, it is cut off from the far end, once per poll, with
+ * nothing on this side reporting anything wrong.
+ *
+ * Ten seconds under the deadline, and the headroom is not decoration. The
+ * worker's clock starts when it sends the request and this one starts when the
+ * request lands, so the far end is always already spending: the connection, the
+ * proxies in front of us, the queue's own polling granularity, and the answer's
+ * journey back all fall inside the gap. A ceiling set at the deadline itself
+ * would lose that race every time.
+ *
+ * It is a bound and not a target. The default is well under it, and everything
+ * between the two is somebody's deliberate choice.
+ */
+const WORKER_POLL_WAIT_CEILING_MS = 40_000;
+
+/**
  * The environment is just as much an external boundary as someone else's HTTP
  * request, so it goes through a zod schema (ADR-0003 §5). A gateway that
  * started with a half-empty configuration will discover that on the very first
@@ -257,8 +299,22 @@ const environmentSchema = z.object({
    */
   PAYMENT_WORDS_KEPT: countAbove(20),
 
-  /** How long the gateway holds a worker's poll open (ADR-0004 §1). */
-  WORKER_POLL_WAIT_MS: durationMs(25_000),
+  /**
+   * How long the gateway holds a worker's poll open (ADR-0004 §1).
+   *
+   * Bounded above, and what the bound is for is the poll that named no window
+   * of its own: that one is held for this number, and nothing here knows when
+   * its caller gives up. See `WORKER_POLL_WAIT_CEILING_MS`; the refusal names
+   * that caller rather than the SDK's worker, which is safe from this number by
+   * arithmetic and would be the wrong reason to give.
+   */
+  WORKER_POLL_WAIT_MS: durationMs(25_000).refine(
+    (value) => value <= WORKER_POLL_WAIT_CEILING_MS,
+    `must be at most ${WORKER_POLL_WAIT_CEILING_MS}ms — a poll that named no window of its own is ` +
+      "held for this long, and the gateway does not know when the client behind it stops waiting; " +
+      `the ceiling keeps that below the ${SDK_WORKER_POLL_DEADLINE_MS}ms at which this project's own ` +
+      "worker abandons a poll, which is the only published figure for what a worker here sits through",
+  ),
   /** The most envelopes one poll answers with, whatever the worker asked for. */
   WORKER_POLL_MAX_ENVELOPES: countAbove(32),
 

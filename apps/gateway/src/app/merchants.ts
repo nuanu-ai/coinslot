@@ -250,9 +250,9 @@ export const SEEDED_SERVICE_NAME = "Coinslot sandbox";
 export type SeedOutcome =
   /** There was no such key and now there is; here it is, the way it was given. */
   | { readonly kind: "issued"; readonly merchantId: string }
-  /** The key is already there and works. Nothing was written. */
+  /** The key is already there and works. No key was issued. */
   | { readonly kind: "already_there" }
-  /** The key is there and somebody disabled it. Nothing was written. */
+  /** The key is there and somebody disabled it. It is left that way. */
   | { readonly kind: "disabled" };
 
 /**
@@ -262,8 +262,10 @@ export type SeedOutcome =
  * This is what lets `docker compose up` sell with no manual step: the key in
  * `compose.yaml` is handed to the cabinet and to the merchant process, and this
  * puts the matching row in the database so that the door recognises it. Run
- * again — a restart, a second replica — it writes nothing, because the key is
- * looked up by its digest before anything is issued.
+ * again — a restart, a second replica — it issues no second key, because the
+ * key is looked up by its digest before anything is issued. That is a promise
+ * about keys and not about the whole call: the listing name below is restored
+ * when it is missing, so a run that issues nothing can still write.
  *
  * A key that is there but disabled is left disabled and said out loud. Bringing
  * it back would make revocation a thing a restart undoes, and a key somebody
