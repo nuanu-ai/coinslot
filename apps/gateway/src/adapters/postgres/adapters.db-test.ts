@@ -712,7 +712,7 @@ if (databaseUrl === null) {
       if (offered.step !== "pay") throw new Error("no price was offered");
 
       const worker = workUntilStopped(
-        { gateway, merchant: { id: A, name: "", key: "", keyId: "" } },
+        { gateway, merchant: { id: A, name: "", key: "", keyId: "", wallet: "" } },
         { onOrder: () => ({ delivered: { access_code: "SESAME" } }) },
       );
       // A fingerprint of this run's own, so the claim left behind by a previous
@@ -1369,7 +1369,7 @@ if (databaseUrl === null) {
         // The merchant's worker takes the order, which is what the envelope was
         // for and what makes the order no longer one that has reached nobody.
         const worker = workUntilStopped(
-          { gateway, merchant: { id: A, name: "", key: "", keyId: "" } },
+          { gateway, merchant: { id: A, name: "", key: "", keyId: "", wallet: "" } },
           { onOrder: () => ({ accepted: {} }) },
         );
         await vi.waitFor(async () => {
@@ -1390,7 +1390,7 @@ if (databaseUrl === null) {
         const paid = `swept-r-${randomUUID()}`;
         await gateway.runner.presentVerifiedPayment(orderId, paid, paid, now);
         const worker = workUntilStopped(
-          { gateway, merchant: { id: A, name: "", key: "", keyId: "" } },
+          { gateway, merchant: { id: A, name: "", key: "", keyId: "", wallet: "" } },
           { onOrder: () => ({ delivered: { activation_code: "CODE" } }) },
         );
         await vi.waitFor(async () => {

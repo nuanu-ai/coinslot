@@ -447,7 +447,9 @@ describe("the wallet a merchant's sales are paid into", () => {
   });
 
   it("refuses a field it does not know", () => {
-    expect(errorOf(PayoutWalletSchema, { ...paid, private_key: "0xdead" })).toContain("private_key");
+    expect(errorOf(PayoutWalletSchema, { ...paid, private_key: "0xdead" })).toContain(
+      "private_key",
+    );
   });
 });
 

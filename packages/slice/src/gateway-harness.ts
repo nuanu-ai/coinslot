@@ -28,7 +28,9 @@ import {
   MemoryStore,
   type Runtime,
   randomIds,
+  SEEDED_MERCHANT,
   seedSandboxKey,
+  setPayoutWallet,
   systemClock,
 } from "@coinslot/gateway";
 
@@ -43,9 +45,10 @@ import {
 export const SLICE_MERCHANT_KEY = "slice-merchant-key-please";
 
 /**
- * A well-formed address to send the money to. On the scripted facilitator no
- * money moves, so this only has to be an address the challenge can name; the
- * smoke overrides it with a real testnet merchant address.
+ * The address the merchant in this harness is paid at. On the scripted
+ * facilitator no money moves, so this only has to be an address the challenge
+ * can name; the smoke overrides it with a real testnet merchant address, and
+ * there the sale really does land at it.
  */
 export const SLICE_PAY_TO = "0x1111111111111111111111111111111111111111";
 
@@ -127,6 +130,21 @@ export async function bootGateway(
   // one function, so a key that works here is a key that works there.
   if (config.sandboxMerchantKey !== null) {
     await seedSandboxKey(store, randomIds, config.sandboxMerchantKey, systemClock());
+  }
+
+  // And where that merchant is paid, which is the address this slice was
+  // configured with. The two are one thing here and only here: this harness
+  // runs one merchant and the operator is that merchant, so the address in the
+  // environment is theirs — under the scripted facilitator a placeholder no
+  // money moves to, and under the smoke's real one the testnet address the sale
+  // actually lands at.
+  //
+  // The seed above deliberately does not do this. It is what a deployment runs,
+  // and a deployment's configured address belongs to whoever runs the gateway
+  // rather than to the merchants selling on it; writing it onto a merchant
+  // there would pay their sales to the operator (ADR-0019).
+  if (config.payment.payTo !== null) {
+    await setPayoutWallet(store, SEEDED_MERCHANT.id, config.payment.payTo, systemClock());
   }
 
   // On the address `baseUrl` below names, not on the wildcard: `serve` in the

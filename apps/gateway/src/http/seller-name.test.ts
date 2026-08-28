@@ -77,6 +77,22 @@ const nameless = async (served: Served): Promise<string> => {
   return (answered.body as { secret: string }).secret;
 };
 
+/**
+ * Somewhere for this merchant's money to go, which a registered merchant also
+ * arrives without.
+ *
+ * It is here so that the refusals below are about the name and nothing else:
+ * this gateway settles for real, so a merchant with no wallet is refused at the
+ * publish too, and a test that left it out would pass on the wrong reason.
+ */
+const payableAt = async (served: Served, key: string): Promise<void> => {
+  const answered = await served.call("POST", "/v0/payout-wallet", {
+    body: { payout_wallet: "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed" },
+    headers: bearer(key),
+  });
+  expect(answered.status, JSON.stringify(answered.body)).toBe(200);
+};
+
 describe("the name a merchant is listed under", () => {
   it("reads back nothing for a merchant nobody has named", async () => {
     // Null is the answer, not an empty string and not a 404. A merchant who has
@@ -296,8 +312,14 @@ describe("publishing before a name has been chosen", () => {
   it("lets a merchant publish as soon as they set one", async () => {
     // The road out of the refusal, walked end to end. A rule a merchant cannot
     // get past is not a rule, it is a wall.
+    //
+    // The wallet is set alongside because a merchant made by registering is
+    // missing that too, and this gateway settles for real: the name is what
+    // this test is about, and being refused for the other reason would say
+    // nothing about it either way.
     const { served } = await started();
     const key = await nameless(served);
+    await payableAt(served, key);
     expect((await publishing(served, key, cardFor("a-room", "A room"))).status).toBe(422);
 
     await setSellerName(served, key, "Their own shop");

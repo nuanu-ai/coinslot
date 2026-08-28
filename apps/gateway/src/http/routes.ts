@@ -19,6 +19,7 @@ import type {
   IssueKeyRequest,
   OrderListQuery,
   OrderWithStatus,
+  PayoutWalletRequest,
   PurchaseRequest,
   RegistrationRequest,
   RouteName,
@@ -170,6 +171,29 @@ export function handlersFor(gateway: Gateway): Partial<Record<RouteName, Mounted
         document: await gateway.setSellerName(
           merchantOf(call),
           (call.body as SellerNameRequest).seller_name,
+        ),
+      }),
+    },
+
+    get_payout_wallet: {
+      serve: async (call) => ({
+        status: OK,
+        document: await gateway.payoutWallet(merchantOf(call)),
+      }),
+    },
+
+    set_payout_wallet: {
+      // An address that is not one never reaches this handler: the mounting
+      // loop holds the body to the contract's own shape and answers 400 with
+      // the schema's words, which say what is wrong with the address and what
+      // the two spellings of one are. That is the same rule the flow below
+      // applies before it writes, and the two are one schema rather than two
+      // copies of a regular expression and a hash.
+      serve: async (call) => ({
+        status: OK,
+        document: await gateway.setPayoutWallet(
+          merchantOf(call),
+          (call.body as PayoutWalletRequest).payout_wallet,
         ),
       }),
     },
@@ -512,7 +536,12 @@ async function purchase(
       edge.challengeFor(
         { amount: offered.stored.card.price.amount, currency: offered.stored.card.price.currency },
         null,
-        { itemId: offered.stored.id, card: offered.stored.card, serviceName: offered.serviceName },
+        {
+          itemId: offered.stored.id,
+          card: offered.stored.card,
+          serviceName: offered.serviceName,
+          payoutWallet: offered.payoutWallet,
+        },
         "GET",
         "this resource is paid for; the price here is the published one and a purchase is priced when it is made",
       ),
@@ -661,6 +690,7 @@ async function answerPurchase(
             itemId: offered.stored.id,
             card: offered.stored.card,
             serviceName: offered.serviceName,
+            payoutWallet: offered.payoutWallet,
           },
           "POST",
           why,

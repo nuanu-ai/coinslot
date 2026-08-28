@@ -40,7 +40,7 @@ import type {
 } from "@x402/core/types";
 import { getDefaultAsset } from "@x402/evm";
 import { bazaarResourceServerExtension, declareDiscoveryExtension } from "@x402/extensions/bazaar";
-import type { PaymentConfig } from "../config.js";
+import { isSandboxFacilitator, type PaymentConfig } from "../config.js";
 
 /** The x402 version this edge speaks. */
 export const X402_VERSION = 2;
@@ -104,15 +104,34 @@ export class PaymentEdge {
   }
 
   /**
-   * What an agent is asked to pay, and which order it is for.
+   * What an agent is asked to pay, whose address it is paid to, and which order
+   * it is for.
    *
-   * The payTo address has no default and none is invented. Without it there is
-   * nowhere for the money to go, and a challenge that named an address nobody
-   * chose would invite an agent to pay a stranger.
+   * The address is the merchant's own, and that is the whole of the payment
+   * arrangement this gateway has: the agent pays the seller directly, nothing
+   * passes through us, and there is no moment at which a merchant's money is
+   * ours (ADR-0019). So the address comes in from the card's own merchant
+   * rather than out of our configuration, and a challenge for one merchant's
+   * product can never name another's address, because there is no other address
+   * in reach of this call.
+   *
+   * A merchant with none is refused rather than defaulted. The gateway does
+   * have an address in its configuration, and it is the operator's: standing it
+   * in here would send a merchant's takings to somebody else, in a payment that
+   * settles on a chain and cannot be called back, with nobody the wiser. The
+   * one place it is used is the sandbox, which settles against nothing — no
+   * chain, no money — and where the address is a placeholder a challenge has to
+   * name rather than a destination.
+   *
+   * Nothing reaches here without an address on a deployment that settles for
+   * real: the publish door refuses a merchant who has set none, and a wallet
+   * cannot be taken away once set. The throw is what that promise is worth if
+   * it is ever wrong, and it says which of the two silences it is.
    */
   requirementsFor(
     price: { readonly amount: string; readonly currency: string },
     orderId: string | null,
+    payoutWallet: string | null,
   ): PaymentRequirements {
     if (!PAYABLE.has(price.currency.toUpperCase())) {
       throw new Error(
@@ -120,12 +139,7 @@ export class PaymentEdge {
       );
     }
 
-    const payTo = this.#config.payTo;
-    if (payTo === null) {
-      throw new Error(
-        "there is nowhere to send the money: no payment address is configured, so no payment can be asked for",
-      );
-    }
+    const payTo = payoutWallet ?? this.#sandboxPlaceholder();
 
     const asset = getDefaultAsset(this.#network());
     return {
@@ -187,6 +201,8 @@ export class PaymentEdge {
       readonly itemId: string;
       readonly card: Card;
       readonly serviceName: string | null;
+      /** Where this card's own merchant is paid, which is who the agent pays. */
+      readonly payoutWallet: string | null;
     },
     method: "GET" | "POST",
     why?: string,
@@ -211,7 +227,7 @@ export class PaymentEdge {
         // goes into the challenge is nobody else's to change afterwards.
         ...(declared.resource.tags === undefined ? {} : { tags: [...declared.resource.tags] }),
       },
-      accepts: [this.requirementsFor(price, orderId)],
+      accepts: [this.requirementsFor(price, orderId, listed.payoutWallet)],
       extensions: discoveryExtensionOf(declared, method),
     };
     return encodePaymentRequiredHeader(challenge);
@@ -220,6 +236,31 @@ export class PaymentEdge {
   /** The settlement receipt, as the header carries it. */
   receiptHeader(settlement: SettleResponse): string {
     return encodePaymentResponseHeader(settlement);
+  }
+
+  /**
+   * The address the sandbox names where the merchant has set none.
+   *
+   * It exists so that a local stack sells with nothing configured about a
+   * merchant's chain identity, which is the whole reason the sandbox exists.
+   * Everywhere else this refuses, and the two refusals are told apart because
+   * they are fixed in two different places: on a deployment that settles for
+   * real the merchant has to set an address, and in a sandbox with nothing
+   * configured at all the operator has to.
+   */
+  #sandboxPlaceholder(): string {
+    if (!isSandboxFacilitator(this.#config.facilitatorUrl)) {
+      throw new Error(
+        "there is nowhere to send the money: the merchant who published this product has set no wallet to be paid at, and this gateway will not stand its own address in for theirs",
+      );
+    }
+    const configured = this.#config.payTo;
+    if (configured === null) {
+      throw new Error(
+        "there is nowhere to send the money: no payment address is configured, so no payment can be asked for",
+      );
+    }
+    return configured;
   }
 
   #network(): `${string}:${string}` {

@@ -33,6 +33,7 @@ export {
   SEEDED_MERCHANT,
   type SeedOutcome,
   seedSandboxKey,
+  setPayoutWallet,
 } from "./app/merchants.js";
 export { type Applied, OrderRunner, orderDocumentOf, type PresentResult } from "./app/runner.js";
 export {

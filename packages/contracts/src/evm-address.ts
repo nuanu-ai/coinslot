@@ -132,7 +132,8 @@ function permute(state: bigint[]): void {
         laneAt(state, column + 20);
     }
     for (let column = 0; column < 5; column++) {
-      const change = laneAt(parity, (column + 4) % 5) ^ rotated(laneAt(parity, (column + 1) % 5), 1);
+      const change =
+        laneAt(parity, (column + 4) % 5) ^ rotated(laneAt(parity, (column + 1) % 5), 1);
       for (let row = 0; row < 25; row += 5) {
         state[column + row] = laneAt(state, column + row) ^ change;
       }

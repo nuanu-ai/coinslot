@@ -28,12 +28,17 @@ import { ScriptedFacilitator } from "./adapters/memory/facilitator.js";
 import { MemoryQueue } from "./adapters/memory/queue.js";
 import { MemoryStore } from "./adapters/memory/store.js";
 import { Gateway } from "./app/gateway.js";
-import { keyDigest, setServiceName } from "./app/merchants.js";
+import { keyDigest, setPayoutWallet, setServiceName } from "./app/merchants.js";
 import { loadConfig } from "./config.js";
 import { buildApp } from "./http/server.js";
 
 const MERCHANT_KEY = "the-merchant-key-for-this-walk";
+
+/** The address this gateway itself is configured with: the operator's. */
 const PAY_TO = "0x00000000000000000000000000000000000000aa";
+
+/** The address the merchant of this walk is paid at, which is not that one. */
+const THE_WALKS_WALLET = "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed";
 
 /** The code the gateway below takes registrations behind. */
 const INVITATION = "the-code-this-walk-was-given";
@@ -52,17 +57,20 @@ async function aGatewayOnAPort() {
   const facilitator = new ScriptedFacilitator();
 
   // A merchant and a key, written the way anything that makes one writes one:
-  // a row for the merchant, a name for the merchant to be sold under, and a row
-  // holding the digest of the key rather than the key. Nothing else in this file
-  // knows the merchant's identifier — the key is the only thing the calls below
-  // carry, and the door is what turns one into the other.
+  // a row for the merchant, a name for the merchant to be sold under, an address
+  // for them to be paid at, and a row holding the digest of the key rather than
+  // the key. Nothing else in this file knows the merchant's identifier — the key
+  // is the only thing the calls below carry, and the door is what turns one into
+  // the other.
   //
-  // The name is not scaffolding. A merchant listed under nothing publishes
-  // nothing, so a walk that skipped it would be refused at its first card; the
-  // walk that registers, further down, is where being made to choose one is the
-  // subject rather than a precondition.
+  // Neither the name nor the address is scaffolding. A merchant listed under
+  // nothing publishes nothing, and on a gateway that settles for real neither
+  // does one with nowhere to be paid, so a walk that skipped either would be
+  // refused at its first card; the walk that registers, further down, is where
+  // being made to choose both is the subject rather than a precondition.
   await store.addMerchant({ id: "mch_the_walk", name: "The merchant of this walk" }, Date.now());
   await setServiceName(store, "mch_the_walk", "The walk's own shop", Date.now());
+  await setPayoutWallet(store, "mch_the_walk", THE_WALKS_WALLET, Date.now());
   await store.addKey(
     {
       id: "mk_the_walk",
@@ -446,9 +454,9 @@ describe("a purchase from the outside", () => {
     // defect it is, which is why it is worth walking rather than asserting on.
     //
     // It is also the whole road a new merchant walks: register, choose the name
-    // buyers will read, publish, sell. The middle step is not optional and this
-    // is where that is shown rather than asserted — a card published before it
-    // is refused, and the sale below never happens.
+    // buyers will read, say where the money goes, publish, sell. Neither middle
+    // step is optional and this is where that is shown rather than asserted — a
+    // card published before them is refused, and the sale below never happens.
     const gateway = await aGatewayOnAPort();
     try {
       const registered = await gateway.call("POST", "/v0/merchants", {
@@ -472,20 +480,35 @@ describe("a purchase from the outside", () => {
         fulfillment: "sync",
       };
 
-      // Nothing of theirs goes on sale before they have a name. Published now,
-      // this card would be offered to a buyer's agent through a payment request
-      // naming no seller at all.
+      // Nothing of theirs goes on sale before they have a name and somewhere to
+      // be paid. Published now, this card would be offered to a buyer's agent
+      // through a payment request naming no seller at all, with nowhere for the
+      // money to go — and the refusal names both, in one answer, rather than
+      // sending them round the loop twice.
       const early = await gateway.call("POST", "/v0/catalog/publish", {
         headers: { authorization: `Bearer ${theirKey}` },
         body: card,
       });
       expect(early.status).toBe(422);
+      expect(
+        (early.body as { errors: { code: string }[] }).errors.map((finding) => finding.code).sort(),
+      ).toStrictEqual(["no_payout_wallet", "no_seller_name"]);
 
       const named = await gateway.call("POST", "/v0/seller-name", {
         headers: { authorization: `Bearer ${theirKey}` },
         body: { seller_name: "The registered shop" },
       });
       expect(named.status).toBe(200);
+
+      // And the address their sales are paid into, which is theirs: the
+      // challenge below names it, and the gateway's own configured address is a
+      // different string, so a card offered against ours would show up here.
+      const theirWallet = "0x27b1fdb04752bbc536007a920d24acb045561c26";
+      const paidAt = await gateway.call("POST", "/v0/payout-wallet", {
+        headers: { authorization: `Bearer ${theirKey}` },
+        body: { payout_wallet: theirWallet },
+      });
+      expect(paidAt.status, JSON.stringify(paidAt.body)).toBe(200);
 
       const published = await gateway.call("POST", "/v0/catalog/publish", {
         headers: { authorization: `Bearer ${theirKey}` },
@@ -500,11 +523,16 @@ describe("a purchase from the outside", () => {
       // every catalogue built from these with nothing anywhere saying why.
       const probed = await gateway.call("GET", `/v0/items/${itemId}/purchase`);
       expect(probed.status).toBe(402);
-      const declared = decodePaymentRequiredHeader(
-        probed.headers.get("payment-required") ?? "",
-      ) as unknown as { resource: { serviceName?: string }; extensions?: Record<string, unknown> };
-      expect(declared.resource.serviceName).toBe("The registered shop");
+      const declared = decodePaymentRequiredHeader(probed.headers.get("payment-required") ?? "");
+      expect(
+        (declared as unknown as { resource: { serviceName?: string } }).resource.serviceName,
+      ).toBe("The registered shop");
       expect(declared.extensions?.bazaar).toBeDefined();
+      // And who the agent is told to pay: this merchant, at the address they
+      // set a moment ago, and not the one the gateway itself was configured
+      // with.
+      expect(declared.accepts[0]?.payTo).toBe(theirWallet);
+      expect(declared.accepts[0]?.payTo).not.toBe(PAY_TO);
 
       // And the sale itself, on their key and their worker.
       const challenged = await gateway.call("POST", `/v0/items/${itemId}/purchase`, {

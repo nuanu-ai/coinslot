@@ -195,8 +195,9 @@ describe("the wallet a merchant is paid at", () => {
     expect(prefixless.status).toBe(400);
     const { error } = short.body as { error: { problems: { message: string }[] } };
     expect(error.problems.map((problem) => problem.message).join(" ")).toContain("forty");
+    // And nothing was written: the merchant is still paid where they were.
     expect(await payoutWallet(served, harnessed.merchant.key)).toStrictEqual({
-      payout_wallet: null,
+      payout_wallet: harnessed.merchant.wallet,
     });
   });
 

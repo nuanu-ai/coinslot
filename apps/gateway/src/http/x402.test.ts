@@ -8,6 +8,7 @@ import {
   validateDiscoveryExtensionSpec,
 } from "@x402/extensions/bazaar";
 import { describe, expect, it } from "vitest";
+import { SANDBOX_FACILITATOR } from "../config.js";
 import { bearerIn } from "./auth.js";
 import { atomicUnits, PaymentEdge, paymentFingerprint } from "./x402.js";
 
@@ -32,11 +33,22 @@ describe("a price in the token's own units", () => {
   });
 });
 
+/**
+ * The address the merchant behind these challenges is paid at.
+ *
+ * Every challenge in this file is written for one seller, and it is theirs. The
+ * gateway's own configured address is a different string wherever the two are
+ * both in play, so a challenge that quietly used ours instead would be visible
+ * rather than indistinguishable.
+ */
+const SELLERS_WALLET = "0x27b1fdb04752bbc536007a920d24acb045561c26";
+
 describe("what an agent is asked to pay", () => {
-  const edge = (payTo: string | null) =>
+  /** A gateway with an address of its own configured, and a facilitator that settles for real. */
+  const edge = (payTo: string | null, facilitatorUrl = "https://x402.org/facilitator") =>
     new PaymentEdge(
       {
-        facilitatorUrl: "https://x402.org/facilitator",
+        facilitatorUrl,
         network: "eip155:84532",
         timeoutSeconds: 300,
         payTo,
@@ -47,38 +59,95 @@ describe("what an agent is asked to pay", () => {
       300,
     );
 
-  it("names the network's own asset and the order the price is for", () => {
-    const asked = edge("0xabc").requirementsFor({ amount: "80.00", currency: "USD" }, "ord_1");
+  it("names the network's own asset, the seller's address and the order it is for", () => {
+    const asked = edge(null).requirementsFor(
+      { amount: "80.00", currency: "USD" },
+      "ord_1",
+      SELLERS_WALLET,
+    );
 
     expect(asked).toStrictEqual({
       scheme: "exact",
       network: "eip155:84532",
       asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
       amount: "80000000",
-      payTo: "0xabc",
+      payTo: SELLERS_WALLET,
       maxTimeoutSeconds: 300,
       extra: { name: "USDC", version: "2", order_id: "ord_1" },
     });
   });
 
+  it("pays the seller rather than the address this gateway is configured with", () => {
+    // The whole of the arrangement in one assertion. The gateway has an address
+    // and it is the operator's; a challenge that named it would be inviting an
+    // agent to pay the operator for somebody else's product.
+    const ours = "0x0000000000000000000000000000000000000001";
+
+    const asked = edge(ours).requirementsFor(
+      { amount: "80.00", currency: "USD" },
+      "ord_1",
+      SELLERS_WALLET,
+    );
+
+    expect(asked.payTo).toBe(SELLERS_WALLET);
+    expect(asked.payTo).not.toBe(ours);
+  });
+
   it("says nothing about an order when there is no order behind the price", () => {
     // A crawler asking what a resource costs is not a purchase, so there is no
     // order to name and none is invented.
-    const asked = edge("0xabc").requirementsFor({ amount: "80.00", currency: "USD" }, null);
+    const asked = edge(null).requirementsFor(
+      { amount: "80.00", currency: "USD" },
+      null,
+      SELLERS_WALLET,
+    );
     expect(asked.extra).toStrictEqual({ name: "USDC", version: "2" });
   });
 
-  it("will not ask for money with nowhere to send it", () => {
+  it("will not stand its own address in for a seller who has set none", () => {
+    // Not a default and not a fallback. The address in the configuration is the
+    // operator's, and a sale paid into it is a merchant's takings going to
+    // somebody else, on a chain, with nobody the wiser.
+    const ours = "0x0000000000000000000000000000000000000001";
+
     expect(() =>
-      edge(null).requirementsFor({ amount: "1.00", currency: "USD" }, null),
+      edge(ours).requirementsFor({ amount: "1.00", currency: "USD" }, null, null),
     ).toThrowError(/nowhere to send the money/);
+  });
+
+  it("stands it in for a seller with none in the sandbox, where no money moves", () => {
+    // The one place the placeholder is used. There is no chain behind this
+    // facilitator and nothing to send, and a challenge still has to name an
+    // address — so a local stack sells with nothing configured about a
+    // merchant's chain identity.
+    const ours = "0x0000000000000000000000000000000000000001";
+
+    expect(
+      edge(ours, SANDBOX_FACILITATOR).requirementsFor(
+        { amount: "1.00", currency: "USD" },
+        null,
+        null,
+      ).payTo,
+    ).toBe(ours);
+  });
+
+  it("will not ask for money with nowhere at all to send it", () => {
+    // The sandbox with no address configured either. Whoever brings this one up
+    // has a variable to set, and the sentence is what says which.
+    expect(() =>
+      edge(null, SANDBOX_FACILITATOR).requirementsFor(
+        { amount: "1.00", currency: "USD" },
+        null,
+        null,
+      ),
+    ).toThrowError(/no payment address is configured/);
   });
 
   it("will not invent an exchange rate for a currency it cannot charge in", () => {
     // Nobody has decided where a rate would come from, and a charge based on one
     // we made up would be the clearest possible claim beyond the evidence.
     expect(() =>
-      edge("0xabc").requirementsFor({ amount: "80.00", currency: "EUR" }, "ord_1"),
+      edge(null).requirementsFor({ amount: "80.00", currency: "EUR" }, "ord_1", SELLERS_WALLET),
     ).toThrowError(/will not invent a rate/);
   });
 });
@@ -406,7 +475,12 @@ describe("the discovery declaration a challenge carries", () => {
       edge().challengeFor(
         { amount: "5.00", currency: "USD" },
         null,
-        { itemId: "itm_4d21bb", card, serviceName: listed.serviceName },
+        {
+          itemId: "itm_4d21bb",
+          card,
+          serviceName: listed.serviceName,
+          payoutWallet: SELLERS_WALLET,
+        },
         method,
       ),
     );
@@ -459,7 +533,12 @@ describe("the discovery declaration a challenge carries", () => {
       edge().challengeFor(
         { amount: "5.00", currency: "USD" },
         null,
-        { itemId: "itm_4d21bb", card: wide, serviceName: "n".repeat(32) },
+        {
+          itemId: "itm_4d21bb",
+          card: wide,
+          serviceName: "n".repeat(32),
+          payoutWallet: SELLERS_WALLET,
+        },
         "POST",
       ),
     );
@@ -545,7 +624,12 @@ describe("the discovery declaration a challenge carries", () => {
           edge().challengeFor(
             { amount: "5.00", currency: "USD" },
             null,
-            { itemId: "itm_4d21bb", card: parsed, serviceName: "A seller" },
+            {
+              itemId: "itm_4d21bb",
+              card: parsed,
+              serviceName: "A seller",
+              payoutWallet: SELLERS_WALLET,
+            },
             "POST",
           ),
         ),
@@ -562,7 +646,7 @@ describe("the discovery declaration a challenge carries", () => {
       edge().challengeFor(
         { amount: "5.00", currency: "USD" },
         "ord_1",
-        { itemId: "itm_4d21bb", card, serviceName: null },
+        { itemId: "itm_4d21bb", card, serviceName: null, payoutWallet: SELLERS_WALLET },
         "POST",
       ),
     );
@@ -677,7 +761,7 @@ describe("the shape a live validation once accepted", () => {
       edge.challengeFor(
         { amount: "2.00", currency: "USD" },
         null,
-        { itemId: "itm_1", card, serviceName: "Freeland" },
+        { itemId: "itm_1", card, serviceName: "Freeland", payoutWallet: SELLERS_WALLET },
         method,
       ),
     );

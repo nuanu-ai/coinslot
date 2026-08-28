@@ -32,6 +32,23 @@ export interface Charge {
   readonly currency: string;
   /** What the agent presented, exactly as it arrived. */
   readonly payment: string;
+  /**
+   * The address this order's own merchant is paid at, or nothing where they
+   * have set none and the deployment is one that asks for none.
+   *
+   * It travels with the charge because the requirements a payment is checked
+   * against are rebuilt from our own side rather than read out of the payment,
+   * and the address is part of them: the agent's copy of it is compared against
+   * this, and the facilitator signs off on the pair. Left out, every real
+   * payment would be checked against an address nobody was ever offered.
+   *
+   * It is read at the moment of the charge rather than kept from the challenge,
+   * so a merchant who has moved their wallet since the challenge was issued has
+   * the payment to the old address refused rather than executed — which is the
+   * safe reading of a wallet that moved, since the likeliest reason to move one
+   * is that it is no longer the merchant's to spend from.
+   */
+  readonly payTo: string | null;
 }
 
 export type VerifyOutcome =

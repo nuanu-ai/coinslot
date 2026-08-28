@@ -33,6 +33,7 @@ import {
   type OrderAcceptResponse,
   type OrderCallError,
   type OrderCallResponse,
+  type PayoutWallet,
   type PublishError,
   type PublishResult,
   publicCardOf,
@@ -48,6 +49,7 @@ import {
 } from "@coinslot/contracts";
 import type { MerchantSelling, TransitionRejection } from "@coinslot/core";
 import { createOrder, fulfillmentDeadline, isOpen, outcomeFor } from "@coinslot/core";
+import { isSandboxFacilitator } from "../config.js";
 import { asTimestamp } from "../ports/clock.js";
 import type { Reminder } from "../ports/queue.js";
 import type { StoredCard, StoredKey, StoredOrder } from "../ports/store.js";
@@ -57,6 +59,7 @@ import {
   issueKey,
   keyDigest,
   registerMerchant,
+  setPayoutWallet,
   setServiceName,
 } from "./merchants.js";
 import { OrderRunner, orderDocumentOf, SWEEP_EFFECTS } from "./runner.js";
@@ -92,8 +95,8 @@ export type SellingChange =
 
 /**
  * One product as a thing that can be paid for, and everything a challenge for
- * it has to say: the card, whether it may be sold at this moment, and the name
- * its seller is listed under where one has been set.
+ * it has to say: the card, whether it may be sold at this moment, the name its
+ * seller is listed under, and the address its seller is paid at.
  */
 export interface PaidResource {
   /** The card as it is held, under the catalog identifier we issued for it. */
@@ -102,6 +105,15 @@ export interface PaidResource {
   readonly selling: MerchantSelling;
   /** The seller's name in a discovery catalog, or nothing where none is set. */
   readonly serviceName: string | null;
+  /**
+   * Where this card's own merchant is paid, or nothing where none is set.
+   *
+   * It travels with the card because it is the card's merchant's and nobody
+   * else's: the address an agent is invited to pay has to belong to the seller
+   * of the thing it is buying, and read anywhere but from this card's owner it
+   * would be somebody's takings going to somebody else.
+   */
+  readonly payoutWallet: string | null;
 }
 
 /** What a purchase attempt came to. */
@@ -305,17 +317,23 @@ export class Gateway {
   /**
    * Puts one card in the catalog, or says everything standing in its way.
    *
-   * The findings are gathered rather than returned at the first one, and one of
-   * them is not about the card at all: a merchant who has set no name for
-   * buyers to read cannot publish. A card of theirs would be offered for sale
+   * The findings are gathered rather than returned at the first one, and two of
+   * them are not about the card at all. A merchant who has set no name for
+   * buyers to read cannot publish: a card of theirs would be offered for sale
    * through a payment request that names no seller, so the agent reading it is
    * invited to pay somebody the request does not name. That has been shipped
-   * from here once, silently, and this is what stops it happening again.
+   * from here once, silently. And on a deployment that settles on a real chain,
+   * a merchant who has set no wallet cannot publish either, for the same shape
+   * of reason one step further along: the money from that card's sales would
+   * have nowhere to go, and the gateway has no address of its own to stand in
+   * for theirs — the operator's configured address is the operator's, and
+   * paying a merchant's sales into it is exactly the custodial arrangement this
+   * design refuses.
    *
-   * The refusal comes back beside whatever is wrong with the card because the
-   * merchant is going to have to fix both, and told one at a time they fix the
-   * card, publish again, and only then find out about the name. It leads the
-   * list for the same reason: a screen that shows one finding shows the one
+   * Both refusals come back beside whatever is wrong with the card because the
+   * merchant is going to have to fix all of it, and told one at a time they fix
+   * the card, publish again, and only then find out about the rest. They lead
+   * the list for the same reason: a screen that shows one finding shows the one
    * that is not on the card, which is the one nothing on the card explains.
    */
   async publishCard(merchantId: string, body: unknown): Promise<PublishResult> {
@@ -326,14 +344,26 @@ export class Gateway {
     // "I cannot say who this is" is that nothing of theirs goes on sale. The
     // door resolved this key to a merchant a moment ago, so it does not happen.
     const merchant = await this.runtime.store.merchantById(merchantId);
-    const unnamed = merchant === null || merchant.serviceName === null;
+    const missing: PublishError[] = [];
+    if (merchant === null || merchant.serviceName === null) {
+      missing.push(NO_SELLER_NAME);
+    }
+    // The sandbox asks for no address, and that is not leniency: it settles
+    // against nothing, so there is no money to send anywhere and no chain to
+    // send it on (ADR-0008). A local stack that could not sell without an
+    // address is a stack nobody can bring up.
+    if (
+      !isSandboxFacilitator(this.runtime.config.payment.facilitatorUrl) &&
+      (merchant === null || merchant.payoutWallet === null)
+    ) {
+      missing.push(NO_PAYOUT_WALLET);
+    }
 
     if (!parsed.success) {
-      const wrongWithTheCard = findingsOf(parsed.error.issues);
-      return { errors: unnamed ? [NO_SELLER_NAME, ...wrongWithTheCard] : wrongWithTheCard };
+      return { errors: [...missing, ...findingsOf(parsed.error.issues)] };
     }
-    if (unnamed) {
-      return { errors: [NO_SELLER_NAME] };
+    if (missing.length > 0) {
+      return { errors: missing };
     }
 
     const stored = await this.runtime.store.publishCard(
@@ -402,6 +432,7 @@ export class Gateway {
       // reading of "I cannot say" is that this is not for sale.
       selling: merchant === null ? "paused" : sellingFor(merchant.selling, stored),
       serviceName: merchant?.serviceName ?? null,
+      payoutWallet: merchant?.payoutWallet ?? null,
     };
   }
 
@@ -572,6 +603,56 @@ export class Gateway {
       );
     }
     return { seller_name: named.serviceName };
+  }
+
+  /**
+   * Where this merchant's sales are paid, as it stands.
+   *
+   * Null for a merchant who has set nothing, exactly as the listing name is
+   * null: having none is an ordinary state a settings screen has to draw, and
+   * on a deployment with a chain behind it, it is also the state that explains
+   * why nothing of theirs can be published.
+   */
+  async payoutWallet(merchantId: string): Promise<PayoutWallet> {
+    const merchant = await this.runtime.store.merchantById(merchantId);
+    if (merchant === null) {
+      throw new Error(
+        `the key on this call resolved to ${merchantId}, and there is no such merchant`,
+      );
+    }
+    return { payout_wallet: merchant.payoutWallet };
+  }
+
+  /**
+   * Sets where this merchant's sales are paid.
+   *
+   * There is no taking one away, and unlike the listing name there is no verb
+   * at a terminal for it either: the address is what a payment request is
+   * written around, so a merchant without one has cards on sale that cannot be
+   * offered at all, and there is no caller for whom that is the right outcome.
+   *
+   * The address is checked and lowered before it is written, by the one
+   * function that does both. The route above holds the same rule on the way in,
+   * so a throw from here is a caller that skipped it.
+   *
+   * What comes back is read off the row that was written. Echoed, this answer
+   * would look identical whether the write landed or not — which for the one
+   * field in this system that money is sent to is not a difference to leave to
+   * chance.
+   */
+  async setPayoutWallet(merchantId: string, wallet: string): Promise<PayoutWallet> {
+    const paid = await setPayoutWallet(
+      this.runtime.store,
+      merchantId,
+      wallet,
+      this.runtime.clock(),
+    );
+    if (paid === null) {
+      throw new Error(
+        `the key on this call resolved to ${merchantId}, and there is no such merchant`,
+      );
+    }
+    return { payout_wallet: paid.payoutWallet };
   }
 
   /**
@@ -754,6 +835,11 @@ export class Gateway {
       amount: price.amount,
       currency: price.currency,
       payment,
+      // Read from this order's own merchant, so that what the payment is
+      // checked against is the address the challenge for this order actually
+      // named. A payment made out to anything else is not a payment for this
+      // sale, whatever else is right about it.
+      payTo: (await this.runtime.store.merchantById(before.merchantId))?.payoutWallet ?? null,
     });
 
     if (verified.verified !== true) {
@@ -1664,6 +1750,30 @@ const NO_SELLER_NAME: PublishError = {
     "this merchant has not set the name their products are sold under, and a card published" +
     " without one is offered for sale through a payment request that names no seller at all;" +
     " set a name with POST /v0/seller-name and publish this card again",
+};
+
+/**
+ * The finding a merchant who has said nothing about where their money goes
+ * meets when they try to publish, on a deployment where the money is real.
+ *
+ * Its path is empty for the reason the one above is: it is not about a field of
+ * the card, and a merchant reading it would search the card for what is missing
+ * and find nothing. The sentence says what is missing, why it is refused here
+ * rather than at the sale, and the one call that fixes it.
+ *
+ * Nothing here offers to stand an address of ours in for theirs, and the
+ * silence is the decision (ADR-0019): the gateway is configured with an
+ * address, it is the operator's, and a card published against it would send a
+ * merchant's takings to somebody else with nobody the wiser.
+ */
+const NO_PAYOUT_WALLET: PublishError = {
+  path: [],
+  code: "no_payout_wallet",
+  message:
+    "this merchant has not set a wallet to be paid at, so the money from sales of this card" +
+    " would have nowhere to go — a buyer's agent pays the merchant's own address directly and" +
+    " nothing of it is held here; set one with POST /v0/payout-wallet and publish this card" +
+    " again",
 };
 
 /** Zod's account of what is wrong, in the shape the contract publishes. */

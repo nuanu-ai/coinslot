@@ -12,6 +12,7 @@ import { PaymentEdge } from "../../http/x402.js";
 import type { Charge } from "../../ports/facilitator.js";
 import { X402Facilitator } from "./facilitator.js";
 
+/** The address the merchant behind these charges is paid at. */
 const PAY_TO = "0x0000000000000000000000000000000000000001";
 
 const edge = new PaymentEdge(
@@ -70,6 +71,7 @@ const charge = (payment: string): Charge => ({
   amount: "80.00",
   currency: "USD",
   payment,
+  payTo: PAY_TO,
 });
 
 /** A payment made against exactly what this gateway would have asked for. */
@@ -77,7 +79,7 @@ const honest = (overrides: Partial<PaymentRequirements> = {}): string =>
   encodePaymentSignatureHeader({
     x402Version: 2,
     accepted: {
-      ...edge.requirementsFor({ amount: "80.00", currency: "USD" }, "ord_1"),
+      ...edge.requirementsFor({ amount: "80.00", currency: "USD" }, "ord_1", PAY_TO),
       ...overrides,
     },
     payload: { signature: "0xsigned" },
@@ -90,7 +92,7 @@ const honest = (overrides: Partial<PaymentRequirements> = {}): string =>
 const forOrder = (orderId: string): string =>
   encodePaymentSignatureHeader({
     x402Version: 2,
-    accepted: edge.requirementsFor({ amount: "80.00", currency: "USD" }, orderId),
+    accepted: edge.requirementsFor({ amount: "80.00", currency: "USD" }, orderId, PAY_TO),
     payload: { signature: "0xsigned" },
   });
 
@@ -138,6 +140,41 @@ describe("verifying a payment", () => {
       message: "the payment was made out to a different address from the one asked for",
     });
     expect(client.asked).toStrictEqual([]);
+  });
+
+  it("checks the payment against the merchant's address rather than the gateway's own", async () => {
+    // The address in the requirements comes from the charge, which reads it off
+    // the order's own merchant, and never from this gateway's configuration.
+    // Read from the configuration, every sale on a deployment with several
+    // merchants would be checked against one address and only one of them would
+    // ever be paid — and it would be the operator.
+    const theirs = "0x27b1fdb04752bbc536007a920d24acb045561c26";
+    const paidToThem = encodePaymentSignatureHeader({
+      x402Version: 2,
+      accepted: edge.requirementsFor({ amount: "80.00", currency: "USD" }, "ord_1", theirs),
+      payload: { signature: "0xsigned" },
+    });
+    const client = new Answering();
+
+    const answered = await new X402Facilitator(client, edge).verify({
+      orderId: "ord_1",
+      amount: "80.00",
+      currency: "USD",
+      payment: paidToThem,
+      payTo: theirs,
+    });
+
+    expect(answered).toStrictEqual({ verified: true, payer: "0xpayer" });
+    expect(client.asked[0]?.requirements.payTo).toBe(theirs);
+    // And the same payment on a charge naming a different merchant's address is
+    // refused, which is what makes the assertion above about this merchant
+    // rather than about any address at all.
+    expect(
+      await new X402Facilitator(new Answering(), edge).verify(charge(paidToThem)),
+    ).toMatchObject({
+      verified: false,
+      message: "the payment was made out to a different address from the one asked for",
+    });
   });
 
   it("refuses a payment made in another asset or on another chain", async () => {
