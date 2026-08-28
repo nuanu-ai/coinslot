@@ -194,6 +194,33 @@ describe("loadConfig", () => {
     );
   });
 
+  it("takes the code registration is behind, and reads nothing at all as closed", () => {
+    // A gateway with no code configured takes no registrations. Absent and
+    // empty read the same, because a deployment closes registration by handing
+    // the process `REGISTRATION_INVITATION=` in a file rather than by deleting
+    // a line — and a reading in which nothing is a code somebody could present
+    // would open the door to whoever guessed the empty string.
+    expect(loadConfig(required).registrationInvitation).toBeNull();
+    expect(
+      loadConfig({ ...required, REGISTRATION_INVITATION: "" }).registrationInvitation,
+    ).toBeNull();
+    expect(
+      loadConfig({ ...required, REGISTRATION_INVITATION: "the-code" }).registrationInvitation,
+    ).toBe("the-code");
+  });
+
+  it("refuses a code that is blank or padded rather than trimming it", () => {
+    // The code is compared exactly as written, so a space at either end is a
+    // door nobody can open while the configuration says registration is on.
+    // Repairing it here would be us deciding what somebody meant to type.
+    expect(() => loadConfig({ ...required, REGISTRATION_INVITATION: "   " })).toThrowError(
+      /REGISTRATION_INVITATION/,
+    );
+    expect(() => loadConfig({ ...required, REGISTRATION_INVITATION: " the-code" })).toThrowError(
+      /REGISTRATION_INVITATION/,
+    );
+  });
+
   it("takes a key to seed the sandbox with, and refuses one too short to hand out", () => {
     // Not a key anything is compared against — there is no such variable any
     // more (ADR-0010). It is written into the database at start-up so a sandbox

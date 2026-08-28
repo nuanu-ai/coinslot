@@ -796,6 +796,18 @@ describe("the route table", () => {
       "-",
       "merchant_card_list",
     ],
+    [
+      "register_merchant",
+      "POST",
+      "/v0/merchants",
+      "none",
+      "-",
+      "registration_request",
+      "registered_merchant",
+    ],
+    ["list_keys", "GET", "/v0/keys", "merchant_key", "-", "-", "merchant_key_list"],
+    ["issue_key", "POST", "/v0/keys", "merchant_key", "-", "issue_key_request", "issued_key"],
+    ["disable_key", "POST", "/v0/keys/:key_id/disable", "merchant_key", "-", "-", "disabled_key"],
     ["get_order", "GET", "/v0/orders/:order_id", "merchant_key", "-", "-", "order_with_status"],
     ["list_orders", "GET", "/v0/orders", "merchant_key", "order_list_query", "-", "order_list"],
     ["list_receipts", "GET", "/v0/receipts", "merchant_key", "-", "-", "receipt_list"],
@@ -1052,6 +1064,38 @@ describe("the route table", () => {
       expect(route.request, route.path).toBeUndefined();
       expect(route.auth, route.path).toBe("merchant_key");
     }
+  });
+
+  // The doors and the shapes of the four calls about merchants and their keys
+  // are pinned by the surface table above, row for row, so nothing here repeats
+  // them. What the table cannot hold is the prose, and these three rules reach
+  // an SDK author only through it.
+
+  it("warns whoever writes a cabinet that one key cannot be disabled from it", () => {
+    // The rule lives in the route rather than on a screen, so the table is
+    // where somebody building against it finds out. What it costs to learn the
+    // hard way is a merchant one click away from a cabinet that answers every
+    // page with "the gateway will not take this key", and no terminal to undo
+    // it with. This pins that the sentence is there, not what it says.
+    expect(API_ROUTES.disable_key.description).toContain("this call was made with");
+    expect(API_ROUTES.list_keys.description).toContain("this_call");
+  });
+
+  it("says how far the refusal that protects a merchant from themselves reaches", () => {
+    // The half that is easy to leave out and expensive to leave out. The rule
+    // is about the key on the call and not about the key a cabinet signed in
+    // with, which the gateway has no way of knowing — so a merchant with two
+    // keys can still be left with a cabinet the gateway will not take. A reader
+    // who took the first sentence for the whole promise would build on a
+    // protection that is not there.
+    expect(API_ROUTES.disable_key.description).toContain("two keys");
+  });
+
+  it("says that registering twice makes two merchants", () => {
+    // Every other write in this table says what a repeat does, and three of
+    // them say a retry after a dropped connection is safe. This one is not, and
+    // read in that company a silence would be taken for the same promise.
+    expect(API_ROUTES.register_merchant.description).toContain("two merchants");
   });
 
   it("says what a pause does and does not do to the orders already open", () => {

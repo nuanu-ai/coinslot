@@ -225,8 +225,24 @@ describe("MemoryStore merchants and their keys", () => {
     await store.addKey({ id: "mk_a", merchantId: A, label: "A's", digest: "digest-a" }, 1_000);
     await store.addKey({ id: "mk_b", merchantId: B, label: "B's", digest: "digest-b" }, 1_000);
 
-    expect(await store.merchantForKey("digest-a")).toBe(A);
-    expect(await store.merchantForKey("digest-b")).toBe(B);
+    expect((await store.workingKey("digest-a"))?.merchantId).toBe(A);
+    expect((await store.workingKey("digest-b"))?.merchantId).toBe(B);
+  });
+
+  it("names the key at the door as well as its merchant", async () => {
+    // Which key opened a call is not a nicety: a merchant cannot disable the key
+    // they are holding, and the door is the only place that knows which one that
+    // was. Answered with a merchant alone, a route would have to hash the header
+    // a second time to find out.
+    const store = await twoMerchants();
+    await store.addKey({ id: "mk_a", merchantId: A, label: "A's", digest: "digest-a" }, 1_000);
+
+    expect(await store.workingKey("digest-a")).toMatchObject({
+      id: "mk_a",
+      merchantId: A,
+      label: "A's",
+      disabledAt: null,
+    });
   });
 
   it("answers a disabled key exactly as it answers a key nobody was issued", async () => {
@@ -238,8 +254,8 @@ describe("MemoryStore merchants and their keys", () => {
 
     await store.disableKey("mk_a", 2_000);
 
-    expect(await store.merchantForKey("digest-a")).toBeNull();
-    expect(await store.merchantForKey("a-digest-nobody-was-issued")).toBeNull();
+    expect(await store.workingKey("digest-a")).toBeNull();
+    expect(await store.workingKey("a-digest-nobody-was-issued")).toBeNull();
   });
 
   it("leaves a merchant's other keys working when one of them is disabled", async () => {
@@ -250,8 +266,88 @@ describe("MemoryStore merchants and their keys", () => {
 
     await store.disableKey("mk_1", 2_000);
 
-    expect(await store.merchantForKey("digest-1")).toBeNull();
-    expect(await store.merchantForKey("digest-2")).toBe(A);
+    expect(await store.workingKey("digest-1")).toBeNull();
+    expect((await store.workingKey("digest-2"))?.merchantId).toBe(A);
+  });
+
+  it("disables one of a merchant's own keys, and finds no key of anybody else's", async () => {
+    // The route behind the cabinet's button calls this one rather than the
+    // unscoped verb beside it. A merchant's call must never be able to move a
+    // stranger's key, and "not yours" and "not there" are one answer, so a
+    // refusal cannot be used to count somebody else's keys.
+    const store = await twoMerchants();
+    await store.addKey({ id: "mk_a", merchantId: A, label: "A's", digest: "digest-a" }, 1_000);
+    await store.addKey({ id: "mk_b", merchantId: B, label: "B's", digest: "digest-b" }, 1_000);
+
+    expect((await store.disableKeyOf(A, "mk_a", 2_000))?.disabledAt).toBe(2_000);
+    expect(await store.disableKeyOf(A, "mk_b", 2_000)).toBeNull();
+    expect(await store.disableKeyOf(A, "mk_nobody_was_issued", 2_000)).toBeNull();
+    // And B's key is untouched, which is the fact the null was protecting.
+    expect((await store.workingKey("digest-b"))?.merchantId).toBe(B);
+  });
+
+  it("keeps the first instant when a merchant disables their own key twice", async () => {
+    const store = await twoMerchants();
+    await store.addKey({ id: "mk_a", merchantId: A, label: "A's", digest: "digest-a" }, 1_000);
+
+    expect((await store.disableKeyOf(A, "mk_a", 2_000))?.disabledAt).toBe(2_000);
+    expect((await store.disableKeyOf(A, "mk_a", 9_000))?.disabledAt).toBe(2_000);
+  });
+
+  it("writes a merchant and their first key together, or neither of them", async () => {
+    // ADR-0014 §1: registering makes both or makes none. A merchant written
+    // without a key is a merchant nobody can reach and nothing points at, and
+    // the identifier is generated, so nobody would ever find it again either.
+    const store = new MemoryStore(counted());
+
+    const made = await store.registerMerchant(
+      { id: A, name: "Merchant A", serviceName: "Merchant A" },
+      { id: "mk_a", label: "the first key", digest: "digest-a" },
+      1_000,
+    );
+
+    expect(made?.merchant).toMatchObject({ id: A, serviceName: "Merchant A", selling: "open" });
+    expect(made?.key).toMatchObject({ id: "mk_a", merchantId: A, disabledAt: null });
+    expect((await store.workingKey("digest-a"))?.merchantId).toBe(A);
+  });
+
+  it("writes no merchant where the key beside it cannot be written", async () => {
+    // The half that makes the sentence above true rather than merely intended.
+    // A digest already taken is the way this fails without anything else being
+    // wrong, and a merchant left behind by it would be litter with a generated
+    // identifier nobody holds.
+    const store = new MemoryStore(counted());
+    await store.registerMerchant(
+      { id: A, name: "Merchant A", serviceName: "Merchant A" },
+      { id: "mk_a", label: "the first key", digest: "digest-a" },
+      1_000,
+    );
+
+    await expect(
+      store.registerMerchant(
+        { id: B, name: "Merchant B", serviceName: "Merchant B" },
+        { id: "mk_b", label: "the first key", digest: "digest-a" },
+        2_000,
+      ),
+    ).rejects.toThrow();
+
+    expect(await store.merchantById(B)).toBeNull();
+    expect((await store.merchants()).map((merchant) => merchant.id)).toStrictEqual([A]);
+  });
+
+  it("says the identifier is taken rather than writing over a merchant", async () => {
+    const store = new MemoryStore(counted());
+    await store.addMerchant({ id: A, name: "Merchant A" }, 1_000);
+
+    const again = await store.registerMerchant(
+      { id: A, name: "Somebody else", serviceName: "Somebody else" },
+      { id: "mk_a", label: "the first key", digest: "digest-a" },
+      2_000,
+    );
+
+    expect(again).toBeNull();
+    expect((await store.merchantById(A))?.name).toBe("Merchant A");
+    expect(await store.keysOf(A)).toStrictEqual([]);
   });
 
   it("keeps the instant a key was first revoked at when it is revoked again", async () => {
@@ -277,6 +373,25 @@ describe("MemoryStore merchants and their keys", () => {
 
     expect((await store.keysOf(A)).map((key) => key.id)).toStrictEqual(["mk_a1", "mk_a2"]);
     expect((await store.keysOf(B)).map((key) => key.id)).toStrictEqual(["mk_b1"]);
+  });
+
+  it("lists them oldest first, and settles a tie by the identifier", async () => {
+    // A merchant reads this list on a screen, so the order is the port's
+    // promise rather than whatever storage happens to hand back. Two keys made
+    // in one millisecond is the ordinary case — a registration writes a merchant
+    // and their first key at one instant — and left to insertion order here and
+    // to the planner over there, the same list would come back differently in
+    // the two places and a test about it would mean two things.
+    const store = await twoMerchants();
+    await store.addKey({ id: "mk_z", merchantId: A, label: "written first", digest: "d1" }, 1_000);
+    await store.addKey({ id: "mk_a", merchantId: A, label: "written second", digest: "d2" }, 1_000);
+    await store.addKey({ id: "mk_older", merchantId: A, label: "made earlier", digest: "d3" }, 500);
+
+    expect((await store.keysOf(A)).map((key) => key.id)).toStrictEqual([
+      "mk_older",
+      "mk_a",
+      "mk_z",
+    ]);
   });
 
   it("finds a key by its digest whatever state it is in, which the door does not", async () => {

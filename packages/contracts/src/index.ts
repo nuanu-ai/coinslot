@@ -56,6 +56,15 @@ import {
   RefusalCodeSchema,
   RefusalSchema,
 } from "./handler.js";
+import {
+  DisabledKeySchema,
+  IssuedKeySchema,
+  IssueKeyRequestSchema,
+  MerchantKeyListSchema,
+  MerchantKeySchema,
+  RegisteredMerchantSchema,
+  RegistrationRequestSchema,
+} from "./merchant.js";
 import { OrderSchema } from "./order.js";
 import { OrderStatusSchema } from "./order-status.js";
 import {
@@ -164,6 +173,24 @@ export {
   RefusalCodeSchema,
   RefusalSchema,
 } from "./handler.js";
+export type {
+  DisabledKey,
+  IssuedKey,
+  IssueKeyRequest,
+  MerchantKey,
+  MerchantKeyList,
+  RegisteredMerchant,
+  RegistrationRequest,
+} from "./merchant.js";
+export {
+  DisabledKeySchema,
+  IssuedKeySchema,
+  IssueKeyRequestSchema,
+  MerchantKeyListSchema,
+  MerchantKeySchema,
+  RegisteredMerchantSchema,
+  RegistrationRequestSchema,
+} from "./merchant.js";
 export type { Order } from "./order.js";
 export { OrderSchema } from "./order.js";
 export type { OrderStatus } from "./order-status.js";
@@ -242,12 +269,17 @@ export const schemas = Object.freeze({
   catalog_page: CatalogPageSchema,
   currency_code: CurrencyCodeSchema,
   delivery: DeliverySchema,
+  disabled_key: DisabledKeySchema,
   field_spec: FieldSpecSchema,
   fulfillment: FulfillmentSchema,
   handler_answer: HandlerAnswerSchema,
   identifier: IdentifierSchema,
+  issue_key_request: IssueKeyRequestSchema,
+  issued_key: IssuedKeySchema,
   merchant_card: MerchantCardSchema,
   merchant_card_list: MerchantCardListSchema,
+  merchant_key: MerchantKeySchema,
+  merchant_key_list: MerchantKeyListSchema,
   money: MoneySchema,
   order: OrderSchema,
   order_accept_response: OrderAcceptResponseSchema,
@@ -274,6 +306,8 @@ export const schemas = Object.freeze({
   receipt: ReceiptSchema,
   receipt_list: ReceiptListSchema,
   receipt_outcome: ReceiptOutcomeSchema,
+  registered_merchant: RegisteredMerchantSchema,
+  registration_request: RegistrationRequestSchema,
   refund_due_reason: RefundDueReasonSchema,
   refusal: RefusalSchema,
   refusal_code: RefusalCodeSchema,
