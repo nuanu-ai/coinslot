@@ -191,8 +191,18 @@ const environmentSchema = z.object({
     )
     .default(SANDBOX_MAIL),
 
-  /** What the provider is called with. Nothing to set in the sandbox. */
-  MAIL_API_KEY: z.string().min(1).optional(),
+  /**
+   * What the provider is called with. Nothing to set in the sandbox.
+   *
+   * Set to nothing reads the same as never set, and that spelling is the one a
+   * deployment actually uses: a compose file hands every service a fixed list
+   * of names, so "no provider here" is written as the name with nothing after
+   * it rather than by deleting the line. Read as a key of length zero it is
+   * refused and the cabinet does not start, which is a stack that will not come
+   * up for a variable nobody meant to set. The gateway's seed key learned the
+   * same lesson this morning.
+   */
+  MAIL_API_KEY: emptyIsAbsent(z.string().min(1)),
 
   /**
    * What a message says it is from.
@@ -202,8 +212,25 @@ const environmentSchema = z.object({
    * say so. A deployment that sends real mail has to name one; the sandbox does
    * not, because the log is not delivered to anybody.
    */
-  MAIL_FROM: z.string().min(1).optional(),
+  MAIL_FROM: emptyIsAbsent(z.string().min(1)),
 });
+
+/**
+ * A variable set to nothing, read the way a variable nobody set is read.
+ *
+ * Not a convenience. Every one of these arrives through a compose file, which
+ * hands a service a fixed list of names — so the way a deployment says "not
+ * this one" is the name with nothing after it, and a schema that reads that as
+ * a value refuses it and stops the process. What is left after the transform is
+ * the ordinary shape: absent, or a value the rule below has looked at.
+ */
+function emptyIsAbsent(rule: z.ZodType<string, string>) {
+  return z
+    .string()
+    .optional()
+    .transform((given) => (given === undefined || given === "" ? undefined : given))
+    .pipe(z.union([z.undefined(), rule]));
+}
 
 export interface CabinetConfig {
   readonly port: number;

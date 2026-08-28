@@ -137,6 +137,19 @@ describe("where the cabinet's two messages go", () => {
     );
   });
 
+  it("reads a credential set to nothing the way it reads one never set", () => {
+    // The spelling a deployment actually uses. A compose file hands a service a
+    // fixed list of names, so "no provider here" is the name with nothing after
+    // it rather than a deleted line — and read as a credential of length zero it
+    // is refused and the whole stack will not come up. It did, once, for exactly
+    // this: `MAIL_API_KEY=` in the sandbox's own compose file.
+    expect(loadConfig(given({ MAIL_API_KEY: "", MAIL_FROM: "" })).mailUrl).toBe("sandbox:log");
+    // And nothing is loosened for what is really there: a credential of one
+    // character is still a credential, and beside the sandbox word it is still
+    // somebody's leftovers.
+    expect(() => loadConfig(given({ MAIL_API_KEY: " " }))).toThrow(/MAIL_API_KEY/);
+  });
+
   it("refuses a provider it could not authenticate against, or send from", () => {
     // A cabinet that appears to send mail and silently does not is discovered
     // by a merchant who has lost a password and is waiting for a link that was

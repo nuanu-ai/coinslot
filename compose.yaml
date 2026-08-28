@@ -284,6 +284,34 @@ services:
       # nothing about a merchant's data — every card, order and receipt on every
       # screen still comes from the API.
       DATABASE_URL: postgres://coinslot:coinslot@postgres:5432/coinslot
+      # What signs a merchant's session cookie. The component behind the sign-in
+      # ships a fallback of its own, and a deployment that leans on it signs
+      # sessions with a value out of somebody else's public source — so the
+      # cabinet refuses to start without this one rather than quietly taking
+      # theirs. The value below is this sandbox's, in this file, for the reason
+      # every other secret here is in this file; a deployment sets its own.
+      # Changing it signs everybody out and does nothing worse: an account is
+      # reached again by signing in.
+      AUTH_SECRET: "${COINSLOT_AUTH_SECRET:-a-sandbox-secret-nobody-should-reuse-anywhere}"
+      # The address a merchant reaches this cabinet at, which is what the links
+      # in a confirmation or a password reset are built on. Nothing else needs
+      # it — every link on every page is relative — but a message is read on
+      # another machine, so those two have to be absolute.
+      #
+      # It is the origin and not the mount point: the cabinet appends its own
+      # base path. A deployment that sends real mail and leaves this at the
+      # laptop's answer is refused at startup, because every link it sent would
+      # point at the reader's own computer.
+      PUBLIC_BASE_URL: "${COINSLOT_PUBLIC_ORIGIN:-http://localhost:${COINSLOT_HOST_PORT:-8080}}"
+      # How a message leaves, or that it does not. `sandbox:log` writes every
+      # message into this service's log with its recipient and its link, so the
+      # whole path — register, confirm, lose a password, set a new one — is
+      # walked on a laptop with no account, no domain and no network. The same
+      # shape as the gateway's facilitator: one field, one value, and a
+      # configuration naming a real provider cannot also be pretending.
+      MAIL_URL: "${MAIL_URL:-sandbox:log}"
+      MAIL_API_KEY: "${MAIL_API_KEY:-}"
+      MAIL_FROM: "${MAIL_FROM:-Coinslot <no-reply@localhost>}"
       # There is no merchant key here, and its absence is the point rather than
       # an omission. The cabinet used to be given one and use it for the life of
       # the process, so every screen showed that merchant's money whoever was
