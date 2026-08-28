@@ -81,7 +81,9 @@ pnpm check:decisions
 
 Three more cost something and are kept apart for that reason. `pnpm test:db`
 needs a Postgres — `docker compose up -d --wait postgres` — and fails rather
-than skipping if there is none. `pnpm outside` packs the SDK, installs it into
+than skipping if there is none. It looks for it on port 5432, where that
+command publishes it; a host that publishes it somewhere else names it in
+`COINSLOT_TEST_DATABASE_URL`. `pnpm outside` packs the SDK, installs it into
 a directory outside this repository and runs the documented commands there.
 `pnpm smoke:listing <https address>` asks Coinbase's own endpoint whether our
 resource would be listed, and reports no verdict rather than a pass when it

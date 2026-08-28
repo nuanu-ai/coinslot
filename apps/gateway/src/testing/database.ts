@@ -2,8 +2,8 @@
  * The database the suite that needs a database is allowed to empty.
  *
  * It is not the one the stack runs on, and that separation is the whole of this
- * file. `compose.yaml` publishes Postgres on 5432 so that a terminal and this
- * suite can reach it, and the suite empties every table it finds and drops the
+ * file. `compose.yaml` publishes Postgres on a laptop's 5432 so that a terminal
+ * and this suite can reach it, and the suite empties every table it finds and drops the
  * queue's schema — so pointed at the stack's own database it empties the
  * catalogue a merchant just published and the orders the cabinet is showing,
  * while somebody is looking at them. That happened: a merchant process
@@ -38,32 +38,129 @@ const THE_STACK_DATABASE = "coinslot";
 /** Where the suite looks when nobody says otherwise. */
 export const DEFAULT_TEST_DATABASE_URL = `postgres://coinslot:coinslot@localhost:5432/${TEST_DATABASE}`;
 
+/**
+ * How a host that keeps its database somewhere else says so.
+ *
+ * The default above is the laptop's answer, and it is only the laptop's:
+ * `compose.yaml` publishes Postgres on 5432 there, and the same file tells a
+ * deployment to bind `127.0.0.1:55432:5432` instead, because the password is in
+ * a repository. On that host the default names a port with nothing behind it,
+ * and until this variable existed there was no way to say otherwise that did
+ * not mean lying about DATABASE_URL.
+ *
+ * It is a name of its own rather than DATABASE_URL because DATABASE_URL is
+ * already spoken for: it is what `db:migrate` and `account add` are handed, and
+ * what it names for them is `coinslot` — the one database this suite refuses.
+ * A variable with "test" in it cannot be mistaken for that one, so it is the
+ * specific answer and wins when both are set.
+ */
+const TEST_DATABASE_URL_VARIABLE = "COINSLOT_TEST_DATABASE_URL";
+
 /** Postgres's own answer for "that database is not there". */
 const NO_SUCH_DATABASE = "3D000";
 
 /**
- * What the suite should run against: DATABASE_URL when it is set, and the
- * suite's own database when it is not.
+ * What the suite should run against: COINSLOT_TEST_DATABASE_URL when it names
+ * something, DATABASE_URL when it does and that one does not, and the suite's
+ * own database on the laptop's port when neither says anything.
  *
- * Being set to the stack's database is refused rather than obeyed. This suite
+ * Being pointed at the stack's database is refused rather than obeyed, and
+ * whichever variable did the pointing is what the refusal names. This suite
  * empties what it is given, and there is no reading of "empty the database the
  * cabinet is showing" that is worth being quietly helpful about. Point it at
  * any other name.
+ *
+ * The environment is an argument, with the real one as its default, so that
+ * this — the whole of the decision, made before any connection exists — is
+ * tested with no Postgres anywhere near it.
  */
-export function testDatabaseUrl(): string {
-  const given = process.env.DATABASE_URL;
-  if (given === undefined || given === "") {
+export function testDatabaseUrl(
+  environment: Record<string, string | undefined> = process.env,
+): string {
+  const named = namedDatabaseUrl(environment);
+  if (named === undefined) {
     return DEFAULT_TEST_DATABASE_URL;
   }
-  if (databaseNameOf(given) === THE_STACK_DATABASE) {
+
+  const { variable, url } = named;
+  const database = databaseNamedBy(variable, url);
+  if (database === THE_STACK_DATABASE) {
     throw new Error(
-      `DATABASE_URL names "${THE_STACK_DATABASE}", which is the database docker compose runs the` +
+      `${variable} names "${THE_STACK_DATABASE}", which is the database docker compose runs the` +
         ` gateway and the cabinet against. This suite empties every table it finds and drops the` +
-        ` queue's schema, so it will not be pointed there. Leave DATABASE_URL unset to use` +
-        ` "${TEST_DATABASE}", or name any other database.`,
+        ` queue's schema, so it will not be pointed there. Leave ${TEST_DATABASE_URL_VARIABLE} and` +
+        ` DATABASE_URL unset to use "${TEST_DATABASE}", or name any other database.`,
     );
   }
-  return given;
+  if (database === "") {
+    // Measured against postgres:17-alpine: an address that stops at the port,
+    // and one ending in a bare slash, both connect to the database named after
+    // the user — `coinslot` on every stack this file is about. So an address
+    // that looks finished is how the refusal above gets walked past.
+    throw new Error(
+      `${variable} stops at the server and names no database, and Postgres fills that in with the` +
+        ` name of the user connecting — "${THE_STACK_DATABASE}" here, which is the database the` +
+        ` cabinet is showing. Put the database on the end of the address:` +
+        ` ".../${TEST_DATABASE}".`,
+    );
+  }
+  return url;
+}
+
+/**
+ * The variable this run was sent by, and what it said — or nothing, when the
+ * run is an ordinary one on a laptop.
+ *
+ * The two variables are read differently when they are set to nothing, and the
+ * difference is which suite they belong to. DATABASE_URL is not this one's: an
+ * unset variable and one emptied by a shell arrive the same way, and neither is
+ * this suite's business, so both mean the default. COINSLOT_TEST_DATABASE_URL
+ * exists for nothing but this, and there is no run it could be describing when
+ * it is empty — whoever set it is on a host where the default's localhost:5432
+ * is the wrong server, so falling back there is either a connection error
+ * naming an address nobody chose or a suite emptying whatever else answers on
+ * that port. It says so instead.
+ */
+function namedDatabaseUrl(
+  environment: Record<string, string | undefined>,
+): { variable: string; url: string } | undefined {
+  const own = environment[TEST_DATABASE_URL_VARIABLE];
+  if (own !== undefined) {
+    if (own === "") {
+      throw new Error(
+        `${TEST_DATABASE_URL_VARIABLE} is set to nothing at all, which is not a way of asking for` +
+          ` the default. Give it the address of the server this suite may empty, or unset it to` +
+          ` use ${withoutPassword(DEFAULT_TEST_DATABASE_URL)}.`,
+      );
+    }
+    return { variable: TEST_DATABASE_URL_VARIABLE, url: own };
+  }
+
+  const inherited = environment.DATABASE_URL;
+  if (inherited === undefined || inherited === "") {
+    return undefined;
+  }
+  return { variable: "DATABASE_URL", url: inherited };
+}
+
+/**
+ * The database that address names, or a refusal saying which variable holds an
+ * address that is not one.
+ *
+ * What it will not do is quote the value back. A connection string is mostly a
+ * password, and this sentence ends up in CI output and in scrollback somebody
+ * pastes; the name of the variable is what the reader needs, and the value is
+ * in front of them already.
+ */
+function databaseNamedBy(variable: string, url: string): string {
+  if (!URL.canParse(url)) {
+    throw new Error(
+      `${variable} is not an address. It has to be a Postgres connection string naming the` +
+        ` database this suite may empty, of the shape` +
+        ` "postgres://user:password@host:port/${TEST_DATABASE}".`,
+    );
+  }
+  return databaseNameOf(url);
 }
 
 /**
