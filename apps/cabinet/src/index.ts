@@ -40,10 +40,6 @@ export {
   type Answer,
   type GatewayClient,
   gatewayFor,
-  type IssuedKey,
-  type KeyList,
-  type MerchantKey,
-  type NewMerchant,
   type Registrar,
   registrarFor,
 } from "./gateway.js";

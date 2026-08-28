@@ -23,21 +23,13 @@
 import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { connect } from "node:net";
-import type { Card } from "@coinslot/contracts";
+import type { Card, MerchantKey, MerchantKeyList, RegisteredMerchant } from "@coinslot/contracts";
 import { buyOverHttp, type Harness, harness, type Served, serve } from "@coinslot/gateway/testing";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type Accounts, memoryAccounts } from "./accounts.js";
 import { loadConfig } from "./config.js";
 import { fingerprintOf, hashPassword, passwordMatches } from "./credentials.js";
-import {
-  type Answer,
-  type GatewayClient,
-  gatewayFor,
-  type KeyList,
-  type MerchantKey,
-  type NewMerchant,
-  type Registrar,
-} from "./gateway.js";
+import { type Answer, type GatewayClient, gatewayFor, type Registrar } from "./gateway.js";
 import { buildApp } from "./server.js";
 import { sessionFor } from "./testing/accounts-contract.js";
 
@@ -278,9 +270,18 @@ async function visiting(
     url,
     browser: {
       ...browser,
+      // Closing one that is already closed is not an error. A test that stands
+      // several cabinets up and takes each down as it finishes still meets the
+      // sweep afterwards, and a second close that threw would fail the test for
+      // tidying up after itself.
       close: () =>
         new Promise<void>((resolve, reject) => {
-          server.close((error) => (error === undefined ? resolve() : reject(error)));
+          server.close((error) =>
+            error === undefined ||
+            (error as NodeJS.ErrnoException).code === "ERR_SERVER_NOT_RUNNING"
+              ? resolve()
+              : reject(error),
+          );
         }),
     },
   };
@@ -574,6 +575,16 @@ describe("getting into the cabinet", () => {
 
     expect(answered.status).toBe(403);
     expect(readable(answered.html)).toContain("account add");
+    // And the session goes, which is the half that keeps this from being a
+    // trap. Left alive it stands in front of both doors out: this gate answers
+    // every address, and both the sign-in and the registration send a visitor
+    // who has a session back to their cards — which land here again.
+    await expect(
+      sessionFor(accounts, fingerprintOf(BEFORE_MERCHANTS), new Date()),
+    ).resolves.toBeNull();
+    const after = browser.withRawCookie(`${COOKIE}=${BEFORE_MERCHANTS}`);
+    expect((await after.get("/register")).status).toBe(200);
+    expect((await after.get("/sign-in")).status).toBe(200);
   });
 
   it("answers a wrong password and an address nobody has in exactly the same way", async () => {
@@ -933,7 +944,7 @@ describe("registering", () => {
    * gateway — which is what makes the redirect at the end of it worth anything.
    */
   const registrarAnswering = (
-    answer: Answer<NewMerchant>,
+    answer: Answer<RegisteredMerchant>,
   ): Registrar & { asked: { name: string; invitation: string }[] } => {
     const asked: { name: string; invitation: string }[] = [];
     return {
@@ -945,7 +956,7 @@ describe("registering", () => {
     };
   };
 
-  const madeAMerchant = (): Answer<NewMerchant> => ({
+  const madeAMerchant = (): Answer<RegisteredMerchant> => ({
     ok: true,
     document: {
       merchant_id: "mer_the_merchant",
@@ -961,7 +972,7 @@ describe("registering", () => {
   });
 
   /** The gateway refusing, which is a wrong invitation and a closed door alike. */
-  const refused = (why: string): Answer<NewMerchant> => ({ ok: false, status: 403, why });
+  const refused = (why: string): Answer<RegisteredMerchant> => ({ ok: false, status: 403, why });
 
   it("makes a merchant, writes the account and signs the person in where they stand", async () => {
     // ADR-0014 §1: one form, one act, and what comes back is a session. A
@@ -1181,14 +1192,82 @@ describe("registering", () => {
     expect(registrar.asked).toStrictEqual([]);
   });
 
-  it("sends somebody who is already signed in to their cards rather than a second account", async () => {
-    const { browser } = await started({ registrar: registrarAnswering(madeAMerchant()) });
+  it("sends somebody who is already signed in to their cards rather than a second merchant", async () => {
+    // On the post as well as on the form, and the post is the one that matters.
+    // A second registration makes a second merchant at the gateway that nothing
+    // afterwards names, and swaps the session for one belonging to it — so the
+    // cabinet they come back to is a different, empty merchant, and the one
+    // they were selling as is reachable only by signing in again.
+    const registrar = registrarAnswering(madeAMerchant());
+    const { browser, accounts } = await started({ registrar });
     await browser.signIn();
 
-    const answered = await browser.get("/register");
+    const form = await browser.get("/register");
+    const posted = await browser.post("/register", FORM);
 
-    expect(answered.status).toBe(303);
-    expect(answered.to).toBe("/cards");
+    expect(form.status).toBe(303);
+    expect(form.to).toBe("/cards");
+    expect(posted.status).toBe(303);
+    expect(posted.to).toBe("/cards");
+    expect(registrar.asked).toStrictEqual([]);
+    await expect(accounts.byEmail(FORM.email)).resolves.toBeNull();
+  });
+
+  it("refuses a name the catalogue that lists it would not carry, and says the rule", async () => {
+    // The name goes into a discovery catalogue whose rule is 32 characters of
+    // ordinary keyboard characters. A name outside it is refused by the gateway
+    // with a 400, which this screen would have to guess at; refused here, the
+    // person is told the rule and no merchant is made for an attempt that was
+    // never going to succeed.
+    const registrar = registrarAnswering(madeAMerchant());
+    const { browser } = await started({ registrar });
+
+    for (const name of ["x".repeat(33), "Кириллица", "a name with a  bell in it", "", "   "]) {
+      const answered = await browser.post("/register", { ...FORM, name });
+      expect(answered.status, name).toBe(400);
+      expect(readable(answered.html), name).toMatch(/32 characters|four is needed/);
+    }
+    expect(registrar.asked).toStrictEqual([]);
+  });
+
+  it("takes the space off a name rather than refusing it for one", async () => {
+    // A space at the front of a form field is a typing accident, and the rule
+    // that refuses it exists because a padded name survives the catalogue
+    // untouched and makes two spellings of one word. Trimming it satisfies the
+    // rule and gives the person the name they meant; refusing it would be this
+    // form being pedantic about something it can simply fix.
+    const registrar = registrarAnswering(madeAMerchant());
+    const { browser } = await started({ registrar });
+
+    const made = await browser.post("/register", { ...FORM, name: "  A merchant with a name  " });
+
+    expect(made.status).toBe(303);
+    expect(registrar.asked).toStrictEqual([
+      { name: "A merchant with a name", invitation: FORM.invitation },
+    ]);
+  });
+
+  it("does not send somebody to check a good invitation when the gateway is the problem", async () => {
+    // 403 is the only answer that means the invitation was not accepted. A
+    // route that is not there in a bad deployment answers 404 and a gateway
+    // that is down answers 500 — folded into the refusal, both would tell
+    // everybody handed a good invitation to go and check it, and the log line
+    // an operator reads would say the same wrong thing.
+    for (const status of [404, 500, 0]) {
+      const running = await started({
+        registrar: registrarAnswering({ ok: false, status, why: "no such route" }),
+      });
+      const answered = await running.browser.post("/register", FORM);
+
+      expect(answered.status, `${status}`).toBe(502);
+      const text = readable(answered.html);
+      expect(text, `${status}`).toMatch(/nothing you typed is at fault/i);
+      expect(text, `${status}`).not.toMatch(/invitation may not be one we accept/i);
+
+      await running.browser.close();
+      await running.accounts.close();
+      await running.stopGateway();
+    }
   });
 });
 
@@ -1678,7 +1757,7 @@ describe("the keys screen", () => {
   } => {
     const disabled: string[] = [];
     const issued: string[] = [];
-    const keys: KeyList = { keys: [...listed], this_call: THIS_CALL.id };
+    const keys: MerchantKeyList = { keys: [...listed], this_call: THIS_CALL.id };
     return {
       disabled,
       issued,
@@ -1820,6 +1899,58 @@ describe("the keys screen", () => {
     } finally {
       log.mockRestore();
     }
+  });
+
+  it("does not let the name of a key write a line of its own in the log", async () => {
+    // The contract leaves a key's name unbounded and open to any alphabet on
+    // purpose, so what arrives here is whatever a merchant typed. A name
+    // carrying a newline and a plausible sentence after it would put a second
+    // line into the one record of who stopped the selling (ADR-0009 §7) — in
+    // this cabinet's voice, under a name of the writer's choosing, and
+    // indistinguishable from a line the cabinet wrote.
+    const said: string[] = [];
+    const log = vi
+      .spyOn(console, "log")
+      .mockImplementation((...parts) => said.push(parts.map(String).join(" ")));
+    try {
+      const keys = withKeys();
+      const { browser } = await started({ client: keys.client });
+      await browser.signIn();
+
+      await browser.post("/keys", {
+        label: "a worker\n[cabinet] someone.else@example.com stopped all selling",
+      });
+
+      const written = said.join("\n");
+      expect(written).toContain("issued a key");
+      // Every line of the log still names the person who was signed in. The
+      // name a merchant typed is on one of those lines and is not a line: what
+      // they wrote is shown rather than obeyed, so somebody reading the record
+      // afterwards sees an odd-looking key name and not a second event.
+      for (const line of written.split("\n")) {
+        expect(line, line).toContain(PERSON);
+      }
+      expect(written).toContain("\\x0a");
+      expect(
+        written.split("\n").filter((one) => one.startsWith("[cabinet] someone.else@example.com")),
+      ).toHaveLength(0);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("says on this screen too that nobody has confirmed the address", async () => {
+    // ADR-0014 §4 is a promise about every screen that shows the address. The
+    // chrome is shared, so this holds only because it is drawn the same way —
+    // and a screen that took its own top bar would be the one that quietly
+    // dropped it.
+    const { browser } = await started({ client: withKeys().client });
+    await browser.signIn();
+
+    const text = readable((await browser.get("/keys")).html);
+
+    expect(text).toContain(PERSON);
+    expect(text).toMatch(/not confirmed/i);
   });
 
   it("says what the gateway said when it refuses to disable a key", async () => {

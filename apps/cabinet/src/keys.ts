@@ -10,19 +10,21 @@
  * Two things about the list are decisions rather than layout. The revoked keys
  * are on it, because "which key did I turn off, and when" is a question
  * somebody has on exactly this screen and a list of only the working ones
- * answers it with silence. And the key the cabinet is holding has no control
- * beside it: the gateway refuses to disable the key its caller is holding, so a
- * button there would be a button that does nothing — and if the gateway did not
- * refuse it, one click would stand between a merchant and a cabinet that
- * answers every page with "the gateway will not take this key", with the way
- * back through a terminal they do not have.
+ * answers it with silence. And the key this cabinet's own calls are made with —
+ * which the list itself names, as `this_call` — has no control beside it. That
+ * is the one click the gateway refuses (ADR-0014 §5), and the refusal is worth
+ * reading precisely: it is about the key in front of it and not about whichever
+ * key some cabinet happens to hold, which the gateway has no way of knowing. So
+ * this screen keeps a merchant from closing the door of the cabinet they are
+ * standing in, and it cannot keep them from closing the door of another one
+ * they are signed into elsewhere.
  *
  * Neither screen fetches anything or decides anything. Each is a function from
  * what the gateway answered to a page, which is what lets a test read the page
  * a merchant would be looking at.
  */
 
-import type { KeyList, MerchantKey } from "./gateway.js";
+import type { MerchantKey, MerchantKeyList } from "@coinslot/contracts";
 import { escaped, page } from "./html.js";
 import type { Viewer } from "./screens.js";
 import { moment } from "./words.js";
@@ -52,11 +54,15 @@ const keyControl = (base: string, entry: MerchantKey, thisCall: string): string 
   if (entry.id === thisCall) {
     return '<span class="quiet">This is the key this cabinet is using</span>';
   }
+  // Named "Revoke" rather than "Disable", because it does not come back and the
+  // word people already use for a credential that does not come back is this
+  // one. The page says so in words above the table as well; a control with no
+  // confirmation behind it should not be the only place that is said.
   return `<form class="inline" method="post" action="${escaped(base)}/keys/${encodeURIComponent(entry.id)}/disable">
 <button type="submit">Revoke</button></form>`;
 };
 
-export const keysScreen = (viewer: Viewer, keys: KeyList, problem?: string): string => {
+export const keysScreen = (viewer: Viewer, keys: MerchantKeyList, problem?: string): string => {
   const { base } = viewer;
   const working = keys.keys.filter((entry) => entry.disabled_at === null).length;
 
@@ -65,9 +71,11 @@ export const keysScreen = (viewer: Viewer, keys: KeyList, problem?: string): str
     <div>
       <h1>Keys</h1>
       <p>${escaped(
-        `${working} ${working === 1 ? "key works" : "keys work"} of the ${keys.keys.length} here.` +
-          " A key is what your code opens the door with. Revoking one stops that key and nothing" +
-          " else: your other keys go on working, and nobody is signed out of this cabinet.",
+        `${working} of the ${keys.keys.length} ${keys.keys.length === 1 ? "key" : "keys"} below` +
+          `${working === 1 ? " works" : " work"}. A key is what your code opens the door with.` +
+          " Revoking one stops that key from that moment and does not stop anything else: your" +
+          " other keys go on working, and nobody is signed out of this cabinet. It is not undone" +
+          " — a revoked key never opens the door again, and what replaces it is a new one.",
       )}</p>
     </div>
   </div>
@@ -77,7 +85,12 @@ ${
     : `<div class="scroller"><table>
 <thead><tr><th>Name</th><th>Made</th><th>State</th><th></th></tr></thead>
 <tbody>${keys.keys.map((entry) => keyRow(base, entry, keys.this_call)).join("")}</tbody>
-</table></div>`
+</table></div>
+  <div class="note"><span class="mark">&#8627;</span><span>${escaped(
+    "This is what the gateway answered with, and its answer does not say whether it is all of" +
+      " them. Nothing pages this list yet and nothing here counts your keys for you — the number" +
+      " above counts the rows below and nothing more.",
+  )}</span></div>`
 }
   <div class="lede">
     <div>

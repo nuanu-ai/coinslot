@@ -21,6 +21,7 @@
 
 import type { AccountMerchant, Accounts } from "./accounts.js";
 import { hashPassword, newPassword } from "./credentials.js";
+import { printable } from "./printable.js";
 
 /**
  * A shape an address has to have before anything is done with it.
@@ -62,21 +63,6 @@ const USAGE = [
   "list of everybody on the machine. Pipe it in from wherever you are holding",
   "it rather than typing it on the line that runs this.",
 ];
-
-/**
- * One line with nothing left in it that a terminal will act on.
- *
- * Shown rather than removed, so that a row with something odd in it looks odd:
- * an address nobody can read is still better information than an address that
- * silently painted over the one above it. Anything already printable is left
- * exactly as it is, so an address with a letter outside ASCII in it reads as
- * itself.
- */
-const printable = (line: string): string =>
-  line.replaceAll(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, (found) => {
-    const at = found.codePointAt(0) ?? 0;
-    return at <= 0xff ? `\\x${at.toString(16).padStart(2, "0")}` : `\\u{${at.toString(16)}}`;
-  });
 
 /** Postgres's own answer for "there is no table by that name". */
 const NO_SUCH_TABLE = "42P01";

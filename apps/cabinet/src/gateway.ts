@@ -17,89 +17,26 @@
 
 import {
   API_ROUTES,
+  DisabledKeySchema,
   expandPath,
+  type IssuedKey,
+  IssuedKeySchema,
   MERCHANT_KEY_HEADER,
   type MerchantCard,
   type MerchantCardList,
   MerchantCardListSchema,
   MerchantCardSchema,
+  type MerchantKey,
+  type MerchantKeyList,
+  MerchantKeyListSchema,
   merchantKeyHeaderValue,
   type OrderList,
   OrderListSchema,
   type ReceiptList,
   ReceiptListSchema,
+  type RegisteredMerchant,
+  RegisteredMerchantSchema,
 } from "@coinslot/contracts";
-import { z } from "zod";
-
-/**
- * The four routes ADR-0014 adds, written here because the contract's table does
- * not carry them yet.
- *
- * Every one of these — the paths and the schemas below them — is replaced by
- * the matching entry of `API_ROUTES` and the matching contract schema when the
- * two branches meet. They are the only addresses written down anywhere in this
- * cabinet, and the file's opening paragraph says why that is a thing to be
- * uncomfortable about: a second transcription of a surface is a second chance
- * for it to come apart. The discomfort is the point of this comment.
- */
-const PENDING_ROUTES = {
-  /** Makes a merchant and its first key. No key: nobody registering has one. */
-  register_merchant: { method: "POST", path: "/v0/merchants" },
-  /** Every key of the merchant the calling key resolves to. */
-  list_keys: { method: "GET", path: "/v0/keys" },
-  /** Issues one more key for that merchant. The secret comes back once. */
-  issue_key: { method: "POST", path: "/v0/keys" },
-  /** Stops one key working. The gateway refuses the key of the caller. */
-  disable_key: { method: "POST", path: "/v0/keys/:key_id/disable" },
-} as const;
-
-/**
- * One key, as the gateway describes it.
- *
- * `disabled_at` is null while the key works, which is what makes a disabled key
- * a row that is still there rather than a row that is gone: a merchant looking
- * at their keys needs to see the one they revoked last week, or the list
- * answers "which key did I turn off" with silence.
- *
- * The secret is not in here and never comes back: it is answered once, by the
- * call that issued it, and nothing on this side can ask for it again.
- */
-const MerchantKeySchema = z.object({
-  id: z.string().min(1),
-  label: z.string(),
-  created_at: z.iso.datetime({ offset: true }),
-  disabled_at: z.iso.datetime({ offset: true }).nullable(),
-});
-
-const KeyListSchema = z.object({
-  keys: z.array(MerchantKeySchema),
-  /**
-   * Which of those keys this call was made with.
-   *
-   * It exists so that the screen does not offer a control the route will
-   * refuse: the gateway will not disable the key its caller is holding, because
-   * one click would otherwise stand between a merchant and a cabinet that
-   * answers every page with "the gateway will not take this key" (ADR-0014 §5).
-   */
-  this_call: z.string().min(1),
-});
-
-const IssuedKeySchema = z.object({ key: MerchantKeySchema, secret: z.string().min(1) });
-
-const DisabledKeySchema = z.object({ key: MerchantKeySchema });
-
-const NewMerchantSchema = z.object({
-  merchant_id: z.string().min(1),
-  name: z.string(),
-  key: MerchantKeySchema,
-  /** The key's secret, which is what the cabinet writes onto the account. */
-  secret: z.string().min(1),
-});
-
-export type MerchantKey = z.infer<typeof MerchantKeySchema>;
-export type KeyList = z.infer<typeof KeyListSchema>;
-export type IssuedKey = z.infer<typeof IssuedKeySchema>;
-export type NewMerchant = z.infer<typeof NewMerchantSchema>;
 
 /** What a call came to, in the two shapes a page has to draw differently. */
 export type Answer<T> =
@@ -118,7 +55,7 @@ export interface GatewayClient {
   setSelling(selling: boolean): Promise<Answer<MerchantCardList>>;
   orders(open: boolean): Promise<Answer<OrderList>>;
   receipts(): Promise<Answer<ReceiptList>>;
-  keys(): Promise<Answer<KeyList>>;
+  keys(): Promise<Answer<MerchantKeyList>>;
   issueKey(label: string): Promise<Answer<IssuedKey>>;
   disableKey(keyId: string): Promise<Answer<MerchantKey>>;
 }
@@ -133,7 +70,7 @@ export interface GatewayClient {
  * shape somebody later reads as an accident.
  */
 export interface Registrar {
-  register(name: string, invitation: string): Promise<Answer<NewMerchant>>;
+  register(name: string, invitation: string): Promise<Answer<RegisteredMerchant>>;
 }
 
 /**
@@ -237,10 +174,15 @@ export const gatewayFor = (
     orders: (open) =>
       call(API_ROUTES.list_orders, OrderListSchema, { query: open ? "?open=true" : "" }),
     receipts: () => call(API_ROUTES.list_receipts, ReceiptListSchema),
-    keys: () => call(PENDING_ROUTES.list_keys, KeyListSchema),
-    issueKey: (label) => call(PENDING_ROUTES.issue_key, IssuedKeySchema, { body: { label } }),
+    keys: () => call(API_ROUTES.list_keys, MerchantKeyListSchema),
+    issueKey: (label) => call(API_ROUTES.issue_key, IssuedKeySchema, { body: { label } }),
     disableKey: async (keyId) => {
-      const answered = await call(PENDING_ROUTES.disable_key, DisabledKeySchema, {
+      // Unwrapped here rather than at the screen. The contract wraps the key in
+      // an object so that the answer can grow a field beside it without
+      // changing shape under every reader; what the one screen that draws it
+      // needs is the key, and a page reaching through a wrapper is a page that
+      // has to be edited the day the wrapper grows.
+      const answered = await call(API_ROUTES.disable_key, DisabledKeySchema, {
         values: { key_id: keyId },
       });
       return answered.ok ? { ok: true, document: answered.document.key } : answered;
@@ -264,7 +206,7 @@ export const registrarFor = (
   const call = caller(baseUrl, null, answerWithinMs);
   return {
     register: (name, invitation) =>
-      call(PENDING_ROUTES.register_merchant, NewMerchantSchema, { body: { name, invitation } }),
+      call(API_ROUTES.register_merchant, RegisteredMerchantSchema, { body: { name, invitation } }),
   };
 };
 

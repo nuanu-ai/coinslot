@@ -70,9 +70,11 @@ export const registerScreen = (base: string, minimum: number, problem?: string):
   <label for="password">Password</label>
   <input id="password" name="password" type="password" autocomplete="new-password" minlength="${minimum}" required>
   <label for="name">The name your products are sold under</label>
-  <input id="name" name="name" type="text" autocomplete="organization" required>
+  <input id="name" name="name" type="text" autocomplete="organization" maxlength="32" required>
+  <p class="quiet">Buyers read this name beside your products. At most 32 characters, all of them ordinary keyboard characters, with no space at either end — that is the rule of the catalogue that lists you, not ours.</p>
   <label for="invitation">Invitation</label>
   <input id="invitation" name="invitation" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+  <p class="quiet">The code you were given along with the address of this site. Registering is not open to everybody yet, and this is what stands in the door until an address can be confirmed.</p>
   <button class="primary" type="submit">Register</button>
   ${problem === undefined ? "" : `<p class="problem">${escaped(problem)}</p>`}
   <p class="quiet">Your address is a name you sign in with. It is not confirmed by anybody and nothing is ever sent to it, so keep the password somewhere safe: losing it is answered by asking us, not by a link in your mail.</p>

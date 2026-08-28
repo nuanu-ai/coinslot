@@ -22,6 +22,7 @@
  */
 
 import { readFileSync } from "node:fs";
+import { ServiceNameSchema } from "@coinslot/contracts";
 import express, { type Express, type Request, type Response } from "express";
 import type { Account, Accounts } from "./accounts.js";
 import type { CabinetConfig } from "./config.js";
@@ -42,6 +43,7 @@ import {
 } from "./gateway.js";
 import { bare, escaped } from "./html.js";
 import { keysScreen, newKeyScreen } from "./keys.js";
+import { printable } from "./printable.js";
 import { cardsScreen, ordersScreen, receiptsScreen, type Viewer } from "./screens.js";
 import { passwordScreen, registerScreen, signInScreen } from "./sign-in.js";
 
@@ -105,16 +107,19 @@ const SESSION_HOURS = 12;
  * an account named its merchant, so there is no key on its row and not one
  * screen in this cabinet can be drawn for it. The two things it must not be
  * answered with are an empty cabinet, which reads as a catalogue somebody
- * emptied, and an exception, which reads as a broken cabinet. So it is told
- * what it is and what fixes it — a command somebody with the merchant's key
- * runs — and the registration link on the same page covers the other reader,
- * who has no merchant at the gateway at all.
+ * emptied, and an exception, which reads as a broken cabinet.
+ *
+ * So it is told what it is and what the two ways out are. The person reading it
+ * is whoever set the deployment up, because this account is one of ours and not
+ * a merchant's, which is why it can name a command at all — and the command is
+ * named in full, because half of one is a person at a terminal guessing.
  */
 const NO_MERCHANT =
   "This account was made before an account named the merchant it signs in for, so there is" +
-  " nothing here for it to show. Somebody holding that merchant's key makes a new account with" +
-  " `account add <address> <merchant>`; a merchant with an invitation and no account can" +
-  " register below.";
+  " nothing here for it to show. A new one is made by somebody holding that merchant's key," +
+  " with the key piped in rather than typed on the line:" +
+  " ... | pnpm --filter @coinslot/cabinet account add <address> <merchant>." +
+  " A merchant who has an invitation and no account registers below instead.";
 
 /**
  * The one sentence a registration is refused with, whatever refused it.
@@ -150,14 +155,24 @@ const REGISTRATION_REFUSED =
 const LOOKS_LIKE_AN_ADDRESS = /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/;
 
 /**
- * The longest name a merchant can be shown under.
+ * What a merchant's name has to be, said in words a person can act on.
  *
- * A number here rather than a guess at the gateway's own: it exists so that a
- * paragraph pasted into the box is refused by the form rather than by a route
- * whose sentence would then be shown as the invitation being wrong. It is
- * generous, because a merchant's own name is theirs.
+ * The rule is the contract's `ServiceNameSchema` and is applied by asking it
+ * rather than by writing it out again here: it is the discovery catalogue's own
+ * rule, because that catalogue is where this name goes, and a second copy of it
+ * in this file would be the copy that goes stale. What is written here is only
+ * the sentence, because the schema's messages are one per broken rule and a
+ * person filling in a form is better served by being told the whole rule once.
+ *
+ * It is checked here as well as at the gateway so that a name outside the rule
+ * comes back as this sentence rather than as a 400 the screen would have to
+ * guess at — and so that no merchant is made for a registration that was never
+ * going to succeed.
  */
-const LONGEST_NAME = 200;
+const NAME_RULE =
+  "The name your products are sold under is at most 32 characters, all of them ordinary" +
+  " keyboard characters, with no space at either end. That is the rule of the catalogue that" +
+  " will list you under it, not ours.";
 
 /** What is wrong with a registration form, in a sentence, or null. */
 function whatIsWrongWith(form: {
@@ -175,8 +190,8 @@ function whatIsWrongWith(form: {
   if (form.password.length < MINIMUM_PASSWORD_LENGTH) {
     return `A password has to be at least ${MINIMUM_PASSWORD_LENGTH} characters.`;
   }
-  if (form.name.length > LONGEST_NAME) {
-    return `The name your products are sold under has to be ${LONGEST_NAME} characters or fewer.`;
+  if (!ServiceNameSchema.safeParse(form.name).success) {
+    return NAME_RULE;
   }
   return null;
 }
@@ -413,18 +428,36 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
     response.redirect(303, `${base}/cards`);
   });
 
+  /**
+   * Turns a registration away from somebody who is already signed in.
+   *
+   * On both the form and the post, and the post is the one that matters. A
+   * merchant already has one; a second registration from the same browser makes
+   * a second merchant at the gateway that nothing afterwards names, and hands
+   * the person a session for it in place of the one they had — so the cabinet
+   * they come back to is a different, empty merchant, and the one they were
+   * selling as is reachable only by signing in again. Guarding the form alone
+   * would leave that a form post away.
+   */
+  const alreadySignedIn = async (request: Request, response: Response): Promise<boolean> => {
+    if ((await whoseSession(request, accounts)) === null) {
+      return false;
+    }
+    response.redirect(303, `${base}/cards`);
+    return true;
+  };
+
   app.get(`${base}/register`, async (request, response) => {
-    if ((await whoseSession(request, accounts)) !== null) {
-      // Somebody already signed in has a merchant. A second registration from
-      // the same browser would make a second one and leave them holding a
-      // session for the first, which is a confusing way to say nothing.
-      response.redirect(303, `${base}/cards`);
+    if (await alreadySignedIn(request, response)) {
       return;
     }
     response.type("html").send(registerScreen(base, MINIMUM_PASSWORD_LENGTH));
   });
 
   app.post(`${base}/register`, async (request, response) => {
+    if (await alreadySignedIn(request, response)) {
+      return;
+    }
     const form = (request.body ?? {}) as {
       email?: unknown;
       password?: unknown;
@@ -463,32 +496,44 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
     // a refused invitation is — one sentence, below.
     const made = await registrar.register(name, invitation);
     if (!made.ok) {
-      if (made.status === 0 || made.status >= 500) {
-        // Nothing was made and nothing is wrong with what they typed. Sending
-        // them off to find a better invitation would be a wrong errand.
-        console.error(`[cabinet] a registration could not be made: ${made.why}`);
+      // 403 is the only status that means the invitation was not accepted, and
+      // the route answers it identically for a wrong code and for a gateway
+      // with registration closed (ADR-0014 §3) — so this is the one branch that
+      // shows the shared sentence, and nothing in it unpacks the gateway's own
+      // words into two of ours.
+      if (made.status === 403) {
+        console.log("[cabinet] a registration was refused by the gateway");
         response
-          .status(502)
+          .status(403)
           .type("html")
-          .send(
-            registerScreen(
-              base,
-              MINIMUM_PASSWORD_LENGTH,
-              "Nothing was made: the part of Coinslot that creates a merchant did not answer." +
-                " Nothing you typed is at fault, and trying again in a moment is the right move.",
-            ),
-          );
+          .send(registerScreen(base, MINIMUM_PASSWORD_LENGTH, REGISTRATION_REFUSED));
         return;
       }
-      // Every refusal the gateway makes is this one sentence. ADR-0014 §3 has
-      // the gateway answer a wrong invitation and a closed registration
-      // identically, and a screen that unpacked its words into two of its own
-      // would undo that at the last step.
-      console.log("[cabinet] a registration was refused by the gateway");
+      // A 400 says the document this cabinet sent is not one the route takes,
+      // which is a fault of ours and not of the invitation. The gateway's own
+      // sentence names the field, so it is passed through: sending somebody to
+      // find a better invitation over a name we should have refused first would
+      // be a wrong errand, and every other status is a wrong errand too.
+      //
+      // Every other status lands below: a route that is not there in a bad
+      // deployment answers 404, and a gateway that is down answers 0 or 5xx.
+      // Folded into the refusal above, all of those would tell every person
+      // handed a good invitation to go and check it.
+      console.error(`[cabinet] a registration could not be made: ${made.why}`);
       response
-        .status(403)
+        .status(502)
         .type("html")
-        .send(registerScreen(base, MINIMUM_PASSWORD_LENGTH, REGISTRATION_REFUSED));
+        .send(
+          registerScreen(
+            base,
+            MINIMUM_PASSWORD_LENGTH,
+            made.status === 400
+              ? `Nothing was made, and it is this cabinet's own request that was refused: ${made.why}`
+              : "Nothing was made: the part of Coinslot that creates a merchant did not answer as" +
+                  " it should. Nothing you typed is at fault, and trying again in a moment is the" +
+                  " right move.",
+          ),
+        );
       return;
     }
 
@@ -571,9 +616,17 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
           // them to type a password that will be accepted and then refused is a
           // longer way to the same sentence.
           //
-          // The session is left alone. Ending it would take away the one thing
-          // that still works about the account for no gain, and nothing this
-          // person can reach does anything with a merchant.
+          // The session goes, and that is the half that keeps this from being a
+          // trap. Left alive it is the thing standing in front of both doors
+          // out: this gate answers every address, the sign-in and the
+          // registration send a signed-in visitor back to their cards, and the
+          // cards land here again — so the one instruction the page gives them
+          // is a circle. Ending it costs nothing, because the account it
+          // belongs to cannot draw a single screen.
+          for (const token of tokensIn(request)) {
+            await accounts.end(fingerprintOf(token));
+          }
+          forget(response);
           response.status(403).type("html").send(signInScreen(base, NO_MERCHANT));
           return;
         }
@@ -1010,9 +1063,19 @@ const viewing = (request: Request, base: string): Viewer => ({
  *
  * What never goes in: a password, a session identifier, the merchant key. A log
  * goes places the environment does not.
+ *
+ * The whole line goes through `printable` rather than the one field that
+ * needed it, and that is on purpose. What made it necessary was the name a
+ * merchant gives a key, which the contract deliberately leaves unbounded and
+ * open to any alphabet — a name carrying a newline and a plausible sentence
+ * would write a second line into the one record of who stopped the selling,
+ * in this cabinet's voice and under a name of the writer's choosing. Doing it
+ * here rather than at that call site means the next thing somebody
+ * interpolates is covered by being here, which is the failure the account
+ * command's own rendering was written against.
  */
 const noted = (person: Account, did: string): void => {
-  console.log(`[cabinet] ${person.email} ${did}`);
+  console.log(printable(`[cabinet] ${person.email} ${did}`));
 };
 
 /** What a merchant is shown when the gateway would not answer. */
