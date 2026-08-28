@@ -836,6 +836,26 @@ export function describeStore(name: string, open: () => Promise<Store>): void {
         ]);
         expect(await store.orders(A)).toHaveLength(4);
         expect(await idsOf(store.orders(B))).toStrictEqual(["ord_theirs"]);
+
+        // And an order closing drops out of the open list, which is the half of
+        // the promise the lists above cannot make. Every order there was written
+        // into the state it is asserted in, so a store that decided once at
+        // insert and never again would pass all of it — and that store is
+        // precisely the failure the comment above describes, a column that fell
+        // behind the document it was written from. Closing one through a
+        // decision is what asks the question.
+        await store.withOrder("ord_open", (found) => ({
+          save: { ...found, order: { ...found.order, state: "expired" as const } },
+          result: null,
+        }));
+
+        expect(await idsOf(store.orders(A, { open: true }))).toStrictEqual([
+          "ord_debt",
+          "ord_unpaid",
+        ]);
+        // Closed is not deleted: the unfiltered list is what somebody
+        // reconciling a day's orders reads.
+        expect(await store.orders(A)).toHaveLength(4);
       });
     });
 
