@@ -37,13 +37,15 @@ import { IdentifierSchema, TimestampSchema } from "./primitives.js";
  * while being two different strings.
  *
  * What it does not do is worth saying, because a reader could take the rule for
- * more than it is. There is no length limit, since no channel outside us
- * carries this text and a number here would be a bound nobody's format asks
- * for. There is no alphabet: unlike the name a discovery catalog lists a seller
- * under, a label never leaves the merchant's own screens, so a label written in
- * Cyrillic is a label. And nothing here forbids a character that shows nothing —
- * a label is read rather than matched on, so an invisible character in one
- * makes an odd-looking row rather than a second key nobody can tell apart.
+ * more than it is. Nothing here bounds the length, since no channel outside us
+ * carries this text and a number would be a bound nobody's format asks for, and
+ * nothing here holds a label to one alphabet: unlike the name a discovery
+ * catalog lists a seller under, a label never leaves the merchant's own
+ * screens, so a label written in Cyrillic is a label. A character that shows
+ * nothing is allowed through as well, which is the omission a reader is likeliest
+ * to be surprised by — an identifier refuses one, because an identifier is
+ * matched on and two that look alike are two keys nobody can tell apart, and a
+ * label is only ever read, so the same character makes one odd-looking row.
  */
 const KeyLabelSchema = z
   .string()
