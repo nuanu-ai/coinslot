@@ -307,6 +307,11 @@ if (databaseUrl === null) {
     beforeEach(async () => {
       await store.addMerchant({ id: A, name: "The merchant of this suite" }, now);
       await store.addMerchant({ id: B, name: "The other merchant" }, now);
+      // A card whose merchant has nowhere to be paid is not on sale outside the
+      // sandbox, and this suite's config names a real facilitator — so the
+      // merchants get wallets, the same way testing/harness.ts seeds its own.
+      await store.setPayoutWallet(A, "0x0000000000000000000000000000000000000001", now);
+      await store.setPayoutWallet(B, "0x0000000000000000000000000000000000000002", now);
     });
 
     afterAll(async () => {
