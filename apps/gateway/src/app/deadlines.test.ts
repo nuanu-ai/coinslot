@@ -524,9 +524,18 @@ describe("when a delivery goes unanswered", () => {
 });
 
 describe("a timer that fires at the wrong moment", () => {
-  it("cannot close an order whose deadline is not running", async () => {
+  it("hands the machine's refusal back rather than closing the order on it", async () => {
     // A stale reminder off the queue, or one for a clock this order never had.
     // Closing an order on it would refund a buyer whose merchant is not late.
+    //
+    // Which timers the machine refuses is the machine's own subject and is
+    // settled in `packages/core`, where the deadline that is not running and
+    // the one that has not come due yet are two cases over the transition. What
+    // is the gateway's is everything after that word: the refusal reaches the
+    // caller as a refusal, carrying the machine's own code and not a code
+    // invented here, and nothing at all is written down. A runner that
+    // swallowed it would leave a caller told the event was applied and an order
+    // that had quietly closed.
     const harnessed = await started();
     const orderId = await bought(harnessed, asyncCard);
     await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
@@ -542,23 +551,6 @@ describe("a timer that fires at the wrong moment", () => {
     if (refused.outcome !== "refused") throw new Error("the stale timer was taken");
     expect(refused.rejection.code).toBe("deadline_not_armed");
     expect((await state(harnessed, orderId))?.state).toBe("delivered");
-  });
-
-  it("cannot close an order before its deadline has actually run out", async () => {
-    const harnessed = await started({ DEFAULT_ASYNC_FULFILLMENT_MS: "3000" });
-    const orderId = await bought(harnessed, asyncCard);
-    await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
-
-    const early = await harnessed.gateway.runner.apply(orderId, {
-      kind: "deadline_expired",
-      at: harnessed.now(),
-      deadline: "async_fulfillment",
-    });
-
-    expect(early.outcome).toBe("refused");
-    if (early.outcome !== "refused") throw new Error("the early timer was taken");
-    expect(early.rejection.code).toBe("deadline_not_yet_due");
-    expect((await state(harnessed, orderId))?.state).toBe("paid");
   });
 });
 
