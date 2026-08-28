@@ -56,20 +56,16 @@ would otherwise come up healthy and fail at the first charge in front of a
 buyer. It is recognised by its host and not by one exact address: the same
 endpoint is reached on a staging host, with a trailing slash, and written
 down to the root as `api.cdp.coinbase.com.`, and every spelling of it needs
-credentials. The host is compared in one spelling for that reason — lower
-case, with the root's own dot taken off — because a spelling read as a
-different host would be handed no credentials at all, which is the failure
-this door exists to move to startup.
+credentials — so the host is compared in one spelling, lower case with the
+root's own dot taken off, because a spelling read as some other host is a
+deployment handed no credentials at all.
 
-That leaves the hosts of Coinbase's that are not this facilitator, and the
-door is closed against those too rather than left open. This gateway knows
-how to sign for one host; pointed at any other under `coinbase.com` it would
-build a client with nothing on its requests, so it refuses to start and says
-which host it does know. A name somebody else registered that merely reads
-like theirs — `coinbase.com.evil.example`, or a domain of their own ending
-in those letters — is not under that domain, is nobody's Coinbase, and
-starts: credentials do not travel to a host on the strength of how it is
-spelled.
+The door is closed the same way against Coinbase's other hosts. This gateway
+can sign for one of them; pointed at any other under `coinbase.com` it would
+build a client with nothing on its requests, so it refuses to start and names
+the host it does know. A name somebody else registered that merely reads like
+theirs is not under that domain, is nobody's Coinbase, and starts: credentials
+do not travel to a host on the strength of how it is spelled.
 
 That address, and never whether credentials happen to be set, is also what
 decides who receives them. A bearer token is a key good for the account it was
