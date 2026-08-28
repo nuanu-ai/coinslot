@@ -335,7 +335,26 @@ export class PostgresStore implements Store {
   // --- orders ---------------------------------------------------------------
 
   async addOrder(record: StoredOrder): Promise<void> {
-    await this.#db.insert(orders).values(rowFor(record));
+    try {
+      await this.#db.insert(orders).values(rowFor(record));
+    } catch (thrown) {
+      if (!alreadyThere(thrown)) {
+        throw thrown;
+      }
+      // The primary key refused it, and this is where that becomes a sentence
+      // the gateway can read rather than the driver's. The in-memory store says
+      // exactly this, so a caller written against the offline suite meets the
+      // same failure here.
+      //
+      // The driver's own error is deliberately not carried as a cause. Its
+      // message is the statement followed by every bound parameter, and one of
+      // those parameters is the whole order document — which holds, among other
+      // things, whatever the agent presented to pay with. That is not a thing to
+      // put in a log, and there is nothing in it to diagnose from: this table
+      // has one unique constraint, so an insert refused for being already there
+      // is refused for this identifier and no other reason.
+      throw new Error(`the order ${record.order.id} is already written down`);
+    }
   }
 
   async orderById(id: string): Promise<StoredOrder | null> {
@@ -700,6 +719,31 @@ export class PostgresStore implements Store {
       .orderBy(receipts.updatedAt);
     return rows.map((row) => row.receipt);
   }
+}
+
+/**
+ * Whether what the driver threw is "that row is already there".
+ *
+ * SQLSTATE 23505, which Postgres raises for a primary key or a unique index
+ * that refused a write. It is looked for down the chain of causes rather than on
+ * the exception itself, because drizzle wraps what the driver threw in one of
+ * its own and hands the original along as `cause`. Reading the message instead
+ * would be reading English somebody's server locale may not be writing.
+ */
+function alreadyThere(thrown: unknown): boolean {
+  let at = thrown;
+  // Bounded rather than a walk, so a cause that pointed back at itself is not a
+  // failure that hangs the gateway instead of reporting itself.
+  for (let deep = 0; deep < 8; deep += 1) {
+    if (typeof at !== "object" || at === null) {
+      return false;
+    }
+    if ((at as { readonly code?: unknown }).code === "23505") {
+      return true;
+    }
+    at = (at as { readonly cause?: unknown }).cause;
+  }
+  return false;
 }
 
 /** One card row as the rest of the gateway reads it. */
