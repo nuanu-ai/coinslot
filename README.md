@@ -80,17 +80,17 @@ sequenceDiagram
     participant G as Gateway
     participant F as Facilitator
     participant H as Merchant
-    A->>G: purchase
+    A->>G: buys the card
     G-->>A: 402, with the price, the network and the asset
     A->>G: the same request, carrying a signed payment
-    G->>F: verify the payment
-    F-->>G: good for it
+    G->>F: is this payment good
+    F-->>G: it is
     Note over G: paid
     G->>H: the order, on the open subscription
     H-->>G: here are the goods
     Note over G: fulfilled
-    G->>F: execute the payment
-    F-->>G: settled
+    G->>F: take the money
+    F-->>G: taken
     Note over G: delivered
     G-->>A: the goods, in the answer to the purchase
 ```
@@ -110,11 +110,11 @@ sequenceDiagram
     participant G as Gateway
     participant F as Facilitator
     participant H as Merchant
-    A->>G: purchase
+    A->>G: buys the card
     G-->>A: 402, with the price, the network and the asset
     A->>G: the same request, carrying a signed payment
-    G->>F: verify, then execute the payment
-    F-->>G: settled
+    G->>F: check the payment, then take the money
+    F-->>G: taken
     Note over G: paid
     G-->>A: an order identifier, and no goods yet
     G->>H: the order, on the open subscription
@@ -130,10 +130,8 @@ takes no key (ADR-0011).
 
 ### Fulfillment against a confirmation
 
-The merchant says whether they will deliver before the buyer is charged at all.
-This mode is built in the state machine and closed at the door: a card asking
-for it is refused at publication, and it opens for the first merchant who
-answers orders by hand (ADR-0007).
+The merchant says whether they will deliver before the buyer is charged at all,
+so this is the mode whose branches matter more than its happy path.
 
 ```mermaid
 sequenceDiagram
@@ -141,20 +139,35 @@ sequenceDiagram
     participant G as Gateway
     participant F as Facilitator
     participant H as Merchant
-    A->>G: purchase
+    A->>G: buys the card
     G->>H: will you deliver this
-    Note over G: awaiting confirmation
-    H-->>G: I will
-    Note over G: confirmed
-    G-->>A: 402, and a deadline to pay by
-    A->>G: the same request, carrying a signed payment
-    G->>F: verify, then execute the payment
-    F-->>G: settled
-    Note over G: paid
-    G->>H: the order, on the open subscription
-    H-->>G: here are the goods
-    Note over G: delivered
+    Note over G: awaiting_confirmation
+    alt the merchant will not, or says nothing in time
+        Note over G: the order closes, nothing was charged
+    else the merchant will, and the agent pays in time
+        H-->>G: I will
+        Note over G: confirmed
+        A->>G: pays
+        G->>F: check the payment, then take the money
+        F-->>G: taken
+        Note over G: paid
+        G->>H: the order, on the open subscription
+        H-->>G: here are the goods
+        Note over G: delivered
+    else the merchant will, and the agent never pays
+        G->>H: this order expired
+        Note over G: the order closes, nothing was charged
+    end
 ```
+
+How the agent is told it may now pay is the piece that does not exist. The
+machine emits an `invite_payment` effect at the confirmation and the gateway
+throws on it rather than invent a message no contract describes, which is what
+closing the mode at the door means: a card asking for `confirm` is refused at
+publication, and ADR-0007 lists what wiring it up would touch. The branches
+above are the machine's — driving it through the three endings is where they
+come from — and the payment arrow deliberately does not say how the agent
+learned it was invited.
 
 ## Where things are
 

@@ -83,8 +83,9 @@ sequenceDiagram
 
 ### With confirmation
 
-Nothing is charged until you have said you will deliver, and the agent then has
-a deadline to pay in.
+Nothing is charged until you have said you will deliver. Your answer is the
+branch the order takes, so this diagram shows all three of its endings rather
+than the one where everything goes well.
 
 ```mermaid
 sequenceDiagram
@@ -93,15 +94,25 @@ sequenceDiagram
     participant Y as You
     A->>C: buys the card
     C->>Y: will you deliver this
-    Y-->>C: I will
-    C-->>A: a deadline to pay by
-    A->>C: pays
-    Note over C: the buyer is charged
-    C->>Y: the order, on your open subscription
-    Y-->>C: the goods, by a separate call
-    A->>C: asks where the order stands
-    C-->>A: the goods
+    alt you refuse, or say nothing before your deadline
+        Note over C: the order closes and nothing was charged
+    else you take it on, and the agent pays in time
+        Y-->>C: I will
+        A->>C: pays
+        Note over C: the buyer is charged
+        C->>Y: the order, on your open subscription
+        Y-->>C: the goods, by a separate call
+        A->>C: asks where the order stands
+        C-->>A: the goods
+    else you take it on and the agent never pays
+        C->>Y: this order expired
+        Note over C: the order closes and nothing was charged
+    end
 ```
+
+Between your "I will" and the agent's payment the clock is the agent's, and
+you are not waiting on your own deadline there — the third branch is how that
+ends, and it reaches you as an event on the same subscription.
 
 ## Where an order comes from
 
@@ -605,6 +616,10 @@ failed, and your side never hears about it — no order appears at all.
   something only by reconciling by hand.
 - The transport for confirmations, for sellers with no API — together with the
   path where an order arrives as a message, after the pilot.
+- How the agent is told it may now pay, in the confirmation mode. Your side of
+  that mode is settled — the request to confirm and your two answers — and the
+  agent's side of it is not, which is one of the reasons the mode is not open
+  during the pilot.
 - How your side learns that a refund on an order has gone out: together with
   the mechanics of refunding ([Money](/money)).
 - Telling your code that a synchronous answer arrived after its deadline. The
