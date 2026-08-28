@@ -19,8 +19,8 @@ export const escaped = (value: string): string =>
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
 
-/** Which of the four screens is being looked at. */
-export type Tab = "cards" | "orders" | "receipts" | "keys";
+/** Which of the screens with navigation on them is being looked at. */
+export type Tab = "cards" | "orders" | "receipts" | "keys" | "settings";
 
 export interface Chrome {
   /** Where the cabinet is mounted, "" when it is at the root of its origin. */
@@ -54,6 +54,16 @@ export interface Chrome {
    * about their keys has gone wrong.
    */
   readonly selling?: { readonly text: string; readonly tone: string };
+  /**
+   * Whether this merchant has still chosen no name for buyers to read.
+   *
+   * True draws the line at the top of the page saying nothing of theirs can go
+   * on sale, with the page that fixes it. Absent where the screen did not ask
+   * the gateway — the keys, for the reason given above the selling word, and
+   * the settings itself, which is the answer rather than a place to be told
+   * about the question.
+   */
+  readonly unnamed?: boolean;
   readonly body: string;
 }
 
@@ -62,6 +72,7 @@ const TABS: readonly [Tab, string][] = [
   ["orders", "Orders"],
   ["receipts", "Receipts"],
   ["keys", "Keys"],
+  ["settings", "Settings"],
 ];
 
 /**
@@ -121,10 +132,30 @@ export const page = (chrome: Chrome): string => `<!doctype html>
       </form>
     </div>
   </div>
-${chrome.body}
+${chrome.unnamed === true ? unnamedNote(chrome.base) : ""}${chrome.body}
 </div>
 </body>
 </html>
+`;
+
+/**
+ * The line at the top of every working screen while no name is set.
+ *
+ * It says the consequence rather than the setting, because the consequence is
+ * the part a merchant can feel: a card their code publishes is refused, and
+ * without this line the refusal arrives in their own logs with nothing in the
+ * cabinet to explain it. The refusal they would read there ends by naming the
+ * route that lifts it, which is the right sentence for whoever is holding an
+ * API response and the wrong one for somebody looking at a page — so this says
+ * the same thing and points at the page that does it instead.
+ *
+ * It goes once the name is chosen. A line that never leaves is a line nobody
+ * reads, and this one is about a state one form post ends.
+ */
+const unnamedNote = (base: string): string => `  <div class="callout">
+    <div class="what">Your products cannot go on sale until you choose the name buyers see beside them.</div>
+    <div class="why">A card published while this is unset is refused, because it would be offered for sale with no seller on it. <a href="${escaped(base)}/settings">Choose the name in your settings</a>.</div>
+  </div>
 `;
 
 /** A page with no navigation, for a merchant who is not signed in yet. */

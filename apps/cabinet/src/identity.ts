@@ -145,12 +145,7 @@ export interface Identity {
    * with no merchant on it is one somebody can sign into and see nothing at all
    * with — and the address it holds is one nobody else can register.
    */
-  register(
-    email: string,
-    password: string,
-    name: string,
-    merchant: AccountMerchant,
-  ): Promise<Registration>;
+  register(email: string, password: string, merchant: AccountMerchant): Promise<Registration>;
   /**
    * Whose session this cookie header carries, having asked the component.
    *
@@ -501,11 +496,17 @@ export function identityFor(config: CabinetConfig, parts: IdentityParts = {}): I
       return { ok: true, opened: { person, cookies: signed.headers.getSetCookie() } };
     },
 
-    async register(email, password, name, merchant) {
+    async register(email, password, merchant) {
       const made = await orNull(
         auth.api.signUpEmail({
           returnHeaders: true,
-          body: { email: emailAs(email), password, name },
+          // The component asks for a display name and nothing in this cabinet
+          // has one to give: a person here is their address, and the one name a
+          // merchant chooses is the name buyers read, which lives at the
+          // gateway and is not this. An empty string rather than a copy of the
+          // address, because a copy would be a second place the address is
+          // written and a value somebody later mistakes for a chosen one.
+          body: { email: emailAs(email), password, name: "" },
         }),
       );
       if (made === null) {
@@ -649,7 +650,7 @@ export function identityFor(config: CabinetConfig, parts: IdentityParts = {}): I
     },
 
     async make(email, password, merchant) {
-      const made = await this.register(email, password, "", merchant);
+      const made = await this.register(email, password, merchant);
       if (!made.ok) {
         return null;
       }

@@ -1,6 +1,7 @@
 /**
- * The cabinet's own HTTP surface: four screens, a sign-in, a registration, the
- * pages a password is set on, and the four switches that stop and start selling.
+ * The cabinet's own HTTP surface: the screens with navigation on them, a
+ * sign-in, a registration, the pages a password is set on, the settings, and
+ * the switches that stop and start selling.
  *
  * It is server-rendered with no client framework and no build step, which is
  * ADR-0005 §4. Every page is one GET and every change is one form post
@@ -11,10 +12,9 @@
  * on the cookie it produces, so nothing on any of these pages needs JavaScript.
  *
  * Nothing here decides anything about a card, an order or the money. Each
- * handler is a translation between one request and one or two calls on the
- * gateway's public API, and the pages are drawn from what those calls answered
- * (ADR-0005 §3). A screen that cannot be drawn is API the merchant does not
- * have either.
+ * handler is a translation between one request and a few calls on the gateway's
+ * public API, and the pages are drawn from what those calls answered (ADR-0005
+ * §3). A screen that cannot be drawn is API the merchant does not have either.
  *
  * Who is allowed in is one middleware and not a check per handler, and that is
  * ADR-0009 §5. The gate sits above every route below it, so a page added later
@@ -25,7 +25,6 @@
  */
 
 import { readFileSync } from "node:fs";
-import { ServiceNameSchema } from "@coinslot/contracts";
 import express, { type Express, type Request, type Response } from "express";
 import type { CabinetConfig } from "./config.js";
 import {
@@ -40,6 +39,13 @@ import type { Identity, Person } from "./identity.js";
 import { keysScreen, newKeyScreen } from "./keys.js";
 import { printable } from "./printable.js";
 import { cardsScreen, ordersScreen, receiptsScreen, type Viewer } from "./screens.js";
+import {
+  chooseNameScreen,
+  NAME_CANNOT_BE_TAKEN_AWAY,
+  NAME_NEEDED,
+  settingsScreen,
+  whatIsWrongWithTheName,
+} from "./seller-name.js";
 import {
   confirmedScreen,
   forgotScreen,
@@ -116,42 +122,19 @@ const REGISTRATION_REFUSED =
  */
 const LOOKS_LIKE_AN_ADDRESS = /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/;
 
-/**
- * What a merchant's name has to be, said in words a person can act on.
- *
- * The rule is the contract's `ServiceNameSchema` and is applied by asking it
- * rather than by writing it out again here: it is the discovery catalogue's own
- * rule, because that catalogue is where this name goes, and a second copy of it
- * in this file would be the copy that goes stale. What is written here is only
- * the sentence, because the schema's messages are one per broken rule and a
- * person filling in a form is better served by being told the whole rule once.
- *
- * It is checked here as well as at the gateway so that a name outside the rule
- * comes back as this sentence rather than as a 400 the screen would have to
- * guess at — and so that no merchant is made for a registration that was never
- * going to succeed.
- */
-const NAME_RULE =
-  "The name your products are sold under is at most 32 characters, all of them ordinary" +
-  " keyboard characters, with no space at either end. That is the rule of the catalogue that" +
-  " will list you under it, not ours.";
-
 /** What is wrong with a registration form, in a sentence, or null. */
 function whatIsWrongWith(
-  form: { email: string; password: string; name: string; invitation: string },
+  form: { email: string; password: string; invitation: string },
   shortestPassword: number,
 ): string | null {
-  if (form.email === "" || form.password === "" || form.name === "" || form.invitation === "") {
-    return "Every one of the four is needed: an address, a password, the name your products are sold under, and your invitation.";
+  if (form.email === "" || form.password === "" || form.invitation === "") {
+    return "Every one of the three is needed: an address, a password, and your invitation.";
   }
   if (!LOOKS_LIKE_AN_ADDRESS.test(form.email)) {
     return "That is not an address of the shape someone@example.com.";
   }
   if (form.password.length < shortestPassword) {
     return `A password has to be at least ${shortestPassword} characters.`;
-  }
-  if (!ServiceNameSchema.safeParse(form.name).success) {
-    return NAME_RULE;
   }
   return null;
 }
@@ -419,19 +402,17 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
     const form = (request.body ?? {}) as {
       email?: unknown;
       password?: unknown;
-      name?: unknown;
       invitation?: unknown;
     };
     const email = typeof form.email === "string" ? form.email.trim() : "";
     const password = typeof form.password === "string" ? form.password : "";
-    const name = typeof form.name === "string" ? form.name.trim() : "";
     const invitation = typeof form.invitation === "string" ? form.invitation.trim() : "";
 
     // Everything about what was typed is settled before the gateway is called,
     // because a merchant made for a form that was never going to produce an
     // account is litter somebody has to argue about later. ADR-0014 §1 accepts
     // that litter where it cannot be avoided; this is where it can.
-    const wrong = whatIsWrongWith({ email, password, name, invitation }, shortest);
+    const wrong = whatIsWrongWith({ email, password, invitation }, shortest);
     if (wrong !== null) {
       response
         .status(400)
@@ -445,7 +426,7 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
     // an account" to somebody who has no invitation at all. Behind an
     // invitation the gateway has accepted, the address is answered the same way
     // a refused invitation is — one sentence, below.
-    const made = await registrar.register(name, invitation);
+    const made = await registrar.register(invitation);
     if (!made.ok) {
       // 403 is the only status that means the invitation was not accepted, and
       // the route answers it identically for a wrong code and for a gateway
@@ -488,7 +469,7 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
       return;
     }
 
-    const registered = await identity.register(email, password, name, {
+    const registered = await identity.register(email, password, {
       id: made.document.merchant_id,
       key: made.document.secret,
     });
@@ -536,7 +517,10 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
 
     carryCookies(response, registered.opened.cookies);
     console.log(`[cabinet] ${registered.opened.person.email} registered and signed in`);
-    response.redirect(303, `${base}/cards`);
+    // On to the one question the form no longer asks. It is the last step of
+    // registering rather than a page inside the cabinet, which is why it is
+    // reached by a redirect from here and linked from nowhere else.
+    response.redirect(303, `${base}/choose-name`);
   });
 
   app.get(`${base}/password/forgot`, (_request, response) => {
@@ -750,12 +734,90 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
     response.redirect(303, `${base}/sign-in`);
   });
 
+  /**
+   * The screen the last step of registering lands on.
+   *
+   * It asks the gateway for nothing. A merchant arrives here in the second
+   * after their account was made, so there is no name to draw, and a call whose
+   * answer is known would be one more thing between registering and the box
+   * they came here to fill in. Somebody who comes back to this address later
+   * gets the same form, and using it sets the name the same way the settings
+   * page does.
+   */
+  app.get(`${base}/choose-name`, (_request, response) => {
+    response.type("html").send(chooseNameScreen(base));
+  });
+
+  app.post(`${base}/choose-name`, async (request, response) => {
+    const typed = nameIn(request);
+    // Empty is somebody who pressed the button with nothing in the box, and
+    // they are told so rather than sent to read the catalogue's rule — the
+    // rule is not what they broke, and the way past this screen is on it.
+    const wrong = typed === "" ? NAME_NEEDED : whatIsWrongWithTheName(typed);
+    if (wrong !== null) {
+      response.status(400).type("html").send(chooseNameScreen(base, wrong));
+      return;
+    }
+
+    const set = await gatewayAs(request).setSellerName(typed);
+    if (!set.ok) {
+      return trouble(response, base, set);
+    }
+    noted(whoIs(request), "chose the name their products are sold under");
+    response.redirect(303, `${base}/cards`);
+  });
+
+  app.get(`${base}/settings`, async (request, response) => {
+    const name = await gatewayAs(request).sellerName();
+    if (!name.ok) {
+      return trouble(response, base, name);
+    }
+    response.type("html").send(settingsScreen(viewing(request, base, name.document)));
+  });
+
+  app.post(`${base}/settings`, async (request, response) => {
+    const typed = nameIn(request);
+    // Empty is a merchant trying to stop being listed, and the sentence names
+    // the control that actually does that. The route below would refuse it
+    // anyway; refused here, the answer is about what they were trying to do
+    // rather than about a document the gateway would not take.
+    const wrong = typed === "" ? NAME_CANNOT_BE_TAKEN_AWAY : whatIsWrongWithTheName(typed);
+    if (wrong !== null) {
+      // The page is drawn from what the gateway has rather than from what was
+      // typed, the way the keys screen redraws its list after a refusal: a
+      // merchant reading a refused name in the box under "the name buyers read"
+      // is reading something they are not listed under.
+      const name = await gatewayAs(request).sellerName();
+      if (!name.ok) {
+        return trouble(response, base, name);
+      }
+      response
+        .status(400)
+        .type("html")
+        .send(settingsScreen(viewing(request, base, name.document), wrong));
+      return;
+    }
+
+    const set = await gatewayAs(request).setSellerName(typed);
+    if (!set.ok) {
+      return trouble(response, base, set);
+    }
+    noted(whoIs(request), "changed the name their products are sold under");
+    // Back to the page rather than answered with one, so that a reload does not
+    // send the name again.
+    response.redirect(303, `${base}/settings`);
+  });
+
   app.get(`${base}/cards`, async (request, response) => {
-    const cards = await gatewayAs(request).cards();
+    const gateway = gatewayAs(request);
+    const [cards, name] = await Promise.all([gateway.cards(), gateway.sellerName()]);
     if (!cards.ok) {
       return trouble(response, base, cards);
     }
-    response.type("html").send(cardsScreen(viewing(request, base), cards.document));
+    if (!name.ok) {
+      return trouble(response, base, name);
+    }
+    response.type("html").send(cardsScreen(viewing(request, base, name.document), cards.document));
   });
 
   app.get(`${base}/orders`, async (request, response) => {
@@ -763,30 +825,48 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
     // and what a merchant reconciling their books relies on.
     const open = request.query.open === "true";
     const gateway = gatewayAs(request);
-    const [cards, orders] = await Promise.all([gateway.cards(), gateway.orders(open)]);
+    const [cards, orders, name] = await Promise.all([
+      gateway.cards(),
+      gateway.orders(open),
+      gateway.sellerName(),
+    ]);
     if (!cards.ok) {
       return trouble(response, base, cards);
     }
     if (!orders.ok) {
       return trouble(response, base, orders);
     }
+    if (!name.ok) {
+      return trouble(response, base, name);
+    }
     response
       .type("html")
-      .send(ordersScreen(viewing(request, base), cards.document, orders.document, open));
+      .send(
+        ordersScreen(viewing(request, base, name.document), cards.document, orders.document, open),
+      );
   });
 
   app.get(`${base}/receipts`, async (request, response) => {
     const gateway = gatewayAs(request);
-    const [cards, receipts] = await Promise.all([gateway.cards(), gateway.receipts()]);
+    const [cards, receipts, name] = await Promise.all([
+      gateway.cards(),
+      gateway.receipts(),
+      gateway.sellerName(),
+    ]);
     if (!cards.ok) {
       return trouble(response, base, cards);
     }
     if (!receipts.ok) {
       return trouble(response, base, receipts);
     }
+    if (!name.ok) {
+      return trouble(response, base, name);
+    }
     response
       .type("html")
-      .send(receiptsScreen(viewing(request, base), cards.document, receipts.document));
+      .send(
+        receiptsScreen(viewing(request, base, name.document), cards.document, receipts.document),
+      );
   });
 
   for (const [verb, paused] of [
@@ -1054,10 +1134,31 @@ function whoIs(request: Request): Person {
   return person;
 }
 
-/** Who is looking at this page, and where the cabinet is mounted. */
-const viewing = (request: Request, base: string): Viewer => {
+/**
+ * Who is looking at this page, where the cabinet is mounted, and what buyers
+ * are told this merchant is called.
+ *
+ * The name is passed by the screens that asked the gateway for it and left out
+ * by the ones that did not. That difference is the point: a screen drawing the
+ * line about an unset name has to have asked, and a screen that has not asked
+ * must not draw a line either way about it.
+ */
+const viewing = (request: Request, base: string, sellerName?: string | null): Viewer => {
   const person = whoIs(request);
-  return { base, who: person.email, confirmed: person.confirmed };
+  return { base, who: person.email, confirmed: person.confirmed, sellerName };
+};
+
+/**
+ * The name in a form post, with the space at either end taken off.
+ *
+ * Trimmed rather than refused for a space, because the catalogue's rule turns a
+ * padded name into two spellings of one word and a space at the front of a form
+ * field is a typing accident. A field that never arrived reads the same as one
+ * left empty: both are somebody who typed no name.
+ */
+const nameIn = (request: Request): string => {
+  const form = (request.body ?? {}) as { seller_name?: unknown };
+  return typeof form.seller_name === "string" ? form.seller_name.trim() : "";
 };
 
 /**

@@ -42,6 +42,16 @@ export interface Viewer {
    * owner only shows up on the day they have lost their password.
    */
   readonly confirmed: boolean;
+  /**
+   * The name buyers read beside this merchant's products, where the screen
+   * asked the gateway for it.
+   *
+   * Null is a merchant who has chosen none, and it is what the line at the top
+   * of these three screens is drawn from: until a name is set, a card their
+   * code publishes is refused. Absent where the screen did not ask — the keys,
+   * for the reason `html.ts` gives beside the selling word.
+   */
+  readonly sellerName?: string | null;
 }
 
 interface Frame {
@@ -60,6 +70,7 @@ const framed = (frame: Frame): string =>
     tab: frame.tab,
     title: frame.title,
     selling: SELLING_WORDS[frame.selling],
+    unnamed: frame.viewer.sellerName === null,
     body: frame.body,
   });
 
@@ -167,7 +178,14 @@ export const cardsScreen = (viewer: Viewer, cards: MerchantCardList): string => 
 ${table(
   ["Product", "Your key", "Price", "Delivery", "State", ""],
   rows,
-  "You have not published a card yet. Your code publishes them; they appear here.",
+  // An empty catalogue has two readings and the merchant cannot tell them
+  // apart from here: nobody has published anything yet, or something published
+  // was refused. While no name is set, the second one is what happens to
+  // everything, so the line says it rather than leaving a merchant to work out
+  // why their code's card never arrived.
+  viewer.sellerName === null
+    ? "You have not published a card yet, and until you choose the name buyers see, publishing one is refused. Choose it in your settings and publish again."
+    : "You have not published a card yet. Your code publishes them; they appear here.",
 )}
   <div class="note"><span class="mark">&#8627;</span><span>${escaped(sellingNote(cards.selling))}</span></div>
 `;

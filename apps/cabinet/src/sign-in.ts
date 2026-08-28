@@ -42,10 +42,16 @@ export const signInScreen = (base: string, problem?: string): string =>
 /**
  * The form that makes a merchant, a key and an account at once.
  *
- * Four boxes, because that is what the act needs: who signs in, what they sign
- * in with, the name the merchant is shown under in the catalogue every buyer
- * reads, and the invitation that stands in the door until registration is open
- * to everybody (ADR-0014 §3).
+ * Three boxes, because that is what the act needs: who signs in, what they sign
+ * in with, and the invitation that stands in the door until registration is
+ * open to everybody (ADR-0014 §3).
+ *
+ * The name buyers read is not one of them, and where it went is the reason. It
+ * is a public answer, printed beside a merchant's products for strangers to
+ * read, and asking for it here demanded it at the one moment somebody knows
+ * least about what it is for: no products, no catalogue seen, and no room on
+ * this page to explain. It is asked for on the screen this one leads to, and
+ * changed afterwards in the settings.
  *
  * The page says what the address is for and what it is not yet. A person who
  * registers has shown they hold an invitation, not that they hold the address
@@ -61,14 +67,11 @@ export const registerScreen = (base: string, minimum: number, problem?: string):
     `<div class="gate">
 <form method="post" action="${escaped(base)}/register">
   <h1>Coinslot</h1>
-  <p>Registering makes your merchant, its first key and your account together. You are signed in at the end of it.</p>
+  <p>Registering makes your merchant, its first key and your account together. You are signed in at the end of it, and the one thing left to choose is asked for on the next page.</p>
   <label for="email">Email</label>
   <input id="email" name="email" type="email" autocomplete="username" autocapitalize="off" spellcheck="false" autofocus required>
   <label for="password">Password</label>
   <input id="password" name="password" type="password" autocomplete="new-password" minlength="${minimum}" required>
-  <label for="name">The name your products are sold under</label>
-  <input id="name" name="name" type="text" autocomplete="organization" maxlength="32" required>
-  <p class="quiet">Buyers read this name beside your products. At most 32 characters, all of them ordinary keyboard characters, with no space at either end — that is the rule of the catalogue that lists you, not ours.</p>
   <label for="invitation">Invitation</label>
   <input id="invitation" name="invitation" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" required>
   <p class="quiet">The code you were given along with the address of this site. Registering is not open to everybody yet, and this is what stands in the door for now.</p>

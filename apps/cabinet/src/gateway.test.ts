@@ -138,40 +138,39 @@ describe("a gateway that answers nothing", () => {
 });
 
 describe("the call that makes a merchant", () => {
-  it("goes to the registration route with the form's two values and no key at all", async () => {
+  it("goes to the registration route with the invitation alone and no key at all", async () => {
     // No key, and that is the whole shape of this call: nobody registering has
     // one. A key header here would be a header carrying nothing, and the
     // gateway reads an empty bearer token as a key it does not know — which
     // would turn "you are not invited" into "your key is wrong" for somebody
     // who has neither.
+    //
+    // And no name either. The name buyers read is chosen after the account
+    // exists, so a registration that sent one would be sending a field the
+    // route does not take.
     const { url, arrived } = await recordingServer(200, {
       merchant_id: "mer_the_merchant",
-      name: "A merchant with a name",
       key: aKey(),
       secret: "the-secret-shown-once",
     });
 
-    const made = await registrarFor(url).register("A merchant with a name", "the-invitation");
+    const made = await registrarFor(url).register("the-invitation");
 
     expect(made.ok).toBe(true);
     expect(arrived[0]?.method).toBe("POST");
     expect(arrived[0]?.path).toBe("/v0/merchants");
     expect(arrived[0]?.key).toBeNull();
-    expect(JSON.parse(arrived[0]?.body ?? "{}")).toStrictEqual({
-      name: "A merchant with a name",
-      invitation: "the-invitation",
-    });
+    expect(JSON.parse(arrived[0]?.body ?? "{}")).toStrictEqual({ invitation: "the-invitation" });
   });
 
   it("hands back the merchant and the secret the account is written with", async () => {
     const { url } = await recordingServer(200, {
       merchant_id: "mer_the_merchant",
-      name: "A merchant with a name",
       key: aKey(),
       secret: "the-secret-shown-once",
     });
 
-    const made = await registrarFor(url).register("A merchant with a name", "the-invitation");
+    const made = await registrarFor(url).register("the-invitation");
 
     if (!made.ok) {
       throw new Error(`the registration was refused: ${made.why}`);
@@ -188,13 +187,10 @@ describe("the call that makes a merchant", () => {
     // screens later.
     const { url } = await recordingServer(200, {
       merchant_id: "mer_the_merchant",
-      name: "A merchant with a name",
       key: aKey(),
     });
 
-    await expect(
-      registrarFor(url).register("A merchant with a name", "the-invitation"),
-    ).rejects.toThrow();
+    await expect(registrarFor(url).register("the-invitation")).rejects.toThrow();
   });
 
   it("carries the gateway's own status through, so a refusal can be told from a fault", async () => {
@@ -206,7 +202,7 @@ describe("the call that makes a merchant", () => {
       error: { code: "not_invited", message: "that is not an invitation we accept" },
     });
 
-    const refused = await registrarFor(url).register("A merchant", "not-the-code");
+    const refused = await registrarFor(url).register("not-the-code");
 
     expect(refused.ok).toBe(false);
     if (refused.ok) {
@@ -214,6 +210,86 @@ describe("the call that makes a merchant", () => {
     }
     expect(refused.status).toBe(403);
     expect(refused.why).toBe("that is not an invitation we accept");
+  });
+});
+
+describe("the calls behind the name buyers read", () => {
+  it("reads the name as the merchant whose key it holds, and hands back the name itself", async () => {
+    // Unwrapped by the client rather than by the screen. The wrapper exists so
+    // the answer can grow a field beside the name without every reader
+    // changing; a page reaching through it is a page to edit the day it does.
+    const { url, arrived } = await recordingServer(200, { seller_name: "A shop with a name" });
+
+    const read = await gatewayFor(url, KEY).sellerName();
+
+    expect(arrived[0]?.method).toBe("GET");
+    expect(arrived[0]?.path).toBe("/v0/seller-name");
+    expect(arrived[0]?.key).toBe(`Bearer ${KEY}`);
+    expect(read.ok).toBe(true);
+    if (!read.ok) {
+      throw new Error(`reading the name failed: ${read.why}`);
+    }
+    expect(read.document).toBe("A shop with a name");
+  });
+
+  it("reads a merchant who has chosen no name as null rather than as an absence", async () => {
+    // Null is the state every screen in this cabinet exists to get somebody out
+    // of, so it has to arrive as an answer and not as a missing field. A client
+    // that folded the two would leave the screens unable to tell "no name" from
+    // "the call went wrong".
+    const { url } = await recordingServer(200, { seller_name: null });
+
+    const read = await gatewayFor(url, KEY).sellerName();
+
+    expect(read.ok).toBe(true);
+    if (!read.ok) {
+      throw new Error(`reading the name failed: ${read.why}`);
+    }
+    expect(read.document).toBeNull();
+  });
+
+  it("sends the name a merchant typed and hands back what was written", async () => {
+    const { url, arrived } = await recordingServer(200, { seller_name: "A shop with a name" });
+
+    const set = await gatewayFor(url, KEY).setSellerName("A shop with a name");
+
+    expect(arrived[0]?.method).toBe("POST");
+    expect(arrived[0]?.path).toBe("/v0/seller-name");
+    expect(arrived[0]?.key).toBe(`Bearer ${KEY}`);
+    expect(JSON.parse(arrived[0]?.body ?? "{}")).toStrictEqual({
+      seller_name: "A shop with a name",
+    });
+    expect(set.ok).toBe(true);
+    if (!set.ok) {
+      throw new Error(`setting the name failed: ${set.why}`);
+    }
+    expect(set.document).toBe("A shop with a name");
+  });
+
+  it("refuses an answer with no name field in it rather than reading one as null", async () => {
+    // The difference between a document that says "no name" and one that does
+    // not mention names is the difference between a banner a merchant can act
+    // on and a banner shown to somebody who has already done the thing.
+    const { url } = await recordingServer(200, {});
+
+    await expect(gatewayFor(url, KEY).sellerName()).rejects.toThrow();
+  });
+
+  it("carries a refusal of the name through with the gateway's status on it", async () => {
+    // The screen has its own sentence for a name outside the rule and needs to
+    // know it was refused rather than written.
+    const { url } = await recordingServer(400, {
+      error: { code: "invalid_request", message: "that name is not one the catalogue carries" },
+    });
+
+    const set = await gatewayFor(url, KEY).setSellerName("x".repeat(33));
+
+    expect(set.ok).toBe(false);
+    if (set.ok) {
+      throw new Error("a refused name answered as written");
+    }
+    expect(set.status).toBe(400);
+    expect(set.why).toBe("that name is not one the catalogue carries");
   });
 });
 
