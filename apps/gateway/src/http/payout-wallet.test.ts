@@ -455,3 +455,123 @@ describe("who an agent is told to pay", () => {
     expect(await payToInTheChallenge(served, itemId)).toBe(A_WALLET);
   });
 });
+
+/**
+ * One card in the catalog whose merchant has nowhere to be paid.
+ *
+ * The publish door refuses to make one where the money is real, so the row is
+ * written straight into the store — which is how one comes to exist in the
+ * world. A card published while the gateway was in the sandbox, where no
+ * address is asked for, is one of these the moment the deployment is pointed at
+ * a facilitator that settles; so is every merchant who was there before the
+ * column was, whom the migration left with nothing in it. What is under test is
+ * what the buying surface does when it finds one, not the road it took to get
+ * there.
+ */
+const soldWithNowhereToPay = async (
+  harnessed: Harness,
+  served: Served,
+  merchantItemId = "a-room",
+): Promise<{ readonly itemId: string; readonly key: string; readonly merchantId: string }> => {
+  const key = await fresh(served);
+  await named(served, key, "A shop that set no wallet");
+  const opened = await harnessed.gateway.keyBehind(key);
+  if (opened === null) {
+    throw new Error("the key this test just registered opens nothing");
+  }
+  const stored = await harnessed.store.publishCard(
+    opened.merchantId,
+    cardFor(merchantItemId, "A room"),
+    harnessed.now(),
+  );
+  return { itemId: stored.id, key, merchantId: opened.merchantId };
+};
+
+describe("a card whose merchant has nowhere to be paid", () => {
+  it("tells an agent it is not on sale rather than falling over", async () => {
+    // A challenge for this card cannot be written at all: there is no address
+    // to name in it, and standing the operator's own in would send a merchant's
+    // takings to somebody else. The agent gets the word a card that is off sale
+    // gets — which is the truth, and which its client already knows how to
+    // read — instead of a five hundred out of the middle of the gateway.
+    const { served, harnessed } = await started();
+    const { itemId } = await soldWithNowhereToPay(harnessed, served);
+
+    const answered = await served.call("GET", `/v0/items/${itemId}/purchase`);
+
+    expect(answered.status, JSON.stringify(answered.body)).toBe(409);
+    expect((answered.body as { error: { code: string } }).error.code).toBe("not_selling");
+  });
+
+  it("opens no order that nobody could ever pay for", async () => {
+    // The half that costs more than a status code. A purchase used to write the
+    // order first and fail afterwards, which left a row nobody could pay, nobody
+    // could close and nothing would ever collect — on the merchant's own stream,
+    // in their cabinet, against a deadline.
+    const { served, harnessed } = await started();
+    const { itemId, merchantId } = await soldWithNowhereToPay(harnessed, served);
+
+    const answered = await served.call("POST", `/v0/items/${itemId}/purchase`, {
+      body: { params: {} },
+    });
+
+    expect(answered.status, JSON.stringify(answered.body)).toBe(409);
+    expect((answered.body as { error: { code: string } }).error.code).toBe("not_selling");
+    expect(await harnessed.gateway.orders(merchantId, undefined)).toStrictEqual([]);
+  });
+
+  it("is not in the catalog an agent walks", async () => {
+    // A catalog is an offer, and an entry every purchase of which comes back
+    // refused is an offer we would not honour: the agent budgets against it,
+    // chooses it over a competitor, and finds out at the till.
+    const { served, harnessed } = await started();
+    const { itemId } = await soldWithNowhereToPay(harnessed, served);
+    const sellable = await publish(served, harnessed.merchant.key, cardFor("a-desk", "A desk"));
+
+    const listed = (await served.call("GET", "/v0/catalog")).body as { items: { id: string }[] };
+
+    expect(listed.items.map((item) => item.id)).not.toContain(itemId);
+    // The other half, or the assertion above would pass against a catalog that
+    // had stopped listing anything at all.
+    expect(listed.items.map((item) => item.id)).toContain(sellable);
+  });
+
+  it("says the same thing to its own merchant as it says to a buyer", async () => {
+    // One word about whether a card sells, and everybody who asks gets it. A
+    // cabinet that showed a card as selling while every purchase of it came
+    // back refused would send its merchant looking at the card for the fault.
+    const { served, harnessed } = await started();
+    const { itemId, key } = await soldWithNowhereToPay(harnessed, served);
+
+    const own = (await served.call("GET", "/v0/cards", { headers: bearer(key) })).body as {
+      cards: { id: string; selling: string }[];
+    };
+
+    expect(own.cards.find((card) => card.id === itemId)?.selling).not.toBe("open");
+  });
+
+  it("sells in the sandbox, where there is no money to send anywhere", async () => {
+    // The safe direction, and the reason this is not simply "no wallet, no
+    // sale". A local stack has to come up and complete a purchase with nothing
+    // configured about a chain: there is nothing to send, so there is nothing
+    // to be missing an address for.
+    const { served, harnessed } = await started({ FACILITATOR_URL: SANDBOX_FACILITATOR });
+    const { itemId } = await soldWithNowhereToPay(harnessed, served);
+
+    expect(await payToInTheChallenge(served, itemId)).toBe(CONFIGURED_PAY_TO);
+    const listed = (await served.call("GET", "/v0/catalog")).body as { items: { id: string }[] };
+    expect(listed.items.map((item) => item.id)).toContain(itemId);
+  });
+
+  it("sells again the moment their merchant says where the money goes", async () => {
+    // A rule a merchant cannot get out of is a wall. Setting the address is the
+    // whole of the repair, and it takes no republishing.
+    const { served, harnessed } = await started();
+    const { itemId, key } = await soldWithNowhereToPay(harnessed, served);
+    expect((await served.call("GET", `/v0/items/${itemId}/purchase`)).status).toBe(409);
+
+    await setPayoutWallet(served, key, A_WALLET);
+
+    expect(await payToInTheChallenge(served, itemId)).toBe(A_WALLET);
+  });
+});
