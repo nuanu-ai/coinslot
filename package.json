@@ -21,6 +21,7 @@
     "test:db": "vitest run --config vitest.db.config.ts",
     "smoke": "pnpm --filter @coinslot/slice run smoke",
     "smoke:listing": "pnpm --filter @coinslot/gateway run listing",
+    "smoke:bootstrap": "pnpm --filter @coinslot/slice run bootstrap",
     "outside": "./scripts/outside.sh",
     "buy": "pnpm --filter @coinslot/slice run buy",
     "changeset": "changeset",
