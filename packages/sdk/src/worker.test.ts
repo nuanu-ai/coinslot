@@ -9,7 +9,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { FIRST_RETRY_MS } from "./backoff.js";
 import { createClient, type QuoteHandler } from "./client.js";
 import { contractVersion } from "./contract.js";
-import { type FakeGateway, type GatewayAnswer, startFakeGateway } from "./testing/fake-gateway.js";
+import { type FakeGateway, startFakeGateway } from "./testing/fake-gateway.js";
+import { waitUntil } from "./testing/waiting.js";
+import { batch, polling } from "./testing/worker-stream.js";
 import {
   POLL_WAIT_SECONDS,
   QUIET_POLL_FLOOR_MS,
@@ -52,21 +54,6 @@ const envelopes = {
   event: { kind: "order_event", id: "env-3", sent_at: AT, payload: event },
 } satisfies Record<string, WorkerEnvelope>;
 
-const batch = (...carried: WorkerEnvelope[]): GatewayAnswer => ({
-  body: { contract_version: contractVersion, envelopes: carried },
-});
-
-/**
- * A poll route that answers the scripted batches and then never answers at
- * all, which is what a gateway holding a long poll open looks like. Without
- * the parked ending, a loop whose sleeps a test has made instant would keep
- * asking for as long as the test ran.
- */
-const polling = (...script: GatewayAnswer[]) => {
-  const parked = new Promise<GatewayAnswer>(() => {});
-  return (_call: unknown, index: number) => script[index] ?? parked;
-};
-
 /** A clock that records what it was asked to wait for and waits for none of it. */
 const recordingClock = (): WorkerClock & { readonly waits: number[]; elapse(ms: number): void } => {
   const waits: number[] = [];
@@ -83,14 +70,6 @@ const recordingClock = (): WorkerClock & { readonly waits: number[]; elapse(ms: 
       waits.push(ms);
     },
   };
-};
-
-const waitUntil = async (ready: () => boolean, what: string): Promise<void> => {
-  for (let attempt = 0; attempt < 2_000; attempt += 1) {
-    if (ready()) return;
-    await new Promise((resolve) => setTimeout(resolve, 1));
-  }
-  throw new Error(`waited for ${what} and it never happened`);
 };
 
 let gateway: FakeGateway | undefined;

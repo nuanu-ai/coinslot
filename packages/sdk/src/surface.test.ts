@@ -17,12 +17,20 @@
  * under and the handler itself have to agree.
  */
 
-import type { Card, Order, OrderEvent, OrderWithStatus, QuoteRequest } from "@coinslot/contracts";
+import type {
+  Card,
+  Order,
+  OrderEvent,
+  OrderWithStatus,
+  QuoteRequest,
+  WorkerEnvelope,
+} from "@coinslot/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CoinslotClient, HandlerKind, OrderCalls } from "./client.js";
-import { contractVersion } from "./contract.js";
 import { createClient } from "./index.js";
 import { type FakeGateway, type GatewayAnswer, startFakeGateway } from "./testing/fake-gateway.js";
+import { waitUntil } from "./testing/waiting.js";
+import { batch, polling } from "./testing/worker-stream.js";
 import type { WorkerProblem } from "./worker.js";
 
 const API_KEY = "merchant-key-for-the-tests";
@@ -57,25 +65,7 @@ const envelopes = {
   order: { kind: "order", id: "env-1", sent_at: AT, payload: order },
   quote: { kind: "quote_request", id: "env-2", sent_at: AT, payload: question },
   event: { kind: "order_event", id: "env-3", sent_at: AT, payload: event },
-};
-
-const batch = (...carried: object[]): GatewayAnswer => ({
-  body: { contract_version: contractVersion, envelopes: carried },
-});
-
-/** Answers the scripted batches and then holds the poll open, as a gateway does. */
-const polling = (...script: GatewayAnswer[]) => {
-  const parked = new Promise<GatewayAnswer>(() => {});
-  return (_call: unknown, index: number) => script[index] ?? parked;
-};
-
-const waitUntil = async (ready: () => boolean, what: string): Promise<void> => {
-  for (let attempt = 0; attempt < 3_000; attempt += 1) {
-    if (ready()) return;
-    await new Promise((resolve) => setTimeout(resolve, 1));
-  }
-  throw new Error(`waited for ${what} and it never happened`);
-};
+} satisfies Record<string, WorkerEnvelope>;
 
 let gateway: FakeGateway | undefined;
 let running: { stop(): Promise<void> } | undefined;
