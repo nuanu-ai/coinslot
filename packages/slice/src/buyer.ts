@@ -31,9 +31,9 @@
  * The risk that buys is silent drift: an address renamed in the contract leaves
  * these strings pointing at nothing, and a 404 inside a poll reads as an order
  * that never arrived. `buyer.test.ts` is what stops that — it drives this buyer
- * against a recorded fetch and holds every address it writes against the
- * contract's own table. The staple is in the test, where importing the
- * contracts costs nothing, and not here.
+ * against a server that records the request line, and holds every address that
+ * went out against the contract's own table. The staple is in the test, where
+ * importing the contracts costs nothing, and not here.
  */
 
 import { CatalogPageSchema, type PublicCard } from "@coinslot/contracts";
