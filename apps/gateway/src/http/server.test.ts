@@ -851,6 +851,29 @@ describe("the worker's calls over HTTP", () => {
     expect(answered.status).toBe(400);
   });
 
+  it("says a body was too large rather than that it could not be read", async () => {
+    // The promise: an error text is a claim somebody else's agent acts on. A
+    // body that is perfectly good JSON and merely over the limit, answered
+    // "could not be read as JSON", sends that agent to re-encode a document it
+    // already got right, and it will get the same answer every time. The two
+    // cases arrive from the parser as one throw and the fork that tells them
+    // apart is the only place they are still distinguishable — the test above
+    // holds the other side of that fork.
+    const { served } = await started();
+
+    const answered = await served.call("POST", "/v0/quotes/prc_1/answer", {
+      body: { available: true, note: "x".repeat(300_000) },
+      headers: asMerchant,
+    });
+
+    expect(answered.status).toBe(413);
+    const { error } = answered.body as { error: { code: string; message: string } };
+    expect(error.code).toBe("body_too_large");
+    // The limit itself, because "too large" without a number leaves the caller
+    // to find the edge by bisection against a live gateway.
+    expect(error.message).toContain("256kb");
+  });
+
   it("answers a call about an order nobody made with a plain not found", async () => {
     const { served } = await started();
 
