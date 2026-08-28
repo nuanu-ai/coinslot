@@ -61,28 +61,16 @@ describe("checking a card before it is published", () => {
     expect(paths).toContainEqual(["fulfillment"]);
   });
 
-  it("refuses a card that promises the agent nothing on delivery", () => {
-    // An empty result satisfies the letter of "the card declares its result"
-    // and tells the agent nothing about what it is paying for.
-    expect(pathsOf({ ...validCard, result: {} })).toStrictEqual([["result"]]);
-  });
-
-  it("refuses the mode that has no shape on the wire yet", () => {
-    // A card published as "confirm" would sell the merchant a mode nobody can
-    // serve, and the first they heard of it would be a request they
-    // mishandled.
-    const paths = pathsOf({ ...validCard, fulfillment: "confirm" });
-
-    expect(paths).toStrictEqual([["fulfillment"]]);
-  });
-
-  it("refuses a delivery deadline on a card that delivers inside the answer", () => {
-    // A synchronous card advertising a delivery deadline advertises a wait
-    // that never happens, and the agent reads that deadline before it pays.
-    expect(pathsOf({ ...validCard, fulfill_deadline_seconds: 600 })).toStrictEqual([
-      ["fulfill_deadline_seconds"],
-    ]);
-  });
+  // Three cases stood here that walked one card rule each through the checker
+  // — an empty result, the mode with no shape on the wire, a delivery deadline
+  // on a synchronous card. `checkCard` is `CardSchema` and nothing beside it,
+  // so each of them was the schema's own test written a second time, and
+  // `card.test.ts` in the contracts package is where the rule lives. Removing
+  // each rule in turn from the schema was tried: every one of them fails a test
+  // over there, which is what says these were spare rather than load-bearing.
+  // What this file is for is the answer's shape — a finding in the shape the
+  // publish call answers in, and the report saying what a short list does and
+  // does not imply — and that is what is left.
 
   it("stops before the rules that compare fields when the shape itself is wrong", () => {
     // Pinned rather than assumed, because a merchant is entitled to know that

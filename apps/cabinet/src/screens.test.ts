@@ -18,6 +18,7 @@ import type { OrderList, ReceiptList } from "@coinslot/contracts";
 import { MerchantCardListSchema, OrderListSchema, ReceiptListSchema } from "@coinslot/contracts";
 import { describe, expect, it } from "vitest";
 import { ordersScreen, receiptsScreen, type Viewer } from "./screens.js";
+import { readable } from "./testing/html.js";
 
 /** A page is drawn for somebody now, and every screen says who (ADR-0009). */
 const SEEN_BY: Viewer = { base: "", who: "dmitry@example.com" };
@@ -70,17 +71,6 @@ const receipt = (id: string, test: boolean) => ({
   outcome: "delivered",
   test,
 });
-
-const readable = (html: string): string =>
-  html
-    .replaceAll(/<[^>]*>/g, " ")
-    .replaceAll("&lt;", "<")
-    .replaceAll("&gt;", ">")
-    .replaceAll("&#39;", "'")
-    .replaceAll("&quot;", '"')
-    .replaceAll("&amp;", "&")
-    .replaceAll(/\s+/g, " ")
-    .trim();
 
 describe("a list where some of the money was real and some was not", () => {
   it("counts the test purchases rather than calling the whole page a test", () => {

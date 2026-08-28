@@ -41,6 +41,7 @@ import type { OrderHandle } from "./client.js";
 import { createClient } from "./client.js";
 import { contractVersion } from "./contract.js";
 import { type FakeGateway, type GatewayAnswer, startFakeGateway } from "./testing/fake-gateway.js";
+import { waitUntil } from "./testing/waiting.js";
 import type { WorkerProblem } from "./worker.js";
 
 const API_KEY = "freeland-merchant-key";
@@ -122,14 +123,6 @@ afterEach(async () => {
   await gateway?.close();
   gateway = undefined;
 });
-
-const waitUntil = async (ready: () => boolean, what: string): Promise<void> => {
-  for (let attempt = 0; attempt < 3_000; attempt += 1) {
-    if (ready()) return;
-    await new Promise((resolve) => setTimeout(resolve, 1));
-  }
-  throw new Error(`waited for ${what} and it never happened`);
-};
 
 it("carries one merchant's two products from publishing to the last refusal", async () => {
   // What breaks if this fails: the SDK works for the documentation's one

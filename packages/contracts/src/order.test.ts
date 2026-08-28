@@ -42,11 +42,11 @@ describe("order", () => {
     });
   }
 
-  it("refuses an order whose test flag is missing rather than treating it as live", () => {
-    // The flag is required, not defaulted, precisely because the safe reading
-    // of silence is not obvious: a test order taken for a live one is a real
-    // delivery against test money.
-    expect(errorOf(OrderSchema, { ...order, test: undefined })).toContain("test");
+  it("refuses an order whose test flag is a word rather than a flag", () => {
+    // The loop above is where a missing flag is asked about. This is the other
+    // way it goes wrong, and the more likely one: `"false"` out of a form or a
+    // query string is a truthy string, and read as a flag it turns every test
+    // order into a live one — a real delivery against money that never moved.
     expect(OrderSchema.safeParse({ ...order, test: "false" }).success).toBe(false);
   });
 

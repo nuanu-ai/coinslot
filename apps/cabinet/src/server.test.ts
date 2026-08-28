@@ -32,6 +32,7 @@ import { fingerprintOf, hashPassword, passwordMatches } from "./credentials.js";
 import { type Answer, type GatewayClient, gatewayFor, type Registrar } from "./gateway.js";
 import { buildApp } from "./server.js";
 import { sessionFor } from "./testing/accounts-contract.js";
+import { readable } from "./testing/html.js";
 
 const KEY = "a-merchant-key-long-enough";
 const asMerchant = { authorization: `Bearer ${KEY}` };
@@ -433,24 +434,6 @@ const counting = (accounts: Accounts): { asked: (readonly string[])[]; cabinet: 
   };
 };
 
-/**
- * The page's text with the tags taken out, so a test reads what a person does.
- *
- * The entities are decoded after the tags are stripped, and the ampersand last
- * of all: decoded first, a page carrying the literal text `&lt;` would come out
- * as a bracket and this would report markup where there is none.
- */
-const readable = (html: string): string =>
-  html
-    .replaceAll(/<[^>]*>/g, " ")
-    .replaceAll("&lt;", "<")
-    .replaceAll("&gt;", ">")
-    .replaceAll("&#39;", "'")
-    .replaceAll("&quot;", '"')
-    .replaceAll("&amp;", "&")
-    .replaceAll(/\s+/g, " ")
-    .trim();
-
 const publish = async (gateway: Served, card: Card): Promise<string> => {
   const answered = await gateway.call("POST", "/v0/catalog/publish", {
     body: card,
@@ -831,7 +814,20 @@ describe("getting into the cabinet", () => {
     const { browser, gateway } = await started({ base: "/cabinet" });
     await publish(gateway, roomCard);
 
-    const page = await browser.signIn();
+    const signedIn = await browser.post("/cabinet/sign-in", {
+      email: PERSON,
+      password: PASSWORD,
+    });
+    const page = await browser.get(signedIn.to ?? "/cabinet/cards");
+
+    // The session cookie hangs off the mount point too, and that is the half
+    // no link on the page can show. Behind Caddy this origin also carries the
+    // gateway's own /v0, so a cookie scoped to `/` would be attached to every
+    // request an agent makes to the money path — which is the one thing
+    // ADR-0005 §2 exists to keep a person's session away from. The name of the
+    // cookie depends on it as well: server.ts declines the `__Host-` prefix
+    // precisely because that prefix would force this back to `/`.
+    expect(signedIn.headers.getSetCookie().join(" ")).toMatch(/;\s*Path=\/cabinet\s*(?:;|$)/i);
 
     expect((await browser.get("/cabinet/")).to).toBe("/cabinet/cards");
     // And without the trailing slash, which is what a person types and what

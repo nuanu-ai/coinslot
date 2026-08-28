@@ -18,12 +18,13 @@
  * work does not.
  */
 
-import { deliveryCheckFor, ReceiptSchema } from "@coinslot/contracts";
+import { type Card, deliveryCheckFor, ReceiptSchema } from "@coinslot/contracts";
 import { ScriptedFacilitator } from "@coinslot/gateway";
+import { WORKER_PROBLEM_KINDS } from "@coinslot/sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { makeBuyer } from "./buyer.js";
 import { EUROPE_ESIM, RENTED_NUMBER } from "./cards.js";
-import { type Booted, bootGateway, SLICE_MERCHANT_KEY } from "./gateway-harness.js";
+import { type Booted, bootGateway, SLICE_MERCHANT_KEY, sliceEnv } from "./gateway-harness.js";
 import { type MockMerchant, startMerchant } from "./merchant.js";
 
 /**
@@ -229,5 +230,140 @@ describe("the stage-one gate: a sandbox purchase, green from catalog to receipt"
     // of the control — nothing was ever charged.
     expect(facilitator.verifies).toHaveLength(1);
     expect(facilitator.settles).toStrictEqual([]);
+  }, 20_000);
+});
+
+/**
+ * A card the merchant sells and cannot fill.
+ *
+ * A second rented number, correct in every way an agent can see and published
+ * like any other, for which nothing in the merchant's handler branches: their
+ * code knows `rented-number-us-30d` and this is the UK one. That is the
+ * ordinary shape of the mistake — a product added to the catalog and not to
+ * the code, or taken out of the code and left in the catalog — and it is the
+ * one the merchant's own handler already calls a defect worth surfacing.
+ */
+const UNSTAFFED_NUMBER: Card = {
+  merchant_item_id: "rented-number-uk-30d",
+  title: "Rented UK phone number, 30 days",
+  description:
+    "A UK phone number rented for 30 days, for receiving SMS one-time codes. The number is released at the end of the term; renewal is not included.",
+  price: { amount: "4.00", currency: "USD" },
+  result: {
+    phone_number: { type: "string", title: "The rented number, in E.164 form" },
+    valid_until: { type: "string", title: "When the rental ends (ISO 8601)" },
+  },
+  fulfillment: "sync",
+};
+
+describe("the same slice when the merchant's own code cannot fill the order", () => {
+  let booted: Booted;
+  let facilitator: ScriptedFacilitator;
+  let merchant: MockMerchant;
+  let buyer: ReturnType<typeof makeBuyer>;
+
+  beforeEach(async () => {
+    facilitator = new ScriptedFacilitator();
+    // The synchronous deadlines, shortened together so they still satisfy the
+    // gateway's own rule that the price wait fits inside the answer wait and
+    // both fit inside the budget. This is the one test here that runs a
+    // deadline out on purpose, and at the shipped numbers it would sit for ten
+    // seconds waiting for goods that are never coming.
+    booted = await bootGateway(
+      () => facilitator,
+      sliceEnv({
+        QUOTE_RESPONSE_MS: "500",
+        SYNC_RESPONSE_MS: "1000",
+        SETTLE_RESPONSE_MS: "500",
+        SYNC_BUDGET_MS: "1500",
+      }),
+    );
+    merchant = startMerchant(booted.baseUrl, SLICE_MERCHANT_KEY);
+    await merchant.start();
+    await merchant.publishCatalog();
+    buyer = makeBuyer({ baseUrl: booted.baseUrl, privateKey: TEST_BUYER_KEY, maxUsd: 50 });
+  });
+
+  afterEach(async () => {
+    try {
+      await merchant.stop();
+    } finally {
+      await booted.stop();
+    }
+  });
+
+  it("tells the merchant which order went unfilled, and charges the buyer nothing", async () => {
+    // The failure side of the seam the two tests above check by asserting an
+    // empty problem list. An empty list says the gateway and the SDK agree
+    // about a purchase that worked; it says nothing about whether anything can
+    // come the other way. This is the other direction: something the merchant
+    // has to act on, from the gateway, through the SDK, onto the list — and if
+    // it does not arrive, a merchant whose catalog has outgrown their handler
+    // sells a product silently, forever, and hears about it from a buyer.
+    //
+    // The money half is the same promise the refused-payment control makes,
+    // from the other end. There the payment layer said no; here the payment is
+    // good and the merchant is the one who cannot deliver, and in the
+    // synchronous mode the charge is executed only after the goods come back.
+    // No goods, no charge.
+    const published = await merchant.client.catalog.publish(UNSTAFFED_NUMBER);
+    if (!("ok" in published)) {
+      throw new Error(`publishing the unstaffed card was refused: ${JSON.stringify(published)}`);
+    }
+
+    const catalog = await buyer.catalog();
+    const unstaffed = catalog.find((card) => card.title === UNSTAFFED_NUMBER.title);
+    if (unstaffed === undefined) throw new Error("the unstaffed card is not in the catalog");
+
+    const bought = await buyer.buy(unstaffed.id, {});
+
+    // The buyer paid for nothing and was charged for nothing: the payment was
+    // verified, the goods never came, and the charge was never executed.
+    expect(bought.status).not.toBe(200);
+    expect(fields(bought.body).delivered).toBeUndefined();
+    expect(bought.settlement).toBeNull();
+    expect(facilitator.verifies.length).toBeGreaterThanOrEqual(1);
+    expect(facilitator.settles).toStrictEqual([]);
+
+    // And the merchant was told. Not eventually and not in a log nobody reads:
+    // on the problem channel their own `on('problem')` subscribes to.
+    await waitFor(() => merchant.problems.length > 0);
+
+    const dropped = merchant.problems.find(
+      (problem) => problem.kind === WORKER_PROBLEM_KINDS.HANDLER_FAILED,
+    );
+
+    if (dropped === undefined) {
+      throw new Error(
+        `no handler failure reached the merchant; what did: ${JSON.stringify(
+          merchant.problems.map((problem) => problem.kind),
+        )}`,
+      );
+    }
+
+    // Intelligible means three things at once. It names the order, so the
+    // merchant can look it up rather than guess which sale this was.
+    const subject = dropped.subject;
+    expect(typeof subject).toBe("string");
+    const stored = await booted.gateway.runtime.store.orderById(String(subject));
+    expect(stored?.merchantItemId).toBe(UNSTAFFED_NUMBER.merchant_item_id);
+
+    // It carries what their own code said, so they can find the line.
+    expect(dropped.message).toContain(UNSTAFFED_NUMBER.merchant_item_id);
+    expect(dropped.message).toContain("no handler for");
+
+    // And it is not fatal, which is checked by selling something rather than
+    // by reading a flag: one product the merchant cannot fill must not take
+    // down the worker that is still selling the two they can.
+    expect(merchant.problems.filter((problem) => problem.fatal)).toStrictEqual([]);
+
+    const esim = (await buyer.catalog()).find((card) => card.title === EUROPE_ESIM.title);
+    if (esim === undefined) throw new Error("the eSIM is not in the catalog");
+
+    const afterwards = await buyer.buy(esim.id, { email: "buyer@example.com" });
+    const order = fields(fields(afterwards.body).order);
+
+    expect(afterwards.status).toBe(200);
+    await waitFor(() => merchant.acceptedOrders.has(String(order.id)));
   }, 20_000);
 });

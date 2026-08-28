@@ -177,6 +177,29 @@ const DECOY: Stored = {
   key: randomBytes(KEY_LENGTH),
 };
 
+/**
+ * What deriving against the decoy costs, read off the decoy itself.
+ *
+ * Exported for one assertion, which cannot be written any other way. The
+ * promise is that an address with no account costs the same derivation as an
+ * address whose password is wrong, and scrypt's cost is a function of exactly
+ * these three numbers — so equal numbers are the whole of it, on any machine
+ * and under any load. Timed instead, the same promise can only be read through
+ * bounds wide enough to survive a busy laptop, and bounds that wide are ones a
+ * decoy made deliberately cheap fits through.
+ *
+ * It is read from `DECOY` and not from `COST` on purpose. `COST` is what a row
+ * written today costs, and the suite already holds that against a literal of
+ * its own; what this says is that the decoy is built at the same cost, which is
+ * a separate claim and the one that would quietly stop being true if somebody
+ * decided the decoy is not a real password and need not be expensive.
+ */
+export const DECOY_COST: { readonly N: number; readonly r: number; readonly p: number } = {
+  N: DECOY.N,
+  r: DECOY.r,
+  p: DECOY.p,
+};
+
 interface Stored {
   readonly N: number;
   readonly r: number;

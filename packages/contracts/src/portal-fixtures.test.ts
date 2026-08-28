@@ -672,19 +672,45 @@ describe("no example on the portal goes unpinned", () => {
     .map((file) => `portal/${file}`)
     .sort();
 
-  for (const page of pages) {
-    for (const language of ["json", "http"]) {
-      it(`${page} has as many ${language} examples as the fixture map pins`, () => {
-        const onThePage = fencesOf(readPortalPage(page), language).length;
-        const pinned = fixtures.filter(
+  /**
+   * Every page and language where either side has something to say.
+   *
+   * The counting happens here, while the cases are being collected, and that is
+   * what keeps the guard automatic. A page carrying no data examples and
+   * pinning none was fourteen cases asserting nothing against nothing; the day
+   * such a page gains a `json` fence, this line sees it on the next run and the
+   * case appears — carrying a count the map does not have, which is the
+   * failure. A fence removed while the map still pins it comes in from the
+   * other side, which is why the filter asks about both and not only about the
+   * page.
+   */
+  const counted = pages
+    .flatMap((page) =>
+      ["json", "http"].map((language) => ({
+        page,
+        language,
+        onThePage: fencesOf(readPortalPage(page), language).length,
+        pinned: fixtures.filter(
           (fixture) => fixture.fence.file === page && fixture.fence.language === language,
-        ).length;
+        ).length,
+      })),
+    )
+    .filter((row) => row.onThePage > 0 || row.pinned > 0);
 
-        expect(
-          onThePage,
-          `${page} carries ${onThePage} ${language} example(s) and the fixture map pins ${pinned}; add the new one to the map so it is held to a schema`,
-        ).toBe(pinned);
-      });
-    }
+  it("has pages with data examples to check at all", () => {
+    // The negative control for the filter above. Everything below is generated
+    // from it, and a filter that quietly matched nothing — a portal directory
+    // that moved, a fence syntax that changed — would leave this describe with
+    // no cases and read as a clean run.
+    expect(counted.length).toBeGreaterThan(0);
+  });
+
+  for (const { page, language, onThePage, pinned } of counted) {
+    it(`${page} has as many ${language} examples as the fixture map pins`, () => {
+      expect(
+        onThePage,
+        `${page} carries ${onThePage} ${language} example(s) and the fixture map pins ${pinned}; add the new one to the map so it is held to a schema`,
+      ).toBe(pinned);
+    });
   }
 });

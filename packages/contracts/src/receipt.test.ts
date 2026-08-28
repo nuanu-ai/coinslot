@@ -99,17 +99,14 @@ describe("receipt", () => {
     expect(ReceiptSchema.safeParse(withoutPriceId).success).toBe(true);
   });
 
+  // Every field, and `test` is in the list for a reason worth naming: a receipt
+  // is proof of payment, and an unmarked receipt for a test purchase is proof
+  // of a payment that never happened.
   for (const field of ["id", "order_id", "item_id", "price", "paid_at", "outcome", "test"]) {
     it(`refuses a receipt without ${field} and names it`, () => {
       expectMissingFieldRejected(ReceiptSchema, receipt, field);
     });
   }
-
-  it("refuses a receipt that does not say whether the money was real", () => {
-    // A receipt is proof of payment. An unmarked receipt for a test purchase
-    // is proof of a payment that never happened.
-    expect(errorOf(ReceiptSchema, { ...receipt, test: undefined })).toContain("test");
-  });
 
   it("refuses a field it does not know", () => {
     expect(errorOf(ReceiptSchema, { ...receipt, refunded: true })).toContain("refunded");

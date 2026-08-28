@@ -215,11 +215,20 @@ const compile = (examples: readonly Example[]): Compilation => {
 };
 
 describe("the portal's TypeScript examples", () => {
-  it.each(PAGES)("compiles every example on $file against this SDK", (page) => {
+  it("compiles every example on every page against this SDK", () => {
     // If this fails, a merchant who copies the page into their editor gets a
     // type error, and the first they hear of it is when they try.
-    const examples = examplesOf(page);
-    const compiled = compile(examples);
+    //
+    // One compiler for all three pages rather than one each. Starting `tsc` is
+    // most of what this costs and the work itself is a rounding error beside
+    // it, and nothing about a page needs its own pass: every generated file is
+    // named for the page and the fence it came from, so the compiler's own
+    // output says which example broke. What one pass adds is that the examples
+    // now share a compilation — an excerpt that declares a name at the top
+    // level of a file the compiler reads as a script would meet the same name
+    // from another page. That has not happened, and if it does the fix is on
+    // the page, which is where two examples contradicting each other belongs.
+    const compiled = compile(PAGES.flatMap(examplesOf));
 
     expect(compiled.ok, compiled.output).toBe(true);
   });

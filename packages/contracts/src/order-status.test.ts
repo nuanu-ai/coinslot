@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { FulfillmentSchema } from "./card.js";
-import { RECOMMENDED_REFUSAL_CODES } from "./handler.js";
 import { ORDER_STATUSES, OrderStatusSchema } from "./order-status.js";
 
 describe("the status an order can be in", () => {
@@ -70,11 +69,7 @@ describe("the vocabulary the machine and the contract share", () => {
     expect(FulfillmentSchema.options).toStrictEqual(["sync", "async", "confirm"]);
   });
 
-  it("keeps the three recommended refusal codes verbatim", () => {
-    expect(Object.values(RECOMMENDED_REFUSAL_CODES)).toStrictEqual([
-      "out_of_stock",
-      "invalid_params",
-      "cannot_fulfill",
-    ]);
-  });
+  // The three recommended refusal codes are held to the same words in
+  // `handler.test.ts`, beside the assertion that `RefusalSchema` accepts each
+  // of them — which is the half this file never had. One list, one place.
 });
