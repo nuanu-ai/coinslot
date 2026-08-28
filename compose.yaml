@@ -4,8 +4,10 @@
 # would look at — the landing, the documentation, the cabinet and the
 # gateway, all on http://localhost:8080, with one Postgres behind them (ADR-0003 §6).
 # Nothing here needs a build on the host first: the documentation is built
-# inside its image and the two Node processes run their TypeScript through tsx,
-# the same way `pnpm --filter @coinslot/gateway start` does on a laptop.
+# inside its image, and the four services that share one image — the
+# migration, the gateway, the cabinet and the mock merchant — run their
+# TypeScript through tsx, the same way `pnpm --filter @coinslot/gateway start`
+# does on a laptop.
 #
 #   docker compose up --build
 #   open http://localhost:8080
