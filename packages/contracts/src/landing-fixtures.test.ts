@@ -31,6 +31,19 @@
  * doing its best: a reader that guessed would certify a card the page does not
  * show, which is the failure this file exists to catch, arriving in a shape
  * nobody could see.
+ *
+ * One level down, where the page is HTML rather than source, five entities are
+ * decoded: &lt; &gt; &quot; &#39; &amp;. A sixth is not decoded and reaches the
+ * reader as the literal `&hellip;` the page wrote, and what happens then
+ * depends on where it sat — which is worth knowing rather than rounding off,
+ * because the two are not equally safe. Written where the source has structure
+ * it is refused in words, `a field name was expected at "&hellip;"`. Written
+ * inside a quoted string it becomes part of that string, and the schema has no
+ * grounds to object: a title is a non-blank string and that is one. What
+ * catches it there is the second test, against the quickstart, which reports
+ * the two spellings side by side. So the short list costs a page an
+ * intelligible failure in one position and a comparison in the other, and the
+ * card check alone would not have caught the second.
  */
 
 import { readFileSync } from "node:fs";
@@ -166,9 +179,21 @@ const readValue = (source: string, from: number): Reading => {
   );
 };
 
-/** Everything between <pre><code> and </code></pre>, in the order the page writes it. */
+/**
+ * Everything between <pre><code> and </code></pre>, in the order the page
+ * writes it.
+ *
+ * Attributes on either tag are allowed, and that is the difference between
+ * this file reading the page and this file only reading the page as it is
+ * written today. Matching the bare tags meant that the day anyone put a class
+ * or a language on them — which is what every syntax highlighter emits — the
+ * example would go invisible, and the failure would have said the anchor had
+ * moved while the call sat right where it always was.
+ */
 const codeBlocksOf = (html: string): string[] =>
-  [...html.matchAll(/<pre><code>([\s\S]*?)<\/code><\/pre>/g)].map((block) => block[1] ?? "");
+  [...html.matchAll(/<pre[^>]*><code[^>]*>([\s\S]*?)<\/code><\/pre>/g)].map(
+    (block) => block[1] ?? "",
+  );
 
 /**
  * The source a visitor reads: the highlighting spans taken off and the
@@ -196,14 +221,25 @@ const sourceOf = (block: string): string =>
  * panel, the highlighting, the order of the sections — is presentation and may
  * be rewritten freely.
  */
-const PUBLISH_CALL = /coinslot\.catalog\.publish\(\s*\{/;
+const PUBLISH_CALL = /coinslot\.catalog\.publish\(\s*\{/g;
 
-/** Where each of these sources opens the card it publishes, if it does. */
+/**
+ * Every place these sources open a card, not the first place each of them
+ * does.
+ *
+ * Every one, because the count is what the check below is made of. Stopping at
+ * the first match made "more than one" unreachable and hid a second publish
+ * call in the same block completely — a page could carry the pinned example
+ * and any number of unpinned ones beside it, and this file would have gone on
+ * certifying the first.
+ */
 const publishCallsIn = (sources: string[]): { source: string; opensAt: number }[] =>
-  sources.flatMap((source) => {
-    const anchor = PUBLISH_CALL.exec(source);
-    return anchor === null ? [] : [{ source, opensAt: anchor.index + anchor[0].length - 1 }];
-  });
+  sources.flatMap((source) =>
+    [...source.matchAll(PUBLISH_CALL)].map((anchor) => ({
+      source,
+      opensAt: anchor.index + anchor[0].length - 1,
+    })),
+  );
 
 /**
  * The card one page publishes, taken off that page.
