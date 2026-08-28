@@ -11,8 +11,13 @@
  *
  * Nothing could have caught it. A test cannot assert that another test made no
  * request, and a reviewer reading a call site sees a plausible-looking name.
- * So this refuses the request instead, at the one place every request goes
- * through, and the failure names the test that made it.
+ * So this refuses the request instead — every request made through `fetch`,
+ * which is the door the case that prompted this went out of and the door the
+ * packages here use — and the failure names the test that made it. It is not
+ * every door: a socket opened directly through `node:net`, an agent built on
+ * `node:http`, a database driver dialling out, none of them pass through here,
+ * and a suite in this repository already writes a request onto a raw socket.
+ * What this is, then, is the near-miss caught rather than the class closed.
  *
  * Loopback is allowed and is the whole point of the exception: several suites
  * stand a real server up in this process and talk to it over a real socket,
