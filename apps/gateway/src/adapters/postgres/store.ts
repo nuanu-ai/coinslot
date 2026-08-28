@@ -161,20 +161,12 @@ export class PostgresStore implements Store {
         return null;
       }
 
-      const [keyRow] = await tx
-        .insert(merchantKeys)
-        .values({
-          id: key.id,
-          merchantId: merchant.id,
-          label: key.label,
-          digest: key.digest,
-          createdAt: new Date(at),
-        })
-        .returning();
-
-      if (keyRow === undefined) {
-        throw new Error(`registering ${merchant.id} wrote a merchant and no key`);
-      }
+      // Through the one place a key row is written, so that a digest already
+      // taken is refused here in the same words it is refused in when a key is
+      // issued on its own. It matters more here than there: this call is
+      // reachable by a stranger registering, and the driver's own refusal
+      // carries the digest.
+      const keyRow = await this.#writeKey(tx, { ...key, merchantId: merchant.id, at });
       return { merchant: storedMerchantOf(merchantRow), key: storedKeyOf(keyRow) };
     });
   }
@@ -214,23 +206,53 @@ export class PostgresStore implements Store {
     // A key naming a merchant that is not there is refused by the foreign key
     // rather than written: a key that opens a door onto nothing is worse than
     // a command that failed.
-    //
-    // The two uniqueness rules are answered one at a time and by name, because
-    // they are two different things to have gone wrong. An identifier already
-    // taken is our own generator having collided, which is a defect in us. A
-    // digest already taken is the same secret being issued twice, which is what
-    // the command that issues keys asks `keyByDigest` about before it writes —
-    // and this is the rule standing behind that check when two issues race.
+    return storedKeyOf(await this.#writeKey(this.#db, { ...key, at }));
+  }
+
+  /**
+   * Writes one key row on whichever handle it is given, and turns the two rules
+   * that can refuse it into sentences the gateway can read.
+   *
+   * One place rather than two, because there are two ways a key is written — on
+   * its own, and beside the merchant it is the first key of — and only one of
+   * them used to say anything a caller could act on. The other handed back the
+   * driver's error, which is where this went wrong: a registration is reachable
+   * by a stranger, and a digest collision there put a merchant's stored secret
+   * into the log.
+   *
+   * The two rules are answered one at a time and by name, because they are two
+   * different things to have gone wrong. An identifier already taken is our own
+   * generator having collided, which is a defect in us. A digest already taken
+   * is the same secret being written twice, which is what the command that
+   * issues keys asks `keyByDigest` about before it writes — and this is the rule
+   * standing behind that check when two writes race.
+   *
+   * Nothing thrown from here carries the digest, and that is the point rather
+   * than a nicety. The driver's own refusal holds it twice — among the bound
+   * parameters of the statement, and in the detail line naming the value that
+   * clashed — so passing that error along, or hanging it on one of ours as a
+   * cause, publishes the secret the first time two writes collide.
+   */
+  async #writeKey(
+    on: Queries,
+    key: {
+      readonly id: string;
+      readonly merchantId: string;
+      readonly label: string;
+      readonly digest: string;
+      readonly at: number;
+    },
+  ): Promise<typeof merchantKeys.$inferSelect> {
     let row: typeof merchantKeys.$inferSelect | undefined;
     try {
-      [row] = await this.#db
+      [row] = await on
         .insert(merchantKeys)
         .values({
           id: key.id,
           merchantId: key.merchantId,
           label: key.label,
           digest: key.digest,
-          createdAt: new Date(at),
+          createdAt: new Date(key.at),
         })
         .returning();
     } catch (thrown) {
@@ -238,25 +260,19 @@ export class PostgresStore implements Store {
       if (refused === null) {
         throw thrown;
       }
-      // Nothing below carries the digest, and that is the point rather than a
-      // nicety. The driver's refusal holds it twice — once among the bound
-      // parameters of the statement and once in the detail line naming the
-      // value that clashed — so passing that error along, or hanging it on one
-      // of ours as a cause, would put a merchant's stored secret into whatever
-      // collects the log the first time a key was issued twice.
       if (refused.constraint === KEY_IDENTIFIER_TAKEN) {
         throw new Error(`the key ${key.id} is already written down`);
       }
       if (refused.constraint === KEY_DIGEST_TAKEN) {
         throw new Error("a key with that digest is already written down");
       }
-      throw new Error(unknownRuleRefused(`issuing the key ${key.id}`, refused));
+      throw new Error(unknownRuleRefused(`writing the key ${key.id}`, refused));
     }
 
     if (row === undefined) {
-      throw new Error(`issuing a key for ${key.merchantId} wrote no row`);
+      throw new Error(`writing a key for ${key.merchantId} wrote no row`);
     }
-    return storedKeyOf(row);
+    return row;
   }
 
   async workingKey(digest: string): Promise<StoredKey | null> {
