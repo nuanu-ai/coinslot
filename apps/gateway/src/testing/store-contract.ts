@@ -537,10 +537,12 @@ export function describeStore(name: string, open: () => Promise<Store>): void {
         // defect, rather than the runner reporting a timeout with nothing said
         // about why.
         //
-        // The first is let go in a `finally` whatever happens, and that is not
-        // tidiness. A decision left open holds a pooled connection and a row
-        // lock for the rest of the file, so everything after this would fail for
-        // reasons of this test's own making.
+        // Both decisions are let go and waited out in a `finally` whatever
+        // happens above, and that is not tidiness. A decision still in flight is
+        // a transaction still holding a row, so a test that walked away from a
+        // failed assertion would leave the next test's first write — the truncate
+        // that empties the table — waiting on it, and the failure would land
+        // somewhere other than here.
         const store = await twoMerchants();
         await store.addOrder(anOrder("ord_1", "created", { createdAt: 1_000 }));
         await store.addOrder(anOrder("ord_2", "created", { createdAt: 2_000 }));
@@ -563,6 +565,7 @@ export function describeStore(name: string, open: () => Promise<Store>): void {
           });
         } finally {
           releaseFirst();
+          await Promise.allSettled([first, second]);
         }
 
         expect(await first).toStrictEqual({ found: true, result: "first" });
