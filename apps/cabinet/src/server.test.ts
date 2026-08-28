@@ -1638,6 +1638,94 @@ describe("the settings screen", () => {
   });
 });
 
+describe("the account on the settings screen", () => {
+  it("keeps the person's own account under a heading of its own", async () => {
+    // The screen has two subjects: the name buyers read beside the products,
+    // and the account the merchant signs in with. They are not the same kind of
+    // thing and a merchant should not have to read both to find out which half
+    // they came for, so each one is under a heading that names it.
+    const { browser } = await started();
+    await browser.signIn();
+
+    const screen = await browser.get("/settings");
+    const headings = [...screen.html.matchAll(/<h2>([^<]*)<\/h2>/g)].map((found) => found[1] ?? "");
+    const saying = headings.join(" | ");
+
+    expect(
+      headings.some((heading) => /sold under|buyers/i.test(heading)),
+      saying,
+    ).toBe(true);
+    expect(
+      headings.some((heading) => /account|sign in/i.test(heading)),
+      saying,
+    ).toBe(true);
+  });
+
+  it("names the address in the section rather than only in the corner", async () => {
+    // The corner says who is signed in on every page, and that is a label. The
+    // section is where the address is the subject, so it says it in its own
+    // right — a section about somebody's account that never names the account
+    // leaves them reading the corner to work out whose settings these are.
+    const { browser, gateway } = await started();
+    await publish(gateway, roomCard);
+    await browser.signIn();
+
+    const named = (html: string): number => readable(html).split(PERSON).length - 1;
+
+    expect(named((await browser.get("/cards")).html)).toBe(1);
+    expect(named((await browser.get("/settings")).html)).toBe(2);
+  });
+
+  it("leads to the password screen rather than carrying a second copy of the form", async () => {
+    // Changing a password asks for the current one and ends every session that
+    // person has, and that belongs on the page built for it. What settings owes
+    // is the way in.
+    const { browser } = await started();
+    await browser.signIn();
+
+    const screen = await browser.get("/settings");
+
+    expect(screen.status).toBe(200);
+    expect(screen.html).toContain('action="/password"');
+    // And nothing on this page takes a password. A second form that did would
+    // be a second place for the rule about the current one to be got wrong.
+    expect(screen.html).not.toContain('type="password"');
+
+    const followed = await browser.get("/password");
+    expect(followed.status).toBe(200);
+    expect(readable(followed.html)).toMatch(/current password/i);
+  });
+
+  it("says a confirmed address can be sent a link that replaces a lost password", async () => {
+    const { browser, mails } = await started();
+    await browser.signIn();
+    await browser.post("/confirm");
+    const link = /token=(\S+)/.exec(mails.at(-1)?.body ?? "")?.[1] ?? "";
+    expect(link).not.toBe("");
+    await browser.get(`/confirm?token=${link}`);
+
+    const text = readable((await browser.get("/settings")).html);
+
+    expect(text).toMatch(/we can send you a link/i);
+    expect(text).not.toMatch(/cannot send you a link/i);
+  });
+
+  it("says an address nobody has answered from cannot be sent one, and who can help", async () => {
+    // The half a merchant cannot see for themselves. An unconfirmed address
+    // costs nothing until the day the password is gone, and on that day the
+    // account is opened by somebody else or not at all — so the page says so
+    // while there is still time to fix it, and says who to ask if there is not.
+    const { browser } = await started();
+    await browser.signIn();
+
+    const text = readable((await browser.get("/settings")).html);
+
+    expect(text).toMatch(/cannot send you a link/i);
+    expect(text).not.toMatch(/we can send you a link/i);
+    expect(text).toMatch(/gave you the address of this site/i);
+  });
+});
+
 describe("a merchant who has chosen no name", () => {
   it("is told on every screen they work on that nothing of theirs can go on sale", async () => {
     const running = await started();
@@ -2410,6 +2498,22 @@ describe("the keys screen", () => {
 });
 
 describe("what every screen says about the address", () => {
+  it("puts the address behind a link to the settings and not to the password form", async () => {
+    // The one place on every page that says "this is you" leads to where the
+    // account is looked after. It used to go straight to the password form,
+    // which is a thing somebody does rarely and never the thing they mean when
+    // they press their own name.
+    const { browser, gateway } = await started();
+    await publish(gateway, roomCard);
+    await browser.signIn();
+
+    for (const path of ["/cards", "/orders", "/receipts", "/keys", "/settings"]) {
+      const answered = await browser.get(path);
+      expect(answered.html, path).toContain(`href="/settings">${PERSON}</a>`);
+      expect(answered.html, path).not.toContain(`href="/password">${PERSON}`);
+    }
+  });
+
   it("says on every screen that nobody has confirmed it, and offers the one control", async () => {
     // A merchant reading their own address in the corner of every page must not
     // build on it until somebody has answered from it. It is on every screen
