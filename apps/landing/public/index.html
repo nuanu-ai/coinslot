@@ -94,7 +94,10 @@
             <pre><code><span class="tok-key">await</span> coinslot.catalog.<span class="tok-call">publish</span>({
   merchant_item_id: <span class="tok-str">'access-monthly'</span>,
   title: <span class="tok-str">'One month of access to the service'</span>,
+  description:
+    <span class="tok-str">'What the buyer gets, what it is good for, and what is not included.'</span>,
   price: { amount: <span class="tok-str">'5.00'</span>, currency: <span class="tok-str">'USD'</span> },
+  result: { access_url: { type: <span class="tok-str">'string'</span> } },
   fulfillment: <span class="tok-str">'sync'</span>,
 })</code></pre>
           </div>
