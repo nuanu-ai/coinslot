@@ -217,8 +217,8 @@ function sellsOnSilentQuote(mode: OrderMode): boolean {
 /**
  * The merchant did not say what the goods cost. It reaches the machine either
  * as the gateway's own `quote_silent` — a timeout, a server error, an answer
- * that did not parse, a stamp older than the freshness threshold — or as the
- * `quote_response` deadline running out on our side. Both are the same fact
+ * that did not parse — or as the `quote_response` deadline running out on our
+ * side. Both are the same fact
  * and get the same answer, which is the per-mode policy and never a closure of
  * its own.
  */

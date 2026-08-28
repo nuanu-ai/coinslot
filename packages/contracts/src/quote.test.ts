@@ -100,9 +100,11 @@ describe("the price answer", () => {
   });
 
   it("refuses an answer with no as_of on either branch", () => {
-    // Without `as_of` there is no way to tell a fresh check from a cached
-    // value, and the freshness threshold that decides whether to trust the
-    // answer has nothing to compare against.
+    // `as_of` is what separates a fresh check from a cached value, and it is
+    // carried into the order and into the record of the sale. Nothing weighs it
+    // today, and it is still required: an answer without it leaves whoever
+    // reconciles the charge afterwards no way to tell how old the number behind
+    // it was.
     expectMissingFieldRejected(QuoteResponseSchema, available, "as_of");
     expectMissingFieldRejected(QuoteResponseSchema, unavailable, "as_of");
   });

@@ -82,8 +82,9 @@ describe("money", () => {
 
 describe("timestamp", () => {
   // The promise: a moment on the wire is a moment, not a time of day in an
-  // unnamed place. `as_of` decides whether we trust a price; a naive local
-  // time cannot be compared with a freshness threshold at all.
+  // unnamed place. `as_of` is parsed into an instant and kept in the record of
+  // the sale, and a naive local time is not an instant — two machines reading
+  // it would land on two different moments.
   it("accepts ISO 8601 moments with a zone", () => {
     for (const moment of [
       "2026-08-26T10:15:00Z",

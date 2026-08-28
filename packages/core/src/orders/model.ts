@@ -11,8 +11,9 @@
  * Two rules hold everywhere in this package. Time is a value: every event
  * carries the instant it happened at, and nothing here reads a clock, so the
  * same inputs always produce the same order. And the deadlines are a policy,
- * not a constant: their numbers are still open questions before the pilot, and
- * a guessed number baked into the core would be a claim beyond the evidence.
+ * not a constant: the numbers live in the gateway's configuration, where the
+ * portal publishes them as that deployment's settings, so one baked in here
+ * would be one deployment's choice frozen into everybody's machine.
  */
 
 import { assertNever } from "../index.js";
