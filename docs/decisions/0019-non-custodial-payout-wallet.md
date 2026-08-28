@@ -52,9 +52,9 @@ checking anybody performs.
 A merchant with no address cannot publish: the publish call refuses with
 `no_payout_wallet` beside `no_seller_name`, because a card with nowhere
 for its money to go is a product offered for sale that cannot be bought
-honestly. An address is changed, never taken away — a merchant without
-one has published cards that answer an agent with nothing at all, and
-the act somebody reaching for that wants is the pause.
+honestly. An address is changed, never taken away — taking it
+away would put every published card off sale under the name of editing
+a setting, and the act somebody reaching for that wants is the pause.
 
 The sandbox asks for none. It settles against nothing (ADR-0008), so the
 configured `PAY_TO_ADDRESS` stands in as the placeholder a challenge has
