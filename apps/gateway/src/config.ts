@@ -640,7 +640,9 @@ export function loadConfig(environment: Record<string, string | undefined>): Gat
   }
 
   if (problems.length > 0) {
-    throw new Error(`The gateway cannot start, the numbers do not add up — ${problems.join("; ")}`);
+    throw new Error(
+      `The gateway cannot start, these settings do not work together — ${problems.join("; ")}`,
+    );
   }
 
   return {
