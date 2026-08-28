@@ -19,6 +19,7 @@ import { generateKeyPairSync } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
+import { loadConfig } from "../../config.js";
 import {
   cdpAuthenticatedClient,
   facilitatorClientFor,
@@ -223,18 +224,25 @@ describe("choosing a facilitator client for a configuration", () => {
     ]);
 
     // The same host written down to the root, which is a spelling deployments
-    // genuinely use. Read as a different host it would be handed no credentials
-    // and refused by the facilitator on every call.
+    // genuinely use — and it comes the way a real one comes, out of the
+    // environment through `loadConfig`, because that is where the two spellings
+    // become one. What the token names has to be what the request carries: the
+    // HTTP client puts this string's host in the `Host` header, so a token
+    // signed for `api.cdp.coinbase.com.` against a request that says
+    // `api.cdp.coinbase.com` — or the other way about — is refused by the
+    // facilitator, every verify comes back "unknown", and the agent retries a
+    // purchase that can never complete.
     const rooted = facilitatorClientFor(
-      aPayment({
-        facilitatorUrl: "https://api.cdp.coinbase.com./platform/v2/x402",
-        cdpApiKeyId: "an-api-key",
-        cdpApiKeySecret: anApiKeySecret(),
-      }),
+      loadConfig({
+        DATABASE_URL: "postgres://coinslot:secret@localhost:5432/coinslot",
+        FACILITATOR_URL: "https://api.cdp.coinbase.com./platform/v2/x402",
+        CDP_API_KEY_ID: "an-api-key",
+        CDP_API_KEY_SECRET: anApiKeySecret(),
+      }).payment,
     );
-    expect((await rooted.createAuthHeaders("verify")).headers.Authorization).toMatch(
-      /^Bearer \S+$/,
-    );
+    expect(
+      claimsOf((await rooted.createAuthHeaders("verify")).headers.Authorization ?? "").uris,
+    ).toStrictEqual(["POST api.cdp.coinbase.com/platform/v2/x402/verify"]);
 
     const unsigned = facilitatorClientFor(aPayment());
     expect((await unsigned.createAuthHeaders("verify")).headers.Authorization).toBeUndefined();
