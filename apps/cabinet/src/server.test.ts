@@ -32,6 +32,7 @@ import { fingerprintOf, hashPassword } from "./credentials.js";
 import type { Answer } from "./gateway.js";
 import { buildApp } from "./server.js";
 import { sessionFor } from "./testing/accounts-contract.js";
+import { readable } from "./testing/html.js";
 
 const KEY = "a-merchant-key-long-enough";
 const asMerchant = { authorization: `Bearer ${KEY}` };
@@ -363,24 +364,6 @@ const counting = (accounts: Accounts): { asked: (readonly string[])[]; cabinet: 
     },
   };
 };
-
-/**
- * The page's text with the tags taken out, so a test reads what a person does.
- *
- * The entities are decoded after the tags are stripped, and the ampersand last
- * of all: decoded first, a page carrying the literal text `&lt;` would come out
- * as a bracket and this would report markup where there is none.
- */
-const readable = (html: string): string =>
-  html
-    .replaceAll(/<[^>]*>/g, " ")
-    .replaceAll("&lt;", "<")
-    .replaceAll("&gt;", ">")
-    .replaceAll("&#39;", "'")
-    .replaceAll("&quot;", '"')
-    .replaceAll("&amp;", "&")
-    .replaceAll(/\s+/g, " ")
-    .trim();
 
 const publish = async (gateway: Served, card: Card): Promise<string> => {
   const answered = await gateway.call("POST", "/v0/catalog/publish", {
