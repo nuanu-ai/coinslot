@@ -297,9 +297,12 @@ true. So nothing here catches a stale price on your behalf: a handler answering
 out of a cache is the one deciding how old that cache may get.
 
 An `available: false` answer to a purchase closes it before any money moves,
-and no order appears on your side. The price from an answer lives until
-`expires_at`: how long a price holds is set by us and is the same across the
-system — thirty seconds — and what happens once it has passed is in [Time ran
+and no order appears on your side. A price you name holds for thirty seconds,
+counted from the moment your answer reaches us; that number is set by us and is
+the same across the system. The `expires_at` in the question is the outside edge
+of the same life rather than a second number — it is worked out when the
+question goes out, before anyone knows when your answer will land, so it falls a
+little later — and what happens once a price has run out is in [Time ran
 out](/orders).
 
 We wait five seconds for an answer, and a question unanswered by then counts as

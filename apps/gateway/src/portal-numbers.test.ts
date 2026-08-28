@@ -119,9 +119,16 @@ const PINS: readonly Pin[] = [
     is: deadlines.quoteTtlMs,
   },
   {
-    what: "the same, in the price check's own reference",
+    // The anchor holds the moment as well as the number, and that is the point
+    // of it. The page used to hang this thirty on `expires_at`, which is a
+    // different and longer number — the gateway works that field out when the
+    // question goes out, as our patience for an answer plus the price's own
+    // life, because the life cannot start until the answer lands. A pin that
+    // read the number alone would have gone on certifying that pairing.
+    what: "how long a price holds, and the moment it is counted from",
     page: "portal/cards.md",
-    anchor: /the same across the system — (\w+) seconds/,
+    anchor:
+      /A price you name holds for (\w+) seconds, counted from the moment your answer reaches us/,
     reads: "seconds",
     is: deadlines.quoteTtlMs,
   },
@@ -306,6 +313,16 @@ describe("every number the portal names is the number this gateway ships", () =>
       }
     });
   }
+
+  it("grows the pause between attempts, which is the one claim carrying no number", () => {
+    // failures.md: "we repeat the delivery, after a pause that grows with each
+    // attempt". Every other claim the portal publishes is a number this file
+    // reads back; this one is a shape, and the configuration can falsify it on
+    // its own — a factor of one is accepted and means a flat retry, which puts
+    // all five attempts inside a couple of seconds on a merchant already in
+    // trouble, and the sentence would then be describing nothing that happens.
+    expect(redelivery.factor).toBeGreaterThan(1);
+  });
 });
 
 describe("a number the portal publishes is not also called undecided", () => {
