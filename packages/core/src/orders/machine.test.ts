@@ -327,6 +327,50 @@ describe("pricing the purchase", () => {
     expect(kinds(effects)).toStrictEqual(["verify_payment"]);
   });
 
+  it("takes a merchant's price in the currency the card was published in", () => {
+    // The positive half of the rule below: moving the number is what a price
+    // check is for, and a card priced in dollars answered in dollars is the
+    // ordinary case. Without this, refusing every quote would satisfy the test
+    // that follows.
+    const { order } = must(newOrder("sync", { priceCheck: "merchant" }), {
+      kind: "quote_answered",
+      at: T0 + 1,
+      available: true,
+      price: { amount: "6.50", currency: TEST_PRICE.currency, asOf: T0 + 1 },
+    });
+
+    expect(order.state).toBe("quoted");
+    expect(order.price?.currency).toBe(TEST_PRICE.currency);
+  });
+
+  it("refuses a quote that answers in a currency the card does not carry", () => {
+    // A quote may move the number and never the unit. The agent chose this
+    // card at the price the catalog showed, in the currency the card declares;
+    // a check that came back in another one and was taken would charge his
+    // wallet in a unit nobody agreed on and write a receipt pointing at a
+    // price the card never carried. There is no conversion here to fall back
+    // on — this package holds money as a decimal string and knows no rates —
+    // so the only honest answer is to refuse the answer, not to guess at it.
+    const created = newOrder("sync", { priceCheck: "merchant" });
+    const before = structuredClone(created);
+
+    const result = transition(created, {
+      kind: "quote_answered",
+      at: T0 + 1,
+      available: true,
+      price: { amount: "6.50", currency: "EUR", asOf: T0 + 1 },
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.rejection.code).toBe("currency_changed");
+    // Sending the same answer again gives the same refusal: what clears it is
+    // the merchant quoting the card's own currency.
+    expect(result.rejection.retryable).toBe(false);
+    expect(result.rejection.message).toContain("EUR");
+    expect(created).toStrictEqual(before);
+  });
+
   it("closes the purchase before any money when the goods are not there", () => {
     // Portal, "Товар кончился": said in time, the buyer's money does not move.
     const { order } = must(newOrder("async", { priceCheck: "merchant" }), {
