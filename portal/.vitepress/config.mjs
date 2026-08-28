@@ -12,6 +12,11 @@ export default defineConfig({
   cleanUrls: true,
   srcExclude: ['WRITING.md'],
   themeConfig: {
+    // The corner of the bar reads "← Coinslot  Docs": the first is the way out
+    // to the site, added in .vitepress/theme, and this is what the reader is
+    // in. Left as the site's own name it said "Coinslot" twice in a row, once
+    // as a link home and once as the title of the page it never leaves.
+    siteTitle: 'Docs',
     sidebar: [
       {
         text: 'For the owner',

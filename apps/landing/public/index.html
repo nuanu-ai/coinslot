@@ -53,6 +53,25 @@
     <link rel="stylesheet" href="/styles/fonts.css" />
     <link rel="stylesheet" href="/styles/tokens.css" />
     <link rel="stylesheet" href="/styles/landing.css" />
+
+    <!-- The reader's choice of theme, applied before anything is painted.
+         Later — at the end of the body, with the control — and the page would
+         show the system's theme for a frame and then swap, which is the flash
+         everybody has seen on somebody else's site.
+
+         In a try, because reading storage throws rather than returning nothing
+         in a private window and behind a browser set to refuse site data. A
+         page that cannot remember a preference should still be a page. -->
+    <script>
+      try {
+        let chosen = localStorage.getItem("coinslot-theme");
+        if (chosen === "light" || chosen === "dark") {
+          document.documentElement.dataset.theme = chosen;
+        }
+      } catch {
+        /* No stored choice, so the operating system decides. */
+      }
+    </script>
   </head>
   <body class="page">
     <header class="masthead">
@@ -64,6 +83,25 @@
         <a href="/docs/">Documentation</a>
         <a href="/docs/money">How the money moves</a>
         <a class="button--small" href="/cabinet/">Cabinet</a>
+        <!-- Three named choices rather than one button that toggles, because a
+             toggle has to be labelled with either where you are or where it
+             takes you, and a single word in a bar is read as both. "Dark" was
+             read as "you are in dark mode" by the first person who saw it. Here
+             every state is on the page and the one in force is marked, so
+             nothing has to be inferred — and following the system stays
+             available instead of being lost the moment somebody chooses once.
+
+             In the markup rather than built by the script so that its place in
+             the bar is decided by the same file as the rest of the bar, and
+             hidden until the script has wired it, because a control that does
+             nothing when pressed is worse than one that is not there. A reader
+             with no script keeps the theme their system asks for, which is what
+             this page did before any of this existed. -->
+        <div id="theme" class="theme" role="group" aria-label="Theme" hidden>
+          <button type="button" data-choice="system">System</button>
+          <button type="button" data-choice="light">Light</button>
+          <button type="button" data-choice="dark">Dark</button>
+        </div>
       </nav>
     </header>
 
@@ -354,5 +392,56 @@
         <span>No address yet: <span class="mono slot">[CONTACT]</span></span>
       </div>
     </footer>
+
+    <!-- The theme control.
+         `system` is stored as the absence of a stored value rather than as the
+         word, so the head of this document has one thing to check and a page
+         that has never been touched behaves the same as one switched back. -->
+    <script>
+      (function () {
+        var root = document.documentElement;
+        var group = document.getElementById("theme");
+        var buttons = group.querySelectorAll("button");
+
+        function chosen() {
+          return root.dataset.theme || "system";
+        }
+
+        function mark() {
+          var now = chosen();
+          for (let i = 0; i < buttons.length; i += 1) {
+            // aria-pressed rather than a class alone: the marking has to reach
+            // somebody who cannot see which of the three is darker.
+            const mine = buttons[i].dataset.choice === now;
+            buttons[i].setAttribute("aria-pressed", mine ? "true" : "false");
+          }
+        }
+
+        group.hidden = false;
+        mark();
+
+        group.addEventListener("click", function (pressed) {
+          var choice = pressed.target.dataset && pressed.target.dataset.choice;
+          if (!choice) {
+            return;
+          }
+          if (choice === "system") {
+            delete root.dataset.theme;
+          } else {
+            root.dataset.theme = choice;
+          }
+          mark();
+          try {
+            if (choice === "system") {
+              localStorage.removeItem("coinslot-theme");
+            } else {
+              localStorage.setItem("coinslot-theme", choice);
+            }
+          } catch {
+            /* The page still changes; it just will not remember. */
+          }
+        });
+      })();
+    </script>
   </body>
 </html>

@@ -106,3 +106,39 @@
 .custom-block {
   border-radius: 3px;
 }
+
+/*
+ * The way out, in the corner before the title.
+ *
+ * It sits in the bar beside the theme's own navigation, so it takes the theme's
+ * own measurements rather than ours: the same size, the same muted colour, and
+ * the same weight the nav links carry, so that a reader sees one row of
+ * controls and not one row plus something we bolted on.
+ */
+.way-out {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 12px;
+  padding-right: 12px;
+  border-right: 1px solid var(--vp-c-divider);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--vp-c-text-2);
+  white-space: nowrap;
+  transition: color 0.25s;
+}
+
+.way-out:hover {
+  color: var(--vp-c-text-1);
+}
+
+/* On a narrow screen the bar is the title and a hamburger and nothing else has
+   room. The way out stays and the divider goes, because a rule with nothing on
+   one side of it is a mark nobody can read. */
+@media (max-width: 640px) {
+  .way-out {
+    margin-right: 8px;
+    padding-right: 0;
+    border-right: 0;
+  }
+}
