@@ -12,19 +12,44 @@
  */
 
 import type { PaymentVerificationFailure } from "@coinslot/core";
+import { decodePaymentSignatureHeader } from "@x402/core/http";
 import type { Charge, Facilitator, SettleOutcome, VerifyOutcome } from "../../ports/facilitator.js";
 
 /**
- * Who the payment layer would say paid, faked from the payment itself so a test
- * can model two buyers and a buyer's own repeat without a real signature.
+ * Who the payment layer would say paid: the wallet the authorisation names,
+ * read out of the payment the agent actually sent.
  *
- * The real facilitator returns the address that actually signed the payment;
- * here the payment string stands in for that signature, and the payer is the
- * part of it before a `#` or `:`. So "alice#first" and "alice#second" are one
- * wallet presenting two authorisations — a repeat — while "alice" and "bob" are
- * two different buyers. A payment with neither separator is its own payer.
+ * The real facilitator answers with the address that signed, and one wallet's
+ * two authorisations come back under one address however differently the two
+ * were spelled — which is the whole reason a repeat is recognisable as the same
+ * buyer's. So this reads the same field the wire carries rather than a
+ * convention of its own: a payment header is base64 JSON, and the exact-EVM
+ * scheme puts the signer at `payload.authorization.from`. That is one field and
+ * this reaches exactly that far; nothing is verified, because this is the
+ * sandbox and no signature here is evidence of anything.
+ *
+ * This used to derive the payer from the shape of the payment string — the part
+ * before a `#` or `:` — which no real header has, so every fresh authorisation
+ * was a fresh owner and a buyer's own repeat was refused as a stranger's.
+ *
+ * A payment that will not decode, or one carrying no authorisation, names
+ * nobody, and `null` says so. It is not a refusal: the port has a word for a
+ * verified payment whose payer is unnamed, the real facilitator answers `null`
+ * in the same place when the layer vouches without naming an address, and the
+ * gateway's stand-in for it is the payment's own fingerprint. A test that wants
+ * a refusal asks for one.
  */
-export const scriptedPayer = (payment: string): string => payment.split(/[#:]/, 1)[0] ?? payment;
+const scriptedPayer = (payment: string): string | null => {
+  let signed: unknown;
+  try {
+    signed = decodePaymentSignatureHeader(payment).payload;
+  } catch {
+    return null;
+  }
+
+  const from = (signed as { authorization?: { from?: unknown } } | undefined)?.authorization?.from;
+  return typeof from === "string" ? from : null;
+};
 
 export class ScriptedFacilitator implements Facilitator {
   readonly verifies: Charge[] = [];
