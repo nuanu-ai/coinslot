@@ -45,20 +45,30 @@ done < <(tar -tf "${archive}")
 
 tar -xf "${archive}" -C "${payload}"
 [[ -f "${payload}/compose.yaml" ]] || fail 'archive has no compose.yaml'
-rsync -a --delete --exclude='.env' --exclude='.coinslot-revision' \
-  "${payload}/" "${deployment}/"
+[[ -f "${payload}/deploy/compose.preview.yaml" ]] || fail 'archive has no preview override'
 
 export COINSLOT_APP_IMAGE="coinslot-app:${revision}"
 export COINSLOT_WEB_IMAGE="coinslot-web:${revision}"
-compose=(docker compose --project-name coinslot --env-file "${environment_file}")
+staged_compose=(
+  docker compose --project-name coinslot --env-file "${environment_file}"
+  -f "${payload}/compose.yaml" -f "${payload}/deploy/compose.preview.yaml"
+)
 
-cd "${deployment}"
-"${compose[@]}" config --quiet
-"${compose[@]}" build
-"${compose[@]}" up -d --wait postgres
-"${compose[@]}" run --rm --no-deps \
+"${staged_compose[@]}" config --quiet
+"${staged_compose[@]}" build
+"${staged_compose[@]}" run --rm --no-deps \
   -e DATABASE_URL=postgres://coinslot:coinslot@postgres:5432/coinslot_test \
   gateway pnpm test:db
+
+rsync -a --delete --exclude='.env' --exclude='.coinslot-revision' \
+  "${payload}/" "${deployment}/"
+
+cd "${deployment}"
+compose=(
+  docker compose --project-name coinslot --env-file "${environment_file}"
+  -f compose.yaml -f deploy/compose.preview.yaml
+)
+"${compose[@]}" config --quiet
 "${compose[@]}" up -d --wait --remove-orphans
 
 for path in / /docs/ /cabinet/healthz /v0/catalog; do

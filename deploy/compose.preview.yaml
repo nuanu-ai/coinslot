@@ -1,0 +1,6 @@
+services:
+  web:
+    # The preview serves the files baked into the SHA-tagged image. The base
+    # file's bind mounts exist only for local edit-and-reload work.
+    volumes: !override
+      - coinslot-caddy:/data
