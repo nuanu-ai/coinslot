@@ -101,10 +101,11 @@ Those three are the whole set, and that matters for how you report a temporary
 failure. An exception in the handler, a process that fell over, a connection
 that broke — for us each of these means the order never reached you: the answer
 did not arrive, so we send the order again, after a delay, until the mode's
-deadline runs out or we have made enough attempts. Either way the order closes
-as though the deadline had passed. We read a refusal the other way, as a final
-"this cannot be delivered", and we close the order on it. So a supplier that
-did not answer within five seconds is not worth a refusal: throw instead.
+deadline runs out or we have delivered it five times, whichever comes first.
+Five is what this system is set to, and no card changes it. Either way the order
+closes as though the deadline had passed. We read a refusal the other way, as a
+final "this cannot be delivered", and we close the order on it. So a supplier
+that did not answer within five seconds is not worth a refusal: throw instead.
 
 Silence does not count as an answer: every wait has a deadline, and an order
 that runs past its deadline closes without you.
@@ -402,17 +403,21 @@ refusal.
 An order whose deadline has passed does not hang in the air. It closes, and the
 agent sees how it ended. What happens depends on which step the waiting was at.
 
-We name the numbers before the pilot. An asynchronous card can carry one
+The numbers are ours to set rather than the card's, and the ones below are what
+the system you are connecting to runs with. A price holds for thirty seconds. A
+synchronous answer has eight seconds. An asynchronous card can carry one
 deadline of yours, on the delivery, counted from the moment the buyer was
-charged; name it and the agent sees it before it buys, leave it out and a
-default of ours applies that neither of you is shown
-([The product card](/cards)). The confirmation mode has a deadline of its own
-and it arrives together with the mode. How long to wait for a synchronous
-answer is set by us and no card carries it. It runs from the moment the agent
-buys rather than from the moment your handler is called, so asking your price
-and checking the payment come out of it first. It is not the whole of the
-agent's wait either: executing the charge happens after your answer, on a clock
-of its own, and the two together fit inside the ceiling we promise the agent.
+charged; name it and the agent sees it before it buys, leave it out and a day
+applies that the agent is never shown ([The product card](/cards)). The
+confirmation mode has a deadline of its own — an hour, where the card names none
+— and it arrives together with the mode.
+
+The eight seconds run from the moment the agent buys rather than from the
+moment your handler is called, so asking your price and checking the payment
+come out of them first. They are not the whole of the agent's wait either:
+executing the charge happens after your answer, on a clock of its own, and the
+two together fit inside the ten seconds we promise the agent for a synchronous
+purchase.
 
 | Situation | Time ran out — what happened |
 | --- | --- |
@@ -493,12 +498,12 @@ delivery. The hard case is a delivery that began before the deadline and
 finished after it, by which time the purchase is closed as a refusal with
 nothing charged.
 
-Say ten seconds are allowed for a synchronous answer (an example figure),
-counted from the moment the agent bought — asking your price and checking the
-payment come out of the same ten, and so does whatever the agent spends
-deciding to pay. Your handler began the delivery in the ninth second and
-finished in the twelfth. By that second the agent has already had a refusal and
-spent nothing, but the access you gave out has not gone anywhere.
+A synchronous answer has eight seconds, counted from the moment the agent
+bought — asking your price and checking the payment come out of the same eight,
+and so does whatever the agent spends deciding to pay. Say your handler began
+the delivery in the seventh second and finished in the tenth. By that second the
+agent has already had a refusal and spent nothing, but the access you gave out
+has not gone anywhere.
 
 Work already done is not lost: a repeat purchase under the same order key
 collects the delivery that was made, this time with the payment. So answering
@@ -529,16 +534,12 @@ failed, and your side never hears about it — no order appears at all.
 
 ## What is not settled yet
 
-- The numbers of the deadlines: how long a price holds, how long we wait for a
-  synchronous answer, and the defaults for the confirmation and delivery
-  deadlines.
 - The threshold at which a price counts as stale: any difference at all, or a
   difference larger than a named one.
 - What other events we send. The three named here are a minimum, and we add to
   the catalogue as cases turn up where your side would otherwise learn of
   something only by reconciling by hand.
-- The delay before we resend an order that never reached you, and how many
-  times we do it.
+- The delay before we resend an order that never reached you.
 - The transport for confirmations, for sellers with no API — together with the
   path where an order arrives as a message, after the pilot.
 - How your side learns that a refund on an order has gone out: together with

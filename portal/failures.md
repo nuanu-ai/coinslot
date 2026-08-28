@@ -32,13 +32,15 @@ sale that can be made honestly at a known price. In the asynchronous mode the
 money leaves at once, and a sale made while availability is unknown would turn
 into a debt to the buyer — a lost sale is cheaper than that debt.
 
-Four things count as silence: no answer for longer than the timeout; a server
-error or a network failure in place of an answer; an answer that did not parse
-against the declared shape; and a timestamp in the answer older than the
-freshness threshold. Both numbers, the timeout and the threshold, we name
-before the pilot. Those boundaries are a price handler's. A card that names a
-price hook instead counts as silent every time, because we do not call that
-address yet ([the card reference](/cards)).
+Three things count as silence: no answer within five seconds; a server error or
+a network failure in place of an answer; and an answer that did not parse
+against the declared shape. That wait is ours, and five seconds is what the
+system you are connecting to allows. The timestamp inside an answer is not a
+fourth thing: we carry that mark and do not yet weigh it, so an answer stamped a
+year ago is honoured exactly as long as one stamped a second ago. Those
+boundaries are a price handler's. A card that names a price hook instead counts
+as silent every time, because we do not call that address yet ([the card
+reference](/cards)).
 
 Silence like this does not stop your selling. The automatic stop described
 below goes by deliveries: silence about a price is not silence about the goods.
@@ -73,10 +75,10 @@ The order will arrive again. We count a handler's answer only once it has come
 back: an exception inside the handler, a process that fell over, a connection
 that broke — for us all of these mean the order never reached you, and we
 repeat the delivery, after a delay, until the mode's deadline runs out — or
-until we have tried five times, whichever comes first. The count is the one the
-orders page describes, and it is the one that surprises people: a handler that
-throws on every attempt runs out of attempts long before it runs out of clock,
-and the order then ends the same way it would have ended at the deadline.
+until we have tried five times, whichever comes first. That count is ours and no
+card carries it. It is also the one that surprises people: a handler that throws
+on every attempt runs out of attempts long before it runs out of clock, and the
+order then ends the same way it would have ended at the deadline.
 
 What your handler threw does not travel to us or to the agent. It goes to the
 handler you registered for problems, which is also where a failed poll, a
@@ -100,13 +102,14 @@ gone. In the confirmation mode, silence in answer to a request to confirm
 closes the order at no cost, while silence after the confirmation ends the way
 the asynchronous mode does.
 
-Say you have allowed a day for delivering an asynchronous product (an example
-figure). The day passes with no confirmation of a delivery from you — the order
-is marked as needing a refund, and the money for it is already with you. An
-asynchronous card can carry a delivery deadline of yours: name it and the agent
-sees it before it buys, leave it out and a default of ours applies that neither
-of you is shown ([The product card](/cards)). How long to wait for a synchronous
-answer is set by us and no card carries it.
+Say an asynchronous card of yours names no delivery deadline, so the day we hold
+it to is the one running. The day passes with no confirmation of a delivery from
+you — the order is marked as needing a refund, and the money for it is already
+with you. Name a deadline of your own and the agent sees it before it buys;
+leave it out and that day applies with no deadline shown to the agent at all
+([The product card](/cards)). How long to wait for a synchronous answer is set
+by us and no card carries it: eight seconds, counted from the moment the agent
+buys ([Time ran out](/orders)).
 
 It works this way because an order that waits forever is worse than an honest
 refusal: the agent holds its budget tied up and can neither buy from your
@@ -187,9 +190,9 @@ case with you rather than instead of you.
   — how many failures in a row and over what period — nor the way selling comes
   back afterwards is settled.
 - The limit on the share of purchases that run into missing goods.
-- The timeout on a price answer, and the freshness threshold past which an
-  answer counts as silence.
-- The delay before we repeat the delivery of an order that never reached you,
-  and how many times we repeat it.
+- Whether an answer whose timestamp is too old counts as silence at all.
+  Nothing weighs that mark today, so what counts as too old has not had to be
+  decided.
+- The delay before we repeat the delivery of an order that never reached you.
 - What happens when it is we who go quiet: how your side sees it, and what we
   promise in that case.

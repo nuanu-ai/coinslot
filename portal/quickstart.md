@@ -216,10 +216,17 @@ An `accepted` can name the time you expect the delivery to take, where you know
 it; an empty `accepted` is a complete answer too. Until `deliver` is called the
 order counts as accepted, and the delivery deadline named in your card is
 running on it — it started when the buyer was charged, at the moment of
-purchase, before the order reached you. A synchronous card carries no such
-field: how long to wait for a synchronous answer is set by us, as one number
-for everybody, and it bounds the whole purchase rather than your handler — it
-runs from the moment the agent buys.
+purchase, before the order reached you. A card that names none is held to a day.
+
+A synchronous card carries no such field: how long to wait for a synchronous
+answer is set by us, as one number for everybody, and it is eight seconds. They
+are not eight seconds for your handler — the clock starts when the agent buys,
+so the price question and the payment check are spent out of them before your
+code is reached. They are not the agent's whole wait either: the charge executes
+after your answer, and the ten seconds we promise the agent for a synchronous
+purchase cover both. Both numbers are ours to set rather than the card's, and
+both are what the system you are connecting to runs with ([Time ran
+out](/orders)).
 
 If your process has restarted in the meantime, the object you kept is gone. The
 open orders are then read back from us, and the delivery is made on those
@@ -354,9 +361,9 @@ where you keep the files you publish from — called bare, it refuses and prints
 those reasons rather than checking nothing quietly. It raises no order and it
 does not need your handler running.
 
-The command itself cannot be invoked yet, because these packages ship without a
-build step and declare no command; until they are built, the same check is the
-function the package exports, which takes a card you have already parsed.
+The same check is also a function the package exports, which takes a card you
+have already parsed. That is the one to call where the cards are assembled in
+code rather than kept in files.
 
 There is no silent "invalid": every finding is explained in words, and all but
 one point at a field — a file that is not JSON at all is a finding about the
@@ -409,9 +416,7 @@ code.
   us. A price handler has neither question — the subscription channel is
   authenticated when it connects.
 - The exact names of an order's fields, and the shape of a refusal.
-- The names of the fields a card sets deadlines in, and all of the numbers: how
-  long a price holds, how long we wait for a synchronous answer, and the
-  defaults for the confirmation and delivery deadlines.
+- The names of the fields a card sets deadlines in.
 - The subscription's network coordinates: where it connects and what to open
   for it in your outbound rules.
 - The parameter that lets one subscription work on several orders at once: its
@@ -425,9 +430,6 @@ code.
 - The half of the check that would send one order twice and watch for a second
   delivery. Nothing on our surface raises a test order to send, and behind that
   sits the question of what separates the sandbox from the live system.
-- `coinslot verify` as a command you can run. The card check is written and the
-  package exports it; what is missing is the build that would let the command
-  start.
 - How the package reaches you. It is not published anywhere, and the name it is
   installed under is a working one.
 - Where to say that you are ready for a test purchase: we have no channel for
