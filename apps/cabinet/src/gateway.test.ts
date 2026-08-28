@@ -293,6 +293,88 @@ describe("the calls behind the name buyers read", () => {
   });
 });
 
+describe("the calls behind the address a merchant's money arrives at", () => {
+  const SHAPED = "0x0123456789abcdef0123456789abcdef01234567";
+
+  it("reads the address as the merchant whose key it holds, and hands back the address", async () => {
+    const { url, arrived } = await recordingServer(200, { payout_wallet: SHAPED });
+
+    const read = await gatewayFor(url, KEY).payoutWallet();
+
+    expect(arrived[0]?.method).toBe("GET");
+    expect(arrived[0]?.path).toBe("/v0/payout-wallet");
+    expect(arrived[0]?.key).toBe(`Bearer ${KEY}`);
+    expect(read.ok).toBe(true);
+    if (!read.ok) {
+      throw new Error(`reading the address failed: ${read.why}`);
+    }
+    expect(read.document).toBe(SHAPED);
+  });
+
+  it("reads a merchant who has set no address as null rather than as an absence", async () => {
+    // The screen draws one block for "you have not said where to send it" and
+    // another for "here is where it goes". A client that folded the absent
+    // field into null would draw the first for a merchant whose answer simply
+    // did not arrive.
+    const { url } = await recordingServer(200, { payout_wallet: null });
+
+    const read = await gatewayFor(url, KEY).payoutWallet();
+
+    expect(read.ok).toBe(true);
+    if (!read.ok) {
+      throw new Error(`reading the address failed: ${read.why}`);
+    }
+    expect(read.document).toBeNull();
+  });
+
+  it("sends the address a merchant pasted and hands back what was written", async () => {
+    const { url, arrived } = await recordingServer(200, { payout_wallet: SHAPED });
+
+    const set = await gatewayFor(url, KEY).setPayoutWallet(SHAPED);
+
+    expect(arrived[0]?.method).toBe("POST");
+    expect(arrived[0]?.path).toBe("/v0/payout-wallet");
+    expect(arrived[0]?.key).toBe(`Bearer ${KEY}`);
+    expect(JSON.parse(arrived[0]?.body ?? "{}")).toStrictEqual({ payout_wallet: SHAPED });
+    expect(set.ok).toBe(true);
+    if (!set.ok) {
+      throw new Error(`setting the address failed: ${set.why}`);
+    }
+    expect(set.document).toBe(SHAPED);
+  });
+
+  it("refuses an answer with no address field in it rather than reading one as null", async () => {
+    const { url } = await recordingServer(200, {});
+
+    await expect(gatewayFor(url, KEY).payoutWallet()).rejects.toThrow();
+  });
+
+  it("refuses an answer whose address is not one, rather than showing it back", async () => {
+    // The one thing this screen promises is that what it shows is where the
+    // money goes. An answer carrying something that is not an address is a
+    // gateway we cannot draw that page from, and stopping here is how that is
+    // found rather than as forty characters a merchant checks against nothing.
+    const { url } = await recordingServer(200, { payout_wallet: "not-an-address" });
+
+    await expect(gatewayFor(url, KEY).payoutWallet()).rejects.toThrow();
+  });
+
+  it("carries a refusal of the address through with the gateway's status on it", async () => {
+    const { url } = await recordingServer(400, {
+      error: { code: "invalid_request", message: "that is not an address" },
+    });
+
+    const set = await gatewayFor(url, KEY).setPayoutWallet(SHAPED);
+
+    expect(set.ok).toBe(false);
+    if (set.ok) {
+      throw new Error("a refused address answered as written");
+    }
+    expect(set.status).toBe(400);
+    expect(set.why).toBe("that is not an address");
+  });
+});
+
 describe("the calls a merchant makes about their keys", () => {
   it("asks for the list with the merchant's key on it", async () => {
     const { url, arrived } = await recordingServer(200, {

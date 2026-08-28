@@ -23,6 +23,7 @@
 import { ServiceNameSchema } from "@coinslot/contracts";
 import { accountSettings } from "./account-settings.js";
 import { bare, escaped, page } from "./html.js";
+import { payoutWalletBlock } from "./payout-wallet.js";
 import type { Viewer } from "./screens.js";
 
 /**
@@ -124,23 +125,28 @@ export const chooseNameScreen = (base: string, problem?: string): string =>
   );
 
 /**
- * The cabinet's settings, which hold two subjects.
+ * The cabinet's settings, which hold three subjects.
  *
- * A page of its own rather than a control tucked onto the cards screen: the
- * name is not about a card, it is about the merchant. The second subject is the
- * merchant's own account, and it arrived because the address in the corner of
- * every page is the one thing on a screen that says "this is you" — pressing it
- * has to lead somewhere that answers that, and the answer is a page with the
- * account on it. `account-settings.ts` holds that half and the reasons for it.
+ * A page of its own rather than controls tucked onto the cards screen: none of
+ * these is about a card, all three are about the merchant. The name buyers read
+ * is here; under it the address the merchant's money arrives at, which lives in
+ * `payout-wallet.ts`; and under that the merchant's own account, which lives in
+ * `account-settings.ts`. That last one arrived because the address in the corner
+ * of every page is the one thing on a screen that says "this is you" — pressing
+ * it has to lead somewhere that answers that, and the answer is a page with the
+ * account on it.
  *
- * The two are not the same kind of thing, so each is under a heading that names
- * which it is: what buyers read beside the products, and how the person signing
- * in gets in. Somebody landing here should be able to tell which half they came
- * for without reading both.
+ * The order is the two things about selling first and the account last, because
+ * a merchant setting themselves up works down the page: what they are called,
+ * where they are paid, and only then how they get back in.
  *
- * The box is filled from what the gateway answered rather than from what was
- * last typed, so that a merchant refused for a name outside the rule is still
- * looking at what they are actually listed under.
+ * The three are not the same kind of thing, so each is under a heading that
+ * names which it is. Somebody landing here should be able to tell which part
+ * they came for without reading the others.
+ *
+ * The name box is filled from what the gateway answered rather than from what
+ * was last typed, so that a merchant refused for a name outside the rule is
+ * still looking at what they are actually listed under.
  */
 export const settingsScreen = (viewer: Viewer, problem?: string): string => {
   const { base } = viewer;
@@ -179,7 +185,7 @@ export const settingsScreen = (viewer: Viewer, problem?: string): string => {
     <button class="primary" type="submit">Save it</button>
     ${problem === undefined ? "" : `<p class="problem">${escaped(problem)}</p>`}
   </form>
-${accountSettings(viewer)}`;
+${payoutWalletBlock(viewer)}${accountSettings(viewer)}`;
 
   return page({
     base,
