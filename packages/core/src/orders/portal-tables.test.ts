@@ -554,7 +554,7 @@ describe("the portal and this machine cannot drift apart quietly", () => {
     // the agent would go and buy the same thing again on a wallet already
     // lighter.
     expect(tableRows(ORDERS_PAGE, "How an order can end", 3)).toStrictEqual([
-      "the goods and a receipt",
+      "the goods, the price they were charged and whether the money behind it was real",
       "a refusal with a reason; the purchase did not happen",
       "a refusal, and nothing was charged",
       "the order was closed on its deadline",

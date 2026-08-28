@@ -381,7 +381,7 @@ saying that it did, that closed order becomes a refund you owe.
 
 | Situation | Where the money is | What the agent sees |
 | --- | --- | --- |
-| You delivered the goods | with you | the goods and a receipt |
+| You delivered the goods | with you | the goods, the price they were charged and whether the money behind it was real |
 | There is none, the parameters did not fit, the payment failed its check — or you refused in the synchronous mode | never moved | a refusal with a reason; the purchase did not happen |
 | You answered "I will not deliver" to a request to confirm | never moved | a refusal, and nothing was charged |
 | Time ran out: no confirmation, no payment or no synchronous delivery arrived | never moved | the order was closed on its deadline |
@@ -429,11 +429,11 @@ answers with the earlier result under it instead of delivering a second time.
 Orders are delivered at least once, so a repeat is ordinary traffic; it does
 not mean that anything broke.
 
-On the agent's side a repeat works differently in different modes. In the
-synchronous mode the order itself is the key: the receipt appears together with
-the payment, and the payment executes last here, so at the moment of a repeat
-there may not be one yet. In the asynchronous mode and in the confirmation mode
-the payment has already gone through, and the repeat goes by the receipt.
+On the agent's side the key is the same one, in every mode. The order's
+identifier rides in the payment challenge we issue and comes back in the
+payment the agent signs, so a repeat names the order it repeats and we carry
+that order on from where it stopped. What differs between the modes is only how
+much of the purchase was already done when the answer went missing.
 
 One case stands apart: a repeat of an asynchronous order you have already
 delivered. You confirmed that delivery with the `deliver` call rather than with
