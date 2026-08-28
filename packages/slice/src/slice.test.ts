@@ -210,9 +210,13 @@ describe("the stage-one gate: a sandbox purchase, green from catalog to receipt"
     // ADR-0011's door, walked by the kind of code it exists for. The test
     // above collects the same sale through the merchant's own routes, which is
     // the merchant's view of it; this one is the buyer's, and it is the only
-    // view an agent has. Everything asserted here the buyer learned from
-    // `buyer.status`: no key, no read of the store, nothing but the identifier
-    // the purchase handed back.
+    // view an agent has.
+    //
+    // The merchant still has to deliver, and that call below is this test
+    // driving the world rather than the agent reading it — an agent cannot
+    // make a merchant issue anything. What is asserted is the other half:
+    // where the order stands and what the buyer ended up holding are read from
+    // `buyer.status` alone, with no key and no look inside the store.
     const catalog = await buyer.catalog();
     const esim = catalog.find((card) => card.title === EUROPE_ESIM.title);
     if (esim === undefined) throw new Error("the eSIM is not in the catalog");

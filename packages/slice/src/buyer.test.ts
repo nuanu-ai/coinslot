@@ -15,10 +15,11 @@
  * What is compared is what went on the wire against what the table says, so
  * this catches a rename whichever side made it.
  *
- * It holds the addresses and not the documents. What the answers have to look
- * like is held by the schemas in `@coinslot/contracts` and by the offline gate
- * in `slice.test.ts`, which buys through a real gateway; the one thing neither
- * of those can see is a buyer politely asking the wrong door.
+ * It holds the addresses, and the one distinction this buyer draws that no
+ * gateway can be made to demonstrate: an answer that arrived and made no sense
+ * against a call that never landed. What the answers have to look like when the
+ * gateway is behaving is held by the schemas in `@coinslot/contracts` and by
+ * the offline gate in `slice.test.ts`, which buys through a real one.
  */
 
 import { createServer, type Server } from "node:http";
@@ -29,6 +30,12 @@ import { makeBuyer } from "./buyer.js";
 
 /** The same valueless local-devnet key the rest of the slice signs with. */
 const TEST_BUYER_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+
+/**
+ * The order this server answers for with a proxy's error page instead of a
+ * document, so the buyer can be shown one without a proxy in the way.
+ */
+const ORDER_BEHIND_A_BAD_PROXY = "ord_a_proxy_ate_it";
 
 /** One request as it arrived, which is the only thing this file looks at. */
 interface Asked {
@@ -49,6 +56,14 @@ beforeAll(async () => {
       path: request.url ?? "",
       headers: request.headers,
     });
+    // One order is answered the way something in the middle answers when the
+    // gateway is unreachable: a status nobody designed, in HTML.
+    if (request.url?.includes(ORDER_BEHIND_A_BAD_PROXY) === true) {
+      response.statusCode = 502;
+      response.setHeader("content-type", "text/html");
+      response.end("<html><head><title>502 Bad Gateway</title></head><body>nginx</body></html>");
+      return;
+    }
     // An empty catalog page is the one answer that has to be well formed: the
     // buyer holds that one to the real schema, and a body it will not parse
     // would fail this file for a reason that has nothing to do with addresses.
@@ -124,6 +139,12 @@ describe("the addresses this buyer writes by hand", () => {
     const one = theOne();
     expect(one.method).toBe(API_ROUTES.get_order_status.method);
     expect(one.path).toBe(expandPath(API_ROUTES.get_order_status.path, { order_id: orderId }));
+
+    // The same address, offered without asking for it. It is what the buy
+    // command prints when it stops watching, so a reader who pastes that line
+    // is pasting the address that was being polled and not a second guess at
+    // it.
+    expect(buyer.statusUrl(orderId)).toContain(one.path);
   });
 
   it("writes an identifier into an address the way the contract writes it", async () => {
@@ -135,6 +156,41 @@ describe("the addresses this buyer writes by hand", () => {
     await buyer.buy(itemId, {});
 
     expect(theOne().path).toBe(expandPath(API_ROUTES.purchase_item.path, { item_id: itemId }));
+  });
+});
+
+describe("an answer that arrived against a call that never landed", () => {
+  it("hands back an answer it cannot read, with the text of it, rather than throwing", async () => {
+    // The case that cost a wait its ending. Something between an agent and the
+    // gateway answers its own error page in HTML; parsed as a document that
+    // raises, it takes down the poll that a paid order was being watched
+    // through, and the address the buyer owed somebody is never printed. The
+    // money has already moved by then, so the answer nobody can read must come
+    // back as one — an answer this buyer could not read is a different thing
+    // from an answer that says the purchase is over.
+    const seen = await buyer.status(ORDER_BEHIND_A_BAD_PROXY);
+
+    expect(seen.status).toBe(502);
+    // Nothing is invented out of it: no state, no goods.
+    expect(seen.state).toBeNull();
+    expect(seen.delivered).toBeNull();
+    // And nothing is lost either — the text is there to be printed, which is
+    // the only way anybody finds out which box in the middle wrote it.
+    expect(seen.body).toContain("502 Bad Gateway");
+  });
+
+  it("throws where the call never landed at all", async () => {
+    // The other half of the split, and the reason the half above is not simply
+    // "never throw". A door that answered badly and a door that is gone want
+    // different next moves from a caller holding a paid order, so they do not
+    // arrive looking alike.
+    const nowhere = makeBuyer({
+      baseUrl: "http://127.0.0.1:1",
+      privateKey: TEST_BUYER_KEY,
+      maxUsd: 50,
+    });
+
+    await expect(nowhere.status("ord_7c1e05")).rejects.toThrow();
   });
 });
 

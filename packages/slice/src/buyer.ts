@@ -62,18 +62,31 @@ export interface Bought {
  * What became of one order, read back through the door that is the agent's.
  *
  * Deliberately smaller and looser than the document the contract publishes,
- * because this is what an outside agent can actually hold: four things read off
- * a JSON body by hand, and the body itself for anything this shape does not
+ * because this is what an outside agent can actually hold: three things read
+ * off a JSON body by hand, and the body itself for anything this shape does not
  * name. A field this buyer does not understand is not lost, it is in `body`.
+ *
+ * Everything here describes an answer that arrived. A call that never landed is
+ * not one of these and is thrown instead — the two are different situations for
+ * a caller holding a paid order, and collapsing them would hide the one where
+ * the door is gone.
  */
 export interface OrderStatus {
   /** The HTTP status: 200 for an order the door knows, 404 for one it does not. */
   readonly status: number;
-  /** The door's whole answer — the status document, or the refusal. */
+  /**
+   * The door's whole answer: the status document, the refusal, or — where what
+   * came back was not JSON at all — the text of it exactly as it arrived.
+   *
+   * The last of those is not hypothetical. A proxy in front of the gateway
+   * answers its own bad-gateway page in HTML, and that page is an answer about
+   * the proxy rather than about the order. Kept as text, a caller can print it
+   * and see what it was; parsed or dropped, it becomes a crash or a silence.
+   */
   readonly body: unknown;
   /**
    * Where the order stands, in the door's own word, and null where the answer
-   * carried no such word at all — a refusal, or anything else unexpected.
+   * carried no such word at all — a refusal, an error page, anything else.
    *
    * Null is not an ending and must not be read as one: it says this buyer was
    * not told, which is a different thing from being told the purchase failed.
@@ -81,8 +94,6 @@ export interface OrderStatus {
   readonly state: string | null;
   /** The goods, once they are the buyer's, and null while there are none. */
   readonly delivered: unknown;
-  /** The address this answer was read at, so a caller can name it or ask again. */
-  readonly url: string;
 }
 
 export interface Buyer {
@@ -104,11 +115,25 @@ export interface Buyer {
    * collects them, and knowing the identifier is the whole of the proof
    * (ADR-0011) — this buyer holds no key and sends none.
    *
-   * An identifier the gateway does not know is not an exception here. It comes
-   * back as the refusal it is, with the status and the body the door wrote, so
-   * a caller can tell "there is no such order" from a call that never landed.
+   * Anything that arrives is data, and that is the whole of the split. An
+   * identifier the gateway does not know comes back as the refusal it is; a
+   * proxy's error page comes back as its text. Only a call that never landed
+   * throws, because for a caller holding a paid order "the door said something
+   * I could not read" and "the door is gone" are different situations and want
+   * different next moves.
    */
   status(orderId: string): Promise<OrderStatus>;
+  /**
+   * The address this order's status is read at, without reading it.
+   *
+   * It exists because the address has to be printable when nothing landed —
+   * that is exactly when a caller has to tell somebody where to collect an
+   * order it has stopped watching, and it is exactly when there is no answer to
+   * take the address off. `status` builds its own request through this, so the
+   * address a caller prints is the address that was asked at, and there is one
+   * place in this file where that string is written.
+   */
+  statusUrl(orderId: string): string;
 }
 
 export interface BuyerOptions {
@@ -128,8 +153,12 @@ export function makeBuyer(options: BuyerOptions): Buyer {
   const payFetch = wrapFetchWithPayment((input, init) => fetch(input, init), client);
   const base = options.baseUrl.replace(/\/+$/, "");
 
+  const statusUrl = (orderId: string): string =>
+    `${base}/v0/orders/${encodeURIComponent(orderId)}/status`;
+
   return {
     address: account.address,
+    statusUrl,
 
     async catalog() {
       const response = await fetch(`${base}/v0/catalog`, {
@@ -172,11 +201,24 @@ export function makeBuyer(options: BuyerOptions): Buyer {
     },
 
     async status(orderId) {
-      const url = `${base}/v0/orders/${encodeURIComponent(orderId)}/status`;
-      const response = await fetch(url, { headers: { accept: "application/json" } });
+      const response = await fetch(statusUrl(orderId), {
+        headers: { accept: "application/json" },
+      });
 
       const text = await response.text();
-      const body: unknown = text === "" ? null : JSON.parse(text);
+      let body: unknown;
+      try {
+        body = text === "" ? null : JSON.parse(text);
+      } catch {
+        // The door answered and what it said was not JSON — a proxy's own error
+        // page, most often, which is an answer about the proxy and not about
+        // the order. It is kept as the text it arrived as rather than thrown,
+        // because the caller of this is holding a paid order: a parse failure
+        // raised here ends its wait in a stack trace, and the address it owed
+        // somebody never gets printed. What cannot be read is reported as not
+        // read, which is what `state` being null already means.
+        body = text;
+      }
       // Read by hand, field by field, the way an agent that has this contract
       // as a page of documentation rather than as a package would read it. A
       // body that is not an object at all, or one whose `status` is not a
@@ -190,7 +232,6 @@ export function makeBuyer(options: BuyerOptions): Buyer {
         body,
         state,
         delivered: document.delivered ?? null,
-        url,
       };
     },
   };

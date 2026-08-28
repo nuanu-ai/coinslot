@@ -75,6 +75,12 @@ const ASK_EVERY_MS = 1_000;
  */
 const STILL_RUNNING = "in_progress";
 
+/** What the door calls an identifier it has no order for. */
+const NO_SUCH_ORDER = "no_such_order";
+
+/** How much of an unreadable answer is worth printing before it is cut. */
+const SHOW_AT_MOST = 500;
+
 /**
  * The exit code for a reader who interrupted the wait.
  *
@@ -94,12 +100,52 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
  * the purchase stopping, and the two are easy to run together — so what is
  * printed is an address the reader can paste, for this order and no other.
  */
-const comeBackLater = (orderId: string, seen: OrderStatus, why: string): void => {
+const comeBackLater = (orderId: string, where: string, why: string): void => {
   console.log(
     `[buyer] ${why}; ${orderId} is still the merchant's to finish, not a sale that ended`,
   );
   console.log(`[buyer] the goods are collected at the door that is the agent's own:`);
-  console.log(`  curl -s ${seen.url}`);
+  console.log(`  curl -s ${where}`);
+};
+
+/**
+ * The refusal code an answer carried, where it was a refusal at all.
+ *
+ * Read off the document rather than off the HTTP status, and the difference
+ * matters here. A proxy between this command and the gateway answers 404 for a
+ * route it does not know, in HTML; the gateway's own "there is no such order"
+ * is a document that says so. Told apart by the code, the first is a bad read
+ * and the second is an answer, which is the whole of what this command has to
+ * decide between.
+ */
+const refusedAs = (body: unknown): string | null => {
+  const document = typeof body === "object" && body !== null ? (body as { error?: unknown }) : {};
+  const error = document.error;
+  const code =
+    typeof error === "object" && error !== null ? (error as { code?: unknown }).code : null;
+  return typeof code === "string" ? code : null;
+};
+
+/**
+ * Whether the door has said where this order stands and there is nothing more
+ * to wait for.
+ *
+ * Two answers end the watching: a word from the status vocabulary that is not
+ * the running one, and the gateway's own refusal, which no amount of asking
+ * again will turn into an order. Everything else — an error page, a body with
+ * no state in it, a 502 from something in the middle — is not an answer about
+ * the order at all, so the watching goes on. A door that answered badly once
+ * has not told us the purchase is over.
+ */
+const isAnEnding = (seen: OrderStatus): boolean =>
+  (seen.state !== null && seen.state !== STILL_RUNNING) || refusedAs(seen.body) === NO_SUCH_ORDER;
+
+/** An answer written out for a reader, cut where it is too long to be read. */
+const asFarAsItReads = (body: unknown): string => {
+  const written = typeof body === "string" ? body : JSON.stringify(body, null, 2);
+  return written.length <= SHOW_AT_MOST
+    ? written
+    : `${written.slice(0, SHOW_AT_MOST)}\n… cut here; ${written.length - SHOW_AT_MOST} more characters came back`;
 };
 
 /** The answers for one card, or the names this buyer cannot supply. */
@@ -202,39 +248,70 @@ console.log(
   `[buyer] accepted as ${orderId}; the goods come later, so this waits up to ${WATCH_MS / 1_000}s for them`,
 );
 
-// The first look is taken before the signal is caught, because catching it is
-// only worth anything once there is an address to print, and that address comes
-// off the answer. A Ctrl-C inside this one round trip kills the process the
-// ordinary way, which is the truth of it: nothing was being watched yet.
-let seen = await buyer.status(orderId);
+// Where this order is collected, settled before anything is asked. It has to be
+// printable when nothing came back at all — that is exactly the moment somebody
+// needs it — so it is taken from the buyer rather than off an answer.
+const where = buyer.statusUrl(orderId);
 
 process.on("SIGINT", () => {
   console.log("");
-  comeBackLater(orderId, seen, "stopped watching on Ctrl-C");
+  comeBackLater(orderId, where, "stopped watching on Ctrl-C");
   process.exit(INTERRUPTED);
 });
 
+/**
+ * One look at the door, or an end to the watching.
+ *
+ * An answer that arrived is returned however little sense it made; the throw
+ * this catches is a call that never landed — the gateway gone, a name that does
+ * not resolve, a socket closed. That is the one case where asking again in a
+ * second is not obviously right, and it is the case where the address below
+ * matters most: the money has already moved, so a stack trace here would end
+ * the wait without telling anybody where the order went.
+ */
+const look = async (): Promise<OrderStatus> => {
+  try {
+    return await buyer.status(orderId);
+  } catch (thrown) {
+    const why = thrown instanceof Error ? thrown.message : String(thrown);
+    comeBackLater(orderId, where, `stopped watching: the door could not be reached (${why})`);
+    process.exit(1);
+  }
+};
+
+let seen = await look();
+
 const until = Date.now() + WATCH_MS;
-while (seen.state === STILL_RUNNING && Date.now() < until) {
+while (!isAnEnding(seen) && Date.now() < until) {
   await sleep(ASK_EVERY_MS);
-  seen = await buyer.status(orderId);
+  seen = await look();
 }
 
-if (seen.state === STILL_RUNNING) {
-  comeBackLater(orderId, seen, `stopped watching after ${WATCH_MS / 1_000}s`);
-  // Not a success: this run has no goods to show for itself. Not a failure of
-  // the purchase either, and the lines above are where that is said — an exit
-  // code has no room for the difference, and the one thing a script must not
-  // read from this command is that a sale completed when nobody has seen it.
+if (refusedAs(seen.body) === NO_SUCH_ORDER) {
+  // The door's own refusal, which is an answer and not a failure to read one:
+  // this gateway has no such order, and asking again would not change that.
+  console.error(`[buyer] the agent's door says there is no order called ${orderId}:`);
+  console.error(asFarAsItReads(seen.body));
   process.exit(1);
 }
 
 if (seen.state === null) {
-  // The door answered something this buyer cannot read as a state at all — a
-  // refusal, most likely. It is printed as it arrived rather than summarised,
-  // because what it says is the only thing anybody here knows.
-  console.error(`[buyer] the agent's door answered ${seen.status} and no order status:`);
-  console.error(JSON.stringify(seen.body, null, 2));
+  // The ceiling ran out and the last thing that came back was not a status this
+  // buyer could read. Saying what it was matters — an HTML page names the proxy
+  // that wrote it — and so does not calling it an ending: nobody here has been
+  // told where the order stands, which is why the address follows.
+  console.error(`[buyer] the last answer, ${seen.status}, was not a status this buyer can read:`);
+  console.error(asFarAsItReads(seen.body));
+  comeBackLater(orderId, where, `stopped watching after ${WATCH_MS / 1_000}s`);
+  process.exit(1);
+}
+
+if (seen.state === STILL_RUNNING) {
+  comeBackLater(orderId, where, `stopped watching after ${WATCH_MS / 1_000}s`);
+  // Not a success: this run has no goods to show for itself. Not a failure of
+  // the purchase either, and the lines above are where that is said — an exit
+  // code has no room for the difference, and the one thing a script must not
+  // read from this command is that a sale completed when nobody has seen it.
   process.exit(1);
 }
 
