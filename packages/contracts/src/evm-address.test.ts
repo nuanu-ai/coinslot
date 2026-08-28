@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { EvmAddressSchema } from "./evm-address.js";
+import { checksummedAddressOf, EvmAddressSchema } from "./evm-address.js";
 import { errorOf } from "./testing/expect-schema.js";
 
 /**
@@ -137,5 +137,61 @@ describe("an address on an EVM chain", () => {
     expect(EvmAddressSchema.safeParse(null).success).toBe(false);
     expect(EvmAddressSchema.safeParse(undefined).success).toBe(false);
     expect(EvmAddressSchema.safeParse(0x5aaeb605).success).toBe(false);
+  });
+});
+
+describe("an address written the way a wallet shows it", () => {
+  // The promise: a merchant pastes forty characters out of their wallet, and
+  // every screen that shows them back shows the same forty characters. This is
+  // the function that makes that true, and the reason it is the canon rather
+  // than lower case: nobody compares two spellings of one address by eye and
+  // gets it right, and the eye is the only thing checking.
+
+  it("writes out the spelling the standard publishes, from either spelling", () => {
+    for (const address of CHECKSUMMED) {
+      expect(checksummedAddressOf(address.toLowerCase()), address).toBe(address);
+      // And given that spelling already, it answers with the same string, so
+      // writing an address down twice writes the same thing twice.
+      expect(checksummedAddressOf(address), address).toBe(address);
+    }
+  });
+
+  it("puts capitals in an address that has letters to capitalise", () => {
+    // The negative control for the loop above: two of the standard's vectors
+    // come out all lower case, so a function that returned its input unchanged
+    // would pass on those and on every all-digit address. This one has to
+    // actually change.
+    const lowered = "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed";
+
+    expect(checksummedAddressOf(lowered)).not.toBe(lowered);
+    expect(checksummedAddressOf(lowered)).toBe("0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed");
+  });
+
+  it("leaves an address with no letters in it exactly as it is", () => {
+    // Nothing to capitalise, so the canonical form and what was typed are one
+    // string. Worth pinning because it is what the seeded addresses in the
+    // gateway's tests look like.
+    const digits = "0x0000000000000000000000000000000000000001";
+
+    expect(checksummedAddressOf(digits)).toBe(digits);
+  });
+
+  it("agrees with the schema about which addresses there are", () => {
+    // The two must never disagree: an address this writes out is one the
+    // schema takes, and one the schema takes is one this can write out.
+    for (const address of CHECKSUMMED) {
+      expect(EvmAddressSchema.safeParse(checksummedAddressOf(address)).success, address).toBe(true);
+    }
+  });
+
+  it("refuses to repair an address whose letters disagree with it", () => {
+    // The failure this exists to not have. Capitalising a mistyped address
+    // afresh produces a perfectly well-formed address that nobody typed —
+    // which is the checksum defeated by the thing meant to enforce it.
+    const mistyped = oneLetterFlipped(CHECKSUMMED[0] ?? "");
+
+    expect(() => checksummedAddressOf(mistyped)).toThrow();
+    expect(() => checksummedAddressOf("0x1234")).toThrow();
+    expect(() => checksummedAddressOf("")).toThrow();
   });
 });

@@ -69,46 +69,52 @@ describe("a key", () => {
 });
 
 describe("the wallet a merchant is paid at", () => {
+  /** One address in both the spellings it may be written in. */
+  const A_WALLET = "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed";
+  const A_WALLET_IN_LOWER = "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed";
+
   const seller = async () => {
     const store = aStore();
     await makeMerchant(store, countedIds(), "A merchant", 1_000, "mch_1");
     return store;
   };
 
-  it("is written in lower case, whichever spelling arrived", async () => {
+  it("is written the way a wallet shows it, whichever spelling arrived", async () => {
     // A wallet hands its owner the mixed-case spelling and a block explorer
     // prints the lower-case one. Kept as they came, one address would be two
     // strings — to every comparison, and to a merchant reading back something
-    // that does not look like what they typed.
+    // that does not look like what they typed. The one that is kept is the
+    // wallet's, because that is the string the merchant will compare against.
     const store = await seller();
 
-    const written = await setPayoutWallet(
-      store,
-      "mch_1",
-      "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed",
-      2_000,
-    );
+    const written = await setPayoutWallet(store, "mch_1", A_WALLET_IN_LOWER, 2_000);
 
-    expect(written?.payoutWallet).toBe("0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed");
-    expect((await store.merchantById("mch_1"))?.payoutWallet).toBe(
-      "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed",
-    );
+    expect(written?.payoutWallet).toBe(A_WALLET);
+    expect((await store.merchantById("mch_1"))?.payoutWallet).toBe(A_WALLET);
+  });
+
+  it("writes the same string for an address that already came that way", async () => {
+    // The ordinary case, and the one that has to be a no-op: a merchant pastes
+    // what their wallet showed them and reads back exactly that.
+    const store = await seller();
+
+    expect((await setPayoutWallet(store, "mch_1", A_WALLET, 2_000))?.payoutWallet).toBe(A_WALLET);
   });
 
   it("refuses an address whose own letters disagree with it, and writes nothing", async () => {
     // The one wrong answer available here, and it costs the merchant every
     // sale they make afterwards: an address that is wrong is another perfectly
     // good address belonging to somebody else, and a payment to it is gone.
+    // Capitalising it afresh instead of refusing would produce a well-formed
+    // address nobody typed, which is the checksum defeated by its own enforcer.
     const store = await seller();
-    await setPayoutWallet(store, "mch_1", "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed", 2_000);
+    await setPayoutWallet(store, "mch_1", A_WALLET, 2_000);
 
     await expect(
       setPayoutWallet(store, "mch_1", "0x5aaeb6053F3E94C9b9A09f33669435E7Ef1BeAed", 3_000),
     ).rejects.toThrow();
 
-    expect((await store.merchantById("mch_1"))?.payoutWallet).toBe(
-      "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed",
-    );
+    expect((await store.merchantById("mch_1"))?.payoutWallet).toBe(A_WALLET);
   });
 
   it("refuses something that is not an address at all", async () => {
@@ -122,14 +128,7 @@ describe("the wallet a merchant is paid at", () => {
   it("answers with nothing for a merchant who is not there", async () => {
     const store = await seller();
 
-    expect(
-      await setPayoutWallet(
-        store,
-        "mch_nobody",
-        "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed",
-        2_000,
-      ),
-    ).toBeNull();
+    expect(await setPayoutWallet(store, "mch_nobody", A_WALLET, 2_000)).toBeNull();
   });
 });
 

@@ -276,11 +276,14 @@ export const SellerNameRequestSchema = z
  * from a client that dropped the field, and reading the second as the first
  * tells a merchant they are set up to be paid when nothing of theirs can be.
  *
- * What comes back is always the lower-case spelling, whichever of the two
- * spellings was sent. That is said out loud in the description because a
- * merchant who typed the mixed-case address their wallet showed them and reads
- * back something that looks different has to be able to find out, in one place,
- * that it is the same address and not a mangled one.
+ * What comes back is always the spelling a wallet shows, whichever of the two
+ * accepted spellings was sent. The door takes both and everything behind it
+ * holds one (ADR-0017), and this is the one for a reason that is about the
+ * person rather than about the storage: a merchant pastes forty characters out
+ * of their wallet and reads them back on a settings screen, and handed the same
+ * address in lower case they cannot tell it from a different address without
+ * comparing character by character. On the one field money is sent to, that
+ * glance is the whole of the checking anybody does.
  */
 export const PayoutWalletSchema = z
   .strictObject({
@@ -289,7 +292,7 @@ export const PayoutWalletSchema = z
   })
   .meta({
     description:
-      "The address a merchant's sales are paid into. Payments are not held by anybody on the way: a buyer's agent pays this address directly, and it is the payTo of every payment request made for this merchant's products. Null means nobody has set one, which is where every merchant starts; the field is always present rather than left out, because an absent field is indistinguishable from a client that dropped it. The address comes back in lower case whichever spelling was sent, and it is the same address. On a deployment that settles on a real chain a merchant with no wallet here cannot publish a card, because the money from that card's sales would have nowhere to go.",
+      "The address a merchant's sales are paid into. Payments are not held by anybody on the way: a buyer's agent pays this address directly, and it is the payTo of every payment request made for this merchant's products. Null means nobody has set one, which is where every merchant starts; the field is always present rather than left out, because an absent field is indistinguishable from a client that dropped it. The address comes back in the mixed-case spelling a wallet shows, whichever of the two accepted spellings was sent — so what a merchant reads back on a screen is character for character what they copied out of their wallet. On a deployment that settles on a real chain a merchant with no wallet here cannot publish a card, because the money from that card's sales would have nowhere to go.",
   });
 
 /**

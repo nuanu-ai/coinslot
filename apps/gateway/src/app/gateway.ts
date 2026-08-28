@@ -631,9 +631,16 @@ export class Gateway {
    * written around, so a merchant without one has cards on sale that cannot be
    * offered at all, and there is no caller for whom that is the right outcome.
    *
-   * The address is checked and lowered before it is written, by the one
-   * function that does both. The route above holds the same rule on the way in,
-   * so a throw from here is a caller that skipped it.
+   * The address is checked and written out in the one spelling anything here
+   * holds — the mixed-case one a wallet shows — by the one function that does
+   * both. The route above holds the same rule on the way in, so a throw from
+   * here is a caller that skipped it.
+   *
+   * That is the opposite spelling from the one a payer's wallet is kept in a
+   * few hundred lines below, and the two are not in conflict. A payer's address
+   * arrives from a facilitator and is only ever compared, so it is lowered to
+   * make two spellings one identity; this one is read by a person off a screen,
+   * so it is kept in the form they can recognise.
    *
    * What comes back is read off the row that was written. Echoed, this answer
    * would look identical whether the write landed or not — which for the one
@@ -843,7 +850,10 @@ export class Gateway {
     });
 
     if (verified.verified !== true) {
-      const why = verified.verified === false ? verified.message : verified.message;
+      // Both ways a verification can fail carry their own message, and the
+      // agent is told it whichever it was. What the two are told apart by is
+      // the retryable flag below, not by the words.
+      const why = verified.message;
       console.warn(`[gateway] a payment for ${orderId} did not verify: ${why}`);
       return {
         step: "payment_not_verified",

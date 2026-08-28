@@ -176,7 +176,7 @@ export {
 export type { OrderEvent, RefundDueReason } from "./events.js";
 export { ORDER_EVENT_TYPES, OrderEventSchema, RefundDueReasonSchema } from "./events.js";
 export type { EvmAddress } from "./evm-address.js";
-export { EvmAddressSchema } from "./evm-address.js";
+export { checksummedAddressOf, EvmAddressSchema } from "./evm-address.js";
 export type { Acceptance, Delivery, HandlerAnswer, Refusal, RefusalCode } from "./handler.js";
 export {
   AcceptanceSchema,

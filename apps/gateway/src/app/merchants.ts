@@ -26,7 +26,7 @@
  */
 
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { EvmAddressSchema, ServiceNameSchema } from "@coinslot/contracts";
+import { checksummedAddressOf, EvmAddressSchema, ServiceNameSchema } from "@coinslot/contracts";
 import type { Ids } from "../ports/clock.js";
 import type { Store, StoredKey, StoredMerchant } from "../ports/store.js";
 
@@ -108,10 +108,13 @@ export async function setServiceName(
  * a stranger, irreversibly. The capitals a wallet writes are the only warning
  * anybody gets, and this is where it is read.
  *
- * And the address is lowered before it is written. An address has two
- * spellings and the store holds one, so that a comparison somewhere else cannot
- * come out false for two spellings of one address, and so that what a merchant
- * reads back does not depend on which spelling they last sent.
+ * And the address is written out in one spelling before it is stored. An
+ * address has two and the store holds one, so that a comparison somewhere else
+ * cannot come out false for two spellings of one address, and so that what a
+ * merchant reads back does not depend on which spelling they last sent. The one
+ * it holds is the wallet's own — the mixed-case checksummed form — because that
+ * is the string the merchant copied and the string they will compare against
+ * when they look at the settings screen a month from now.
  */
 export async function setPayoutWallet(
   store: Store,
@@ -122,7 +125,7 @@ export async function setPayoutWallet(
   // Throws with the schema's own words, which say what is wrong with the
   // address and what the two spellings of one are.
   const address = EvmAddressSchema.parse(payoutWallet);
-  return store.setPayoutWallet(merchantId, address.toLowerCase(), at);
+  return store.setPayoutWallet(merchantId, checksummedAddressOf(address), at);
 }
 
 /** Writes down a merchant. Null where that identifier is already taken. */

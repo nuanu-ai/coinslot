@@ -503,12 +503,18 @@ describe("a purchase from the outside", () => {
       // And the address their sales are paid into, which is theirs: the
       // challenge below names it, and the gateway's own configured address is a
       // different string, so a card offered against ours would show up here.
-      const theirWallet = "0x27b1fdb04752bbc536007a920d24acb045561c26";
+      //
+      // Sent in the lower-case spelling and read back in the one their wallet
+      // shows, which is what everything from here on holds. An address of all
+      // digits would read back the same whichever the canon was and would pin
+      // nothing, so this one has letters in it.
+      const theirWallet = "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359";
       const paidAt = await gateway.call("POST", "/v0/payout-wallet", {
         headers: { authorization: `Bearer ${theirKey}` },
-        body: { payout_wallet: theirWallet },
+        body: { payout_wallet: theirWallet.toLowerCase() },
       });
       expect(paidAt.status, JSON.stringify(paidAt.body)).toBe(200);
+      expect(paidAt.body).toStrictEqual({ payout_wallet: theirWallet });
 
       const published = await gateway.call("POST", "/v0/catalog/publish", {
         headers: { authorization: `Bearer ${theirKey}` },

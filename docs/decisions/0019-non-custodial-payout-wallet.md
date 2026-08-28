@@ -7,19 +7,18 @@ Status: accepted
 
 Until now every payment request this gateway wrote named one address:
 `PAY_TO_ADDRESS`, out of the deployment's configuration. That was
-survivable while the deployment had one merchant and the operator was
-that merchant. It stopped being survivable the moment merchants became
-rows somebody else registers into (ADR-0010, ADR-0014): every sale would
-be paid into the operator's wallet, and paying each merchant what they
-were owed would take a ledger, a reconciliation and a promise to hold
-other people's money — none of which exists, and all of which would have
-to.
+survivable while the operator was the only merchant. It stopped being
+survivable the moment merchants became rows somebody else registers into
+(ADR-0010, ADR-0014): every sale would be paid into the operator's
+wallet, and paying each merchant what they were owed would take a ledger,
+a reconciliation and a promise to hold other people's money — none of
+which exists, and all of which would have to.
 
 x402 asks us to hold nothing. The buying agent signs an authorisation to
-a `payTo` address and the facilitator settles it on the chain; nothing
-passes through the gateway at any point. So the only question is whose
-address goes in that field, and the answer decides whether this is a
-payments business or a catalogue.
+a `payTo` address and the facilitator settles it on the chain, and
+nothing passes through us. So the only question is whose address goes in
+that field, and the answer decides whether this is a payments business
+or a catalogue.
 
 ## Decision
 
@@ -32,10 +31,20 @@ settlement run, and no moment at which a merchant's money is ours.
 The address is a nullable column on the merchant, set and read through
 `/v0/payout-wallet`, held to `EvmAddressSchema` in the contracts: `0x`
 and forty hexadecimal characters, accepted in lower case or in the exact
-EIP-55 spelling a wallet shows, refused in between, stored lower case. A
-mistyped address is not a malformed one — it is another perfectly good
-address belonging to somebody else — so the checksum is the only warning
-anybody gets, and it is read where the merchant can still be told.
+EIP-55 spelling a wallet shows, refused in between. A mistyped address is
+not a malformed one — it is another perfectly good address belonging to
+somebody else — so the checksum is the only warning anybody gets, and it
+is read where the merchant can still be told.
+
+Two spellings at the door, one behind it (ADR-0017), and the canon is
+the wallet's: what is stored, answered with and put in a payment request
+is the checksummed form, written by `checksummedAddressOf`. The reason is
+the person rather than the storage. A merchant pastes forty characters
+out of their wallet and later reads them back on a settings screen;
+handed the same address in lower case they cannot tell it from a
+different address without going character by character, and nobody does
+that. On the one field money is sent to, that glance is the whole of the
+checking anybody performs.
 
 A merchant with no address cannot publish: the publish call refuses with
 `no_payout_wallet` beside `no_seller_name`, because a card with nowhere
@@ -69,4 +78,8 @@ is paid at one address, and fifty copies are forty-nine chances for one
 to be somebody else's. Falling back to the configured address for a
 merchant who has set none — the failure is silent, on a chain, and
 irreversible. Refusing the sale rather than the publish — the merchant
-finds out at the till, and the agent finds out instead of them.
+finds out at the till, and the agent finds out instead of them. Lower
+case as the canon — cheaper to compute and impossible to check by eye,
+which trades the one safeguard a person has for nothing. Storing what
+was sent and normalizing on read — every reader becomes a parser, and
+the one that misses serves the second spelling (ADR-0017).

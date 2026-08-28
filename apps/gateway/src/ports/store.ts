@@ -293,10 +293,12 @@ export interface StoredMerchant {
    * one address, and fifty copies of it is forty-nine chances for one of them
    * to be somebody else's.
    *
-   * It is written in lower case, always, whichever of the two spellings an
-   * address may be written in arrived. One address with two spellings would be
-   * two strings to every comparison, and the answer a merchant reads back would
-   * depend on which of them they last sent.
+   * It is written in one spelling, always, whichever of the two an address may
+   * be written in arrived: the mixed-case one a wallet displays. One address
+   * with two spellings would be two strings to every comparison, and the answer
+   * a merchant reads back would depend on which of them they last sent — and of
+   * the two, the wallet's is the one a person can check against their own
+   * screen without going character by character.
    *
    * Null is the ordinary state and it means what it says: nobody has said where
    * the money goes. It is never filled in from the gateway's own configured
@@ -404,9 +406,10 @@ export interface Store {
    * Sets the address one merchant's sales are paid into, and hands back the
    * merchant as they now stand. Null where there is no such merchant.
    *
-   * The value is expected to be an address already, written in lower case; the
-   * caller that makes it so is `setPayoutWallet` in `app/merchants.ts`, which is
-   * the one place an address is checked and lowered before it is written.
+   * The value is expected to be an address already, in the checksummed spelling
+   * a wallet shows; the caller that makes it so is `setPayoutWallet` in
+   * `app/merchants.ts`, which is the one place an address is checked and written
+   * out before it is stored.
    *
    * There is no clearing it, and the absence of a null is the difference from
    * the listing name beside it. A merchant whose address was taken away keeps

@@ -89,7 +89,7 @@ interface MerchantRow {
   selling: MerchantSelling;
   /** The name this seller is listed under in a catalog, where one is named. */
   serviceName: string | null;
-  /** Where this merchant's sales are paid, in lower case, where one is set. */
+  /** Where this merchant's sales are paid, as a wallet writes it, where one is set. */
   payoutWallet: string | null;
 }
 

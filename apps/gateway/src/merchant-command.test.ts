@@ -274,7 +274,9 @@ describe("the name a merchant is listed under", () => {
 });
 
 describe("the address a merchant is paid at", () => {
-  const A_WALLET = "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed";
+  /** One address, as a wallet shows it and as an explorer prints it. */
+  const A_WALLET = "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed";
+  const A_WALLET_IN_LOWER = "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed";
 
   it("sets it and says where the money now goes", async () => {
     const terminal = aTerminal();
@@ -288,12 +290,16 @@ describe("the address a merchant is paid at", () => {
     expect(terminal.text()).toContain(A_WALLET);
   });
 
-  it("writes the mixed-case spelling a wallet shows in lower case", async () => {
+  it("writes the lower-case spelling out the way a wallet shows it", async () => {
+    // The other accepted spelling at the door, written down as the one form
+    // anything behind it holds — so an operator who pasted an address off a
+    // block explorer and a merchant reading their settings screen see the same
+    // forty characters.
     const terminal = aTerminal();
     await terminal.run("add", "Someone's shop");
     const [made] = await terminal.store.merchants();
 
-    await terminal.run("pays-to", made?.id ?? "", "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed");
+    await terminal.run("pays-to", made?.id ?? "", A_WALLET_IN_LOWER);
 
     expect((await terminal.store.merchantById(made?.id ?? ""))?.payoutWallet).toBe(A_WALLET);
   });

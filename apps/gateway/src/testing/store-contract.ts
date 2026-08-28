@@ -429,13 +429,16 @@ export function describeStore(name: string, open: () => Promise<Store>): void {
         // and is never guessed at from anywhere.
         expect((await store.merchantById(A))?.payoutWallet).toBeNull();
 
-        const wallet = "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed";
+        // Written as a wallet shows it, which is what the one caller of this
+        // hands over — the store keeps what it is given and normalizes nothing,
+        // so the fixture is written in the form that actually arrives.
+        const wallet = "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed";
         expect((await store.setPayoutWallet(A, wallet, 3_000))?.payoutWallet).toBe(wallet);
         expect((await store.merchantById(A))?.payoutWallet).toBe(wallet);
         // And the merchant beside them is still paid nowhere.
         expect((await store.merchantById(B))?.payoutWallet).toBeNull();
 
-        const second = "0x27b1fdb04752bbc536007a920d24acb045561c26";
+        const second = "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359";
         expect((await store.setPayoutWallet(A, second, 4_000))?.payoutWallet).toBe(second);
         expect((await store.merchantById(A))?.payoutWallet).toBe(second);
 

@@ -13,14 +13,19 @@
  * is a stranger's wallet filling up with somebody's sales.
  *
  * Two spellings are accepted and no others. All lower case is the spelling that
- * carries no checksum at all — it is what a block explorer prints, it is what
- * this contract stores, and it is what a merchant reads back from us, so
- * refusing it would mean an address we handed out could not be handed back. The
- * other is the exact output of the checksum, which is what a wallet puts on the
- * clipboard. Anything between the two is a string that has been through
- * something: a case-mangling copy, a document that shouted it, or a keystroke
- * in the wrong place. The refusal says so and says what to do instead, because
- * "invalid address" leaves a person staring at forty characters that look fine.
+ * carries no checksum at all, and it is what a block explorer prints and what
+ * half the tooling in this world hands somebody, so refusing it would refuse
+ * addresses that are perfectly good. The other is the exact output of the
+ * checksum, which is what a wallet puts on the clipboard. Anything between the
+ * two is a string that has been through something: a case-mangling copy, a
+ * document that shouted it, or a keystroke in the wrong place. The refusal says
+ * so and says what to do instead, because "invalid address" leaves a person
+ * staring at forty characters that look fine.
+ *
+ * Of the two, the wallet's is the canon: the door takes both spellings and
+ * everything behind it holds one (ADR-0017), and `checksummedAddressOf` below
+ * is what writes it. The reason is about the person rather than about the
+ * storage, and it is written where that function is.
  *
  * The hash is written out below rather than taken from a package, and that is a
  * decision rather than an oversight. This package's runtime dependency tree is
@@ -201,10 +206,10 @@ function checksumDigits(body: string): string {
 }
 
 /**
- * One address written the way a wallet writes it: every character whose digest
- * digit is eight or more capitalised, and the rest left alone.
+ * One address body written the way a wallet writes it: every character whose
+ * digest digit is eight or more capitalised, and the rest left alone.
  */
-function checksummed(body: string): string {
+function checksummedBody(body: string): string {
   const digits = checksumDigits(body);
   let written = "";
   for (let index = 0; index < ADDRESS_LENGTH; index++) {
@@ -230,7 +235,38 @@ function carriesItsOwnChecksum(value: string): boolean {
   }
   const body = value.slice(2);
   const lowered = body.toLowerCase();
-  return body === lowered || body === checksummed(lowered);
+  return body === lowered || body === checksummedBody(lowered);
+}
+
+/**
+ * One address written the way the wallet it came out of displays it: the
+ * canonical form, and the one anything behind the door keeps.
+ *
+ * The door takes two spellings and everything behind it holds one (ADR-0017),
+ * and this is the one, because it is the one a person recognises. A merchant
+ * pastes forty characters out of their wallet and then reads them back on a
+ * settings screen; handed the same address in lower case they cannot tell it
+ * from a different address without comparing character by character, and the
+ * one field in this system where that matters is the field money is sent to.
+ * Lower case would be the easier canon to compute and the harder one to check
+ * by eye, and the eye is the only thing checking.
+ *
+ * It refuses what the schema refuses rather than quietly repairing it. Given a
+ * mixed-case address whose letters disagree with its digits, capitalising it
+ * afresh would produce a perfectly well-formed address that nobody typed —
+ * which is the exact failure the checksum exists to catch, arrived at by the
+ * thing meant to enforce it.
+ *
+ * Given an address that is already in this form it answers with the same
+ * string, so writing one down twice writes the same thing twice.
+ */
+export function checksummedAddressOf(address: string): string {
+  if (!ADDRESS_SHAPE.test(address) || !carriesItsOwnChecksum(address)) {
+    throw new Error(
+      `${JSON.stringify(address)} is not an address this can write out: it is either not an address at all, or its capital letters disagree with the rest of it`,
+    );
+  }
+  return `0x${checksummedBody(address.slice(2).toLowerCase())}`;
 }
 
 /**
@@ -257,7 +293,7 @@ export const EvmAddressSchema = z
   )
   .meta({
     description:
-      "An address on an EVM chain: 0x and forty hexadecimal characters. Two spellings are accepted and no others — all in lower case, which carries no checksum, and the exact mixed-case spelling a wallet shows, which is the EIP-55 checksum of the address. Anything between the two is refused, because the capitals are a checksum and letters that disagree with the digits mean a character is wrong; an address that is wrong is another perfectly valid address belonging to somebody else. That checksum is not part of this document: JSON Schema cannot express it, so a client generated from here checks the shape and this gateway checks the rest. What is stored and what comes back is always the lower-case spelling, whichever of the two was sent.",
+      "An address on an EVM chain: 0x and forty hexadecimal characters. Two spellings are accepted and no others — all in lower case, which carries no checksum, and the exact mixed-case spelling a wallet shows, which is the EIP-55 checksum of the address. Anything between the two is refused, because the capitals are a checksum and letters that disagree with the digits mean a character is wrong; an address that is wrong is another perfectly valid address belonging to somebody else. That checksum is not part of this document: JSON Schema cannot express it, so a client generated from here checks the shape and this gateway checks the rest. What is stored and what comes back is always the mixed-case spelling a wallet shows, whichever of the two was sent — it is the form a person can recognise at a glance, which on the one field money is sent to is the whole of the checking anybody does.",
   });
 
 export type EvmAddress = z.infer<typeof EvmAddressSchema>;

@@ -264,8 +264,12 @@ async function addKnownKey(
  * It is written out of a counter rather than picked at random: a test that
  * fails on whose address a challenge names is read by somebody, and
  * `0x…0002` beside `0x…0003` says what forty random characters do not. All
- * digits, so it is an address in either of the two spellings one can be written
- * in and no checksum has to be computed to write one.
+ * digits, so there is no letter for the checksum to capitalise: it is an
+ * address in either of the two spellings one can be written in, and it is its
+ * own canonical form, so no checksum has to be computed to write one down
+ * here. What that costs is that these addresses say nothing about the
+ * canonical form either way — the tests that are about it use addresses with
+ * letters in them.
  */
 const aSeededWallet = (() => {
   let issued = 0;

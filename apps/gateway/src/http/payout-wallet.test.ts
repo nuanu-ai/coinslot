@@ -35,9 +35,20 @@ const CONFIGURED_PAY_TO = "0x0000000000000000000000000000000000000001";
 /** The code this suite's gateway is configured to accept. */
 const INVITATION = "the-code-from-the-invitation";
 
-/** Two addresses that are addresses, and are not each other. */
-const A_WALLET = "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed";
-const ANOTHER_WALLET = "0x27b1fdb04752bbc536007a920d24acb045561c26";
+/**
+ * Two addresses that are addresses, and are not each other, written the way the
+ * wallets they came out of would show them.
+ *
+ * That is the spelling everything here stores and answers with, so it is the
+ * spelling the assertions are written in. Both have letters that the checksum
+ * capitalises, deliberately: an address of all digits would read back
+ * identically whatever the canon was, and would pin nothing.
+ */
+const A_WALLET = "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed";
+const ANOTHER_WALLET = "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359";
+
+/** The same address as the first, written the other way one may be written. */
+const A_WALLET_IN_LOWER = "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed";
 
 const cardFor = (merchantItemId: string, title: string): Card => ({
   merchant_item_id: merchantItemId,
@@ -147,20 +158,30 @@ describe("the wallet a merchant is paid at", () => {
     });
   });
 
-  it("takes the spelling a wallet shows and reads it back in lower case", async () => {
-    // The two spellings of one address. A merchant pastes the mixed-case one
-    // their wallet gave them; what comes back is the same address written the
-    // one way anything here stores it.
+  it("reads back what the merchant's wallet showed them, character for character", async () => {
+    // The reason this is the canon and not lower case. A merchant pastes forty
+    // characters out of their wallet and then looks at a settings screen: shown
+    // the same address in another spelling they cannot tell it from a different
+    // address without going character by character, and nobody does that.
     const { served, harnessed } = await started();
 
-    const answered = await setPayoutWallet(
-      served,
-      harnessed.merchant.key,
-      "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed",
-    );
+    const answered = await setPayoutWallet(served, harnessed.merchant.key, A_WALLET);
 
     expect(answered.status, JSON.stringify(answered.body)).toBe(200);
     expect(answered.body).toStrictEqual({ payout_wallet: A_WALLET });
+  });
+
+  it("takes the lower-case spelling too, and answers in the one a wallet shows", async () => {
+    // The other accepted spelling: a block explorer prints it, and half the
+    // tooling in this world hands it to somebody. It is one address, so it is
+    // answered with in the one form anything behind the door holds.
+    const { served, harnessed } = await started();
+
+    const answered = await setPayoutWallet(served, harnessed.merchant.key, A_WALLET_IN_LOWER);
+
+    expect(answered.status, JSON.stringify(answered.body)).toBe(200);
+    expect(answered.body).toStrictEqual({ payout_wallet: A_WALLET });
+    expect(A_WALLET_IN_LOWER).not.toBe(A_WALLET);
   });
 
   it("refuses an address whose own letters disagree with it, and writes nothing", async () => {

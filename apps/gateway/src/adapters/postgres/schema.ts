@@ -65,8 +65,10 @@ export const merchants = pgTable("merchants", {
    * refuses. It is never filled in from the operator's own configured address
    * for the same reason.
    *
-   * Always in lower case. An address has two spellings, and holding both would
-   * make one address two strings to every comparison and to every read back.
+   * Always in the mixed-case spelling a wallet displays. An address has two
+   * spellings, and holding both would make one address two strings to every
+   * comparison and to every read back; of the two, this is the one a merchant
+   * can check against their own wallet at a glance.
    */
   payoutWallet: text("payout_wallet"),
   /** The order machine's own word: open, paused or departed. */

@@ -39,9 +39,10 @@ describe("a price in the token's own units", () => {
  * Every challenge in this file is written for one seller, and it is theirs. The
  * gateway's own configured address is a different string wherever the two are
  * both in play, so a challenge that quietly used ours instead would be visible
- * rather than indistinguishable.
+ * rather than indistinguishable. It is written the way a wallet shows it,
+ * because that is the form the store hands the edge.
  */
-const SELLERS_WALLET = "0x27b1fdb04752bbc536007a920d24acb045561c26";
+const SELLERS_WALLET = "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed";
 
 describe("what an agent is asked to pay", () => {
   /** A gateway with an address of its own configured, and a facilitator that settles for real. */
