@@ -59,11 +59,22 @@ const PASSWORD = "a-password-nobody-guesses";
  */
 const PASSWORD_HASH = await hashPassword(PASSWORD);
 
+/**
+ * The merchant both of those accounts sign in as.
+ *
+ * One merchant with two people at it, which ADR-0009 §9 names as a shape the
+ * cabinet does not really have — it is here because "somebody else's session"
+ * cannot be tested with one account, and because the key on both rows is the
+ * one the harness seeded, so every screen these tests read is drawn from the
+ * real gateway.
+ */
+const THE_MERCHANT = { id: "mer_the_merchant", key: KEY };
+
 /** The store a cabinet under test signs people in against, with two accounts. */
 const withAccounts = async (): Promise<Accounts> => {
   const accounts = memoryAccounts();
-  await accounts.add(PERSON, PASSWORD_HASH, new Date());
-  await accounts.add(OTHER, PASSWORD_HASH, new Date());
+  await accounts.add(PERSON, PASSWORD_HASH, new Date(), THE_MERCHANT);
+  await accounts.add(OTHER, PASSWORD_HASH, new Date(), THE_MERCHANT);
   return accounts;
 };
 

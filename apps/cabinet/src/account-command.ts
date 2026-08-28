@@ -1,22 +1,25 @@
 /**
  * The command that makes an account, and the three that keep one.
  *
- * ADR-0009: no self-serve sign-up and no reset by mail *yet*. Registration is
- * settled — ADR-0010 records it as the product's shape, third on a road whose
- * order is fixed by the danger — and what is not settled is the mail it needs.
- * Until that road reaches it, an account exists because somebody ran this. That
- * makes this command the only door into the cabinet,
- * which is why it is a tested module with the terminal handed to it rather than
- * a script that prints as it goes.
+ * A merchant registers for themselves now (ADR-0014), so this is no longer the
+ * only door into the cabinet. It is still the door somebody walks through when
+ * a merchant already exists at the gateway and needs a person who can sign in
+ * as them — which is what the first account on a deployed server is — and it is
+ * still the answer to a lost password, because nothing here sends mail.
  *
  * A password is never taken as an argument. One typed on a command line is in
  * the shell's history, in the process list of everybody on the machine, and in
  * whatever collects either — so the command generates one, prints it once, and
  * has nothing left afterwards that can be read back. A person who wants a
  * password of their own sets it from the cabinet.
+ *
+ * The merchant's key is not taken as an argument either, and for exactly the
+ * same reason: it is a secret, the reasoning above does not care which kind,
+ * and an argument is an argument. It is read from standard input instead, so
+ * that whoever runs this can pipe it in from wherever they are holding it.
  */
 
-import type { Accounts } from "./accounts.js";
+import type { AccountMerchant, Accounts } from "./accounts.js";
 import { hashPassword, newPassword } from "./credentials.js";
 
 /**
@@ -29,16 +32,35 @@ import { hashPassword, newPassword } from "./credentials.js";
  */
 const LOOKS_LIKE_AN_ADDRESS = /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/;
 
+/**
+ * The shortest key this will accept.
+ *
+ * The floor the gateway holds its own keys to. The comparison at the other end
+ * is constant-time over equal lengths, and a key short enough to walk through
+ * makes that care pointless. It is checked here because this is now the one
+ * place a key is taken in at all — the cabinet has none in its configuration.
+ */
+const SHORTEST_KEY = 16;
+
 const USAGE = [
   "Usage: pnpm --filter @coinslot/cabinet account <command>",
   "",
-  "  add <address>       make an account and print a password for it, once",
-  "  password <address>  set a new password, print it once, end every session",
-  "  revoke <address>    end every session that person has, keeping the account",
-  "  list                the accounts there are, and how many sessions are open",
+  "  add <address> <merchant>  make an account for that merchant and print a",
+  "                            password for it, once; the merchant's key is",
+  "                            read from standard input",
+  "  password <address>        set a new password, print it once, end every session",
+  "  revoke <address>          end every session that person has, keeping the account",
+  "  list                      the accounts there are, their merchant, and how",
+  "                            many sessions are open",
   "",
-  "There is no sign-up page and no reset by mail yet (ADR-0009, ADR-0010): an",
-  "account exists because somebody ran this.",
+  "A merchant can register for themselves and get their first key that way",
+  "(ADR-0014). This command is for the other case: a merchant that already",
+  "exists at the gateway and needs somebody who can sign in as them.",
+  "",
+  "The merchant's key is read from standard input rather than taken as an",
+  "argument, because an argument is in the shell's history and in the process",
+  "list of everybody on the machine. Pipe it in from wherever you are holding",
+  "it rather than typing it on the line that runs this.",
 ];
 
 /**
@@ -74,6 +96,29 @@ const missingTables = (thrown: unknown): boolean =>
   "code" in thrown &&
   String((thrown as { code: unknown }).code) === NO_SUCH_TABLE;
 
+/** The terminal this command is run at, handed in rather than reached for. */
+export interface Terminal {
+  /** One line to whoever is watching. */
+  readonly say: (line: string) => void;
+  /**
+   * The merchant's key, off standard input.
+   *
+   * A function rather than a value, so that it is read only by the one verb
+   * that needs one. Read eagerly, the three verbs that have no key to take
+   * would each sit waiting on a terminal with nothing printed.
+   */
+  readonly readKey: () => Promise<string>;
+  /**
+   * The moment this run happens at, with the obvious default.
+   *
+   * So that a test asking what the listing says about a session can put itself
+   * at a moment when that session is alive. Reading the wall clock here instead
+   * made one test fail every day after nine in the evening, which is a test
+   * that reports on the hour rather than on the code.
+   */
+  readonly now?: () => Date;
+}
+
 /**
  * Runs one command. The answer is the exit code.
  *
@@ -87,14 +132,10 @@ const missingTables = (thrown: unknown): boolean =>
 export async function runAccount(
   argv: readonly string[],
   accounts: Accounts,
-  print: (line: string) => void,
-  // The moment this run happens at. An argument with the obvious default, so
-  // that a test asking what the listing says about a session can put itself at
-  // a moment when that session is alive. Reading the wall clock here instead
-  // made one test fail every day after nine in the evening, which is a test
-  // that reports on the hour rather than on the code.
-  now: () => Date = () => new Date(),
+  terminal: Terminal,
 ): Promise<number> {
+  const print = terminal.say;
+  const now = terminal.now ?? (() => new Date());
   // Everything this command prints goes through one rendering, rather than the
   // half-dozen places that print an address, because forgetting one of those is
   // the whole failure. What it takes out is the characters a terminal obeys
@@ -106,7 +147,7 @@ export async function runAccount(
   // cabinet", which is the only question it is for.
   const say = (line: string): void => print(printable(line));
   try {
-    return await dispatch(argv, accounts, say, now);
+    return await dispatch(argv, accounts, say, now, terminal.readKey);
   } catch (thrown) {
     if (!missingTables(thrown)) {
       throw thrown;
@@ -122,8 +163,9 @@ async function dispatch(
   accounts: Accounts,
   say: (line: string) => void,
   now: () => Date,
+  readKey: () => Promise<string>,
 ): Promise<number> {
-  const [verb, address] = argv;
+  const [verb, address, merchant] = argv;
 
   if (verb === "list") {
     return await listAccounts(accounts, say, now);
@@ -144,7 +186,7 @@ async function dispatch(
   }
 
   if (verb === "add") {
-    return await addAccount(accounts, say, address, now);
+    return await addAccount(accounts, say, address, merchant, now, readKey);
   }
   if (verb === "password") {
     return await changePassword(accounts, say, address);
@@ -156,20 +198,80 @@ async function addAccount(
   accounts: Accounts,
   say: (line: string) => void,
   address: string,
+  merchantId: string | undefined,
   now: () => Date,
+  readKey: () => Promise<string>,
 ): Promise<number> {
+  // Both halves of the merchant before anything is generated or written. An
+  // account made without them is one somebody can sign into and then see
+  // nothing at all with, because the cabinet reaches the gateway with the key
+  // on the row of whoever is signed in (ADR-0014 §2).
+  if (merchantId === undefined || merchantId.trim() === "") {
+    say(`The add command needs the merchant this account signs in for:`);
+    say(`    add ${address.trim()} mer_the_identifier`);
+    say("The merchant's key is read from standard input, not given here.");
+    return 2;
+  }
+  // Nothing is guessed about the shape of an identifier the gateway hands out,
+  // beyond it being one word: this value is a record of which catalogue the
+  // account is looking at, and the gateway resolves the merchant from the key
+  // rather than from this.
+  if (/\s/.test(merchantId.trim())) {
+    say(`"${merchantId}" is not a merchant identifier: it has a space in it.`);
+    return 2;
+  }
+
+  const merchant = await merchantKey(say, merchantId.trim(), readKey);
+  if (merchant === null) {
+    return 2;
+  }
+
   const password = newPassword();
-  const made = await accounts.add(address, await hashPassword(password), now());
+  const made = await accounts.add(address, await hashPassword(password), now(), merchant);
   if (made === null) {
     // Not an overwrite. Somebody running this twice must not silently replace a
-    // password the person on the other end is already using.
+    // password the person on the other end is already using, nor point their
+    // cabinet at a merchant that is not the one they have been working as.
     say(`${address.trim()} already has an account. Use "password" to set a new one.`);
     return 1;
   }
 
-  say(`An account for ${made.email}.`);
+  say(`An account for ${made.email}, signing in as ${merchant.id}.`);
   showPassword(say, password);
   return 0;
+}
+
+/**
+ * The merchant's key off standard input, or null having said what was wrong.
+ *
+ * Trimmed, because a key arrives through a pipe and a pipe puts a newline on
+ * the end of almost everything. A key with whitespace in the middle of it is
+ * not a thing the gateway issues, so nothing is lost by it — and a key stored
+ * with a stray newline is a cabinet whose every screen says the gateway will
+ * not take this key, with nothing on the page to say why.
+ *
+ * Neither refusal quotes what arrived. It is a secret whether or not it is the
+ * right one, and a terminal's scrollback is exactly where it should not be.
+ */
+async function merchantKey(
+  say: (line: string) => void,
+  id: string,
+  readKey: () => Promise<string>,
+): Promise<AccountMerchant | null> {
+  const key = (await readKey()).trim();
+  if (key === "") {
+    say("The add command reads the merchant's key from standard input, and nothing arrived.");
+    say("Pipe it in from wherever you are holding it rather than typing it on the line:");
+    say("    ... | pnpm --filter @coinslot/cabinet account add someone@example.com mer_x");
+    return null;
+  }
+  if (key.length < SHORTEST_KEY) {
+    say(
+      `That key is shorter than ${SHORTEST_KEY} characters, which is not one the gateway issues.`,
+    );
+    return null;
+  }
+  return { id, key };
 }
 
 async function changePassword(
@@ -218,7 +320,8 @@ async function listAccounts(
   const listed = await accounts.list(now());
   if (listed.length === 0) {
     say("There are no accounts. Nobody can sign into this cabinet yet.");
-    say("Make one: pnpm --filter @coinslot/cabinet account add someone@example.com");
+    say("A merchant can register for one from the cabinet, or make one here:");
+    say("    ... | pnpm --filter @coinslot/cabinet account add someone@example.com mer_x");
     return 0;
   }
 
@@ -229,7 +332,14 @@ async function listAccounts(
   const widest = Math.max(...rows.map((row) => row.email.length));
   for (const row of rows) {
     const open = row.sessions === 1 ? "1 session open" : `${row.sessions} sessions open`;
-    say(`${row.email.padEnd(widest)}  made ${row.createdAt.toISOString().slice(0, 10)}  ${open}`);
+    // The merchant's identifier, which says which catalogue this person's
+    // screens show. An account with none is named as what it is rather than
+    // printed with a gap where the others have a word: it was made before
+    // accounts had merchants, and it cannot sign in at all.
+    const whose = row.merchant ?? "no merchant, cannot sign in";
+    say(
+      `${row.email.padEnd(widest)}  made ${row.createdAt.toISOString().slice(0, 10)}  ${open}  ${whose}`,
+    );
   }
   return 0;
 }

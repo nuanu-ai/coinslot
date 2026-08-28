@@ -148,15 +148,25 @@ export function postgresAccounts(pool: Pool): Accounts {
     email: string;
     passwordHash: string;
     createdAt: Date;
+    merchantId: string | null;
+    merchantKey: string | null;
   }): Account => ({
     id: row.id,
     email: row.email,
     passwordHash: row.passwordHash,
     createdAt: row.createdAt,
+    // Both columns or neither. A row with one of them filled in is a row
+    // nothing can be done with — an identifier with no key draws no screen, and
+    // a key with no identifier names nothing — so it is read as an account with
+    // no merchant, which is a state the sign-in already has a sentence for.
+    merchant:
+      row.merchantId === null || row.merchantKey === null
+        ? null
+        : { id: row.merchantId, key: row.merchantKey },
   });
 
   return {
-    async add(email, passwordHash, at) {
+    async add(email, passwordHash, at, merchant) {
       try {
         const [row] = await db
           .insert(accounts)
@@ -165,6 +175,8 @@ export function postgresAccounts(pool: Pool): Accounts {
             email: emailAs(email),
             passwordHash,
             createdAt: at,
+            merchantId: merchant?.id ?? null,
+            merchantKey: merchant?.key ?? null,
           })
           .returning();
         return row === undefined ? null : accountFrom(row);
@@ -213,15 +225,20 @@ export function postgresAccounts(pool: Pool): Accounts {
 
     async list(now) {
       return await guarded("listing of accounts", async () => {
+        // The merchant's identifier is selected and its key is not, and that is
+        // the whole of what this listing is allowed to know: it is printed to a
+        // terminal, and a column selected here is a column that ends up in a
+        // scrollback.
         const rows = await db
           .select({
             email: accounts.email,
             createdAt: accounts.createdAt,
             sessions: count(sessions.fingerprint),
+            merchant: accounts.merchantId,
           })
           .from(accounts)
           .leftJoin(sessions, and(eq(sessions.accountId, accounts.id), gt(sessions.expiresAt, now)))
-          .groupBy(accounts.email, accounts.createdAt);
+          .groupBy(accounts.email, accounts.createdAt, accounts.merchantId);
         // Sorted here rather than by the database, so that the order a person
         // reads off a terminal is the same one whichever store answered and on
         // whatever server. A database sorts by its own collation, and the
@@ -234,6 +251,7 @@ export function postgresAccounts(pool: Pool): Accounts {
             email: row.email,
             createdAt: row.createdAt,
             sessions: Number(row.sessions),
+            merchant: row.merchant,
           }))
           .sort((one, other) => one.email.localeCompare(other.email));
       });
@@ -278,6 +296,8 @@ export function postgresAccounts(pool: Pool): Accounts {
             email: accounts.email,
             passwordHash: accounts.passwordHash,
             createdAt: accounts.createdAt,
+            merchantId: accounts.merchantId,
+            merchantKey: accounts.merchantKey,
           })
           .from(sessions)
           .innerJoin(accounts, eq(accounts.id, sessions.accountId))

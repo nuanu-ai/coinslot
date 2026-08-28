@@ -1,15 +1,17 @@
 /**
- * The command that makes an account, because there is no other way to get one.
+ * The command that makes an account for a merchant who already exists.
  *
- * ADR-0009: no self-serve sign-up and no reset by mail yet. That makes this
- * command the only door into the cabinet, and a broken one is a cabinet nobody
- * can open
- * — which is why it is tested at all rather than left as a script.
+ * A merchant can register for themselves now (ADR-0014), so this is not the
+ * only door into the cabinet any more. It is the one that gets used when the
+ * merchant is already at the gateway and needs a person who can sign in as
+ * them, and it is still the only answer to a lost password, because nothing
+ * here sends mail — a broken one is a cabinet somebody cannot get back into.
  *
  * The tests are about what a person reading a terminal gets and what the store
  * holds afterwards. The password it prints is checked against the account it
  * made, so a command that printed one thing and stored another would fail here
- * instead of at the sign-in form.
+ * instead of at the sign-in form. The merchant's key is checked the other way
+ * round: it goes into the store and never comes back out onto the terminal.
  */
 
 import { describe, expect, it } from "vitest";
@@ -19,6 +21,18 @@ import { hashPassword, passwordMatches } from "./credentials.js";
 import { sessionFor } from "./testing/accounts-contract.js";
 
 const HOUR = 60 * 60 * 1_000;
+
+/** The merchant an account made in this file belongs to. */
+const MERCHANT = "mer_the_merchant";
+/**
+ * The key that arrives on standard input, unless a test sends something else.
+ *
+ * Long enough to be accepted, and written here as a readable phrase rather than
+ * as something that looks like a real key: what the tests hold is that it never
+ * comes back out, and a value you can search the output for is what makes that
+ * checkable.
+ */
+const KEY = "the-merchants-own-key-long-enough";
 
 interface Run {
   readonly code: number;
@@ -37,14 +51,17 @@ interface Run {
  */
 const NOON = new Date("2026-08-27T12:00:00.000Z");
 
-const run = async (accounts: Accounts, ...argv: string[]): Promise<Run> => {
+const running = async (
+  accounts: Accounts,
+  argv: readonly string[],
+  readKey: () => Promise<string> = async () => KEY,
+): Promise<Run> => {
   const lines: string[] = [];
-  const code = await runAccount(
-    argv,
-    accounts,
-    (line) => lines.push(line),
-    () => NOON,
-  );
+  const code = await runAccount(argv, accounts, {
+    say: (line) => lines.push(line),
+    readKey,
+    now: () => NOON,
+  });
   const said = lines.join("\n");
   // The command prints a password indented on a line of its own, so that it can
   // be copied without picking it out of a sentence.
@@ -52,11 +69,14 @@ const run = async (accounts: Accounts, ...argv: string[]): Promise<Run> => {
   return { code, said, password: shown?.[1] ?? null };
 };
 
+const run = async (accounts: Accounts, ...argv: string[]): Promise<Run> =>
+  await running(accounts, argv);
+
 describe("making an account", () => {
   it("makes one that can be signed into with the password it printed", async () => {
     const accounts = memoryAccounts();
 
-    const made = await run(accounts, "add", "dmitry@example.com");
+    const made = await run(accounts, "add", "dmitry@example.com", MERCHANT);
 
     expect(made.code).toBe(0);
     expect(made.said).toContain("dmitry@example.com");
@@ -68,12 +88,94 @@ describe("making an account", () => {
     );
   });
 
+  it("puts the merchant it was named on the account, with the key that came in on standard input", async () => {
+    // ADR-0014 §2: the cabinet reaches the gateway with the key on the row of
+    // whoever is signed in. An account made without one is an account that can
+    // sign in and then see nothing at all, so this is the whole of what the
+    // command is for now.
+    const accounts = memoryAccounts();
+
+    const made = await run(accounts, "add", "dmitry@example.com", MERCHANT);
+
+    expect(made.code).toBe(0);
+    expect((await accounts.byEmail("dmitry@example.com"))?.merchant).toStrictEqual({
+      id: MERCHANT,
+      key: KEY,
+    });
+  });
+
+  it("never prints the key it was handed", async () => {
+    // The key goes to a terminal's scrollback and to whatever collects it, and
+    // unlike the password beside it there is nothing to be gained by showing it
+    // — whoever ran this is holding it already.
+    const accounts = memoryAccounts();
+
+    const made = await run(accounts, "add", "dmitry@example.com", MERCHANT);
+
+    expect(made.said).not.toContain(KEY);
+  });
+
+  it("takes a key with the newline a pipe puts on the end of it", async () => {
+    // `something | account add ...` ends the value with a newline more often
+    // than not, and a key stored with one on the end is a key the gateway
+    // refuses — on every screen, with nothing on the page to say why.
+    const accounts = memoryAccounts();
+
+    const made = await running(accounts, ["add", "dmitry@example.com", MERCHANT], async () => {
+      return `  ${KEY}\n`;
+    });
+
+    expect(made.code).toBe(0);
+    expect((await accounts.byEmail("dmitry@example.com"))?.merchant?.key).toBe(KEY);
+  });
+
+  it("refuses when no key arrives on standard input, and says where it looks for one", async () => {
+    const accounts = memoryAccounts();
+
+    const tried = await running(accounts, ["add", "dmitry@example.com", MERCHANT], async () => "");
+
+    expect(tried.code).not.toBe(0);
+    expect(tried.said).toMatch(/standard input/i);
+    await expect(accounts.byEmail("dmitry@example.com")).resolves.toBeNull();
+  });
+
+  it("refuses a key short enough to walk through", async () => {
+    // The floor the gateway holds its own key to. The comparison at the other
+    // end is over equal lengths, and a key short enough to guess makes that
+    // care pointless — and this is the only place a key is accepted now that
+    // the cabinet has no key in its configuration.
+    const accounts = memoryAccounts();
+
+    const tried = await running(
+      accounts,
+      ["add", "dmitry@example.com", MERCHANT],
+      async () => "walk-through",
+    );
+
+    expect(tried.code).not.toBe(0);
+    expect(tried.said).toMatch(/16 characters/);
+    // And what arrived is not quoted back. It is a secret whether or not it is
+    // the right one, and a terminal's scrollback is where it should not be.
+    expect(tried.said).not.toContain("walk-through");
+    await expect(accounts.byEmail("dmitry@example.com")).resolves.toBeNull();
+  });
+
+  it("says what it wanted when it is given no merchant to make the account for", async () => {
+    const accounts = memoryAccounts();
+
+    const nothing = await run(accounts, "add", "dmitry@example.com");
+
+    expect(nothing.code).not.toBe(0);
+    expect(nothing.said).toMatch(/merchant/i);
+    await expect(accounts.byEmail("dmitry@example.com")).resolves.toBeNull();
+  });
+
   it("says the password is shown once and is not kept anywhere readable", async () => {
     // Whoever runs this has to know that scrolling back is the only copy, and
     // that we cannot recover it for them later.
     const accounts = memoryAccounts();
 
-    const made = await run(accounts, "add", "dmitry@example.com");
+    const made = await run(accounts, "add", "dmitry@example.com", MERCHANT);
 
     expect(made.said).toContain("once");
     expect(made.said).not.toContain(
@@ -85,22 +187,26 @@ describe("making an account", () => {
     // Run twice by mistake, this would otherwise leave the person holding a
     // password that no longer works and no sign that anything happened.
     const accounts = memoryAccounts();
-    await run(accounts, "add", "dmitry@example.com");
+    await run(accounts, "add", "dmitry@example.com", MERCHANT);
     const before = (await accounts.byEmail("dmitry@example.com"))?.passwordHash;
 
-    const again = await run(accounts, "add", "dmitry@example.com");
+    const again = await run(accounts, "add", "dmitry@example.com", "mer_somebody_else");
 
     expect(again.code).not.toBe(0);
     expect(again.said).toContain("already");
     expect(again.password).toBeNull();
-    expect((await accounts.byEmail("dmitry@example.com"))?.passwordHash).toBe(before);
+    const kept = await accounts.byEmail("dmitry@example.com");
+    expect(kept?.passwordHash).toBe(before);
+    // And the merchant it was pointed at the first time, so a second run cannot
+    // quietly move somebody's cabinet to a catalogue that is not theirs.
+    expect(kept?.merchant?.id).toBe(MERCHANT);
   });
 
   it("refuses something that is not an address, and says which part is wrong", async () => {
     const accounts = memoryAccounts();
 
     for (const bad of ["dmitry", "dmitry@", "@example.com", "a b@example.com", ""]) {
-      const tried = await run(accounts, "add", bad);
+      const tried = await run(accounts, "add", bad, MERCHANT);
       expect(tried.code, bad).not.toBe(0);
       expect(tried.said, bad).toMatch(/address/i);
     }
@@ -124,7 +230,10 @@ describe("setting a new password from the command line", () => {
     // exercise pointless.
     const accounts = memoryAccounts();
     const at = new Date("2026-08-27T09:00:00.000Z");
-    const person = await accounts.add("dmitry@example.com", await hashPassword("old"), at);
+    const person = await accounts.add("dmitry@example.com", await hashPassword("old"), at, {
+      id: MERCHANT,
+      key: KEY,
+    });
     await accounts.open("laptop", person?.id ?? "", at, new Date(+at + 12 * HOUR));
 
     const changed = await run(accounts, "password", "dmitry@example.com");
@@ -152,7 +261,7 @@ describe("ending somebody's sessions from the command line", () => {
   it("ends every one of them and says how many", async () => {
     const accounts = memoryAccounts();
     const at = new Date("2026-08-27T09:00:00.000Z");
-    const person = await accounts.add("dmitry@example.com", "hash", at);
+    const person = await accounts.add("dmitry@example.com", "hash", at, { id: MERCHANT, key: KEY });
     await accounts.open("laptop", person?.id ?? "", at, new Date(+at + 12 * HOUR));
     await accounts.open("telephone", person?.id ?? "", at, new Date(+at + 12 * HOUR));
 
@@ -180,8 +289,11 @@ describe("listing what accounts there are", () => {
   it("names each address, when it was made, and how many sessions are open", async () => {
     const accounts = memoryAccounts();
     const at = new Date("2026-08-27T09:00:00.000Z");
-    const person = await accounts.add("dmitry@example.com", "hash-one", at);
-    await accounts.add("someone@example.com", "hash-two", at);
+    const person = await accounts.add("dmitry@example.com", "hash-one", at, {
+      id: MERCHANT,
+      key: KEY,
+    });
+    await accounts.add("someone@example.com", "hash-two", at, { id: MERCHANT, key: KEY });
     await accounts.open("laptop", person?.id ?? "", at, new Date(+at + 12 * HOUR));
 
     const listed = await run(accounts, "list");
@@ -194,6 +306,25 @@ describe("listing what accounts there are", () => {
     // Never the stored value of a password, on the screen or in a scrollback.
     expect(listed.said).not.toContain("hash-one");
     expect(listed.said).not.toContain("hash-two");
+  });
+
+  it("says which merchant each account is looking at, and never that merchant's key", async () => {
+    // Two accounts on one cabinet are two merchants now, and this listing is
+    // the only place anybody can see which is which. The key is what makes that
+    // true and is not printed: it goes into a scrollback and into whatever
+    // collects it, and whoever is reading this listing does not need it.
+    const accounts = memoryAccounts();
+    const at = new Date("2026-08-27T09:00:00.000Z");
+    await accounts.add("dmitry@example.com", "hash-one", at, { id: MERCHANT, key: KEY });
+    await accounts.add("older@example.com", "hash-two", at, null);
+
+    const listed = await run(accounts, "list");
+
+    expect(listed.said).toContain(MERCHANT);
+    expect(listed.said).not.toContain(KEY);
+    // The account made before merchants existed is named as what it is, rather
+    // than shown with a blank where the others have an identifier.
+    expect(listed.said).toMatch(/older@example\.com.*no merchant/);
   });
 
   it("says there are none rather than printing an empty table", async () => {
@@ -233,8 +364,8 @@ describe("an address carrying characters a terminal acts on", () => {
     // above it is an answer with somebody quietly missing from it.
     const accounts = memoryAccounts();
     const at = new Date("2026-08-27T09:00:00.000Z");
-    await accounts.add(`a${ERASES_A_ROW}b@example.com`, "hash", at);
-    await accounts.add("dmitry@example.com", "hash", at);
+    await accounts.add(`a${ERASES_A_ROW}b@example.com`, "hash", at, { id: MERCHANT, key: KEY });
+    await accounts.add("dmitry@example.com", "hash", at, { id: MERCHANT, key: KEY });
 
     const listed = await run(accounts, "list");
 
@@ -287,7 +418,7 @@ describe("a database the migrations have never been run against", () => {
     // still looking for a property the new exception did not carry.
     for (const argv of [
       ["list"],
-      ["add", "dmitry@example.com"],
+      ["add", "dmitry@example.com", MERCHANT],
       ["revoke", "dmitry@example.com"],
     ]) {
       const said = await run(withoutTables(), ...argv);
@@ -329,6 +460,41 @@ describe("a command nobody meant to run", () => {
       for (const verb of ["add", "password", "revoke", "list"]) {
         expect(said.said, argv.join(" ")).toContain(verb);
       }
+    }
+  });
+
+  it("says where the merchant's key is read from, so nobody puts it on the line", async () => {
+    // The usage text is where somebody looks before they type. A key given as
+    // an argument is in the shell's history and in the process list of
+    // everybody on the machine, and the only moment that can be prevented is
+    // before it is typed.
+    const accounts = memoryAccounts();
+
+    const said = await run(accounts, "--help");
+
+    expect(said.said).toMatch(/standard input/i);
+  });
+});
+
+describe("the verbs that have no key to read", () => {
+  it("do not go looking on standard input for one", async () => {
+    // A command run without a pipe in front of it waits forever on standard
+    // input, so a verb that read it whether or not it needed it would be three
+    // of the four verbs hanging at a terminal with nothing printed.
+    const accounts = memoryAccounts();
+    const at = new Date("2026-08-27T09:00:00.000Z");
+    await accounts.add("dmitry@example.com", "hash", at, { id: MERCHANT, key: KEY });
+    const neverAsked = async (): Promise<string> => {
+      throw new Error("standard input was read by a command that has no key to take");
+    };
+
+    for (const argv of [
+      ["list"],
+      ["password", "dmitry@example.com"],
+      ["revoke", "dmitry@example.com"],
+    ]) {
+      const said = await running(accounts, argv, neverAsked);
+      expect(said.code, argv.join(" ")).toBe(0);
     }
   });
 });

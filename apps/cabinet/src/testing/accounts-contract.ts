@@ -89,7 +89,9 @@ export function describeAccounts(name: string, open: () => Promise<Accounts>): v
         const made = await accounts.add("dmitry@example.com", "hash-one", at, THE_MERCHANT);
 
         expect(made?.merchant).toStrictEqual(THE_MERCHANT);
-        expect((await accounts.byEmail("dmitry@example.com"))?.merchant).toStrictEqual(THE_MERCHANT);
+        expect((await accounts.byEmail("dmitry@example.com"))?.merchant).toStrictEqual(
+          THE_MERCHANT,
+        );
       });
 
       it("can have no merchant at all, which is what the accounts made before them are", async () => {
