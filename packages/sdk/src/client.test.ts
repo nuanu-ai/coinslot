@@ -358,6 +358,52 @@ describe("closing an order the merchant took on", () => {
     }
   });
 
+  it("does not blame the gateway for an answer that died halfway through", async () => {
+    // The neighbour of the case above, and the one that is easiest to file
+    // wrongly. Here the gateway did answer — a status came back, and part of a
+    // body — and then the connection broke while the rest of it was being
+    // read. The break is on this side of the exchange, so calling it "answered
+    // with something that is not JSON" would be reporting a broken gateway on
+    // the evidence of a broken wire, and a merchant chasing that spends their
+    // afternoon reading someone else's logs. What is actually known is that
+    // the call was delivered and its outcome is not: the same fact as a
+    // request dropped in flight, said with the status it got as far as.
+    const diedMidSentence = createServer((_request, response) => {
+      // A length longer than what is written, so the answer is cut off rather
+      // than merely short: the reader is waiting for bytes that never arrive.
+      response.writeHead(200, { "content-type": "application/json", "content-length": "512" });
+      response.write('{"order_id":"order-1","st', () => response.socket?.destroy());
+    });
+
+    await new Promise<void>((resolve) => diedMidSentence.listen(0, "127.0.0.1", resolve));
+
+    const port = (diedMidSentence.address() as AddressInfo).port;
+    const coinslot = createClient({ apiKey: API_KEY, baseUrl: `http://127.0.0.1:${port}` });
+
+    try {
+      const result = await coinslot.orders.forId("order-1").deliver({
+        access_url: "https://a.example",
+      });
+
+      // Not the unreadable-answer fact, which would blame the gateway.
+      expect(result.ok === false && result.error.code).toBe(OUTCOME_UNKNOWN);
+      expect(result.ok === false && result.error.code).not.toBe(ANSWER_NOT_UNDERSTOOD);
+      expect(result.ok === false && result.error.retryable).toBe(true);
+      // And not the never-arrived fact, which would claim it did nothing.
+      expect(result.ok === false && result.error.message).not.toMatch(/did not reach us/);
+      // What is left is the sentence for this case, carrying the status the
+      // gateway got as far as saying — the detail that tells a person reading
+      // the log which of the two broken-wire cases they are looking at.
+      expect(result.ok === false && result.error.message).toMatch(
+        /began answering 200 and the answer could not be read to the end/,
+      );
+      expect(result.ok === false && result.error.message).not.toMatch(/is not JSON/);
+    } finally {
+      diedMidSentence.closeAllConnections();
+      await new Promise<void>((resolve) => diedMidSentence.close(() => resolve()));
+    }
+  });
+
   it("promises a safe repeat only where the contract promises one", async () => {
     // Delivering is idempotent by the order's identifier and taking an order
     // on happens again on every redelivery, so both may be repeated. Refusing
