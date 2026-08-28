@@ -34,13 +34,36 @@ const asyncCard: Card = {
   fulfillment: "async",
 };
 
-/** Deadlines short enough that an order lives and dies inside one test. */
+/**
+ * Deadlines short enough that an order lives and dies inside one test.
+ *
+ * The synchronous budget is the odd one out, and it is deliberately nowhere
+ * near the rest. Every other number here is arithmetic against a clock that
+ * does not move, so it is exact. The budget is not: it is the real wait an
+ * agent parked on a synchronous purchase actually sits out, and it races the
+ * real timer carrying the synchronous deadline that is supposed to end the
+ * order first. Because the harness clock is frozen, the two are counted from
+ * two different real instants — the park from the moment the payment reaches
+ * the gateway, the deadline from the moment the machine arms it a few lines
+ * later — so the distance between the two numbers is the whole slack absorbing
+ * whatever the process was doing in between.
+ *
+ * At 200 that slack was 120ms, which is inside what this machine loses to a
+ * worker importing its own modules while other suites have the cores. It went
+ * the wrong way roughly once in eighty runs, always on the first test in the
+ * file: the park gave up first, and the agent was told `under_way` about a
+ * purchase whose deadline was a microtask away from closing it. A deployment
+ * cannot invert the two — there the clock moves, and the park and the deadline
+ * are both anchored to the order's own creation, with the gateway refusing to
+ * start at all unless the answer fits inside the budget — so the margin is
+ * bought here rather than in the gateway.
+ */
 const brisk = {
   QUOTE_RESPONSE_MS: "20",
   QUOTE_TTL_MS: "60",
   SYNC_RESPONSE_MS: "80",
   SETTLE_RESPONSE_MS: "40",
-  SYNC_BUDGET_MS: "200",
+  SYNC_BUDGET_MS: "2000",
   HANDLER_ANSWER_MS: "1000",
   DEFAULT_ASYNC_FULFILLMENT_MS: "80",
 };

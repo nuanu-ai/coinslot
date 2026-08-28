@@ -3,7 +3,15 @@ import type { CreateOrderInput } from "./create.js";
 import { createOrder } from "./create.js";
 import { deadlines } from "./deadlines.js";
 import { transition } from "./machine.js";
-import type { Effect, Order, OrderEvent, OrderPolicy, Price } from "./model.js";
+import type {
+  DeadlineKind,
+  Effect,
+  Order,
+  OrderEvent,
+  OrderEventKind,
+  OrderPolicy,
+  Price,
+} from "./model.js";
 import { DEADLINE_KINDS, isOpen, modeOf, ORDER_EVENT_KINDS, ORDER_STATES } from "./model.js";
 import { moneyInvariantViolations } from "./money.js";
 import { ORDER_OUTCOMES, outcomeFor } from "./outcome.js";
@@ -130,6 +138,40 @@ function everyEvent(at: number): readonly OrderEvent[] {
 }
 
 /**
+ * What a step of the walk did, in the terms the coverage below counts in: the
+ * kind of the event, and — on the one kind where that is a choice — which
+ * deadline ran out. One expiry is not another. A price going stale and a
+ * settle going unanswered are different questions put to the machine, so
+ * `deadline_expired` on its own is too coarse a name to count.
+ */
+function moveOf(kind: OrderEventKind, deadline?: DeadlineKind): string {
+  return deadline === undefined ? kind : `${kind}/${deadline}`;
+}
+
+/**
+ * Every move the walk owes the machine, built out of the model's own two
+ * lists.
+ *
+ * Not out of `everyEvent` above, and that is the whole of the point. An
+ * expectation read off the generator narrows the instant the generator
+ * narrows, and would go on reporting full coverage of a machine it had stopped
+ * covering — the same failure `everyEvent` avoids by mapping the model's
+ * deadlines rather than a copy of them.
+ *
+ * There are twenty-four of these moves. Twelve of them were measured to be
+ * removable from the generator one at a time with every other check in this
+ * file still green: eight event kinds, among them the repeat of a purchase and
+ * the merchant's own call to deliver, and four of the seven deadlines, among
+ * them the one on the settle that the double-charge accounting is written
+ * about. That is what this list is for.
+ */
+const EVERY_MOVE: readonly string[] = ORDER_EVENT_KINDS.flatMap((kind) =>
+  kind === "deadline_expired"
+    ? DEADLINE_KINDS.map((deadline) => moveOf(kind, deadline))
+    : [moveOf(kind)],
+);
+
+/**
  * The effects a walk has to reach if its effect checks are to mean anything:
  * money going out, goods going out, a debt being written down.
  */
@@ -217,7 +259,9 @@ function anEvent(next: () => number, order: Order, at: number): OrderEvent {
 }
 
 type Step = {
-  readonly event: string;
+  readonly event: OrderEventKind;
+  /** Which deadline ran out, on the one kind of event where that is a choice. */
+  readonly deadline: DeadlineKind | undefined;
   readonly accepted: boolean;
   readonly after: string;
   readonly effects: readonly string[];
@@ -343,6 +387,7 @@ function takeAWalk(seed: number, steps: number): { order: Order; trace: readonly
     if (result.ok) order = result.order;
     trace.push({
       event: event.kind,
+      deadline: event.kind === "deadline_expired" ? event.deadline : undefined,
       accepted: result.ok,
       after: `${order.state}/${order.payment}`,
       effects: result.ok ? result.effects.map((effect) => effect.kind) : [],
@@ -491,6 +536,14 @@ describe("a long walk over the machine", () => {
    * second alone. The budget below has not been re-derived yet; until it is,
    * it stands on the old, larger cost, which errs in the only safe direction.
    *
+   * The move coverage added since asks the machine nothing new — it reads the
+   * trace the walk was already keeping — and costs one string and two map
+   * writes per step. Measured in one process, the two shapes of the loop
+   * alternating and six rounds of each: the four hundred walks go from a
+   * median of 130ms to 135ms. Five milliseconds on a body of several hundred
+   * is under the spread between two runs of this file on an idle machine, so
+   * neither the derivation above nor the budget below moves.
+   *
    * What it costs inside `pnpm test` is another matter. The suite forks a
    * worker per core and hands them seventy-odd CPU-bound files, and this is
    * the longest single stretch of computation among them, so it collects
@@ -514,13 +567,24 @@ describe("a long walk over the machine", () => {
    * change that made it loop would sit here for fifty seconds and then say so.
    * Re-derive it if the seed count moves.
    */
-  it("visits every state of the machine for the walk to mean anything", () => {
+  it("visits every state of the machine and takes every move for the walk to mean anything", () => {
     // A walk that never left `created` would pass every check above while
     // testing nothing at all. A single order's life is short — most of these
     // walks fall into a closed state early — so the coverage is counted over
-    // two hundred orders rather than over one.
+    // four hundred orders rather than over one.
+    //
+    // Visiting the states is not taking the moves, and it took a mutation to
+    // show how far apart the two are. Half the moves a walk can make can be
+    // dropped out of the generator without a single check in this file going
+    // red, this one included: the states an event leads to are reachable by
+    // other events, so nothing here noticed that a whole kind had stopped
+    // being walked. What the walk actually exercised was never written down,
+    // and a check nobody wrote down is one an edit can quietly take away.
+    const seedCount = 400;
     const visited = new Set<string>();
-    for (let seed = 1; seed <= 400; seed += 1) {
+    const taken = new Set<string>();
+    const offered = new Map<string, number>();
+    for (let seed = 1; seed <= seedCount; seed += 1) {
       const walked = takeAWalk(seed, 200);
       // The same accounting the nine named seeds carry, over four hundred
       // more. Nine orders is not many to look for a double charge in, and the
@@ -528,8 +592,38 @@ describe("a long walk over the machine", () => {
       accountFor(seed, walked.trace);
       for (const step of walked.trace) {
         visited.add(step.order.state);
+        const move = moveOf(step.event, step.deadline);
+        offered.set(move, (offered.get(move) ?? 0) + 1);
+        if (step.accepted) taken.add(move);
       }
     }
+
+    // Offered is not taken: an event the machine refuses in every state it was
+    // ever put into has been walked past, not walked. So the count is of what
+    // the machine accepted, and the message separates the two, because they
+    // are different faults with different homes — nothing offered is a
+    // generator that stopped asking, offered and never accepted is a machine
+    // that stopped answering.
+    //
+    // What this does not catch, said plainly: a move still offered but no
+    // longer preferred. The any-event pool reaches everything eventually, so a
+    // kind skipped in the sorting pass and left in that pool goes on being
+    // taken — measured, `handler_delivered` skipped there was still accepted
+    // two thousand two hundred times over these four hundred seeds, and every
+    // check in this file stayed green, this one with it. Only a digest of the
+    // whole trace sees a walk grow lopsided, and a digest pins the generator
+    // we happen to have rather than the promise it is here to keep. This is a
+    // floor, not a distribution.
+    const missing = EVERY_MOVE.filter((move) => !taken.has(move)).map((move) => {
+      const offers = offered.get(move) ?? 0;
+      return offers === 0
+        ? `${move} (never offered)`
+        : `${move} (offered ${offers} times, never accepted)`;
+    });
+    expect(
+      missing,
+      `moves the walk never got the machine to take, over ${seedCount} seeds: ${missing.join(", ")}`,
+    ).toStrictEqual([]);
 
     expect([...visited].sort()).toStrictEqual([...ORDER_STATES].sort());
   }, 50_000);

@@ -1069,12 +1069,21 @@ describe("registering", () => {
    */
   const registrarAnswering = (
     answer: Answer<RegisteredMerchant>,
+<<<<<<< HEAD
   ): Registrar & { asked: string[] } => {
     const asked: string[] = [];
     return {
       asked,
       register: async (invitation) => {
         asked.push(invitation);
+=======
+  ): Registrar & { asked: { invitation: string }[] } => {
+    const asked: { invitation: string }[] = [];
+    return {
+      asked,
+      register: async (invitation) => {
+        asked.push({ invitation });
+>>>>>>> main
         return answer;
       },
     };
@@ -1108,7 +1117,12 @@ describe("registering", () => {
     const registered = await browser.post("/register", FORM);
 
     expect(registered.status).toBe(303);
+<<<<<<< HEAD
     expect(registrar.asked).toStrictEqual([FORM.invitation]);
+=======
+    expect(registered.to).toBe("/cards");
+    expect(registrar.asked).toStrictEqual([{ invitation: FORM.invitation }]);
+>>>>>>> main
     // The account is there, pointed at the merchant the gateway made, and the
     // password typed into the form is the one that works.
     const made = await identity.byEmail(FORM.email);
@@ -1226,6 +1240,11 @@ describe("registering", () => {
     // Every one of the three is required, and a merchant is not made for a form
     // that was never going to produce an account. Litter that can be avoided by
     // reading the form is litter nobody has to argue about afterwards.
+    //
+    // It was four until the name a merchant sells under moved off this form:
+    // it is a public answer nobody can give on the day they arrive, and it is
+    // asked for once the account exists.
+
     const registrar = registrarAnswering(madeAMerchant());
     const { browser, identity } = await started({ registrar });
 
@@ -1369,6 +1388,17 @@ describe("registering", () => {
     await expect(identity.byEmail(FORM.email)).resolves.toBeNull();
   });
 
+<<<<<<< HEAD
+=======
+  // Two tests stood here and are gone with the field they were about: one
+  // refused a name the catalogue would not carry, and one took the space off a
+  // padded one. Both described this form checking a name, and this form no
+  // longer asks for one — the screen that does is where those promises are
+  // made now, and where the tests for them belong. Deleting them here rather
+  // than leaving them passing against nothing is the point: a test that
+  // survives the behaviour it described is the one that later gets believed.
+
+>>>>>>> main
   it("does not send somebody to check a good invitation when the gateway is the problem", async () => {
     // 403 is the only answer that means the invitation was not accepted. A
     // route that is not there in a bad deployment answers 404 and a gateway

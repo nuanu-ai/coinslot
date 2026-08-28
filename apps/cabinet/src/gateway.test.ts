@@ -138,7 +138,11 @@ describe("a gateway that answers nothing", () => {
 });
 
 describe("the call that makes a merchant", () => {
+<<<<<<< HEAD
   it("goes to the registration route with the invitation alone and no key at all", async () => {
+=======
+  it("goes to the registration route with the invitation and no key at all", async () => {
+>>>>>>> main
     // No key, and that is the whole shape of this call: nobody registering has
     // one. A key header here would be a header carrying nothing, and the
     // gateway reads an empty bearer token as a key it does not know — which
@@ -160,7 +164,13 @@ describe("the call that makes a merchant", () => {
     expect(arrived[0]?.method).toBe("POST");
     expect(arrived[0]?.path).toBe("/v0/merchants");
     expect(arrived[0]?.key).toBeNull();
+<<<<<<< HEAD
     expect(JSON.parse(arrived[0]?.body ?? "{}")).toStrictEqual({ invitation: "the-invitation" });
+=======
+    expect(JSON.parse(arrived[0]?.body ?? "{}")).toStrictEqual({
+      invitation: "the-invitation",
+    });
+>>>>>>> main
   });
 
   it("hands back the merchant and the secret the account is written with", async () => {

@@ -64,7 +64,7 @@
          page that cannot remember a preference should still be a page. -->
     <script>
       try {
-        let chosen = localStorage.getItem("coinslot-theme");
+        const chosen = localStorage.getItem("coinslot-theme");
         if (chosen === "light" || chosen === "dark") {
           document.documentElement.dataset.theme = chosen;
         }
@@ -430,7 +430,7 @@
          would leave a reader who switches their machine to dark in the evening
          looking at a light page and no way to explain it. -->
     <script>
-      (function () {
+      (() => {
         const root = document.documentElement;
         const button = document.getElementById("theme");
         const system = window.matchMedia("(prefers-color-scheme: dark)");

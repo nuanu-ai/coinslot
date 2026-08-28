@@ -128,7 +128,7 @@ function whatIsWrongWith(
   shortestPassword: number,
 ): string | null {
   if (form.email === "" || form.password === "" || form.invitation === "") {
-    return "Every one of the three is needed: an address, a password, and your invitation.";
+    return "All three are needed: an address, a password and your invitation.";
   }
   if (!LOOKS_LIKE_AN_ADDRESS.test(form.email)) {
     return "That is not an address of the shape someone@example.com.";

@@ -42,16 +42,16 @@ export const signInScreen = (base: string, problem?: string): string =>
 /**
  * The form that makes a merchant, a key and an account at once.
  *
- * Three boxes, because that is what the act needs: who signs in, what they sign
- * in with, and the invitation that stands in the door until registration is
- * open to everybody (ADR-0014 §3).
+ * Three boxes, and it was four. Who signs in, what they sign in with, and the
+ * invitation that stands in the door until registration is open to everybody.
  *
- * The name buyers read is not one of them, and where it went is the reason. It
- * is a public answer, printed beside a merchant's products for strangers to
- * read, and asking for it here demanded it at the one moment somebody knows
- * least about what it is for: no products, no catalogue seen, and no room on
- * this page to explain. It is asked for on the screen this one leads to, and
- * changed afterwards in the settings.
+ * The fourth was the name a merchant's products are sold under, and it is gone
+ * from here on purpose. On this form it asked for a public answer at the one
+ * moment somebody knows least — no products, no catalogue seen, nothing yet to
+ * name — and what a form like that collects is whatever gets past it, which is
+ * then printed beside their products for buyers to read. It is asked for after
+ * the account exists, where it has room to say why it matters and where it can
+ * be changed. Until it is chosen, publishing a card is refused.
  *
  * The page says what the address is for and what it is not yet. A person who
  * registers has shown they hold an invitation, not that they hold the address
