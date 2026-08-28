@@ -5,6 +5,8 @@ import {
   IssueKeyRequestSchema,
   MerchantKeyListSchema,
   MerchantKeySchema,
+  PayoutWalletRequestSchema,
+  PayoutWalletSchema,
   RegisteredMerchantSchema,
   RegistrationRequestSchema,
   SellerNameRequestSchema,
@@ -398,6 +400,106 @@ describe("what a merchant sends to change that name", () => {
   it("refuses a field it does not know", () => {
     expect(errorOf(SellerNameRequestSchema, { ...asked, merchant_id: "mch_4d21bb" })).toContain(
       "merchant_id",
+    );
+  });
+});
+
+describe("the wallet a merchant's sales are paid into", () => {
+  // The promise: a merchant can find out where their money goes and change it,
+  // and what they read back is what a buyer's agent will actually be told to
+  // pay. Nothing else in this contract carries an address, because nothing else
+  // is money leaving somebody's hands.
+  const paid = { payout_wallet: "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed" };
+  const unpaid = { payout_wallet: null };
+
+  it("carries the wallet a merchant chose", () => {
+    expect(PayoutWalletSchema.parse(paid)).toStrictEqual(paid);
+  });
+
+  it("says a merchant has none rather than leaving the field out", () => {
+    // Null is the fact "nobody has said where the money goes", which is every
+    // merchant on the day they register. An absent field is a silence, and a
+    // settings screen cannot tell a silence from a client that dropped the
+    // field — it would have to guess, and guessing wrong means telling a
+    // merchant they are set up to be paid when they are not.
+    expect(PayoutWalletSchema.parse(unpaid)).toStrictEqual(unpaid);
+    expect(PayoutWalletSchema.safeParse({}).success).toBe(false);
+  });
+
+  it("refuses a document without payout_wallet and names it", () => {
+    expectMissingFieldRejected(PayoutWalletSchema, paid, "payout_wallet");
+  });
+
+  it("holds the wallet to the rule an address is written by", () => {
+    expect(PayoutWalletSchema.safeParse({ payout_wallet: "" }).success).toBe(false);
+    expect(PayoutWalletSchema.safeParse({ payout_wallet: "0x1234" }).success).toBe(false);
+    // The checksummed spelling a wallet shows, and the same address with one
+    // letter's case wrong: the first is an address, the second is a paste that
+    // went through something.
+    expect(
+      PayoutWalletSchema.safeParse({ payout_wallet: "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed" })
+        .success,
+    ).toBe(true);
+    expect(
+      PayoutWalletSchema.safeParse({ payout_wallet: "0x5aaeb6053F3E94C9b9A09f33669435E7Ef1BeAed" })
+        .success,
+    ).toBe(false);
+  });
+
+  it("refuses a field it does not know", () => {
+    expect(errorOf(PayoutWalletSchema, { ...paid, private_key: "0xdead" })).toContain("private_key");
+  });
+});
+
+describe("what a merchant sends to change that wallet", () => {
+  const asked = { payout_wallet: "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed" };
+
+  it("takes the wallet, held to the same rule the answer is", () => {
+    expect(PayoutWalletRequestSchema.parse(asked)).toStrictEqual(asked);
+    expect(PayoutWalletRequestSchema.safeParse({ payout_wallet: "0x1234" }).success).toBe(false);
+    expect(
+      PayoutWalletRequestSchema.safeParse({
+        payout_wallet: "0x5aaeb6053F3E94C9b9A09f33669435E7Ef1BeAed",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("refuses null, because a wallet cannot be taken away", () => {
+    // The difference between this document and the answer, and the whole of
+    // it. Having no wallet is a state a merchant starts in and cannot go back
+    // to: their published cards would stay on sale with nowhere for the money
+    // to go, and every agent asking one of them what it costs would be met by
+    // a gateway that cannot answer. What somebody reaching for null wants is
+    // either a different wallet, which is this same call, or an end to
+    // selling, which is the pause.
+    expect(PayoutWalletRequestSchema.safeParse({ payout_wallet: null }).success).toBe(false);
+  });
+
+  it("says what to do instead, rather than that a string was expected", () => {
+    const complaint = errorOf(PayoutWalletRequestSchema, { payout_wallet: null });
+
+    expect(complaint).toContain("pause");
+    expect(complaint).not.toContain("expected string");
+  });
+
+  it("refuses a document without payout_wallet and names it", () => {
+    expectMissingFieldRejected(PayoutWalletRequestSchema, asked, "payout_wallet");
+  });
+
+  it("complains about a missing field in its own words, not the ones about null", () => {
+    expect(errorOf(PayoutWalletRequestSchema, {})).not.toContain("pause");
+  });
+
+  it("has nowhere to put a key, and refuses one put there anyway", () => {
+    // The line this whole feature is on the right side of: an address is what
+    // somebody is paid at, and a key is what spends it. Nothing in this
+    // contract takes one, and a field carrying one is refused rather than
+    // ignored — ignored, it would sit in a log of the request that carried it.
+    expect(errorOf(PayoutWalletRequestSchema, { ...asked, private_key: "0xdead" })).toContain(
+      "private_key",
+    );
+    expect(errorOf(PayoutWalletRequestSchema, { ...asked, mnemonic: "a b c" })).toContain(
+      "mnemonic",
     );
   });
 });
