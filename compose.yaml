@@ -350,6 +350,44 @@ services:
     depends_on:
       gateway:
         condition: service_healthy
+    healthcheck:
+      # This one has no port to ask. The merchant is a long poll and nothing
+      # else, so `running` was the whole of what this service ever said, and it
+      # says that just as readily about a process whose worker ended on a
+      # version mismatch and has been deaf ever since. So the process writes one
+      # line about its own subscription and this reads it: the line has to say
+      # it is selling, and the file has to have been written recently enough
+      # that the loop writing it is still turning. Either alone can be true
+      # while the other is not — a frozen process leaves a `selling` line behind
+      # it, and a fresh file may say it is not getting through.
+      #
+      # The path is spelled here and in packages/slice/src/serve.ts, and neither
+      # of them spells the directory: both ask the runtime for it, so the two
+      # agree under whatever TMPDIR this service is given. Fifteen seconds is
+      # generous against a line rewritten twice a second; it is a bound on a
+      # stalled process, not a timing budget.
+      #
+      # What this can and cannot claim is written where the line is produced,
+      # and the short of it is that a `selling` line means no poll has failed
+      # lately, not that the catalogue is still on the shelf.
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "const fs=require('node:fs'),p=require('node:path').join(require('node:os').tmpdir(),'coinslot-merchant-subscription');process.exit(Date.now()-fs.statSync(p).mtimeMs<15000&&fs.readFileSync(p,'utf8').startsWith('selling')?0:1)",
+        ]
+      interval: 5s
+      timeout: 3s
+      # Three in a row rather than one, so a single probe that lands in the
+      # moment between a dropped poll and the retry that succeeds does not turn
+      # the service red on its own. A gateway that is really gone keeps failing
+      # and is red within the quarter minute.
+      retries: 3
+      # The same grace its neighbours have, and for the same reason: this
+      # process comes up through tsx, and it publishes its catalogue before it
+      # writes the file at all.
+      start_period: 15s
 
   web:
     build:
