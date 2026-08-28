@@ -129,7 +129,9 @@ export async function bootGateway(
     await seedSandboxKey(store, randomIds, config.sandboxMerchantKey, systemClock());
   }
 
-  const server: Server = buildApp(gateway).listen(0);
+  // On the address `baseUrl` below names, not on the wildcard: `serve` in the
+  // gateway's own harness says what the difference costs.
+  const server: Server = buildApp(gateway).listen(0, "127.0.0.1");
   await new Promise<void>((resolve) => server.once("listening", resolve));
   const { port } = server.address() as AddressInfo;
 
