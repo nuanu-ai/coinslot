@@ -151,6 +151,17 @@ export function buildApp(
   // under the status the web already has for it, and it names the limit —
   // "too large" without a number leaves the caller to find the edge by
   // bisection against a live gateway.
+  //
+  // A third refusal arrives from that same throw and is the furthest of the
+  // three from the default: a content-encoding the parser has no decompressor
+  // for. Nothing at all was read in that case, so nothing whatever is known
+  // about the JSON inside — "could not be read as JSON" claims a reading that
+  // never happened, and the document may well be flawless. The answer names the
+  // header that was refused, because a caller not told that has only the body
+  // left to suspect; and it names the way out, because uncompressed is the one
+  // encoding this gateway always takes, and leaving the caller to find that by
+  // trying the others against a live gateway is not work to hand to somebody
+  // else.
   app.use(
     (thrown: unknown, _request: Request, response: Response, next: (error?: unknown) => void) => {
       if (response.headersSent) {
@@ -168,6 +179,17 @@ export function buildApp(
               refusal(
                 "body_too_large",
                 `this call's body is over the ${BODY_LIMIT} a call may carry`,
+              ),
+            );
+          return;
+        }
+        if ((thrown as { type: unknown }).type === "encoding.unsupported") {
+          response
+            .status(415)
+            .json(
+              refusal(
+                "encoding_unsupported",
+                "this call's body was not read because its content-encoding is not one this gateway decompresses, so send the body uncompressed",
               ),
             );
           return;
