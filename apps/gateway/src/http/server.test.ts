@@ -56,8 +56,15 @@ const publish = async (served: Served, card: Card): Promise<string> => {
 
 describe("the surface is the table", () => {
   it("serves every call the contract says may be served", async () => {
-    // If this fails, one of two things happened: a call was agreed and never
-    // implemented, or one was implemented under an address nobody agreed to.
+    // A call agreed and never implemented is not what this catches: the
+    // mounting loop throws at start-up for that one, and the case below says
+    // so. What is left over is narrower and has nowhere else to be found — an
+    // address express mounts and then does not match against its own literal
+    // path. A pattern the router reads differently from the string it was
+    // written as answers "no such call" at the very address the contract
+    // publishes, and every route in the table is walked here because the one
+    // that grows such a pattern is not knowable in advance.
+    //
     // The poll window is a millisecond here so that the one call in the table
     // designed to be held open does not hold this test open with it.
     const { served } = await started({ WORKER_POLL_WAIT_MS: "1" });
