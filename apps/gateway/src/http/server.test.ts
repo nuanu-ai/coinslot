@@ -713,6 +713,90 @@ describe("whose purchase it is", () => {
     expect(orders[0]?.order.state).toBe("quoted");
     expect(orders[0]?.order.closure).toBeNull();
   });
+
+  it("lets the buyer who owns an order drive the payment home with a second authorisation", async () => {
+    // The portal's promise for a synchronous delivery whose charge did not
+    // execute: the purchase did not happen, and a repeat drives the payment
+    // home. A repeat is a second authorisation, not the same one again — a
+    // fresh nonce, a different signed thing, a different fingerprint — and what
+    // makes it the same buyer's is the wallet it was signed from. Nothing else
+    // in the exchange carries that, so the gateway has to be told it by the
+    // payment layer, and the payment layer reads it off the payment.
+    const { served, harnessed } = await started();
+    const itemId = await publish(served, syncCard);
+    harnessed.facilitator.willSettle(
+      { settled: false, reason: "the transfer reverted" },
+      { settled: true, transaction: "0xsecond" },
+    );
+    const challenge = await challengeFor(served, itemId);
+    const first = paidBy(challenge, BUYER, "0x01");
+    const repeat = paidBy(challenge, BUYER, "0x02");
+
+    const worker = workUntilStopped(harnessed, {
+      onOrder: () => ({ delivered: { access_code: "SESAME" } }),
+    });
+    const delivered = await served.call("POST", `/v0/items/${itemId}/purchase`, {
+      body: { params: {} },
+      headers: { [PAYMENT_SIGNATURE_HEADER]: first },
+    });
+    // The merchant made the goods and the charge failed, so the goods are not
+    // the buyer's yet and the agent is not told the purchase went through.
+    expect(delivered.status).toBe(409);
+    expect(delivered.body).toMatchObject({ status: "delivered_unpaid" });
+
+    // The worker is stopped before the repeat: the merchant is asked for
+    // nothing a second time, and a repeat that needed him would hang here.
+    await worker.stop();
+
+    const paid = await served.call("POST", `/v0/items/${itemId}/purchase`, {
+      body: { params: {} },
+      headers: { [PAYMENT_SIGNATURE_HEADER]: repeat },
+    });
+
+    expect(paid.status).toBe(200);
+    expect(paid.body).toMatchObject({ delivered: { access_code: "SESAME" } });
+    // And it was the authorisation the agent actually sent that was charged.
+    expect(harnessed.facilitator.settles.map((charge) => charge.payment)).toStrictEqual([
+      first,
+      repeat,
+    ]);
+  });
+
+  it("refuses a second wallet's payment for an order that is already somebody's", async () => {
+    // The other side of the repeat, and the reason a repeat cannot simply be
+    // waved through: an order's identifier travels — in a challenge, on the
+    // merchant's stream, in a receipt — and holding one is not being the agent
+    // whose purchase it is. A different wallet gets the refusal the contract
+    // names, in the words it names.
+    const { served, harnessed } = await started();
+    const itemId = await publish(served, {
+      ...syncCard,
+      merchant_item_id: "esim-owned",
+      fulfillment: "async",
+    });
+    const challenge = await challengeFor(served, itemId);
+
+    const bought = await served.call("POST", `/v0/items/${itemId}/purchase`, {
+      body: { params: {} },
+      headers: { [PAYMENT_SIGNATURE_HEADER]: paidBy(challenge, BUYER, "0x01") },
+    });
+    expect(bought.status).toBe(200);
+
+    const stranger = await served.call("POST", `/v0/items/${itemId}/purchase`, {
+      body: { params: {} },
+      headers: { [PAYMENT_SIGNATURE_HEADER]: paidBy(challenge, STRANGER, "0x02") },
+    });
+
+    expect(stranger.status).toBe(409);
+    expect(stranger.body).toStrictEqual({
+      error: {
+        code: "not_this_purchase",
+        message: "this order already belongs to another payment",
+      },
+    });
+    // The stranger was never charged, and the order is still the buyer's.
+    expect(harnessed.facilitator.settles).toHaveLength(1);
+  });
 });
 
 describe("the worker's calls over HTTP", () => {

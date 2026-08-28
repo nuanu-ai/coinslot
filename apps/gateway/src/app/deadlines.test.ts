@@ -1,7 +1,10 @@
 import type { Card } from "@coinslot/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Reminder } from "../ports/queue.js";
-import { type Harness, harness, workUntilStopped } from "../testing/harness.js";
+import { authorisation, type Harness, harness, workUntilStopped } from "../testing/harness.js";
+
+/** The buyer, for the one test here that turns on which wallet signed. */
+const BUYER = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
 /**
  * The clocks, from the outside.
@@ -184,7 +187,8 @@ describe("when the time runs out", () => {
     const harnessed = await started();
     const orderId = await bought(harnessed, syncCard);
 
-    const settled = await harnessed.gateway.payPurchase(orderId, "buyer#one", "buyer#one");
+    const paid = authorisation(harnessed, BUYER, "0x01");
+    const settled = await harnessed.gateway.payPurchase(orderId, paid.payment, paid.fingerprint);
     expect(settled.step).toBe("settled");
     expect((await state(harnessed, orderId))?.state).toBe("expired");
 
@@ -205,7 +209,12 @@ describe("when the time runs out", () => {
     // And the repeat purchase that collects the drawer gets that same one. A
     // fresh authorisation from the same wallet, which is how the owner of the
     // order is recognised across a repeat.
-    const collected = await harnessed.gateway.payPurchase(orderId, "buyer#two", "buyer#two");
+    const repeat = authorisation(harnessed, BUYER, "0x02");
+    const collected = await harnessed.gateway.payPurchase(
+      orderId,
+      repeat.payment,
+      repeat.fingerprint,
+    );
     expect(collected.step).toBe("settled");
     if (collected.step !== "settled") throw new Error("the repeat did not settle");
     expect(collected.delivery).toStrictEqual({ access_code: "CODE-ONE" });
