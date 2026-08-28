@@ -130,7 +130,7 @@ export function handlersFor(gateway: Gateway): Partial<Record<RouteName, Mounted
     register_merchant: {
       serve: async (call) => {
         const asked = call.body as RegistrationRequest;
-        const made = await gateway.registerMerchant(asked.name, asked.invitation);
+        const made = await gateway.registerMerchant(asked.invitation);
         if (made === null) {
           // One answer for a wrong code and for a gateway that takes no
           // registrations. Two answers would make this form a way of asking

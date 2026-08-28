@@ -19,7 +19,7 @@ import { ScriptedFacilitator } from "../adapters/memory/facilitator.js";
 import { MemoryQueue } from "../adapters/memory/queue.js";
 import { MemoryStore } from "../adapters/memory/store.js";
 import { Gateway } from "../app/gateway.js";
-import { issueKey, keyDigest, makeMerchant } from "../app/merchants.js";
+import { issueKey, keyDigest, makeMerchant, setServiceName } from "../app/merchants.js";
 import type { Runtime } from "../app/runtime.js";
 import { type GatewayConfig, loadConfig } from "../config.js";
 import { buildApp } from "../http/server.js";
@@ -131,16 +131,31 @@ export async function harness(overrides: Record<string, string> = {}): Promise<H
   const gateway = new Gateway(runtime);
   await gateway.start();
 
-  // Made through the same two functions the command-line verb and the sandbox
-  // seed use, so a key that works here is a key that works there: a second way
-  // of turning a secret into a digest would be a key that opens one door and
-  // not the other, and the failure would look like a wrong key rather than like
-  // two hashes.
+  // Made through the same three functions the command-line verbs and the
+  // sandbox seed use, so a key that works here is a key that works there: a
+  // second way of turning a secret into a digest would be a key that opens one
+  // door and not the other, and the failure would look like a wrong key rather
+  // than like two hashes.
+  //
+  // The merchant is listed under the name it was made with, and that is not
+  // scaffolding for its own sake. A merchant with no name publishes nothing, so
+  // every test in this repository whose subject is a sale — a deadline, a
+  // refusal, the shape of a receipt — would otherwise be refused at the first
+  // card for a reason that has nothing to do with what it is testing.
+  //
+  // The listing name is the merchant's own name because the harness is given
+  // one string and a seeded merchant that reads differently in two places would
+  // be a puzzle in every assertion about a challenge. What that costs is a rule
+  // on the names tests pass in: they go through the catalogue's own check, so
+  // one over thirty-two characters or outside printable ASCII stops the harness
+  // here, saying which rule it broke. A test that wants a merchant listed under
+  // nothing takes the name away through the route.
   const seed = async (name: string, secret?: string): Promise<SeededMerchant> => {
     const made = await makeMerchant(store, ids, name, now);
     if (made === null) {
       throw new Error(`the harness could not make the merchant ${name}`);
     }
+    await setServiceName(store, made.id, name, now);
     const issued =
       secret === undefined
         ? await issueKey(store, ids, made.id, "the harness", now)

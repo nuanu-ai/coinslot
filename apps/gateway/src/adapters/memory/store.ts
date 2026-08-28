@@ -143,19 +143,22 @@ export class MemoryStore implements Store {
   }
 
   async registerMerchant(
-    merchant: { readonly id: string; readonly name: string; readonly serviceName: string },
+    merchant: { readonly id: string; readonly name: string },
     key: { readonly id: string; readonly label: string; readonly digest: string },
     at: number,
   ): Promise<{ merchant: StoredMerchant; key: StoredKey } | null> {
     if (this.#merchants.has(merchant.id)) {
       return null;
     }
+    // Listed under nothing, exactly as a merchant made at a terminal is. The
+    // name buyers read is chosen afterwards, and until it is, this merchant
+    // publishes nothing.
     const row: MerchantRow = {
       id: merchant.id,
       name: merchant.name,
       createdAt: at,
       selling: "open",
-      serviceName: merchant.serviceName,
+      serviceName: null,
     };
     this.#merchants.set(merchant.id, row);
 

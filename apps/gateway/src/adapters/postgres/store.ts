@@ -133,7 +133,7 @@ export class PostgresStore implements Store {
   }
 
   async registerMerchant(
-    merchant: { readonly id: string; readonly name: string; readonly serviceName: string },
+    merchant: { readonly id: string; readonly name: string },
     key: { readonly id: string; readonly label: string; readonly digest: string },
     at: number,
   ): Promise<{ merchant: StoredMerchant; key: StoredKey } | null> {
@@ -141,13 +141,16 @@ export class PostgresStore implements Store {
     // (ADR-0014 §1). Written as two statements outside one, a failure between
     // them leaves a merchant with no key, a generated identifier nobody holds,
     // and foreign keys on it that stop anything sweeping it away.
+    //
+    // The listing name is left out of the insert rather than set to null, so
+    // that what a merchant is listed under has one default and it is the
+    // column's.
     return this.#db.transaction(async (tx) => {
       const [merchantRow] = await tx
         .insert(merchants)
         .values({
           id: merchant.id,
           name: merchant.name,
-          serviceName: merchant.serviceName,
           selling: "open",
           createdAt: new Date(at),
           updatedAt: new Date(at),

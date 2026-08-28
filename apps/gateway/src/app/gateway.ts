@@ -302,10 +302,38 @@ export class Gateway {
 
   // --- the catalog ----------------------------------------------------------
 
+  /**
+   * Puts one card in the catalog, or says everything standing in its way.
+   *
+   * The findings are gathered rather than returned at the first one, and one of
+   * them is not about the card at all: a merchant who has set no name for
+   * buyers to read cannot publish. A card of theirs would be offered for sale
+   * through a payment request that names no seller, so the agent reading it is
+   * invited to pay somebody the request does not name. That has been shipped
+   * from here once, silently, and this is what stops it happening again.
+   *
+   * The refusal comes back beside whatever is wrong with the card because the
+   * merchant is going to have to fix both, and told one at a time they fix the
+   * card, publish again, and only then find out about the name. It leads the
+   * list for the same reason: a screen that shows one finding shows the one
+   * that is not on the card, which is the one nothing on the card explains.
+   */
   async publishCard(merchantId: string, body: unknown): Promise<PublishResult> {
     const parsed = CardSchema.safeParse(body);
+
+    // A merchant the store cannot find is refused along with one who has chosen
+    // no name, and for the same reason read the other way: the safe answer to
+    // "I cannot say who this is" is that nothing of theirs goes on sale. The
+    // door resolved this key to a merchant a moment ago, so it does not happen.
+    const merchant = await this.runtime.store.merchantById(merchantId);
+    const unnamed = merchant === null || merchant.serviceName === null;
+
     if (!parsed.success) {
-      return { errors: findingsOf(parsed.error.issues) };
+      const wrongWithTheCard = findingsOf(parsed.error.issues);
+      return { errors: unnamed ? [NO_SELLER_NAME, ...wrongWithTheCard] : wrongWithTheCard };
+    }
+    if (unnamed) {
+      return { errors: [NO_SELLER_NAME] };
     }
 
     const stored = await this.runtime.store.publishCard(
@@ -454,17 +482,21 @@ export class Gateway {
   // --- merchants and their keys ---------------------------------------------
 
   /**
-   * Registers a merchant: the merchant, the name they are listed under and
-   * their first key, in one act. Null where the invitation is not the one this
-   * gateway holds, or where it holds none.
+   * Registers a merchant: the merchant and their first key, in one act. Null
+   * where the invitation is not the one this gateway holds, or where it holds
+   * none.
    *
    * The two refusals are one value on purpose. Registration being closed is a
    * fact about this deployment rather than about the caller, and the route above
    * answers both in the same words and the same status — otherwise the form is
    * a way of asking whether registration is open here, which is what the code in
    * the door exists to stop being findable (ADR-0014 §3).
+   *
+   * What comes back names no seller, because nobody has chosen one. The merchant
+   * is listed under nothing until they set a name, and until then publishing is
+   * refused — so the caller's next screen is the one that asks for it.
    */
-  async registerMerchant(name: string, invitation: string): Promise<RegisteredMerchant | null> {
+  async registerMerchant(invitation: string): Promise<RegisteredMerchant | null> {
     if (!invitationAccepted(this.runtime.config.registrationInvitation, invitation)) {
       return null;
     }
@@ -472,7 +504,6 @@ export class Gateway {
     const registered = await registerMerchant(
       this.runtime.store,
       this.runtime.ids,
-      name,
       this.runtime.clock(),
     );
 
@@ -486,20 +517,7 @@ export class Gateway {
     }
 
     const { merchant, key, secret } = registered;
-    if (merchant.serviceName === null) {
-      // Registering writes the listing name with the merchant, so this cannot
-      // happen — and if it did, the merchant would publish cards whose challenge
-      // names no seller, which is the defect worth stopping loudly rather than
-      // papering over with the merchant's own name.
-      throw new Error(`the merchant ${merchant.id} was registered under no listing name`);
-    }
-
-    return {
-      merchant_id: merchant.id,
-      name: merchant.serviceName,
-      key: merchantKeyOf(key),
-      secret,
-    };
+    return { merchant_id: merchant.id, key: merchantKeyOf(key), secret };
   }
 
   /**
@@ -1592,6 +1610,26 @@ function misfitsIn(findings: readonly PublishError[]): string {
   const rest = findings.length - MISFITS_NAMED;
   return rest > 0 ? `${named} (and ${rest} more)` : named;
 }
+
+/**
+ * The finding a merchant who has chosen no name for buyers meets when they try
+ * to publish.
+ *
+ * Its path is empty because it is not about a field of the card: a merchant
+ * reading this would search their card for what is missing and find nothing,
+ * which is why the message names the call that fixes it instead. The address is
+ * written out rather than described, so that the sentence works for whoever is
+ * reading it — a person in a cabinet, and an engineer with a terminal and this
+ * response.
+ */
+const NO_SELLER_NAME: PublishError = {
+  path: [],
+  code: "no_seller_name",
+  message:
+    "this merchant has not set the name their products are sold under, and a card published" +
+    " without one is offered for sale through a payment request that names no seller at all;" +
+    " set a name with POST /v0/seller-name and publish this card again",
+};
 
 /** Zod's account of what is wrong, in the shape the contract publishes. */
 function findingsOf(

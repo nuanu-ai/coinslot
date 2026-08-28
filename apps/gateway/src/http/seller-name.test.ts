@@ -270,9 +270,9 @@ describe("publishing before a name has been chosen", () => {
 
     const published = await publishing(served, nameless.key, cardFor("a-room", "A room"));
     expect(published.status, JSON.stringify(published.body)).toBe(200);
-    expect(await sellerInTheChallenge(served, (published.body as { ok: { id: string } }).ok.id)).toBe(
-      "Their own shop",
-    );
+    expect(
+      await sellerInTheChallenge(served, (published.body as { ok: { id: string } }).ok.id),
+    ).toBe("Their own shop");
   });
 });
 

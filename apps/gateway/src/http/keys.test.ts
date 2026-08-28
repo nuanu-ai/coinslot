@@ -326,6 +326,7 @@ describe("issuing another key", () => {
     const { served } = await started();
     const first = await registered(served);
     const second = await registered(served);
+    await listAs(served, first.secret, "First shop");
     const itemId = await publish(served, first.secret, cardFor("a-room", "A room"));
 
     const another = await issued(served, first.secret, "another of the first shop's");

@@ -137,13 +137,16 @@ export const ORDER_CALL_ERROR_CODES = Object.freeze([
   "delivery_does_not_match_card",
 ] as const);
 
-/** One thing wrong with a card, in a place, in a code and in words. */
+/** One thing standing between a card and the catalog, in a code and in words. */
 export const PublishErrorSchema = z.strictObject({
   /**
    * Which field the finding is about, as the path to it — `["params",
    * "email", "type"]`. An empty path is a statement rather than a missing
-   * value: the finding is about the card as a whole. Leaving the field out
-   * entirely would make those two indistinguishable.
+   * value, and it covers two kinds of finding that a merchant tells apart by
+   * the words rather than by the shape: one about the card as a whole, and one
+   * about the merchant publishing it, such as their having set no name for
+   * buyers to read. Leaving the field out entirely would make an empty path
+   * indistinguishable from a path nobody filled in.
    */
   path: z.array(z.string()),
 
@@ -155,11 +158,16 @@ export const PublishErrorSchema = z.strictObject({
 });
 
 /**
- * The answer to publishing a card: the catalog id, or what is wrong with it.
+ * The answer to publishing a card: the catalog id, or what stands in its way.
  *
  * The list of findings is never empty. "Refused, and here is nothing" is the
  * one answer a merchant cannot act on, and acceptance already has a shape of
  * its own — it does not need to be spelled as an absence of errors.
+ *
+ * Not every finding is about the card. A merchant who has set no name for
+ * buyers to read is refused here too, in the same list, so that one answer
+ * carries everything standing between this card and the catalog rather than
+ * handing it over one round trip at a time.
  */
 export const PublishResultSchema = z.union(
   [

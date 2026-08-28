@@ -221,44 +221,45 @@ export const SellerNameSchema = z
 /**
  * What somebody sends to become a merchant.
  *
- * Two fields, and what is not here is the half worth reading. The address and
- * the password belong to the account rather than to the merchant, and they stay
- * on the other side of the boundary (ADR-0014 §1) — a gateway that took either
- * would be holding a person's credentials on the money path, which is what this
- * route's whole shape is arranged to avoid.
+ * One field, and what is not here is most of what is worth reading. The address
+ * and the password belong to the account rather than to the merchant, and they
+ * stay on the other side of the boundary (ADR-0014 §1) — a gateway that took
+ * either would be holding a person's credentials on the money path, which is
+ * what this route's whole shape is arranged to avoid.
  *
- * The name is held to the discovery catalog's own rule, because that is where
- * it goes: it becomes the name this seller is listed under, and a name the
- * catalog cannot render is dropped there without a word.
+ * The name the seller's products are sold under is not here either, and that
+ * omission is a decision rather than a simplification. It is a public answer,
+ * and asking for it here asks for it at the one moment a merchant knows least:
+ * no products, no catalogue seen, no idea what the name is for. It is asked for
+ * on the screen after this one instead, where there is room to say why it
+ * matters, and it can be changed afterwards from the merchant's own settings.
+ *
+ * The shape refuses a name rather than ignoring one, because a field quietly
+ * dropped is a person believing they have chosen what buyers will read.
  */
 export const RegistrationRequestSchema = z
   .strictObject({
-    /** The name this seller trades under, which strangers will read. */
-    name: ServiceNameSchema,
-
     /** The code handed over with the address of the site. */
     invitation: InvitationSchema,
   })
   .meta({
     description:
-      "What somebody sends to become a merchant: the name they trade under and the invitation code they were given. The name is held to the rule of the discovery catalog that will carry it — at most 32 characters of printable ASCII — because a name refused here is a name the person is told about, and a name accepted here and dropped there is a seller trading under something nobody chose. Nothing about an account is in this document: an address and a password belong to whatever signs the person in, and are never sent to the gateway.",
+      "What somebody sends to become a merchant: the invitation code they were given, and nothing else. The name their products are sold under is deliberately not here — it is a public answer, and asked for on the way in it is answered by somebody with no products and no idea what the name is for; it is set afterwards, and changed afterwards, through the merchant's own call for it. Nothing about an account is here either: an address and a password belong to whatever signs the person in, and are never sent to the gateway. A document carrying either is refused rather than trimmed, because a field accepted and dropped is somebody believing they said something.",
   });
 
 /**
  * What registering answers with: a merchant, their first key, and the secret.
  *
- * The name comes back as well as the merchant's identifier, and it is not
- * decoration. It is the name the merchant is now listed under, read back from
- * what was actually written rather than echoed from the request, so a caller
- * that showed it on the next screen is showing what is true.
+ * No name comes back, because none was chosen. A merchant who has just
+ * registered is listed under nothing at all, and a field here would either be a
+ * name this call invented or a null that says the same thing at more length.
+ * What the caller needs is the merchant to hang an account on and the key to
+ * reach us with, and both are here.
  */
 export const RegisteredMerchantSchema = z
   .strictObject({
     /** The merchant that now exists, which every key and card of theirs names. */
     merchant_id: IdentifierSchema,
-
-    /** The name this merchant is listed under, as it was written down. */
-    name: ServiceNameSchema,
 
     key: MerchantKeySchema,
 
@@ -267,7 +268,7 @@ export const RegisteredMerchantSchema = z
   })
   .meta({
     description:
-      "What registering produced: the merchant, the name they are listed under, their first key and that key itself. The key is readable here and nowhere afterwards, so whoever made this call is the only party that can keep it. What this answer does not carry is any notion of an account or a session — registering makes a merchant and a key, and whatever signs a person in is on the other side of this call.",
+      "What registering produced: the merchant, their first key and that key itself. The key is readable here and nowhere afterwards, so whoever made this call is the only party that can keep it. The merchant is listed under no name yet and this answer carries none — the name their products are sold under is chosen afterwards, and until it is, publishing a card is refused. What this answer does not carry either is any notion of an account or a session: registering makes a merchant and a key, and whatever signs a person in is on the other side of this call.",
   });
 
 export type SellerName = z.infer<typeof SellerNameSchema>;
