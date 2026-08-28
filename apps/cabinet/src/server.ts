@@ -974,8 +974,19 @@ function sameOriginUnder(base: string) {
       next();
       return;
     }
-    // Nothing about which origin would have worked: that is an answer to
-    // somebody who is guessing, and this refusal is only ever seen by them.
+    // The page says nothing about which origin would have worked, because that
+    // is an answer to somebody who is guessing. The log says everything,
+    // because the other person this refusal reaches is a merchant who did
+    // nothing wrong, and until this line existed there was no way to tell the
+    // two apart: the check refused an honest browser on the live site and the
+    // only evidence anywhere was a screenshot. What is written down is what was
+    // compared and nothing else — an origin and a host are not secrets, and
+    // both arrive from outside, so both go through the same rendering that
+    // strips what a terminal would obey instead of show.
+    console.log(
+      `[cabinet] a form post was refused: its origin is ${printable(origin)},` +
+        ` and it was addressed to ${printable(asked ?? "nothing at all")}`,
+    );
     response
       .status(403)
       .type("html")
