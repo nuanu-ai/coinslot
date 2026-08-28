@@ -272,3 +272,78 @@ describe("the name a merchant is listed under", () => {
     expect(terminal.text()).toContain("listed-as");
   });
 });
+
+describe("the address a merchant is paid at", () => {
+  const A_WALLET = "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed";
+
+  it("sets it and says where the money now goes", async () => {
+    const terminal = aTerminal();
+    await terminal.run("add", "Someone's shop");
+    const [made] = await terminal.store.merchants();
+
+    const code = await terminal.run("pays-to", made?.id ?? "", A_WALLET);
+
+    expect(code).toBe(0);
+    expect((await terminal.store.merchantById(made?.id ?? ""))?.payoutWallet).toBe(A_WALLET);
+    expect(terminal.text()).toContain(A_WALLET);
+  });
+
+  it("writes the mixed-case spelling a wallet shows in lower case", async () => {
+    const terminal = aTerminal();
+    await terminal.run("add", "Someone's shop");
+    const [made] = await terminal.store.merchants();
+
+    await terminal.run("pays-to", made?.id ?? "", "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed");
+
+    expect((await terminal.store.merchantById(made?.id ?? ""))?.payoutWallet).toBe(A_WALLET);
+  });
+
+  it("refuses an address whose own letters disagree with it, and writes nothing", async () => {
+    // The whole point of holding it here rather than taking the paste on trust:
+    // a mistyped address is another perfectly good address, so nothing
+    // downstream would notice, and every sale afterwards would be a stranger's.
+    const terminal = aTerminal();
+    await terminal.run("add", "A merchant");
+    const [made] = await terminal.store.merchants();
+
+    const code = await terminal.run(
+      "pays-to",
+      made?.id ?? "",
+      "0x5aaeb6053F3E94C9b9A09f33669435E7Ef1BeAed",
+    );
+
+    expect(code).toBe(1);
+    expect(terminal.text()).toMatch(/checksum|lower case/i);
+    expect((await terminal.store.merchantById(made?.id ?? ""))?.payoutWallet).toBeNull();
+  });
+
+  it("refuses something that is not an address at all", async () => {
+    const terminal = aTerminal();
+    await terminal.run("add", "A merchant");
+    const [made] = await terminal.store.merchants();
+
+    const code = await terminal.run("pays-to", made?.id ?? "", "0x1234");
+
+    expect(code).toBe(1);
+    expect((await terminal.store.merchantById(made?.id ?? ""))?.payoutWallet).toBeNull();
+  });
+
+  it("says there is no such merchant rather than writing a row for one", async () => {
+    const terminal = aTerminal();
+
+    const code = await terminal.run("pays-to", "mch_nobody", A_WALLET);
+
+    expect(code).toBe(1);
+    expect(terminal.text()).toContain("mch_nobody");
+  });
+
+  it("asks for a merchant and an address rather than guessing at either", async () => {
+    const terminal = aTerminal();
+    await terminal.run("add", "A merchant");
+    const [made] = await terminal.store.merchants();
+
+    expect(await terminal.run("pays-to")).toBe(2);
+    expect(await terminal.run("pays-to", made?.id ?? "")).toBe(2);
+    expect(terminal.text()).toContain("pays-to");
+  });
+});

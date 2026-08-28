@@ -20,6 +20,10 @@
  * should never have been listed is pulled, by somebody who can see what it
  * costs and pause the merchant's selling in the same sitting.
  *
+ * The address a merchant is paid at is the same shape of verb and has no such
+ * escape, for the reason written beside it: there is no caller for whom taking
+ * one away is the right act.
+ *
  * It is a tested module with the terminal handed to it rather than a script
  * that prints as it goes, for the reason the cabinet's account command is.
  *
@@ -32,7 +36,7 @@
  */
 
 import { ZodError } from "zod";
-import { issueKey, makeMerchant, setServiceName } from "./app/merchants.js";
+import { issueKey, makeMerchant, setPayoutWallet, setServiceName } from "./app/merchants.js";
 import type { Ids } from "./ports/clock.js";
 import type { Store, StoredKey, StoredMerchant } from "./ports/store.js";
 
@@ -44,6 +48,7 @@ const USAGE = [
   "  listed-as <merchant> <name>",
   "                             the name this seller is shown under in a",
   "                             discovery catalog, or --none to take it away",
+  "  pays-to <merchant> <0x…>   the address this merchant's sales are paid into",
   "  key <merchant> <label>     issue a key to a merchant and print it, once",
   "  keys <merchant>            that merchant's keys, working and revoked",
   "  disable <key>              stop one key working, touching no other",
@@ -87,6 +92,15 @@ export async function runMerchant(
     return named === ""
       ? needs(say, "listed-as", "a name", 'listed-as the_merchant "The pilot merchant"')
       : await setListingName(store, now, say, first, named === NO_NAME ? null : named);
+  }
+  if (verb === "pays-to") {
+    if (first === undefined) {
+      return needs(say, "pays-to", "a merchant", "pays-to the_merchant 0x…");
+    }
+    const address = rest.join(" ").trim();
+    return address === ""
+      ? needs(say, "pays-to", "an address", "pays-to the_merchant 0x…")
+      : await setPaidAt(store, now, say, first, address);
   }
   if (verb === "keys") {
     return first === undefined
@@ -171,6 +185,48 @@ async function setListingName(
       ? `${named.id} is listed under no name, so nothing about the seller goes out.`
       : `${named.id} is listed as "${named.serviceName}".`,
   );
+  return 0;
+}
+
+/**
+ * Where one merchant's sales are paid into, set from a terminal.
+ *
+ * There is no `--none` here and the omission is deliberate. Taking a listing
+ * name away is a thing somebody at a terminal has a reason to do — a name that
+ * should never have been listed is pulled, and the merchant's selling is paused
+ * in the same sitting. Taking an address away has no such use: the payment
+ * request for every card the merchant has published is written around it, so a
+ * merchant without one has products that answer an agent with nothing at all,
+ * and the act that actually stops their selling is the pause. What this verb is
+ * for is the merchant who cannot reach their own cabinet, and for them the
+ * useful act is setting an address rather than removing one.
+ */
+async function setPaidAt(
+  store: Store,
+  now: () => number,
+  say: (line: string) => void,
+  merchantId: string,
+  address: string,
+): Promise<number> {
+  let paid: StoredMerchant | null;
+  try {
+    paid = await setPayoutWallet(store, merchantId, address, now());
+  } catch (thrown) {
+    // The one wrong answer available is writing down an address that is not
+    // theirs, and nothing downstream would ever notice. What is printed is the
+    // rule and the address that broke it; nothing is written, so the merchant
+    // keeps whatever they were paid at before.
+    say(`That is not an address this merchant can be paid at: ${reasonOf(thrown)}`);
+    say("Nothing was written.");
+    return 1;
+  }
+
+  if (paid === null) {
+    say(`There is no merchant ${merchantId}, so there is nobody to pay.`);
+    return 1;
+  }
+
+  say(`${paid.id} is paid at ${paid.payoutWallet}.`);
   return 0;
 }
 

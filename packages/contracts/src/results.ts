@@ -153,9 +153,10 @@ export const PublishErrorSchema = z
      * "email", "type"]`. An empty path is a statement rather than a missing
      * value, and it covers two kinds of finding that a merchant tells apart by
      * the words rather than by the shape: one about the whole of what was
-     * sent, and one about the merchant sending it, such as their having set no
-     * name for buyers to read. Leaving the field out entirely would make an
-     * empty path indistinguishable from a path nobody filled in.
+     * sent, and one about the merchant sending it — their having set no name
+     * for buyers to read, or no wallet for their sales to be paid into.
+     * Leaving the field out entirely would make an empty path
+     * indistinguishable from a path nobody filled in.
      */
     path: z.array(z.string()),
 
@@ -167,7 +168,7 @@ export const PublishErrorSchema = z
   })
   .meta({
     description:
-      'One thing wrong with what was sent: where it is, a code for the program that reads it, and the same finding in words for the person who has to fix it. The path names the field, innermost last — ["params", "email", "type"] — and an empty path is a statement rather than a missing value: the finding is about the whole of what was sent, or about the sender — a merchant with no name set for buyers is refused with an empty path too — and not about any one field, which is also what a document that could not be read at all produces. The field is always present for that reason, because an absent path and an empty one would be indistinguishable. This is the shape of a card\'s findings when publishing is refused, and the same shape a refusal carries in its problems when a body, a query string or a set of purchase parameters did not fit.',
+      'One thing wrong with what was sent: where it is, a code for the program that reads it, and the same finding in words for the person who has to fix it. The path names the field, innermost last — ["params", "email", "type"] — and an empty path is a statement rather than a missing value: the finding is about the whole of what was sent, or about the sender — a merchant with no name set for buyers, or no wallet set for their sales to be paid into, is refused with an empty path too — and not about any one field, which is also what a document that could not be read at all produces. The field is always present for that reason, because an absent path and an empty one would be indistinguishable. This is the shape of a card\'s findings when publishing is refused, and the same shape a refusal carries in its problems when a body, a query string or a set of purchase parameters did not fit.',
   });
 
 /**
@@ -178,7 +179,8 @@ export const PublishErrorSchema = z
  * its own — it does not need to be spelled as an absence of errors.
  *
  * Not every finding is about the card. A merchant who has set no name for
- * buyers to read is refused here too, in the same list, so that one answer
+ * buyers to read is refused here too, and so is one who has set no wallet for
+ * their sales to be paid into — both in the same list, so that one answer
  * carries everything standing between this card and the catalog rather than
  * handing it over one round trip at a time.
  */
