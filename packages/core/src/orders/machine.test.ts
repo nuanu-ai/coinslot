@@ -1,33 +1,24 @@
 import { describe, expect, it } from "vitest";
 import { deadlines } from "./deadlines.js";
-import { must, newOrder, reach, T0, TEST_POLICY, TEST_PRICE, walk } from "./fixtures.js";
+import {
+  must,
+  newOrder,
+  reach,
+  sampleEvent,
+  T0,
+  TEST_POLICY,
+  TEST_PRICE,
+  walk,
+} from "./fixtures.js";
 import { transition } from "./machine.js";
 import type { Effect, Order, OrderEvent, OrderEventKind, OrderState, Price } from "./model.js";
 import { ORDER_EVENT_KINDS, ORDER_STATES, PAYMENT_STAGES } from "./model.js";
-import { moneyInvariantViolations } from "./money.js";
 import { ORDER_OUTCOMES, outcomeFor } from "./outcome.js";
 
 const MERCHANT_PRICE: Price = { amount: "6.50", currency: "USD", asOf: T0 + 1 };
 
 function kinds(effects: readonly Effect[]): readonly string[] {
   return effects.map((effect) => effect.kind);
-}
-
-function sampleEvent(kind: OrderEventKind): OrderEvent {
-  switch (kind) {
-    case "quote_answered":
-      return { kind, at: T0 + 1, available: true, price: MERCHANT_PRICE };
-    case "handler_refused":
-      return { kind, at: T0 + 1, code: "out_of_stock", message: "none left" };
-    case "refuse_called":
-      return { kind, at: T0 + 1, code: "cannot_fulfill", message: "supplier is silent" };
-    case "payment_verification_failed":
-      return { kind, at: T0 + 1, reason: "insufficient_funds" };
-    case "deadline_expired":
-      return { kind, at: T0 + 1_000_000, deadline: "sync_response" };
-    default:
-      return { kind, at: T0 + 1 };
-  }
 }
 
 /**
@@ -263,12 +254,13 @@ describe("the shape of the machine", () => {
 
         accepted += 1;
         // Whatever it did, what came back has to be an order: a real state, a
-        // real payment stage, an outcome the agent can be told, the money and
-        // the state in agreement, and the same order it was handed.
+        // real payment stage, an outcome the agent can be told, and the same
+        // order it was handed. Whether the money and the state agree is the
+        // same sweep in `money.test.ts`, which is where the rules that decide
+        // it live and where the controls proving they fire live with them.
         expect(ORDER_STATES, where).toContain(result.order.state);
         expect(PAYMENT_STAGES, where).toContain(result.order.payment);
         expect(ORDER_OUTCOMES, where).toContain(outcomeFor(result.order));
-        expect(moneyInvariantViolations(result.order), where).toStrictEqual([]);
         expect(result.order.id, where).toBe(before.id);
         expect(result.order.mode, where).toStrictEqual(before.mode);
       }
