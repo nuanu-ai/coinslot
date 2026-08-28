@@ -55,8 +55,24 @@
   --hairline: 1px;
 }
 
+/*
+ * The dark set, in the two places a reader can ask for it.
+ *
+ * There are three states rather than two. With nothing chosen the page follows
+ * the operating system, which is the first block; a reader who has chosen gets
+ * what they chose, which is the second, and the `:not()` above is what makes a
+ * choice of light survive a system that is dark.
+ *
+ * The values are written twice and that is the cost of doing it in plain CSS: a
+ * media query cannot be part of a selector, so the same block cannot serve both
+ * conditions. `light-dark()` would state each colour once and was not taken —
+ * a browser that does not know the function drops every declaration containing
+ * it, and the front door of the product would render with no colours at all
+ * rather than with the wrong ones. The pair below drifts apart the moment
+ * somebody edits one of them, which is the reason this paragraph is here.
+ */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: oklch(0.165 0.012 260);
     --surface: oklch(0.205 0.013 260);
     --raised: oklch(0.235 0.013 260);
@@ -69,6 +85,39 @@
     --warn: oklch(0.7 0.15 25);
     --on-accent: oklch(0.19 0.012 260);
   }
+}
+
+:root[data-theme="dark"] {
+  --bg: oklch(0.165 0.012 260);
+  --surface: oklch(0.205 0.013 260);
+  --raised: oklch(0.235 0.013 260);
+  --line: oklch(0.31 0.013 260);
+  --line-strong: oklch(0.52 0.013 260);
+  --fg: oklch(0.94 0.004 90);
+  --muted: oklch(0.67 0.011 260);
+  --accent: oklch(0.74 0.13 55);
+  --ok: oklch(0.72 0.12 155);
+  --warn: oklch(0.7 0.15 25);
+  --on-accent: oklch(0.19 0.012 260);
+}
+
+/*
+ * What the browser paints that this stylesheet does not: form controls, the
+ * scrollbar, the caret. Told rather than left to guess, or a light page keeps a
+ * dark scrollbar down its side.
+ */
+:root {
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
 }
 
 *,

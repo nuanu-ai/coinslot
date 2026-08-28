@@ -103,6 +103,50 @@
   min-height: 24px;
 }
 
+/* The only controls in the header that are not links: they change this page
+   rather than going to another. Three joined segments, because the choice in
+   force has to be visible — a single button would have to be labelled either
+   with the state or with the action, and one word in a bar is read as both.
+
+   The font is named because a button takes neither face nor size from the page
+   on its own: left out, these arrive in the browser's own type, a head taller
+   than the words beside them. */
+.theme {
+  display: inline-flex;
+  border: var(--hairline) solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.theme button {
+  min-height: 24px;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  border-left: var(--hairline) solid var(--line);
+  cursor: pointer;
+}
+
+.theme button:first-child {
+  border-left: 0;
+}
+
+.theme button:hover {
+  color: var(--fg);
+}
+
+/* The one in force. Colour alone would carry it for most people and not for
+   everyone, so it also carries weight — and the button says so in aria-pressed,
+   which is what reaches a reader who gets neither. */
+.theme button[aria-pressed="true"] {
+  color: var(--fg);
+  font-weight: 500;
+  background: var(--raised);
+}
+
 /* Buttons here are links: every one of them goes to a page, and none of them
    submits anything. */
 

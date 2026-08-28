@@ -127,7 +127,11 @@ operator.
   consumer is broken?" A test with no answer to that question is theater and
   is deleted.
 - Anti-theater: a test checks behavior, not implementation; a mock inside an
-  assert is a defect (we do not test mocks); negative cases are mandatory —
+  assert is a defect (we do not test mocks); a test does not pin prose,
+  variable names or the presence of stubs. A test whose subject is the test
+  machinery itself — a matcher, a helper, a fixture loader — is green that is
+  enclosed in itself and says nothing about the product; it is deleted
+  together with the machinery it guards. Negative cases are mandatory —
   every required field of a schema has a test for its absence with an
   intelligible error; the mutation self-check confirms that the tests die
   together with the behavior, distinguishing "mutation killed", "survived" and
@@ -135,7 +139,9 @@ operator.
 - Examples from the documentation are test fixtures: the portal's JSON
   examples (a card, a hook response) must pass the contracts schemas, and the
   portal's tables ("time ran out", "how an order can end") must be test cases
-  of the state machine. Documentation and code cannot drift apart silently.
+  of the state machine. One file, two readers: the page renders the very file
+  the test runs — likeness between two copies is not a check. Documentation
+  and code cannot drift apart silently.
 - Delete first. Until the first external merchant, backward compatibility is
   not a value: a refactor removes the old shape in the same change rather than
   keeping it beside the new one — no deprecated aliases, no migration shims,

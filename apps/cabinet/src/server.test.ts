@@ -848,31 +848,53 @@ describe("getting into the cabinet", () => {
     expect((await browser.get("/cabinet/")).to).toBe("/cabinet/sign-in");
   });
 
-  it("serves one stylesheet whose two themes define the same tokens", async () => {
-    // ADR-0005 §6: one visual language in tokens rather than repeated per page.
+  it("serves one stylesheet whose three theme states define the same tokens", async () => {
+    // One visual language in tokens rather than repeated per page (the web
+    // surface decision).
     //
     // The property that matters is not that a dark block exists — an empty one
     // would satisfy that — but that no colour is defined *only* inside it. A
-    // token declared in the media query and nowhere else is a colour that has
-    // no value at all in the light theme, and the page renders with whatever
-    // the browser falls back to. So the two blocks are read out and compared.
+    // token declared in the media query and nowhere else is a colour with no
+    // value at all in the light theme, and the page renders with whatever the
+    // browser falls back to.
+    //
+    // There are three states rather than two since the landing grew a switch:
+    // nothing chosen follows the operating system, and a choice overrides it.
+    // That means the dark values are written out twice, because a media query
+    // cannot be part of a selector and one block cannot serve both conditions.
+    // Twice is where drift lives, so the two are compared by value and not
+    // merely by which tokens they name — a dark background that got a nudge in
+    // one of them and not the other is exactly the edit nobody would notice.
     const { browser } = await started();
 
     const sheet = await browser.get("/coinslot.css");
-    const dark = /@media \(prefers-color-scheme: dark\)\s*\{\s*:root\s*\{([^}]*)\}/.exec(
-      sheet.html,
-    );
+    const followingTheSystem =
+      /@media \(prefers-color-scheme: dark\)\s*\{\s*:root:not\(\[data-theme="light"\]\)\s*\{([^}]*)\}/.exec(
+        sheet.html,
+      );
+    const chosen = /:root\[data-theme="dark"\]\s*\{([^}]*)\}/.exec(sheet.html);
     const light = /:root\s*\{([^}]*)\}/.exec(sheet.html);
+
     const tokensIn = (block: string | undefined): string[] =>
       [...(block ?? "").matchAll(/(--[a-z-]+)\s*:/g)].map((found) => found[1] ?? "").sort();
+    /** The declarations of a block, as text a comparison can be made on. */
+    const declarationsIn = (block: string | undefined): string[] =>
+      (block ?? "")
+        .split(";")
+        .map((one) => one.replaceAll(/\s+/g, " ").trim())
+        .filter((one) => one.startsWith("--"))
+        .sort();
 
     expect(sheet.headers.get("content-type")).toContain("text/css");
-    expect(dark?.[1], "no dark block").toBeTruthy();
+    expect(followingTheSystem?.[1], "no dark block for a system that asks for one").toBeTruthy();
+    expect(chosen?.[1], "no dark block for a reader who chose it").toBeTruthy();
 
-    const painted = tokensIn(dark?.[1]);
+    const painted = tokensIn(followingTheSystem?.[1]);
     expect(painted.length).toBeGreaterThan(5);
     // Every token the dark theme paints is painted by the light theme too.
     expect(tokensIn(light?.[1])).toEqual(expect.arrayContaining(painted));
+    // And the two ways of asking for dark paint it identically.
+    expect(declarationsIn(chosen?.[1])).toStrictEqual(declarationsIn(followingTheSystem?.[1]));
   });
 
   it("answers a health probe at the root and under the path it is mounted at", async () => {
