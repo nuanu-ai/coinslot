@@ -1,4 +1,5 @@
 import type { AddressInfo } from "node:net";
+import { gzipSync } from "node:zlib";
 import type { Card, MerchantCardList, Receipt } from "@coinslot/contracts";
 import { API_ROUTES, mountableRoutes } from "@coinslot/contracts";
 import { decodePaymentRequiredHeader, encodePaymentSignatureHeader } from "@x402/core/http";
@@ -858,56 +859,115 @@ describe("the worker's calls over HTTP", () => {
     expect(error.message).toContain("256kb");
   });
 
-  it("says an encoding was refused rather than that the body could not be read", async () => {
-    // The promise: an error text is a claim somebody else's agent acts on, and
-    // "could not be read as JSON" is a false claim here. The body was never
-    // read at all — its content-encoding was turned away before a byte of it
-    // was decompressed, and the document inside may be perfectly good JSON. An
-    // agent told its JSON is bad re-encodes a document that was already right
-    // and sends it again under the same encoding, and gets the same answer
-    // every time.
+  it("tells the four ways a body is turned away apart, and says the true one about each", async () => {
+    // The promise: an error is a claim somebody else's agent acts on, and by
+    // the time these leave the parser they are one throw with a word on it.
+    // The fork in front of them is the only place they are still four things,
+    // so each one answered in another one's words sends that agent to repair
+    // something that was never broken — and, in two of the four cases here, to
+    // do it forever, because the answer will not change however many times it
+    // tries.
     //
-    // All three refusals the parser raises are read here, in one gateway,
-    // because they arrive as one throw and this fork is the only place they
-    // are still distinguishable. A fork widened until it swallows its
-    // neighbours is the same defect pointing the other way, and a test that
-    // only looked at the new branch would not see it.
+    // The four are read against one gateway. A test that watched only the
+    // branch it was written for would miss a fork widened until it swallows
+    // its neighbours, which is the same defect pointing the other way.
+    //
+    // What this does not cover: an unsupported charset, which the parser also
+    // raises with a word of its own and which this fork still answers as
+    // malformed JSON. That is a fifth row and a separate repair.
     const { served } = await started();
 
-    // `compress` is a content coding the HTTP specification registers and this
-    // parser has no decompressor for. Gzip, deflate and brotli it does inflate,
-    // so a body under any of those never reaches this branch at all.
-    const refusedEncoding = await served.call("POST", "/v0/quotes/prc_1/answer", {
-      body: { available: true },
-      headers: { ...asMerchant, "content-encoding": "compress" },
+    // A body that really was gzip and arrived cut in half — a dropped upload,
+    // the ordinary accident. Valid gzip up to the byte it stops at, which is
+    // what makes it the caller's mishap rather than a lie about the header.
+    const wholeGzip = gzipSync(JSON.stringify({ available: true }));
+    const halfGzip = wholeGzip.subarray(0, Math.floor(wholeGzip.length / 2));
+
+    const refusedFor = async (headers: Record<string, string>, body: string | Uint8Array) => {
+      const answered = await fetch(`${served.url}/v0/quotes/prc_1/answer`, {
+        method: "POST",
+        headers: { ...asMerchant, "content-type": "application/json", ...headers },
+        body,
+      });
+      const { error } = (await answered.json()) as {
+        error: { code: string; message: string };
+      };
+      return { status: answered.status, ...error };
+    };
+
+    // Nothing among the four is a failure of ours, so none of them may be
+    // written to the log as one. An operator who greps for that line and finds
+    // somebody else's broken upload goes looking for a defect in this process.
+    const complaints: string[] = [];
+    const realError = console.error;
+    console.error = (...args: unknown[]) => {
+      complaints.push(String(args[0]));
+    };
+
+    let notJson: Awaited<ReturnType<typeof refusedFor>>;
+    let tooLarge: typeof notJson;
+    let encodingRefused: typeof notJson;
+    let encodingBroken: typeof notJson;
+    let goodGzipBadJson: typeof notJson;
+    try {
+      notJson = await refusedFor({}, "{ this is not json");
+      tooLarge = await refusedFor({}, JSON.stringify({ note: "x".repeat(300_000) }));
+      // `compress` is a content coding the HTTP specification registers and
+      // this parser has no decompressor for. Gzip, deflate and brotli it does
+      // inflate, so a body under any of those never reaches that branch.
+      encodingRefused = await refusedFor({ "content-encoding": "compress" }, "{}");
+      encodingBroken = await refusedFor({ "content-encoding": "gzip" }, halfGzip);
+      // The negative control for the branch above it. This body declares the
+      // very same header and decompresses perfectly; what is wrong is the JSON
+      // inside it. A fork that read the header instead of the failure would
+      // call this undecodable and be wrong about a document it had in its hand.
+      goodGzipBadJson = await refusedFor(
+        { "content-encoding": "gzip" },
+        gzipSync("{ this is not json"),
+      );
+    } finally {
+      console.error = realError;
+    }
+
+    expect({ status: notJson.status, code: notJson.code }).toEqual({
+      status: 400,
+      code: "malformed_body",
     });
-    const badJson = await fetch(`${served.url}/v0/quotes/prc_1/answer`, {
-      method: "POST",
-      headers: { ...asMerchant, "content-type": "application/json" },
-      body: "{ this is not json",
+    expect({ status: tooLarge.status, code: tooLarge.code }).toEqual({
+      status: 413,
+      code: "body_too_large",
     });
-    const tooLarge = await served.call("POST", "/v0/quotes/prc_1/answer", {
-      body: { available: true, note: "x".repeat(300_000) },
-      headers: asMerchant,
+    expect({ status: goodGzipBadJson.status, code: goodGzipBadJson.code }).toEqual({
+      status: 400,
+      code: "malformed_body",
     });
 
-    expect(refusedEncoding.status).toBe(415);
-    const { error } = refusedEncoding.body as { error: { code: string; message: string } };
-    expect(error.code).toBe("encoding_unsupported");
+    expect({ status: encodingRefused.status, code: encodingRefused.code }).toEqual({
+      status: 415,
+      code: "encoding_unsupported",
+    });
     // The subject, because an agent not told what was refused has only the body
     // left to suspect and the body was fine; and the way out, because sending
     // it uncompressed is the one thing that always works and the caller should
     // not have to find that by trying encodings against a live gateway.
-    expect(error.message).toContain("content-encoding");
-    expect(error.message).toContain("uncompressed");
-    expect(error.message).not.toContain("could not be read as JSON");
+    expect(encodingRefused.message).toContain("content-encoding");
+    expect(encodingRefused.message).toContain("uncompressed");
+    expect(encodingRefused.message).not.toContain("could not be read as JSON");
 
-    expect(badJson.status).toBe(400);
-    expect((await badJson.json()) as { error: { code: string } }).toMatchObject({
-      error: { code: "malformed_body" },
+    expect({ status: encodingBroken.status, code: encodingBroken.code }).toEqual({
+      status: 400,
+      code: "body_undecodable",
     });
-    expect(tooLarge.status).toBe(413);
-    expect((tooLarge.body as { error: { code: string } }).error.code).toBe("body_too_large");
+    // Again the header, since that and the bytes are the two candidates and we
+    // hold neither: what is known is that they disagree. "Nothing was decided"
+    // under a 5xx was the old answer and the worst of the four, because a 5xx
+    // is the one answer an agent is right to retry, and the retry carries the
+    // same broken bytes.
+    expect(encodingBroken.message).toContain("content-encoding");
+    expect(encodingBroken.message).not.toContain("nothing was decided");
+    expect(complaints.filter((line) => line.includes("failed before it reached a route"))).toEqual(
+      [],
+    );
   });
 
   it("answers a call about an order nobody made with a plain not found", async () => {
