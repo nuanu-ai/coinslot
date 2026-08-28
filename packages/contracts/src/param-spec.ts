@@ -84,11 +84,39 @@ export const FieldSpecSchema = z.strictObject({
 export const PROTOTYPE_KEY_IS_DROPPED = "__proto__";
 
 /** A whole declaration: the parameters of a purchase, or a delivery result. */
-export const ParamSpecSchema = z.record(ParamNameSchema, FieldSpecSchema);
+export const ParamSpecSchema = z.record(ParamNameSchema, FieldSpecSchema, {
+  // What a value that is not a declaration at all is told. The default —
+  // "expected record, received string" — names a word from the schema library
+  // rather than from the card, and it lands on the one mistake the short form
+  // invites: a merchant who has learned that `access_url: 'string'` declares a
+  // field writes `result: 'string'` and has declared nothing. The sentence
+  // shows the shape they meant.
+  //
+  // Only where something was written. A declaration that is simply absent is a
+  // different finding — a required field nobody filled in — and returning
+  // nothing here leaves zod's own words for it, which say exactly that.
+  error: (issue) =>
+    issue.input === undefined
+      ? undefined
+      : "a declaration names each field and gives its type, as in { access_url: 'string' }; a type word on its own declares one field and not the whole of it",
+});
 
 export type ParamType = z.infer<typeof ParamTypeSchema>;
 export type FieldSpec = z.infer<typeof FieldSpecSchema>;
 export type ParamSpec = z.infer<typeof ParamSpecSchema>;
+
+/**
+ * One declared field as a merchant may write it on a card: the whole spec, or
+ * the type word alone.
+ *
+ * The short form belongs to the card and is opened out where a card is parsed,
+ * so this type says what may be written and never what is stored or read back.
+ * The rule and the reasons are in `card.ts`, beside the other two short forms.
+ */
+export type FieldSpecInput = FieldSpec | ParamType;
+
+/** A whole declaration as a merchant may write it, field by field. */
+export type ParamSpecInput = Record<string, FieldSpecInput>;
 
 const checkFor = (type: ParamType, direction: ParamSpecDirection): z.ZodType => {
   switch (type) {

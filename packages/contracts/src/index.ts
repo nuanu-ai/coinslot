@@ -140,6 +140,7 @@ export {
 export type {
   BazaarDeclaration,
   Card,
+  CardInput,
   Fulfillment,
   MerchantCard,
   PriceCheck,
@@ -201,7 +202,14 @@ export type { Order } from "./order.js";
 export { OrderSchema } from "./order.js";
 export type { OrderStatus } from "./order-status.js";
 export { ORDER_STATUSES, OrderStatusSchema } from "./order-status.js";
-export type { FieldSpec, ParamSpec, ParamSpecDirection, ParamType } from "./param-spec.js";
+export type {
+  FieldSpec,
+  FieldSpecInput,
+  ParamSpec,
+  ParamSpecDirection,
+  ParamSpecInput,
+  ParamType,
+} from "./param-spec.js";
 export {
   FieldSpecSchema,
   ParamNameSchema,

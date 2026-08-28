@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { CardInput } from "./card.js";
 import {
   bazaarDeclarationOf,
   CardSchema,
@@ -154,14 +155,11 @@ describe("card", () => {
     expect(CardSchema.safeParse({ ...withoutParams, params: {} }).success).toBe(true);
   });
 
-  for (const field of [
-    "merchant_item_id",
-    "title",
-    "description",
-    "price",
-    "result",
-    "fulfillment",
-  ]) {
+  // Every field a card cannot go without. `fulfillment` is not one of them and
+  // once was: a card that names no mode is synchronous, and the word is filled
+  // in as the card is parsed rather than left for readers downstream to guess
+  // at. What holds that is "a card written short" at the foot of this file.
+  for (const field of ["merchant_item_id", "title", "description", "price", "result"]) {
     it(`refuses a card without ${field} and names it`, () => {
       expectMissingFieldRejected(CardSchema, syncCard, field);
     });
@@ -850,5 +848,258 @@ describe("the description a listing carries", () => {
 
   it("says the ceiling in the document, for the reader who has only that", () => {
     expect(toJsonSchemas().card.properties?.description).toMatchObject({ maxLength: 500 });
+  });
+});
+
+describe("a card written short", () => {
+  // The promise, and it is a product promise before it is a schema one. A
+  // merchant selling one thing has three facts to give us — what they sell, at
+  // what price, what the buyer receives — and everything else on a card is
+  // either optional already or has one sensible answer. The short forms let
+  // them write only the three. What they may not do is shrink the promises:
+  // every short form opens out into the canonical card at the door, and
+  // storage, the public card, the delivery check and the discovery declaration
+  // never see anything else.
+  //
+  // If these fail, either a merchant who wrote the short form is refused a card
+  // our own documentation shows them, or — worse — a short card and a long card
+  // that say the same thing become two different cards downstream.
+
+  /** The least a card can carry: what is sold, at what price, what arrives. */
+  const shortCard = {
+    merchant_item_id: "access-monthly",
+    title: "Доступ к сервису на один месяц",
+    description: "Доступ на 30 дней с момента выдачи, продление не входит.",
+    price: "5.00 USD",
+    result: { access_url: "string" },
+  };
+
+  /** The same card with nothing left out, written the long way. */
+  const longCard = {
+    merchant_item_id: "access-monthly",
+    title: "Доступ к сервису на один месяц",
+    description: "Доступ на 30 дней с момента выдачи, продление не входит.",
+    price: { amount: "5.00", currency: "USD" },
+    result: { access_url: { type: "string" } },
+    fulfillment: "sync",
+  };
+
+  const issued = { id: "itm_9f2c4a", as_of: "2026-08-26T10:00:00Z" };
+
+  it("becomes exactly the card its long form produces", () => {
+    // The whole mechanism in one assertion. Two spellings, one card: anything
+    // downstream that told them apart would be a place where a merchant's
+    // choice of spelling changed what they sold.
+    expect(CardSchema.parse(shortCard)).toStrictEqual(CardSchema.parse(longCard));
+  });
+
+  it("reaches an agent as the same public card its long form does", () => {
+    expect(publicCardOf(CardSchema.parse(shortCard), issued)).toStrictEqual(
+      publicCardOf(CardSchema.parse(longCard), issued),
+    );
+    // Down to the bytes, because a catalog is read as text by whoever is about
+    // to spend money on it.
+    expect(JSON.stringify(publicCardOf(CardSchema.parse(shortCard), issued))).toBe(
+      JSON.stringify(publicCardOf(CardSchema.parse(longCard), issued)),
+    );
+  });
+
+  it("reaches a discovery catalog as the same declaration its long form does", () => {
+    const listed = { url: "https://api.example.com/x402/itm_9f2c4a", serviceName: null };
+
+    expect(bazaarDeclarationOf(CardSchema.parse(shortCard), listed)).toStrictEqual(
+      bazaarDeclarationOf(CardSchema.parse(longCard), listed),
+    );
+  });
+
+  it("delivers against the same promise its long form declares", () => {
+    const check = deliveryCheckFor(CardSchema.parse(shortCard));
+
+    expect(check.safeParse({ access_url: "https://example.com/a" }).success).toBe(true);
+    expect(check.safeParse({}).success).toBe(false);
+    expect(check.safeParse({ access_url: "" }).success).toBe(false);
+  });
+
+  it("takes a card whose mode is not the silent one, still written short", () => {
+    // The default is a default and not a rule: a merchant who sells
+    // asynchronously says so, and the other short forms still hold.
+    const parsed = CardSchema.parse({
+      ...shortCard,
+      fulfillment: "async",
+      fulfill_deadline_seconds: 900,
+    });
+
+    expect(parsed.fulfillment).toBe("async");
+    expect(parsed.price).toStrictEqual({ amount: "5.00", currency: "USD" });
+  });
+
+  it("lets one card mix the short form and the long one, field by field", () => {
+    // The short forms belong to fields rather than to cards, so a merchant puts
+    // a title on one delivered field without rewriting the rest of the card.
+    const parsed = CardSchema.parse({
+      ...shortCard,
+      params: { email: { type: "string", required: true, title: "Куда прислать доступ" } },
+      result: { access_url: "string", expires_at: { type: "string", title: "До какого момента" } },
+    });
+
+    expect(parsed.params).toStrictEqual({
+      email: { type: "string", required: true, title: "Куда прислать доступ" },
+    });
+    expect(parsed.result).toStrictEqual({
+      access_url: { type: "string" },
+      expires_at: { type: "string", title: "До какого момента" },
+    });
+  });
+
+  it("takes every type the long form takes, and nothing besides", () => {
+    // The short form is the same vocabulary written differently, so it can
+    // neither invent a type the compiler has no check for nor lose one the long
+    // form allows.
+    for (const type of ["string", "number", "integer", "boolean"]) {
+      expect(
+        CardSchema.parse({ ...shortCard, result: { field: type } }).result,
+        type,
+      ).toStrictEqual({ field: { type } });
+    }
+  });
+
+  it("takes back a card it has already opened out", () => {
+    // A merchant reads a card back from us and publishes it again — from a
+    // script that keeps a catalog in step, or after editing one field of it.
+    // What comes back is the canonical form, so the canonical form has to be
+    // among the things a merchant may write, and writing it a second time has
+    // to leave it exactly where it was. The annotation below is half the
+    // assertion and it is made by the compiler: `CardInput` is spelled out by
+    // hand, and this is what stops it drifting away from the card it describes.
+    const once = CardSchema.parse(shortCard);
+    const republished: CardInput = once;
+
+    expect(CardSchema.parse(republished)).toStrictEqual(once);
+  });
+
+  it("fills the mode in rather than leaving it absent", () => {
+    // A stored card, a public card and a discovery declaration all read this
+    // field. Left absent it would be a card whose mode every reader downstream
+    // has to guess at, and the guess would be made in three places.
+    expect(CardSchema.parse(shortCard).fulfillment).toBe("sync");
+  });
+
+  it("says in its own document that the mode has a default", () => {
+    // For the reader holding the exported document and no TypeScript: a card
+    // generated from it may leave the field out and is still accepted.
+    expect(toJsonSchemas().card.properties?.fulfillment).toMatchObject({ default: "sync" });
+  });
+
+  describe("what it refuses, and in what words", () => {
+    const complaint = (card: Record<string, unknown>): string =>
+      errorOf(CardSchema, { ...shortCard, ...card });
+
+    it("refuses a price whose currency is not a currency code", () => {
+      const message = complaint({ price: "5 dollars" });
+
+      expect(message).toContain("currency");
+      expect(message).toContain("USD");
+    });
+
+    it("refuses a price that names no currency at all", () => {
+      const message = complaint({ price: "5.00" });
+
+      expect(message).toContain("price");
+      expect(message).toContain("5.00 USD");
+    });
+
+    it("refuses a price with space around it rather than reading past the space", () => {
+      // Trimming or collapsing here would make `" 5.00 USD"`, `"5.00  USD"` and
+      // `"5.00 USD"` three spellings of one price, and a merchant comparing
+      // what they typed against what came back would find them identical. Each
+      // of these is told what a price looks like instead.
+      for (const price of [" 5.00 USD", "5.00 USD ", "5.00  USD", "5.00\tUSD"]) {
+        expect(complaint({ price }), JSON.stringify(price)).toContain("5.00 USD");
+      }
+    });
+
+    it("refuses a type word the compiler has no check for, and names the field", () => {
+      const message = complaint({ result: { x: "strin" } });
+
+      expect(message).toContain("x");
+      expect(message).toContain("string");
+      expect(message).toContain("integer");
+    });
+
+    it("refuses a bare type word where the whole declaration belongs", () => {
+      // The mistake the short form invites: `result: 'string'` reads like a
+      // card that delivers a string, and it names no field at all.
+      const message = complaint({ result: "string" });
+
+      expect(message).toContain("result");
+      expect(message).toContain("access_url");
+    });
+
+    it("tells a declaration nobody wrote from one written wrongly", () => {
+      // Two mistakes with two different fixes: one merchant has to add a field
+      // they left out, the other has to write differently the one they have.
+      // Told in the same words, the first goes looking for a shape problem in
+      // something that is not there at all.
+      const { result, ...withoutResult } = longCard;
+
+      expect(result).toBeDefined();
+
+      const missing = errorOf(CardSchema, withoutResult);
+
+      expect(missing).not.toBe(complaint({ result: "string" }));
+      expect(missing).not.toContain("access_url");
+    });
+
+    it("still says which field is missing when the declaration is not there", () => {
+      expectMissingFieldRejected(CardSchema, longCard, "result");
+      expectMissingFieldRejected(CardSchema, longCard, "price");
+    });
+  });
+
+  describe("the long form is untouched by any of this", () => {
+    it("still refuses a price that is neither of the two forms", () => {
+      expect(CardSchema.safeParse({ ...longCard, price: 5 }).success).toBe(false);
+      expect(
+        CardSchema.safeParse({ ...longCard, price: { amount: 5, currency: "USD" } }).success,
+      ).toBe(false);
+    });
+
+    it("still names the offending half of a two-field price", () => {
+      expect(
+        errorOf(CardSchema, { ...longCard, price: { amount: "x", currency: "USD" } }),
+      ).toContain("amount");
+      expect(
+        errorOf(CardSchema, { ...longCard, price: { amount: "5.00", currency: "usd" } }),
+      ).toContain("currency");
+    });
+
+    it("still refuses a key the field spec does not know", () => {
+      expect(
+        errorOf(CardSchema, { ...longCard, result: { x: { type: "string", pattern: "^a" } } }),
+      ).toContain("pattern");
+    });
+
+    it("still refuses a result that promises nothing", () => {
+      expect(CardSchema.safeParse({ ...longCard, result: {} }).success).toBe(false);
+      expect(
+        CardSchema.safeParse({ ...longCard, result: { x: { type: "string", required: false } } })
+          .success,
+      ).toBe(false);
+    });
+
+    it("still drops the one name it cannot refuse, in the short form too", () => {
+      // `__proto__` is removed by zod before any check of ours runs, and
+      // opening the short forms out must not become the place where it starts
+      // being kept: a declaration rebuilt field by field could carry it
+      // through, or set a prototype with it.
+      const parsed = CardSchema.parse(
+        JSON.parse(
+          '{"merchant_item_id":"a","title":"t","description":"d","price":"5.00 USD","result":{"access_url":"string","__proto__":"string"}}',
+        ),
+      );
+
+      expect(Object.keys(parsed.result)).toStrictEqual(["access_url"]);
+      expect(Object.getPrototypeOf(parsed.result)).toBe(Object.prototype);
+    });
   });
 });

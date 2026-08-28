@@ -17,8 +17,9 @@ back what it expected.
 
 ::: warning The field names are preliminary
 What is fixed is the model and not the signatures. Of the machine names `id`,
-`merchant_item_id` and `as_of` are final; the other names in this reference are
-working names and can still change before the pilot.
+`merchant_item_id` and `as_of` are final; the package name, the function names
+and the rest of the names in this reference are working names and can still
+change before the pilot.
 :::
 
 ## Fields
@@ -29,12 +30,12 @@ working names and can still change before the pilot.
 | `merchant_item_id` | string | required | `access-monthly` |
 | `title` | string | required | `One month of access to the service` |
 | `description` | string, up to 500 characters | required | `Access for 30 days from delivery, renewal not included` |
-| `price` | an amount as a string, and a currency | required | `{ amount: '5.00', currency: 'USD' }` |
+| `price` | an amount as a string, and a currency; or the two as one string | required | `{ amount: '5.00', currency: 'USD' }`, or `'5.00 USD'` |
 | `price_check` | what to ask the price and availability with: a handler, or an address we do not call yet | optional | `'handler'` |
 | `params` | the shape of the purchase parameters | required where the delivery needs input | `{ email: { type: 'string', required: true } }` |
-| `result` | the shape of what the agent receives on delivery | required | `{ access_url: { type: 'string' } }` |
+| `result` | the shape of what the agent receives on delivery | required | `{ access_url: { type: 'string' } }`, or `{ access_url: 'string' }` |
 | `tags` | words that describe this product in a catalogue: at most five, each 1 to 32 characters of plain typewriter text — unaccented letters, digits, spaces and the punctuation on a keyboard, so a curly quote or a long dash is refused — with no space at either end and no two the same but for their case. A card with no tags leaves the field out rather than sending an empty list | optional | `['esim', 'telecom']` |
-| `fulfillment` | `'sync'` or `'async'`; `'confirm'` is not published during the pilot | required | `'sync'` |
+| `fulfillment` | `'sync'` or `'async'`; `'confirm'` is not published during the pilot | optional; a card that names no mode is `'sync'` | `'sync'` |
 | `fulfill_deadline_seconds` | how long you may take to deliver | optional, and only on an asynchronous card | `86400` |
 
 An asynchronous card can carry one deadline of your own: how long you may take
@@ -59,11 +60,32 @@ confirmation mode has a deadline of its own — an hour, where the card names no
 
 ### A whole card
 
-The fields above, assembled into the one document they make: this is what
-publishing a card sends, and every field in it is described somewhere on this
-page.
+The required fields above, assembled into the one document they make. This is
+what publishing a card sends; the optional fields are added to it as the product
+needs them, and each one is described further down this page.
 
 <<< @/examples/card/access-monthly.json
+
+### The same card, written short
+
+Three of those fields take a shorter spelling, and a card that needs none of the
+options can be written with all three. The price goes as one string, the amount
+and the currency code with a single space between them. A declared field that
+carries no title and no `required` mark goes as its type word alone. A card that
+names no fulfillment mode is synchronous.
+
+<<< @/examples/card/access-monthly-short.json
+
+That is the same card as the one above, and it is the same card after we accept
+it: the short spellings are opened out when the card arrives, so what we store,
+what an agent reads in a catalogue and what your delivery is held to are the
+long form either way. Reading a card back gives you the long form, whichever way
+you wrote it.
+
+The shorter spellings belong to fields rather than to cards, so one card mixes
+them. Put a title on the field that needs one and leave its neighbours as type
+words; write the price short and the purchase parameters in full. There is no
+mode to switch on, and nothing about the card changes when you do.
 
 ### Two identifiers
 
@@ -191,6 +213,10 @@ The value of `fulfillment` declares the mode, and the agent sees it before it
 pays. With `'sync'` the goods leave in the answer to the purchase; with
 `'async'` they leave later. The mode decides when the buyer is charged and how
 the sale behaves when something fails.
+
+A card that names no mode is synchronous, and it is stored and shown as though
+it had said so. Leave the field out where the goods go back in the answer to the
+purchase; name it where they do not.
 
 A third mode, `'confirm'`, puts your confirmation before the delivery: you are
 asked whether you will deliver, and the buyer is charged after your yes. A card

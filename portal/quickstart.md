@@ -85,20 +85,26 @@ const published = await coinslot.catalog.publish({
   title: 'One month of access to the service',
   description:
     'What the buyer gets, what it is good for, and what is not included.',
-  price: { amount: '5.00', currency: 'USD' },
+  price: '5.00 USD',
   params: {
     email: { type: 'string', required: true, title: 'Where to send it' },
   },
-  result: {
-    access_url: { type: 'string', title: 'The link to sign in with' },
-  },
-  fulfillment: 'sync',
+  result: { access_url: 'string' },
 })
 
 if ('errors' in published) {
   console.error(published.errors)
 }
 ```
+
+Two fields there are written short and one is missing, and all three are
+deliberate. A price goes as one string, the amount and the currency code with a
+space between them, or as the two fields written out. A declared field that
+needs no title and no `required` mark goes as its type word — `email` above
+needs both, so it is written out. And a card that names no fulfillment mode is
+synchronous, which is what this one is. The long spelling of every one of them
+is in the [card reference](/cards), and what you write is opened out into it
+when the card arrives.
 
 An invalid card raises no exception. In place of `ok` the call answers with
 `errors`: a list of the fields at fault, each with an explanation of what is
@@ -134,14 +140,15 @@ has confirmed. You will answer that question in code on the next step; the
 fields of the question and of the answer are in the [card reference](/cards),
 and what silence leads to is on [What can go wrong](/failures).
 
-The field `fulfillment` declares the mode. With `'sync'` the goods go to the
-agent in the answer to the purchase; with `'async'` they go later. There is a
-third mode, `'confirm'`, where you say first that you will deliver and the
-buyer is charged only after that — a card cannot be published in it during the
-pilot, because the request that asks you has no shape on the wire yet and your
-handler could not tell one from a paid order. The product decides which mode it
-takes, and the channel only narrows the choice: an API delivers both
-synchronously and asynchronously — issuing an eSIM, for one, is paid for at
+The field `fulfillment` declares the mode, and a card that leaves it out is
+synchronous. With `'sync'` the goods go to the agent in the answer to the
+purchase; with `'async'` they go later, and a card that sells that way names the
+mode. There is a third mode, `'confirm'`, where you say first that you will
+deliver and the buyer is charged only after that — a card cannot be published in
+it during the pilot, because the request that asks you has no shape on the wire
+yet and your handler could not tell one from a paid order. The product decides
+which mode it takes, and the channel only narrows the choice: an API delivers
+both synchronously and asynchronously — issuing an eSIM, for one, is paid for at
 once while the profile arrives later — and an order that arrived as a message
 is never synchronous.
 

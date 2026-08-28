@@ -26,8 +26,9 @@
  */
 
 import { z } from "zod";
-import type { ParamSpec, ParamType } from "./param-spec.js";
+import type { ParamSpec, ParamSpecInput, ParamType } from "./param-spec.js";
 import { ParamSpecSchema, paramSpecToValidator } from "./param-spec.js";
+import type { Money } from "./primitives.js";
 import { IdentifierSchema, MoneySchema, TimestampSchema } from "./primitives.js";
 import { SellingStateSchema } from "./selling.js";
 
@@ -231,6 +232,126 @@ const DeclaredResultSchema = ParamSpecSchema.refine(
   minProperties: 1,
 });
 
+/**
+ * The short forms a card may be written in, and the one form they all become.
+ *
+ * A merchant selling one thing has three facts to give us: what they sell, at
+ * what price, and what the buyer receives. Everything else a card can carry is
+ * either optional already or has one answer that fits almost every product. The
+ * three forms below let such a merchant write only the three facts, and they
+ * exist for the publish call and for nothing else.
+ *
+ * What keeps them from becoming a second contract is that they open out into
+ * the canonical card while it is parsed. What is stored, what an agent reads in
+ * a catalog, what a delivery is held to and what a discovery catalog is told
+ * are all built from the one shape they were always built from — the
+ * projections further down this file never see a short form and need no case
+ * for one. The mechanism does not fork; only the writing does, in the writer's
+ * favour.
+ *
+ * They are private to this file on purpose. A card is the only document written
+ * by a person rather than by a running program, so a short spelling buys
+ * nothing anywhere else and would put a second form on the wire if it were
+ * offered there. The price of a quote answer and the price on an order stay as
+ * they are.
+ *
+ * Two properties are worth stating, because a reader would otherwise have to
+ * test for them.
+ *
+ * The short forms belong to fields rather than to cards. A card may write its
+ * price short and its purchase parameters long, or put a title on one delivered
+ * field and leave its neighbours as bare type words. There is no short mode to
+ * turn on, so adding one option to one field does not mean rewriting the rest.
+ *
+ * And a short form neither widens nor narrows what a card may say. The set of
+ * types a field may declare is `ParamTypeSchema`'s and is read from there: the
+ * expansion writes the word it was given into `type` without judging it, so a
+ * word outside the set is refused by the same check and in the same words as
+ * `{ type: 'strin' }` always was.
+ */
+
+/** A price written as one string: the amount, one space, the currency code. */
+const PRICE_WRITTEN_SHORT = /^(\S+) (\S+)$/;
+
+/**
+ * What a price that is neither of the two forms is told.
+ *
+ * It names both forms, because the mistake it catches does not say which one
+ * was meant: `"5.00"` is the short form with the currency left off and `"USD"`
+ * is the short form with the amount left off, and what helps in either case is
+ * seeing a whole price written each way.
+ */
+const PRICE_EXPECTED =
+  'a price is either the amount and the currency as one string, "5.00 USD", or the two written out, { amount: "5.00", currency: "USD" }';
+
+/**
+ * A card's price: the two fields, or the one string that becomes them.
+ *
+ * The string is opened out before `MoneySchema` runs rather than beside it, and
+ * that ordering is why this is a preprocess and not a union of the two shapes.
+ * Written as a union, a merchant who gave the canonical form and got one half
+ * of it wrong is told "invalid input" — zod has two failed branches and no way
+ * to choose between them — where today they are told which half and why. Opened
+ * out first, the canonical check is the only one that ever speaks, so
+ * `{ amount: 'x', currency: 'USD' }` still names the amount, and `"5 dollars"`
+ * names the currency, which is the half of it that is wrong.
+ */
+const CardPriceSchema = z.preprocess((value, ctx) => {
+  if (typeof value !== "string") return value;
+
+  const written = PRICE_WRITTEN_SHORT.exec(value);
+
+  if (written === null) {
+    ctx.addIssue({ code: "custom", message: PRICE_EXPECTED });
+    // Nothing further to say about this field: the canonical check would only
+    // add "expected object, received string" underneath a sentence that has
+    // already said what was expected. The rest of the card is still checked,
+    // because this sits on the field rather than on the card.
+    return z.NEVER;
+  }
+
+  return { amount: written[1], currency: written[2] };
+}, MoneySchema);
+
+/** A record with names on it, as against an array, a null or a bare value. */
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/**
+ * A declaration with every field written out, from one where some of them are
+ * the type word alone.
+ *
+ * `access_url: 'string'` becomes `access_url: { type: 'string' }`; a field that
+ * is anything else is passed through for the canonical schema to judge, and
+ * that includes a word which is not a type.
+ *
+ * The declaration is rebuilt rather than edited, so nothing here changes the
+ * object the caller handed in. The rebuild is also where a key named
+ * `__proto__` could have started being kept, or setting a prototype;
+ * `Object.fromEntries` defines a property rather than assigning one, so such a
+ * key stays an ordinary key and is dropped where it always was — see
+ * `PROTOTYPE_KEY_IS_DROPPED` in `param-spec.ts`.
+ */
+const declarationWrittenOut = (value: unknown): unknown =>
+  isRecord(value)
+    ? Object.fromEntries(
+        Object.entries(value).map(([name, field]) => [
+          name,
+          typeof field === "string" ? { type: field } : field,
+        ]),
+      )
+    : value;
+
+/**
+ * The same declaration, also accepting a field written as its type alone.
+ *
+ * Takes the schema rather than being one, because a card has two declarations
+ * held to different rules — the purchase parameters may be empty and the
+ * delivery result may not — and both take the short form.
+ */
+const writtenShort = <Declaration extends z.ZodType>(declaration: Declaration) =>
+  z.preprocess(declarationWrittenOut, declaration);
+
 const CardFieldsSchema = z.strictObject({
   /** The merchant's own key for this product, the one their database uses. */
   merchant_item_id: IdentifierSchema,
@@ -242,13 +363,16 @@ const CardFieldsSchema = z.strictObject({
   /**
    * The price in the catalog. Always required, even for a card with a price
    * check: this is what the agent compares when it is choosing.
+   *
+   * Written as the two fields, or as the one string that becomes them. What is
+   * stored and what an agent reads are the two fields either way.
    */
-  price: MoneySchema,
+  price: CardPriceSchema,
 
   /** What the agent has to supply to buy. Absent when the purchase needs no input. */
-  params: ParamSpecSchema.optional(),
+  params: writtenShort(ParamSpecSchema).optional(),
 
-  result: DeclaredResultSchema,
+  result: writtenShort(DeclaredResultSchema),
 
   /**
    * Words for an agent searching a discovery catalog. Absent on a card whose
@@ -256,7 +380,17 @@ const CardFieldsSchema = z.strictObject({
    */
   tags: TagsSchema.optional(),
 
-  fulfillment: FulfillmentSchema,
+  /**
+   * When the product reaches the agent, and so when the money moves.
+   *
+   * A card that names no mode is synchronous, which is what almost every
+   * product a person writes a card for by hand is: the goods go back in the
+   * answer to the purchase. The default is filled in here rather than read as
+   * absence downstream, so the stored card, the public card and the discovery
+   * declaration all carry the word — the alternative is three readers each
+   * deciding for themselves what silence meant.
+   */
+  fulfillment: FulfillmentSchema.default("sync"),
 
   price_check: PriceCheckSchema.optional(),
 
@@ -332,12 +466,39 @@ export const CardSchema = CardFieldsSchema.superRefine((card, ctx) => {
   // sends deadlines a card cannot carry and only find out on the first publish.
   // Saying it in words is weaker than checking it, and better than silence.
   description:
-    'A product in the catalog, as the merchant publishes it. Three rules are enforced beyond the shape below. A card cannot be published as fulfillment "confirm" during the pilot: the confirmation request has no shape on the wire yet, so a handler could not tell one from a paid order. confirm_deadline_seconds is only allowed when fulfillment is "confirm", and fulfill_deadline_seconds only when fulfillment is "async" or "confirm" — a synchronous card delivers inside the system-wide response budget and names no deadline of its own.',
+    'A product in the catalog, as the merchant publishes it. Three rules are enforced beyond the shape below. A card cannot be published as fulfillment "confirm" during the pilot: the confirmation request has no shape on the wire yet, so a handler could not tell one from a paid order. confirm_deadline_seconds is only allowed when fulfillment is "confirm", and fulfill_deadline_seconds only when fulfillment is "async" or "confirm" — a synchronous card delivers inside the system-wide response budget and names no deadline of its own. This document describes the card as it is stored and read back; three fields also take a shorter spelling at publication, which JSON Schema has no way to show alongside the canonical one. price may be written as one string, the amount and the currency code with a single space between them ("5.00 USD"). A field of params or result may be written as its type word alone (access_url: "string") where it carries no title and no required flag. fulfillment may be left out, and a card that leaves it out is "sync". Each of those is opened out into the form below as the card is accepted, so a card generated from this document is accepted unchanged and a card read back is always in this form.',
 });
 
 export type Fulfillment = z.infer<typeof FulfillmentSchema>;
 export type PriceCheck = z.infer<typeof PriceCheckSchema>;
 export type Card = z.infer<typeof CardSchema>;
+
+/**
+ * A card as a merchant may write it, before the short forms are opened out.
+ *
+ * It is the input face of the one schema above rather than a second schema, and
+ * it is spelled out by hand because zod cannot describe it: the short forms are
+ * read by a step whose own input is `unknown`, so inference would hand a
+ * merchant no help at all where this hands them the two spellings each field
+ * takes.
+ *
+ * What that costs is one place to keep in step, and it is bounded: everything
+ * except the four fields named below is taken from `Card` itself, so a field
+ * added to a card appears here without anybody remembering to add it. A test
+ * holds the other direction — a canonical card is a thing a merchant may write.
+ *
+ * `Card` is what everything else uses. This type is for the call that publishes
+ * and for nothing else; nothing is ever read back in this shape.
+ */
+export type CardInput = Omit<Card, "price" | "params" | "result" | "fulfillment"> & {
+  /** `{ amount, currency }`, or the two as one string: `'5.00 USD'`. */
+  price: Money | string;
+  /** Each field whole, or written as its type word alone: `email: 'string'`. */
+  params?: ParamSpecInput;
+  result: ParamSpecInput;
+  /** Left out on a card that is delivered in the answer to the purchase. */
+  fulfillment?: Fulfillment;
+};
 
 /**
  * The check an agent's purchase parameters are held to, for this card.

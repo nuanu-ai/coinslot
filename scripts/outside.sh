@@ -138,6 +138,30 @@ cat > card.json <<'JSON'
 }
 JSON
 
+# The pilot's other product, the rented number, written the short way: the price
+# as one string, the delivered field as its type word, and no fulfillment mode
+# because the number goes back in the answer to the purchase. `params` stays
+# written out, because a required parameter with a title cannot be said any
+# shorter — which is the mixed spelling the documentation shows.
+#
+# It is here rather than in the unit tests because the short forms are read by
+# the contracts package and the command lives in the SDK: packed separately,
+# installed from tarballs, resolved by npm rather than by the workspace link.
+# A version range between the two that let an older contracts package answer
+# would take the short forms away and leave every test in this repository green.
+cat > short-card.json <<'JSON'
+{
+  "merchant_item_id": "virtual-number-monthly-nl",
+  "title": "Virtual phone number, the Netherlands, one month",
+  "description": "A rented number for one month, incoming SMS only. Whether a given sender's one-time code arrives depends on that sender.",
+  "price": "8.75 USD",
+  "params": {
+    "country": { "type": "string", "required": true, "title": "Country of the number" }
+  },
+  "result": { "phone_number": "string" }
+}
+JSON
+
 # The same card with its title taken out: the negative control. Without it a
 # command that printed "complete" unconditionally would pass every assertion
 # above and this check would be theatre.
@@ -145,6 +169,16 @@ node -e '
   const card = JSON.parse(require("fs").readFileSync("card.json", "utf8"));
   delete card.title;
   require("fs").writeFileSync("untitled-card.json", JSON.stringify(card, null, 2));
+'
+
+# And the short card with a price nobody could settle in: the negative control
+# for the short forms themselves. Accepting the long form and quietly accepting
+# anything at all in the short one is the failure this catches — the merchant
+# has to be told which half of the price is wrong.
+node -e '
+  const card = JSON.parse(require("fs").readFileSync("short-card.json", "utf8"));
+  card.price = "8.75 dollars";
+  require("fs").writeFileSync("miswritten-card.json", JSON.stringify(card, null, 2));
 '
 
 echo
@@ -156,14 +190,18 @@ echo "Step 3 of the quickstart: importing the package"
 imported="$(node --input-type=module -e '
   import { readFileSync } from "node:fs";
   import { checkCard, createClient, contractVersion } from "@coinslot/sdk";
-  const card = JSON.parse(readFileSync("card.json", "utf8"));
-  const complete = checkCard(card).problems.length === 0;
-  console.log(`contract=${contractVersion} client=${typeof createClient} complete=${complete}`);
+  const read = (file) => JSON.parse(readFileSync(file, "utf8"));
+  const complete = checkCard(read("card.json")).problems.length === 0;
+  const short = checkCard(read("short-card.json")).problems.length === 0;
+  console.log(
+    `contract=${contractVersion} client=${typeof createClient} complete=${complete} short=${short}`,
+  );
 ' 2>&1)" || imported="node refused it: $imported"
 echo "  $imported"
 contains "the entry point imports and its exports are callable" \
   "client=function" "$imported"
 contains "the check runs on a real card" "complete=true" "$imported"
+contains "the check reads a card written short" "short=true" "$imported"
 
 echo
 echo "Step 4 of the quickstart: npx coinslot verify"
@@ -192,11 +230,24 @@ contains "it says the card is complete" "complete as far as the contract can tel
 contains "it claims nothing about the check that did not run" \
   "Nothing is claimed about idempotency" "$out"
 
+run verify short-card.json
+echo "--- npx coinslot verify short-card.json (exit $code) ---"
+echo "$out"
+check "a card written short answers 3, the same as one written out" "3" "$code"
+contains "it says the short card is complete too" \
+  "complete as far as the contract can tell" "$out"
+
 run verify untitled-card.json
 echo "--- npx coinslot verify untitled-card.json (exit $code) ---"
 echo "$out"
 check "a card with a finding answers 1" "1" "$code"
 contains "it names the field that is missing" "title:" "$out"
+
+run verify miswritten-card.json
+echo "--- npx coinslot verify miswritten-card.json (exit $code) ---"
+echo "$out"
+check "a card whose short price is not one answers 1" "1" "$code"
+contains "it names the half of the price that is wrong" "price.currency:" "$out"
 
 run verify
 echo "--- npx coinslot verify (exit $code) ---"
