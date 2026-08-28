@@ -169,15 +169,23 @@ describe("registering a merchant", () => {
     // door is meant to stop being findable.
     const closed = await started({ REGISTRATION_INVITATION: "" });
     const shut = await register(closed.served, "Someone's shop", "any code at all");
+    const merchantsThere = (await closed.harnessed.store.merchants()).length;
     await closed.served.close();
     await closed.harnessed.stop();
     open = null;
 
-    const { served } = await started();
+    const { served, harnessed } = await started();
     const wrong = await register(served, "Someone's shop", "not-the-code");
 
+    // Refused on both, in one status and one document. Said as three
+    // assertions rather than two, because "the same answer either way" is also
+    // true of two gateways that both registered the merchant.
+    expect(shut.status).toBe(403);
     expect(shut.status).toBe(wrong.status);
     expect(shut.body).toStrictEqual(wrong.body);
+    // And neither wrote anything: only the merchant the harness seeds is there.
+    expect(merchantsThere).toBe(1);
+    expect((await harnessed.store.merchants()).length).toBe(1);
   });
 
   it("gives each registration a merchant of its own", async () => {
