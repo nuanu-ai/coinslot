@@ -167,6 +167,7 @@ describe("registering a merchant", () => {
     // said so differently, the form would be a way of asking whether
     // registration is open here at all, which is the one thing the code in the
     // door is meant to stop being findable.
+    //
     // The code presented to the closed gateway is the one the open gateway
     // below accepts, and that is the whole design of this test: presented with
     // a code that is wrong for it anyway, a closed gateway would be

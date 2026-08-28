@@ -94,11 +94,23 @@ caller's key resolves to, like every other merchant route. The secret is shown
 once on the screen that issued it and never again, the same promise the command
 makes, and for the same reason.
 
-A merchant cannot disable the key their cabinet is holding. That is a rule in
-the route rather than a warning on the screen: it is one click between a
+A merchant cannot disable the key their own call was made with. That is a rule
+in the route rather than a warning on the screen: it is one click between a
 merchant and a cabinet that answers every page with "the gateway will not take
 this key", and the way back is a terminal they do not have. Rotating that key is
 its own act and is not built here.
+
+The rule is the key on the call and not the key the cabinet is signed in with,
+and the difference is worth writing down rather than leaving to whoever reads
+the route. Which key a cabinet holds is a column on the other side of the
+boundary and no call carries it, so the gateway cannot recognise it; what it can
+see is the key in front of it. A merchant with a second key can therefore still
+disable the one their cabinet is using, and two calls made at one moment with
+two keys, each naming the other, leave them with none. Neither is refused. The
+wider rule that would refuse them is "a merchant may not disable their last
+working key", which is a different thing to decide — it takes away a merchant's
+own ability to shut off every key they hold — and nobody has decided it. The
+click is what this refuses, and the click is what the paragraph above is about.
 
 ## Consequences
 

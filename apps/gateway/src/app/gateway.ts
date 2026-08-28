@@ -538,10 +538,11 @@ export class Gateway {
    * boundary, and no call carries it — so a merchant with two keys can disable
    * either with the other, the one their cabinet holds included, and two calls
    * made at the same moment with two keys, each naming the other, both pass this
-   * line and leave the merchant with none. Widening the rule would mean refusing
-   * a merchant their own last working key, which is a different decision and one
-   * nobody has taken. What is here refuses the click, and the click is what §5
-   * describes.
+   * line and leave the merchant with none. Neither is refused here and neither
+   * is refused anywhere else. Widening the rule would mean refusing a merchant
+   * their own last working key, which takes something away from them and is a
+   * decision rather than a fix; §5 of the decision says as much and says nobody
+   * has taken it.
    */
   async disableMerchantKey(
     merchantId: string,
