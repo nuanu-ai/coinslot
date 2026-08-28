@@ -1,10 +1,18 @@
 import { defineConfig } from 'vitepress'
+import { withMermaid } from 'vitepress-plugin-mermaid'
 
 // The default theme, wearing our palette (see .vitepress/theme). Everything in
 // themeConfig here is navigation and local search: the theme's own labels are
 // already in the language the pages are written in, so none of them is
 // restated.
-export default defineConfig({
+//
+// withMermaid turns ```mermaid fences into diagrams. It is a wrapper around
+// this config and not a markdown plugin beside it, because the diagrams are
+// drawn in the reader's browser: the wrapper registers the component, and
+// mermaid itself is loaded on the pages that have one. A page with no fence
+// pays nothing for it. The fulfillment modes are the only diagrams so far, on
+// /orders.
+export default withMermaid(defineConfig({
   lang: 'en',
   title: 'Coinslot',
   description:
@@ -38,5 +46,33 @@ export default defineConfig({
       }
     ],
     search: { provider: 'local' }
+  },
+
+  // Mermaid is registered once for the whole site, so every page's preload list
+  // gets its chunks — including the pages with no diagram on them. Measured on
+  // the page about connecting, that was 1.54 MB of diagram kinds we never draw
+  // (gantt, c4, gitGraph, cytoscape, katex) fetched before the merchant had
+  // read a line. Vite's own `build.modulePreload` does not reach these: VitePress
+  // writes the links itself, from the page's chunk graph.
+  //
+  // So they are taken back out of the pages that do not draw anything. A page
+  // that does keeps every link it had; `class="mermaid"` is the marker, written
+  // by the plugin's component into the rendered HTML. Dropping a preload cannot
+  // break a page — the chunk stays on disk and loads on demand — which is why
+  // the rule is an allowlist of what to keep rather than a list of mermaid's
+  // chunks to remove: a chunk this does not recognise costs a page one lazy
+  // fetch, where an unrecognised diagram kind would cost every page the
+  // megabyte again.
+  transformHtml(code) {
+    if (code.includes('class="mermaid"')) return code
+
+    return code.replace(
+      /[ \t]*<link rel="modulepreload" href="([^"]+)">\n?/g,
+      (link, href) => (KEPT_CHUNK.test(href) ? link : ''),
+    )
   }
-})
+}))
+
+/** The framework, the theme, and the page's own module. Everything else a page
+ * with no diagram preloads is mermaid's. */
+const KEPT_CHUNK = /\/(framework|theme)\.[^/]+\.js$|\.md\.[^/]+\.js$/

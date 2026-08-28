@@ -39,6 +39,70 @@ almost the same: the order and the way of watching where it stands are
 identical. What differs is the moment of charging, and one consequence of
 confirming — a confirmed order acquires a deadline for the agent to pay it in.
 
+The three sequences below are the same three rows of the table, in the order
+the steps actually happen. The payment network is left off them: what reaches
+you is the order, and where the charge falls relative to your delivery is what
+the modes differ by.
+
+### Synchronous
+
+Nothing is charged until you have delivered, so a refusal leaves the buyer
+having spent nothing.
+
+```mermaid
+sequenceDiagram
+    participant A as Agent
+    participant C as Coinslot
+    participant Y as You
+    A->>C: buys the card
+    C->>Y: the order, on your open subscription
+    Y-->>C: here are the goods
+    Note over C: the buyer is charged
+    C-->>A: the goods, in the answer to the purchase
+```
+
+### Asynchronous
+
+The buyer is charged before you are asked for anything, and the goods follow by
+a separate call — a minute later or a day later, which changes nothing here.
+
+```mermaid
+sequenceDiagram
+    participant A as Agent
+    participant C as Coinslot
+    participant Y as You
+    A->>C: buys the card
+    Note over C: the buyer is charged
+    C-->>A: an order, and no goods yet
+    C->>Y: the order, on your open subscription
+    Y-->>C: accepted
+    Y-->>C: the goods, by a separate call
+    A->>C: asks where the order stands
+    C-->>A: the goods
+```
+
+### With confirmation
+
+Nothing is charged until you have said you will deliver, and the agent then has
+a deadline to pay in.
+
+```mermaid
+sequenceDiagram
+    participant A as Agent
+    participant C as Coinslot
+    participant Y as You
+    A->>C: buys the card
+    C->>Y: will you deliver this
+    Y-->>C: I will
+    C-->>A: a deadline to pay by
+    A->>C: pays
+    Note over C: the buyer is charged
+    C->>Y: the order, on your open subscription
+    Y-->>C: the goods, by a separate call
+    A->>C: asks where the order stands
+    C-->>A: the goods
+```
+
 ## Where an order comes from
 
 A purchase starts on our side. The agent finds the card, we work out the price
