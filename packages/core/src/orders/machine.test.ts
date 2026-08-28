@@ -1,10 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { deadlines } from "./deadlines.js";
-import { must, newOrder, reach, T0, TEST_POLICY, TEST_PRICE, walk } from "./fixtures.js";
+import {
+  must,
+  newOrder,
+  reach,
+  sampleEvent,
+  T0,
+  TEST_POLICY,
+  TEST_PRICE,
+  walk,
+} from "./fixtures.js";
 import { transition } from "./machine.js";
 import type { Effect, Order, OrderEvent, OrderEventKind, OrderState, Price } from "./model.js";
 import { ORDER_EVENT_KINDS, ORDER_STATES, PAYMENT_STAGES } from "./model.js";
-import { moneyInvariantViolations } from "./money.js";
 import { ORDER_OUTCOMES, outcomeFor } from "./outcome.js";
 
 const MERCHANT_PRICE: Price = { amount: "6.50", currency: "USD", asOf: T0 + 1 };
@@ -13,22 +21,207 @@ function kinds(effects: readonly Effect[]): readonly string[] {
   return effects.map((effect) => effect.kind);
 }
 
-function sampleEvent(kind: OrderEventKind): OrderEvent {
-  switch (kind) {
-    case "quote_answered":
-      return { kind, at: T0 + 1, available: true, price: MERCHANT_PRICE };
-    case "handler_refused":
-      return { kind, at: T0 + 1, code: "out_of_stock", message: "none left" };
-    case "refuse_called":
-      return { kind, at: T0 + 1, code: "cannot_fulfill", message: "supplier is silent" };
-    case "payment_verification_failed":
-      return { kind, at: T0 + 1, reason: "insufficient_funds" };
-    case "deadline_expired":
-      return { kind, at: T0 + 1_000_000, deadline: "sync_response" };
-    default:
-      return { kind, at: T0 + 1 };
-  }
-}
+/**
+ * Which events each state answers at all, written down rather than measured.
+ *
+ * A kind is listed for a state when the machine takes it as meaningful there.
+ * That is not the same as taking it: a refusal with a reason of its own —
+ * goods offered before anything was charged, a charge still in flight, a timer
+ * that is not the one running — is an answer to the event, and only
+ * `event_not_applicable` says the event has no meaning in that state at all.
+ *
+ * The list is read against the portal's tables: a row is what a merchant's
+ * call, an agent's move or a redelivery off the queue gets back for an order
+ * sitting in that state.
+ *
+ * Two things the table deliberately does not say. Some of these answers turn
+ * on the card's mode and on where the payment has got to — a settle can only
+ * report back on an order that has one in flight — so what is pinned is the
+ * order `reach` walks to for each state, and where that matters the row says
+ * which order it is. And `deadline_expired` is answered in every state because
+ * it is answered centrally, before any state is consulted; whether the timer
+ * that fired is the one running is `deadlines(order)`'s answer rather than
+ * this table's, and `deadlines.test.ts` is where that is pinned.
+ */
+const ANSWERED: Record<OrderState, readonly OrderEventKind[]> = {
+  // Waiting for the price. The answer and the silence are the two ways that
+  // wait can end.
+  created: [
+    "quote_answered",
+    "quote_silent",
+    "purchase_repeated",
+    "merchant_departed",
+    "deadline_expired",
+  ],
+  // Priced, and nothing charged: a synchronous card, whose money is verified
+  // here and executed after the goods. The settle's own outcomes are not
+  // answered because nothing has been sent for execution yet — on the
+  // asynchronous card, whose charge goes out from this state, they are.
+  quoted: [
+    "payment_verified",
+    "payment_verification_failed",
+    "purchase_repeated",
+    "merchant_departed",
+    "deadline_expired",
+  ],
+  // The merchant has the question and the buyer's money has not been touched.
+  // His goods are refused rather than dismissed: there is nothing charged to
+  // hand them over against, and the refusal is what tells him so.
+  awaiting_confirmation: [
+    "purchase_repeated",
+    "confirmation_dispatched",
+    "handler_accepted",
+    "handler_delivered",
+    "handler_refused",
+    "handler_undelivered",
+    "deliver_called",
+    "refuse_called",
+    "merchant_departed",
+    "deadline_expired",
+  ],
+  // He said he would deliver, and the agent owes the payment. He may still
+  // refuse while nothing is charged.
+  confirmed: [
+    "payment_verified",
+    "payment_verification_failed",
+    "purchase_repeated",
+    "handler_refused",
+    "refuse_called",
+    "merchant_departed",
+    "deadline_expired",
+  ],
+  // Queued for the merchant. Every answer of his is taken here as well as in
+  // `dispatched`: he is plainly holding the order, because he is answering,
+  // and our own record of the hand-over has simply not landed yet.
+  paid: [
+    "purchase_repeated",
+    "order_dispatched",
+    "handler_accepted",
+    "handler_delivered",
+    "handler_refused",
+    "handler_undelivered",
+    "deliver_called",
+    "refuse_called",
+    "merchant_departed",
+    "deadline_expired",
+  ],
+  dispatched: [
+    "purchase_repeated",
+    "order_dispatched",
+    "handler_accepted",
+    "handler_delivered",
+    "handler_refused",
+    "handler_undelivered",
+    "deliver_called",
+    "refuse_called",
+    "merchant_departed",
+    "deadline_expired",
+  ],
+  // The whole row, and not because this state is permissive. Both ways into it
+  // hand the payment over for execution, so an order here is always mid-charge
+  // and the settling guard answers everything the state itself would have
+  // dismissed — with "come back once the charge reports" rather than "this
+  // means nothing here". Which of the two a caller gets is the subject of the
+  // settle-in-flight tests below.
+  fulfilled: [...ORDER_EVENT_KINDS],
+  // Closed as a success. A redelivered order and a redelivered acceptance are
+  // ordinary here and are answered with the state he is in; a refusal is not,
+  // and an order that ended in goods may not take one.
+  delivered: [
+    "purchase_repeated",
+    "order_dispatched",
+    "handler_accepted",
+    "handler_delivered",
+    "deliver_called",
+    "refuse_called",
+    "merchant_departed",
+    "deadline_expired",
+  ],
+  // The goods are made and the money never came. A repeat brings a fresh
+  // payment, which is why the verification's failure is answered here; the
+  // charge this fixture is carrying has already reported, so its outcomes are
+  // not.
+  delivered_unpaid: [
+    "payment_verification_failed",
+    "purchase_repeated",
+    "handler_delivered",
+    "deliver_called",
+    "refuse_called",
+    "merchant_departed",
+    "deadline_expired",
+  ],
+  // A debt, and the widest row in the table. Everything the merchant can say
+  // about the order is heard: late goods close the debt, and the rest are
+  // taken and change nothing rather than being dismissed as meaningless.
+  refund_due: [
+    "purchase_repeated",
+    "order_dispatched",
+    "handler_accepted",
+    "handler_delivered",
+    "handler_refused",
+    "handler_undelivered",
+    "deliver_called",
+    "refuse_called",
+    "refund_settled",
+    "merchant_departed",
+    "deadline_expired",
+  ],
+  // The debt is paid back. There is nothing left to deliver against, and
+  // saying so is the answer.
+  refunded: [
+    "purchase_repeated",
+    "handler_delivered",
+    "deliver_called",
+    "refuse_called",
+    "merchant_departed",
+    "deadline_expired",
+  ],
+  // He refused this order himself. Goods arriving afterwards are not a late
+  // fulfillment of it but a contradiction, which is why `handler_delivered` is
+  // missing from a row that otherwise looks like the three below.
+  failed: [
+    "purchase_repeated",
+    "deliver_called",
+    "refuse_called",
+    "merchant_departed",
+    "deadline_expired",
+  ],
+  // Closed before the handler ever saw the order, and nobody was charged. The
+  // settle's outcomes are answered on one of these — the order closed on the
+  // guess that a silent charge did not move — and this fixture is not that
+  // one: it closed because the goods were gone.
+  rejected: [
+    "purchase_repeated",
+    "deliver_called",
+    "refuse_called",
+    "merchant_departed",
+    "deadline_expired",
+  ],
+  declined: [
+    "purchase_repeated",
+    "deliver_called",
+    "refuse_called",
+    "merchant_departed",
+    "deadline_expired",
+  ],
+  // Out of time. Late goods and the repeat that collects them are answered
+  // only where the purchase was closed by the synchronous budget, and this
+  // fixture ran out of a price instead.
+  expired: [
+    "purchase_repeated",
+    "deliver_called",
+    "refuse_called",
+    "merchant_departed",
+    "deadline_expired",
+  ],
+  cancelled: [
+    "purchase_repeated",
+    "deliver_called",
+    "refuse_called",
+    "merchant_departed",
+    "deadline_expired",
+  ],
+};
 
 describe("the shape of the machine", () => {
   it("reaches every state in the vocabulary through legal events alone", () => {
@@ -61,12 +254,13 @@ describe("the shape of the machine", () => {
 
         accepted += 1;
         // Whatever it did, what came back has to be an order: a real state, a
-        // real payment stage, an outcome the agent can be told, the money and
-        // the state in agreement, and the same order it was handed.
+        // real payment stage, an outcome the agent can be told, and the same
+        // order it was handed. Whether the money and the state agree is the
+        // same sweep in `money.test.ts`, which is where the rules that decide
+        // it live and where the controls proving they fire live with them.
         expect(ORDER_STATES, where).toContain(result.order.state);
         expect(PAYMENT_STAGES, where).toContain(result.order.payment);
         expect(ORDER_OUTCOMES, where).toContain(outcomeFor(result.order));
-        expect(moneyInvariantViolations(result.order), where).toStrictEqual([]);
         expect(result.order.id, where).toBe(before.id);
         expect(result.order.mode, where).toStrictEqual(before.mode);
       }
@@ -75,6 +269,25 @@ describe("the shape of the machine", () => {
     // A floor under the loop: if a change made every pairing illegal, the
     // checks above would pass while exercising nothing at all.
     expect(accepted).toBeGreaterThan(60);
+  });
+
+  it("answers exactly the events each state has a meaning for", () => {
+    // The sweep above holds if a delivered order starts taking a refusal: it
+    // pins that something comes back, never what. This pins what, and what is
+    // the promise — the portal's tables tell a merchant which of his calls an
+    // order in each state will hear, and an agent reads the same table from
+    // the other side. A pairing that quietly became meaningful, or quietly
+    // stopped being, is one of those rows changing with nobody saying so.
+    for (const state of ORDER_STATES) {
+      const answered = new Set(ANSWERED[state]);
+
+      for (const kind of ORDER_EVENT_KINDS) {
+        const result = transition(reach(state), sampleEvent(kind));
+        const meaningful = result.ok || result.rejection.code !== "event_not_applicable";
+
+        expect(meaningful, `${state} on ${kind}`).toBe(answered.has(kind));
+      }
+    }
   });
 
   it("never changes the order it was given", () => {
@@ -104,6 +317,50 @@ describe("pricing the purchase", () => {
     expect(order.price).toStrictEqual(MERCHANT_PRICE);
     expect(order.quoteSource).toBe("merchant_answer");
     expect(kinds(effects)).toStrictEqual(["verify_payment"]);
+  });
+
+  it("takes a merchant's price in the currency the card was published in", () => {
+    // The positive half of the rule below: moving the number is what a price
+    // check is for, and a card priced in dollars answered in dollars is the
+    // ordinary case. Without this, refusing every quote would satisfy the test
+    // that follows.
+    const { order } = must(newOrder("sync", { priceCheck: "merchant" }), {
+      kind: "quote_answered",
+      at: T0 + 1,
+      available: true,
+      price: { amount: "6.50", currency: TEST_PRICE.currency, asOf: T0 + 1 },
+    });
+
+    expect(order.state).toBe("quoted");
+    expect(order.price?.currency).toBe(TEST_PRICE.currency);
+  });
+
+  it("refuses a quote that answers in a currency the card does not carry", () => {
+    // A quote may move the number and never the unit. The agent chose this
+    // card at the price the catalog showed, in the currency the card declares;
+    // a check that came back in another one and was taken would charge his
+    // wallet in a unit nobody agreed on and write a receipt pointing at a
+    // price the card never carried. There is no conversion here to fall back
+    // on — this package holds money as a decimal string and knows no rates —
+    // so the only honest answer is to refuse the answer, not to guess at it.
+    const created = newOrder("sync", { priceCheck: "merchant" });
+    const before = structuredClone(created);
+
+    const result = transition(created, {
+      kind: "quote_answered",
+      at: T0 + 1,
+      available: true,
+      price: { amount: "6.50", currency: "EUR", asOf: T0 + 1 },
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.rejection.code).toBe("currency_changed");
+    // Sending the same answer again gives the same refusal: what clears it is
+    // the merchant quoting the card's own currency.
+    expect(result.rejection.retryable).toBe(false);
+    expect(result.rejection.message).toContain("EUR");
+    expect(created).toStrictEqual(before);
   });
 
   it("closes the purchase before any money when the goods are not there", () => {
@@ -878,9 +1135,14 @@ describe("while the settle is in flight", () => {
   });
 
   it("turns the guess into a fact once, and no more than once", () => {
-    // The counter behind the double-charge check moves on every accepted
-    // settle outcome. An unbounded stream of them on a closed order would
-    // drive it below zero and disarm the check that guards a second charge.
+    // Nothing in the machine counts charges. The counter that guards against a
+    // second one is the walk's accounting in `walk.test.ts`: it goes up on
+    // every charge sent for execution and down on every accepted settle
+    // outcome, and it is read against a floor of nought as well as a ceiling
+    // of one. So this arm is what holds that counter honest — an unbounded
+    // stream of settle outcomes accepted on a closed order would drive it
+    // below zero and leave room underneath it for a charge the walk would no
+    // longer notice.
     const closed = walk(settling(), [
       { kind: "deadline_expired", at: T0 + 999_999, deadline: "settle_response" },
     ]);

@@ -3,8 +3,8 @@ import type { CreateOrderInput } from "./create.js";
 import { createOrder } from "./create.js";
 import { deadlines } from "./deadlines.js";
 import { transition } from "./machine.js";
-import type { DeadlineKind, Effect, Order, OrderEvent, OrderPolicy, Price } from "./model.js";
-import { isOpen, modeOf, ORDER_EVENT_KINDS, ORDER_STATES } from "./model.js";
+import type { Effect, Order, OrderEvent, OrderPolicy, Price } from "./model.js";
+import { DEADLINE_KINDS, isOpen, modeOf, ORDER_EVENT_KINDS, ORDER_STATES } from "./model.js";
 import { moneyInvariantViolations } from "./money.js";
 import { ORDER_OUTCOMES, outcomeFor } from "./outcome.js";
 
@@ -91,17 +91,14 @@ const POLICY: OrderPolicy = {
 
 const PRICE: Price = { amount: "12.00", currency: "USD", asOf: 500_000 };
 
-const DEADLINES: readonly DeadlineKind[] = [
-  "quote_response",
-  "quote_expiry",
-  "settle_response",
-  "confirmation_response",
-  "payment_after_confirmation",
-  "sync_response",
-  "async_fulfillment",
-];
-
-/** Every shape each event can arrive in, so the walk can choose among them. */
+/**
+ * Every shape each event can arrive in, so the walk can choose among them.
+ *
+ * The deadlines are the machine's own list rather than a copy of it. Copied,
+ * an eighth deadline added to the model would never once be walked, and the
+ * walk would go on reporting full coverage of a machine it had stopped
+ * covering.
+ */
 function everyEvent(at: number): readonly OrderEvent[] {
   return ORDER_EVENT_KINDS.flatMap((kind): OrderEvent[] => {
     switch (kind) {
@@ -125,7 +122,7 @@ function everyEvent(at: number): readonly OrderEvent[] {
           reason,
         }));
       case "deadline_expired":
-        return DEADLINES.map((deadline) => ({ kind, at, deadline }));
+        return DEADLINE_KINDS.map((deadline) => ({ kind, at, deadline }));
       default:
         return [{ kind, at }];
     }
@@ -211,7 +208,69 @@ type Step = {
   readonly accepted: boolean;
   readonly after: string;
   readonly effects: readonly string[];
+  /** The order as the step left it, which is the previous one where the step was refused. */
+  readonly order: Order;
 };
+
+/**
+ * The accounting every walk is held to, at every step it accepted.
+ *
+ * Written once and run over both the nine named seeds and the four hundred,
+ * because it was written twice and the two copies were not equal. The nine
+ * carried the money invariants and the four hundred carried the counters, and
+ * the double charge this file exists to catch was reachable only from a seed
+ * in the second group — so the check that would have caught it was running
+ * where it could not be reached.
+ *
+ * The counters are what the effects half is for. Money moves through effects,
+ * so a walk that read only the order would be blind to the second charge and
+ * the second fulfillment, which are the two mistakes a buyer notices first.
+ * The floor of nought under the charges matters as much as the ceiling of one:
+ * a counter driven negative by a run of settle outcomes on a closed order
+ * would leave room underneath it for a genuine second charge.
+ */
+function accountFor(seed: number, trace: readonly Step[]): void {
+  // What the gateway would have been told to do, so far.
+  let chargesInFlight = 0;
+  let goodsReleased = 0;
+  let receipts = 0;
+  let accepted = 0;
+
+  for (const [index, step] of trace.entries()) {
+    // Only what the machine actually accepted counts. A refused event changed
+    // nothing, and taking it for a settle that reported would drive the
+    // counter below zero on nothing at all.
+    if (!step.accepted) continue;
+    accepted += 1;
+    const where = `seed ${seed}, step ${index}, ${step.event} -> ${step.after}`;
+
+    expect(moneyInvariantViolations(step.order), where).toStrictEqual([]);
+    expect(ORDER_STATES, where).toContain(step.order.state);
+    expect(ORDER_OUTCOMES, where).toContain(outcomeFor(step.order));
+
+    for (const kind of step.effects) {
+      if (kind === "execute_payment") chargesInFlight += 1;
+      if (kind === "release_goods_to_agent") goodsReleased += 1;
+      if (kind === "issue_receipt") receipts += 1;
+      if (kind === "mark_refund_due") {
+        // A debt is a claim that the buyer's money is with the merchant.
+        expect(step.order.payment, `${where}: a refund marked without a charge`).toBe("settled");
+      }
+    }
+    if (step.event === "payment_settled" || step.event === "payment_settle_failed") {
+      chargesInFlight -= 1;
+    }
+
+    expect(chargesInFlight, `${where}: charges in flight`).toBeGreaterThanOrEqual(0);
+    expect(chargesInFlight, `${where}: charges in flight`).toBeLessThanOrEqual(1);
+    expect(goodsReleased, `${where}: the goods went out twice`).toBeLessThanOrEqual(1);
+    expect(receipts, `${where}: two receipts for one order`).toBeLessThanOrEqual(1);
+  }
+
+  // A floor under the loop: a machine that refused everything would sail
+  // through every check above.
+  expect(accepted, `seed ${seed}`).toBeGreaterThan(3);
+}
 
 function takeAWalk(seed: number, steps: number): { order: Order; trace: readonly Step[] } {
   const next = generator(seed);
@@ -243,6 +302,7 @@ function takeAWalk(seed: number, steps: number): { order: Order; trace: readonly
       accepted: result.ok,
       after: `${order.state}/${order.payment}`,
       effects: result.ok ? result.effects.map((effect) => effect.kind) : [],
+      order,
     });
   }
 
@@ -260,72 +320,7 @@ describe("a long walk over the machine", () => {
 
   for (const seed of seeds) {
     it(`keeps the money invariants over two hundred steps from seed ${seed}`, () => {
-      const next = generator(seed);
-      const input: CreateOrderInput = {
-        id: `ord_walk_${seed}`,
-        at: WALK_STARTS_AT,
-        mode: modeOf(pick(next, ["sync", "async", "confirm"])),
-        policy: POLICY,
-        priceCheck: pick(next, ["none", "merchant"]),
-        cardPrice: PRICE,
-        test: false,
-        selling: "open",
-      };
-      const created = createOrder(input);
-      expect(created.ok).toBe(true);
-      if (!created.ok) return;
-
-      let order = created.order;
-      let at = WALK_STARTS_AT;
-      // What the gateway would have been told to do, so far.
-      let chargesInFlight = 0;
-      let goodsReleased = 0;
-      let receipts = 0;
-      let accepted = 0;
-      const reached = new Set<string>();
-
-      for (let step = 0; step < 200; step += 1) {
-        at = tick(next, at);
-        const event = anEvent(next, order, at);
-        const result = transition(order, event);
-        if (!result.ok) continue;
-
-        accepted += 1;
-        order = result.order;
-        const where = `seed ${seed}, step ${step}, ${event.kind} -> ${order.state}/${order.payment}`;
-
-        expect(moneyInvariantViolations(order), where).toStrictEqual([]);
-        expect(ORDER_STATES, where).toContain(order.state);
-        expect(ORDER_OUTCOMES, where).toContain(outcomeFor(order));
-
-        for (const effect of result.effects) {
-          if (effect.kind === "execute_payment") chargesInFlight += 1;
-          if (effect.kind === "release_goods_to_agent") goodsReleased += 1;
-          if (effect.kind === "issue_receipt") receipts += 1;
-          if (effect.kind === "mark_refund_due") {
-            // A debt is a claim that the buyer's money is with the merchant.
-            expect(order.payment, `${where}: a refund marked without a charge`).toBe("settled");
-          }
-          reached.add(effect.kind);
-        }
-        if (event.kind === "payment_settled" || event.kind === "payment_settle_failed") {
-          chargesInFlight -= 1;
-        }
-
-        // The buyer's money is sent for execution once at a time, and one
-        // order hands over its goods and writes its receipt exactly once. The
-        // floor of nought matters as much as the ceiling of one: a counter
-        // driven negative by a run of settle outcomes on a closed order would
-        // leave room underneath it for a genuine second charge.
-        expect(chargesInFlight, `${where}: charges in flight`).toBeGreaterThanOrEqual(0);
-        expect(chargesInFlight, `${where}: charges in flight`).toBeLessThanOrEqual(1);
-        expect(goodsReleased, `${where}: the goods went out twice`).toBeLessThanOrEqual(1);
-        expect(receipts, `${where}: two receipts for one order`).toBeLessThanOrEqual(1);
-      }
-
-      // A floor under the loop: a machine that refused everything would sail
-      // through every check above.
-      expect(accepted, `seed ${seed}`).toBeGreaterThan(3);
+      accountFor(seed, takeAWalk(seed, 200).trace);
     });
   }
 
@@ -434,34 +429,13 @@ describe("a long walk over the machine", () => {
     const visited = new Set<string>();
     for (let seed = 1; seed <= 400; seed += 1) {
       const walked = takeAWalk(seed, 200);
-      // The same accounting the nine seeds above carry, over four hundred
+      // The same accounting the nine named seeds carry, over four hundred
       // more. Nine orders is not many to look for a double charge in, and the
       // one this file failed to reach was found by hand instead.
-      let chargesInFlight = 0;
-      let goodsReleased = 0;
-      let receipts = 0;
-
+      accountFor(seed, walked.trace);
       for (const step of walked.trace) {
-        visited.add(step.after.split("/")[0] ?? "");
-        // Only what the machine actually accepted counts. A refused event
-        // changed nothing, and taking it for a settle that reported would
-        // drive the counter below zero on nothing at all.
-        if (!step.accepted) continue;
-        for (const kind of step.effects) {
-          if (kind === "execute_payment") chargesInFlight += 1;
-          if (kind === "release_goods_to_agent") goodsReleased += 1;
-          if (kind === "issue_receipt") receipts += 1;
-        }
-        if (step.event === "payment_settled" || step.event === "payment_settle_failed") {
-          chargesInFlight -= 1;
-        }
-        const where = `seed ${seed}, ${step.event} -> ${step.after}`;
-        expect(chargesInFlight, where).toBeGreaterThanOrEqual(0);
-        expect(chargesInFlight, where).toBeLessThanOrEqual(1);
-        expect(goodsReleased, where).toBeLessThanOrEqual(1);
-        expect(receipts, where).toBeLessThanOrEqual(1);
+        visited.add(step.order.state);
       }
-      expect(moneyInvariantViolations(walked.order), `seed ${seed}`).toStrictEqual([]);
     }
 
     expect([...visited].sort()).toStrictEqual([...ORDER_STATES].sort());

@@ -18,6 +18,7 @@ import type {
   FulfillmentMode,
   Order,
   OrderEvent,
+  OrderEventKind,
   OrderPolicy,
   OrderState,
   Price,
@@ -74,6 +75,42 @@ export function newOrder(
     throw new Error(`fixture could not create the order: ${created.rejection.code}`);
   }
   return created.order;
+}
+
+/**
+ * One event of every kind, for the sweeps that walk every pairing of a state
+ * and an event. The values carry no meaning of their own — what a sweep is
+ * about is the pairing — but two of them are load-bearing and would be easy to
+ * change without noticing.
+ *
+ * The quoted price is in the card's own currency. A quote in another one is
+ * refused rather than taken, so a sample in euros would quietly make the one
+ * pairing that prices an order illegal and every sweep would go on passing.
+ *
+ * The expiry is far enough out that any deadline it names has genuinely come
+ * due; an instant that had not would be turned back as premature everywhere
+ * and the sweeps would exercise the guard instead of the machine.
+ */
+export function sampleEvent(kind: OrderEventKind): OrderEvent {
+  switch (kind) {
+    case "quote_answered":
+      return {
+        kind,
+        at: T0 + 1,
+        available: true,
+        price: { amount: "6.50", currency: TEST_PRICE.currency, asOf: T0 + 1 },
+      };
+    case "handler_refused":
+      return { kind, at: T0 + 1, code: "out_of_stock", message: "none left" };
+    case "refuse_called":
+      return { kind, at: T0 + 1, code: "cannot_fulfill", message: "the supplier is silent" };
+    case "payment_verification_failed":
+      return { kind, at: T0 + 1, reason: "insufficient_funds" };
+    case "deadline_expired":
+      return { kind, at: T0 + 1_000_000, deadline: "sync_response" };
+    default:
+      return { kind, at: T0 + 1 };
+  }
 }
 
 /** Unwraps a transition, turning a rejection into a loud test failure. */

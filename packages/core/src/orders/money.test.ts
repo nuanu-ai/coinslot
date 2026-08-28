@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { must, newOrder, reach, T0, walk } from "./fixtures.js";
+import { must, newOrder, reach, sampleEvent, T0, walk } from "./fixtures.js";
 import { transition } from "./machine.js";
-import type { Effect, Order, OrderEvent, OrderState } from "./model.js";
+import type { Effect, Order } from "./model.js";
 import { ORDER_EVENT_KINDS, ORDER_STATES } from "./model.js";
 import { moneyInvariantViolations } from "./money.js";
 
@@ -15,28 +15,6 @@ const MONEY_EFFECTS: readonly Effect["kind"][] = ["execute_payment", "release_go
 
 function moved(effects: readonly Effect[]): readonly string[] {
   return effects.map((effect) => effect.kind).filter((kind) => MONEY_EFFECTS.includes(kind));
-}
-
-function sampleEvent(kind: (typeof ORDER_EVENT_KINDS)[number]): OrderEvent {
-  switch (kind) {
-    case "quote_answered":
-      return {
-        kind,
-        at: T0 + 1,
-        available: true,
-        price: { amount: "1.00", currency: "USD", asOf: T0 },
-      };
-    case "handler_refused":
-      return { kind, at: T0 + 1, code: "out_of_stock", message: "none" };
-    case "refuse_called":
-      return { kind, at: T0 + 1, code: "out_of_stock", message: "none" };
-    case "payment_verification_failed":
-      return { kind, at: T0 + 1, reason: "signature" };
-    case "deadline_expired":
-      return { kind, at: T0 + 1_000_000, deadline: "sync_response" };
-    default:
-      return { kind, at: T0 + 1 };
-  }
 }
 
 describe("the invariants of the order's money", () => {
@@ -195,40 +173,15 @@ describe("a refusal before the charge never creates a debt", () => {
 });
 
 describe("money taken is always accounted for", () => {
-  it("leaves no closed state in which the buyer paid and nothing says so", () => {
-    // Walk every state the machine can reach and every event it accepts, and
-    // check the one thing that must never happen: the buyer's money gone and
-    // the order closed as though nothing was owed.
-    const settledAndClosed: string[] = [];
-    let accepted = 0;
-
-    for (const state of ORDER_STATES) {
-      for (const kind of ORDER_EVENT_KINDS) {
-        const result = transition(reach(state), sampleEvent(kind));
-        if (!result.ok) continue;
-        accepted += 1;
-
-        const after = result.order;
-        const owedNothing: readonly OrderState[] = [
-          "rejected",
-          "declined",
-          "expired",
-          "cancelled",
-          "failed",
-        ];
-        // "settling" belongs here too: it is the window in which the machine
-        // does not know whether the money moved, and closing an order as free
-        // on a guess is exactly the mistake this list exists to catch.
-        const moneyMayHaveMoved = after.payment === "settled" || after.payment === "settling";
-        if (moneyMayHaveMoved && owedNothing.includes(after.state)) {
-          settledAndClosed.push(`${state} on ${kind} -> ${after.state}/${after.payment}`);
-        }
-      }
-    }
-
-    expect(settledAndClosed).toStrictEqual([]);
-    expect(accepted).toBeGreaterThan(60);
-  });
+  // The sweep that used to open this block walked the same sixteen states and
+  // eighteen events as the one above and looked for one shape by hand: the
+  // buyer's money gone and the order closed as though nothing were owed. Every
+  // order it could have flagged breaks a rule the sweep above already reads —
+  // money settled outside the states that may hold it, and a charge in flight
+  // outside the states that may be charging — so it could only ever fail in
+  // company. Measured, on a refunded order closed as cancelled by a departure:
+  // both went red together, and deleting the hand-written one left the failure
+  // exactly where it was.
 
   it("turns the departure of a merchant who was already paid into a debt", () => {
     const paid = walk(newOrder("async"), [

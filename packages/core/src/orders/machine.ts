@@ -456,9 +456,25 @@ function onSilentSettle(order: Order): TransitionResult {
 function fromCreated(order: Order, event: StateEvent): TransitionResult {
   switch (event.kind) {
     case "quote_answered":
-      return event.available
-        ? enterQuoted(order, event.at, event.price, "merchant_answer")
-        : ok(closeWithoutMoney(order, "rejected", { cause: "unavailable" }));
+      if (!event.available) {
+        return ok(closeWithoutMoney(order, "rejected", { cause: "unavailable" }));
+      }
+      // A price check moves the number. The unit belongs to the card, which
+      // was published in it and shown to the agent in it, and this package
+      // holds money as a decimal string and knows no rates — so a quote in
+      // another currency cannot be converted, only believed or refused.
+      // Believing it would charge the buyer in a unit he never agreed to and
+      // point his receipt at a price the card never carried.
+      if (event.price.currency !== order.cardPrice.currency) {
+        return reject(
+          order,
+          event,
+          "currency_changed",
+          `the card is priced in ${order.cardPrice.currency} and the quote answered in ` +
+            `${event.price.currency}, and a quote may move the number but not the currency`,
+        );
+      }
+      return enterQuoted(order, event.at, event.price, "merchant_answer");
     case "quote_silent":
       return onQuoteSilence(order, event.at);
     case "merchant_departed":

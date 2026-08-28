@@ -29,10 +29,18 @@ describe("@coinslot/core", () => {
   it("hands the gateway everything it needs to run an order", () => {
     // If this failed, the gateway would be reaching into the package's
     // internals for something the package meant to be part of its surface.
+    //
+    // The list is what the gateway actually calls, not everything the index
+    // exports: `effectsOnQuoted` and `isArmed` are on the surface and have no
+    // caller outside this package, and a list that named them would be
+    // claiming a need that nobody has.
     for (const name of [
       "createOrder",
       "transition",
       "deadlines",
+      // Read by the gateway when it decides whether another delivery attempt
+      // could still land in time.
+      "fulfillmentDeadline",
       "nextRedelivery",
       "outcomeFor",
       "moneyInvariantViolations",
