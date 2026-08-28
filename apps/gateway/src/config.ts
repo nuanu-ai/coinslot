@@ -80,9 +80,9 @@ const countAbove = (fallback: number) =>
  * paid against that is a comment on each side of the seam naming the other —
  * this one, and the paragraph above `POLL_DEADLINE_MS`.
  *
- * Nothing reads this at run time. It is the reason a ceiling exists, and the
- * refusal says it out loud so that an operator who runs into the ceiling is not
- * left guessing where it came from.
+ * Nothing reads this at run time. It is where the ceiling's number comes from
+ * rather than the thing the ceiling protects, and the refusal says so out loud
+ * so that an operator who runs into the ceiling is not left guessing.
  */
 const SDK_WORKER_POLL_DEADLINE_MS = 50_000;
 
@@ -302,16 +302,18 @@ const environmentSchema = z.object({
   /**
    * How long the gateway holds a worker's poll open (ADR-0004 §1).
    *
-   * Bounded above by what the worker on the other end will sit through, because
-   * a window longer than that is a gateway timing out its own callers. See
-   * `WORKER_POLL_WAIT_CEILING_MS`; the refusal carries both numbers, since the
-   * ceiling on its own would be a rule with no reason attached.
+   * Bounded above, and what the bound is for is the poll that named no window
+   * of its own: that one is held for this number, and nothing here knows when
+   * its caller gives up. See `WORKER_POLL_WAIT_CEILING_MS`; the refusal names
+   * that caller rather than the SDK's worker, which is safe from this number by
+   * arithmetic and would be the wrong reason to give.
    */
   WORKER_POLL_WAIT_MS: durationMs(25_000).refine(
     (value) => value <= WORKER_POLL_WAIT_CEILING_MS,
-    `must be at most ${WORKER_POLL_WAIT_CEILING_MS}ms — a poll held longer than that outlasts the ` +
-      `worker waiting on it, which abandons the request at ${SDK_WORKER_POLL_DEADLINE_MS}ms and ` +
-      "reports it failed",
+    `must be at most ${WORKER_POLL_WAIT_CEILING_MS}ms — a poll that named no window of its own is ` +
+      "held for this long, and the gateway does not know when the client behind it stops waiting; " +
+      `the ceiling keeps that below the ${SDK_WORKER_POLL_DEADLINE_MS}ms at which this project's own ` +
+      "worker abandons a poll, which is the only published figure for what a worker here sits through",
   ),
   /** The most envelopes one poll answers with, whatever the worker asked for. */
   WORKER_POLL_MAX_ENVELOPES: countAbove(32),
