@@ -25,6 +25,43 @@ export const SANDBOX_FACILITATOR = "sandbox:scripted";
 export const isSandboxFacilitator = (facilitatorUrl: string): boolean =>
   facilitatorUrl === SANDBOX_FACILITATOR;
 
+/**
+ * The domain Coinbase's facilitator answers on, and the reason it is a domain
+ * rather than one address.
+ *
+ * The published endpoint is `https://api.cdp.coinbase.com/platform/v2/x402`,
+ * but the same facilitator is also reached at a staging host and with a
+ * trailing slash, and each of those is a deployment that needs credentials
+ * exactly as much as the canonical spelling does. A rule that read one exact
+ * string would let every other spelling past the door below and hand it to a
+ * facilitator that answers nothing unsigned — the failure arriving at the first
+ * purchase instead of at startup, which is what the door exists to prevent.
+ *
+ * Matched on the host and only on the host. A path is not evidence of anything
+ * and a prefix match on the whole address would take `cdp.coinbase.com.evil.example`
+ * for Coinbase and send it credentials, which is the one mistake here that
+ * costs more than a broken deployment.
+ */
+const CDP_FACILITATOR_DOMAIN = "cdp.coinbase.com";
+
+/**
+ * Whether this address is Coinbase's facilitator, which takes no request
+ * without credentials.
+ *
+ * It is the facilitator the pilot settles through, because a product is listed
+ * in the Bazaar catalog only after a payment settles through this one
+ * (ADR-0001). Every other address — the x402.org testnet facilitator, anything
+ * self-hosted — is unauthenticated as far as this gateway knows, and is handed
+ * nothing.
+ */
+export const isCdpFacilitator = (facilitatorUrl: string): boolean => {
+  if (!URL.canParse(facilitatorUrl)) {
+    return false;
+  }
+  const { hostname } = new URL(facilitatorUrl);
+  return hostname === CDP_FACILITATOR_DOMAIN || hostname.endsWith(`.${CDP_FACILITATOR_DOMAIN}`);
+};
+
 function isHttpUrl(value: string): boolean {
   if (!URL.canParse(value)) {
     return false;
@@ -573,6 +610,27 @@ export function loadConfig(environment: Record<string, string | undefined>): Gat
         "and CDP_API_KEY_ID or CDP_API_KEY_SECRET is set — those talk to a real facilitator, " +
         "so one of the two is left over from somewhere else",
     );
+  }
+
+  // The mirror of the door above, and the one that costs money rather than
+  // tidiness. Coinbase's facilitator answers nothing unsigned, so a deployment
+  // pointed at it without credentials verifies nothing and settles nothing: the
+  // gateway would come up looking healthy, take a purchase, and fail at the
+  // charge, in front of a buyer. The names are listed one by one because which
+  // of the two is missing is the whole of what an operator needs to fix it.
+  if (isCdpFacilitator(environmentValues.FACILITATOR_URL)) {
+    const missing = [
+      ...(environmentValues.CDP_API_KEY_ID === undefined ? ["CDP_API_KEY_ID"] : []),
+      ...(environmentValues.CDP_API_KEY_SECRET === undefined ? ["CDP_API_KEY_SECRET"] : []),
+    ];
+    if (missing.length > 0) {
+      problems.push(
+        `FACILITATOR_URL is ${JSON.stringify(environmentValues.FACILITATOR_URL)}, which is Coinbase's ` +
+          `facilitator and takes no request without credentials, and ${missing.join(" and ")} ` +
+          `${missing.length === 1 ? "is" : "are"} not set — nothing would be verified and nothing ` +
+          "would be settled, and the first to find that out would be a buyer",
+      );
+    }
   }
 
   if (payTo !== null && network.startsWith("eip155:") && !/^0x[0-9a-fA-F]{40}$/.test(payTo)) {
