@@ -456,10 +456,11 @@ describe("when a delivery goes unanswered", () => {
     }
 
     // The reminder for that hand-over, and then the same one over again. It is
-    // put on the queue twice rather than delivered twice from inside it because
-    // what reaches the gateway is the same either way — one payload, named for
-    // one hand-over — and the in-memory queue only repeats a reminder whose
-    // handler threw, which is the one way this does not happen.
+    // put on the queue twice rather than repeated from inside it because what
+    // reaches the gateway is the same either way: one payload, naming one
+    // hand-over. The in-memory queue repeats a reminder only when the handler
+    // throws, and a handler that got as far as deciding on a redelivery did not
+    // throw — so its own repeat is the one path that cannot produce this.
     const unanswered: Reminder = { kind: "delivery_unanswered", orderId, handOver };
     await harnessed.queue.remind(unanswered, 0);
     await vi.waitFor(
