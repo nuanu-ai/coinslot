@@ -1,652 +1,246 @@
 /**
- * The portal's examples are fixtures of this package.
+ * The portal's examples are files of this repository, and this is what holds
+ * them to the schemas.
  *
- * The rule behind this file is the charter's: an example a merchant copies out
- * of the documentation has to pass the schemas, and the documentation and the
- * code are not allowed to drift apart quietly. Everything a merchant reads on
- * the portal is a promise about what our side accepts, and a promise nobody
- * checks is a promise that goes stale between one commit and the next.
+ * The charter's rule is that an example a merchant copies out of the
+ * documentation has to pass the schemas, and that the documentation and the
+ * code may not drift apart quietly. The way that rule used to be kept was a
+ * matcher: the examples lived inside the pages, hand-written copies of them
+ * lived in this file, and some two hundred lines compared the copy against the
+ * page name by name and value by value — with four lists of exceptions for the
+ * parts that could not be compared, and a suite of its own to check the
+ * comparing. A guard that needs its own suite is a guard that has become the
+ * subject.
  *
- * Two kinds of fixture live here, because the portal writes its examples in
- * two ways.
+ * There is no copy any more. Every payload example is one file, the page shows
+ * that file with VitePress's snippet import (`<<< @/examples/…`), and the bytes
+ * a merchant reads on the portal are the bytes this test parses. Nothing is
+ * compared against anything, because there is only one of everything.
  *
- * An example inside a ```json or ```http fence is read out of the page and
- * validated as it stands. If someone edits the example, this test parses the
- * edited text.
+ * The convention the checks below rest on: an example lives at
+ * `portal/examples/<schema>/<name>.json`, and the directory names the schema
+ * the file is held to. `SCHEMAS` is that map, and a directory missing from it
+ * fails rather than becoming a place where files sit unvalidated.
  *
- * An example written as TypeScript cannot be read that way without a parser
- * for JavaScript object literals, which is a great deal of machinery for a
- * handful of examples. Those are transcribed into JSON here by hand, and the
- * transcription is kept honest by a second check: every name and every literal
- * value in it has to still appear in the fence it came from. Rename a field on
- * the portal, or change what an example says, and the build says so.
+ * Four checks, and together they mean an example cannot arrive unwatched.
+ * Every file parses and passes the schema its directory names. Every file is
+ * shown by at least one page, so an example nobody reads cannot sit here going
+ * stale. Every include on every page resolves to a file that exists, so a page
+ * cannot point at nothing. And no page carries a payload inline, which is what
+ * stops the whole mechanism from being walked around by writing the JSON back
+ * into a fence.
+ *
+ * Two things are deliberately outside all of this.
+ *
+ * The TypeScript fences are outside. They are calling code — `order.delivered({
+ * … })`, `q.available(price, asOf)` — and not documents: the merchant writes
+ * the call, and the SDK builds what goes on the wire from it. Every one of them
+ * is compiled against the real SDK by `packages/sdk/src/portal-fences.test.ts`,
+ * which is the check that catches what a merchant meets first, and the document
+ * each call puts on the wire is asserted by the SDK's own tests. Transcribing
+ * them into JSON here meant certifying a document the portal has never shown
+ * anybody.
+ *
+ * Fragments are outside. An example file is a whole document, because a
+ * merchant copies what they see, and a document missing a required field is a
+ * claim about what our side accepts that our side would refuse — the charter's
+ * fifth gate. Where a page genuinely discusses a piece of something rather than
+ * a document — the `result` block of a card, under the heading that explains
+ * that one field — the piece stays a plain fence: not included from here, not
+ * validated as a document, because it is not one. What keeps that exception
+ * from widening is the fourth check: a fragment is TypeScript on the page, and
+ * anything written as JSON has to be a file.
  */
 
 import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { z } from "zod";
-import { CardSchema } from "./card.js";
-import { HandlerAnswerSchema, RefusalSchema } from "./handler.js";
-import { ParamSpecSchema, paramSpecToValidator } from "./param-spec.js";
+import { CardSchema, deliveryCheckFor } from "./card.js";
 import { QuoteRequestSchema, QuoteResponseSchema } from "./quote.js";
 
-const repoRoot = new URL("../../../", import.meta.url);
-
-const readPortalPage = (file: string): string => readFileSync(new URL(file, repoRoot), "utf8");
+const PORTAL = fileURLToPath(new URL("../../../portal/", import.meta.url));
+const EXAMPLES = join(PORTAL, "examples");
 
 /**
- * The fenced blocks of one language, in the order the page writes them.
+ * Which schema each directory of examples is held to.
  *
- * Not a markdown parser: it looks for the line that opens a fence and the line
- * that closes it. That is enough for the portal, which has no nested and no
- * indented fences — and if it ever grows one, this returns the wrong text and
- * the fixtures below fail loudly, which is the failure we want.
+ * This map is the whole naming convention. A directory that is not in it is a
+ * failure below rather than a quiet corner of the tree where an example could
+ * live without being checked against anything.
  */
-const fencesOf = (markdown: string, language: string): string[] => {
-  const blocks: string[] = [];
-  let current: string[] | null = null;
-
-  for (const line of markdown.split("\n")) {
-    if (current === null) {
-      if (line.trim() === `\`\`\`${language}`) current = [];
-      continue;
-    }
-    if (line.trim() === "```") {
-      blocks.push(current.join("\n"));
-      current = null;
-      continue;
-    }
-    current.push(line);
-  }
-
-  return blocks;
+const SCHEMAS: Readonly<Record<string, z.ZodType>> = {
+  card: CardSchema,
+  "quote-request": QuoteRequestSchema,
+  "quote-response": QuoteResponseSchema,
 };
 
-/**
- * The JSON object inside a fence: everything from the first brace on. In a
- * ```json fence that is the whole block; in an ```http example it steps over
- * the request line above the body.
- */
-const jsonBodyOf = (fence: string): string => fence.slice(fence.indexOf("{"));
+/** The house style: the page addressed to us, which the site does not build. */
+const NOT_A_PAGE = "WRITING.md";
 
-interface Token {
-  kind: "key" | "text" | "literal";
-  text: string;
-  /** The name this token belongs to: itself for a key, its field for a value. */
-  key: string | null;
+const entriesOfExamples = readdirSync(EXAMPLES, { withFileTypes: true });
+
+/** Every example, by the path a page includes it with: `card/access-monthly.json`. */
+const files: readonly string[] = entriesOfExamples
+  .filter((entry) => entry.isDirectory())
+  .flatMap((directory) =>
+    readdirSync(join(EXAMPLES, directory.name)).map((name) => `${directory.name}/${name}`),
+  )
+  .sort();
+
+const pages: readonly string[] = readdirSync(PORTAL)
+  .filter((name) => name.endsWith(".md") && name !== NOT_A_PAGE)
+  .sort();
+
+const textOf = (page: string): string => readFileSync(join(PORTAL, page), "utf8");
+
+/**
+ * The snippet imports a page writes, as the path each one names.
+ *
+ * VitePress lets a line carry a region after the path (`#name`) and options
+ * after that (`{2,4}`); neither is part of the file's name, so both are cut.
+ * The paths on our pages all start `@/`, which is the source root — the portal
+ * directory itself.
+ */
+const includesOf = (markdown: string): string[] =>
+  markdown
+    .split("\n")
+    .map((line) => /^<<<\s+(\S+)/.exec(line.trim())?.[1])
+    .filter((path) => path !== undefined)
+    .map((path) => path.replace(/[#{].*$/, "").replace(/^@\//, ""));
+
+/** Every path any page includes, and the pages that include it. */
+const included = new Map<string, string[]>();
+for (const page of pages) {
+  for (const path of includesOf(textOf(page))) {
+    included.set(path, [...(included.get(path) ?? []), page]);
+  }
 }
 
-/**
- * Every name and every literal value of a transcription, tagged by which it
- * is, for the drift check below.
- *
- * The tag is what makes the check bite. Asking only that each token appear
- * somewhere in the fence lets `'sync'` pass against `'async'` and `'5.00'`
- * against `'15.00'`, which is not a hypothetical: both went through unnoticed
- * before the tag was here.
- */
-const tokensOf = (value: unknown, key: string | null = null): Token[] => {
-  if (typeof value === "string") return [{ kind: "text", text: value, key }];
-  if (typeof value === "number" || typeof value === "boolean") {
-    return [{ kind: "literal", text: String(value), key }];
-  }
-  if (Array.isArray(value)) return value.flatMap((item) => tokensOf(item, key));
-  if (value !== null && typeof value === "object") {
-    return Object.entries(value).flatMap(([name, child]) => [
-      { kind: "key" as const, text: name, key: name },
-      ...tokensOf(child, name),
-    ]);
-  }
-  return [];
-};
+const jsonOf = (file: string): unknown => {
+  const text = readFileSync(join(EXAMPLES, file), "utf8");
 
-const escaped = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-/** Where in a TypeScript or JSON example a token of each kind has to appear. */
-const occursIn = (fence: string, token: Token): boolean => {
-  switch (token.kind) {
-    // A name in the position of a name. There are two such positions on the
-    // portal's pages.
-    case "key":
-      // `email:` or `"email":`. The left boundary is what stops `code:`
-      // matching inside `reason_code:`. Without it a renamed field passed the
-      // guard, and a rename is the most consequential drift a portal edit can
-      // carry.
-      //
-      // And `.delivered(` — the call that builds the answer. The SDK's own
-      // examples write `order.delivered({ … })` rather than the object
-      // literal, so the wrapper the wire calls `delivered` reaches the page as
-      // a method of that name and nowhere else. The dot in front is what keeps
-      // the boundary: a call renamed to `.handedOver(` fails here exactly as a
-      // renamed field does, and `.unavailable(` is not `.available(`.
-      return (
-        new RegExp(`(?<![\\w$])["']?${escaped(token.text)}["']?\\s*:`).test(fence) ||
-        new RegExp(`\\.${escaped(token.text)}\\s*\\(`).test(fence)
-      );
-    // `'sync'` or `"sync"` — a string, quotes and all, so one value cannot
-    // pass as the tail of a longer one.
-    case "text":
-      return fence.includes(`'${token.text}'`) || fence.includes(`"${token.text}"`);
-    // `60`, `true` — bounded, so 60 does not match inside 160.
-    case "literal":
-      return new RegExp(`(?<![\\w.])${escaped(token.text)}(?![\\w.])`).test(fence);
+  try {
+    return JSON.parse(text);
+  } catch (failure) {
+    throw new Error(`portal/examples/${file} is not valid JSON: ${(failure as Error).message}`);
   }
 };
 
-/** The names an example writes on a line of their own, for the reverse check. */
-const keysWrittenIn = (fence: string): string[] =>
-  // Anchored at the start of a line or just after a brace or comma, because
-  // the portal writes nested objects inline: `price: { amount: '5.00' }`.
-  // Anchored only at the line start, a field added inside one of those was
-  // invisible to the reverse check.
-  [...fence.matchAll(/(?:^|[{,])\s*([A-Za-z_][A-Za-z0-9_]*)\s*:/gm)].map((match) => match[1] ?? "");
-
-/**
- * The other direction of the drift check: names the example writes that the
- * transcription has never heard of.
- *
- * Without it a field added on the portal is invisible here — every token of
- * the transcription still occurs, so the check passes while the example has
- * grown something no schema is holding.
- */
-const namesTheFixtureLacks = (fence: string, known: Set<string>): string[] =>
-  keysWrittenIn(fence).filter((name) => !known.has(name));
-
-/**
- * What the drift check makes of one token of a transcription.
- *
- * `missing` — the example no longer writes it. `written after all` — the
- * fixture claims the example works this value out, and the example writes it
- * literally; that is the escape hatch checking itself, so a stale entry in a
- * `computed` list cannot quietly turn the drift check off for that field.
- */
-const driftVerdictOf = (
-  fence: string,
-  token: Token,
-  computed: Set<string>,
-): "ok" | "missing" | "written after all" => {
-  const standsIn = token.kind !== "key" && token.key !== null && computed.has(token.key);
-  const occurs = occursIn(fence, token);
-
-  if (standsIn) return occurs ? "written after all" : "ok";
-  return occurs ? "ok" : "missing";
-};
-
-interface Fence {
-  file: string;
-  language: string;
-  index: number;
-}
-
-interface Common {
-  what: string;
-  fence: Fence;
-  schema: z.ZodType;
-}
-
-type Fixture =
-  | (Common & { kind: "read" })
-  | (Common & {
-      kind: "transcribed";
-      value: unknown;
-      /**
-       * Also demand that the example write no name the transcription lacks —
-       * only for fences that are a payload and nothing else. Turned on for the
-       * examples where a field added on the portal would silently go
-       * unchecked; left off where the fence is calling code and its own
-       * variables would trip it.
-       */
-      completeKeys?: boolean;
-      /** Names the fence writes around the payload rather than inside it. */
-      outerKeys?: string[];
-      /**
-       * Fields whose value the example computes instead of writing out — a
-       * timestamp from a clock, an amount from a lookup. The name is still
-       * checked; the value cannot be, because there is no literal in the fence
-       * to compare against, and the transcription has to invent one for the
-       * schema to have something to parse.
-       *
-       * The escape hatch verifies itself: a field listed here whose value the
-       * example does write literally fails the test, so the list cannot
-       * quietly grow into a way of switching the drift check off.
-       */
-      computed?: string[];
-      /**
-       * Names of the document that the page does not write at all, because the
-       * SDK supplies them.
-       *
-       * `q.available(price, asOf)` sends `{ available, price, as_of }`, and of
-       * those three names only the first is on the page — as the call. The
-       * other two are the call's arguments, and their names live in the SDK's
-       * signature rather than in the merchant's code.
-       *
-       * What still holds them is not this file: the fence is compiled against
-       * the real SDK types, so an argument that changed shape stops the page
-       * compiling, and the SDK's own tests assert which document each of these
-       * calls puts on the wire. This list is the place where that hand-over is
-       * written down rather than left as an unexplained gap.
-       *
-       * It verifies itself the same way `computed` does: a name listed here
-       * that the page does write fails the test.
-       */
-      suppliedBySdk?: string[];
-      /**
-       * The SDK call the example makes to build this document, where it makes
-       * one.
-       *
-       * Without it a fixture can end up tied to nothing of its own. The two
-       * price answers share a fence, and `{ available: false }` has exactly two
-       * names in it: `available`, which the *other* branch's `q.available(…)`
-       * satisfies, and `as_of`, which the SDK supplies. Delete the whole
-       * "there is none" example from the page and every remaining token still
-       * occurs — the fixture would go on certifying a document the portal no
-       * longer shows anybody. Naming the call is what puts that branch's own
-       * line back under the check.
-       */
-      builtBy?: string;
-    });
-
-/**
- * The result declaration the cards page shows, transcribed once because two
- * checks need it: the fixture that holds it to `ParamSpecSchema`, and the
- * cross-page test further down that holds the orders page's delivery to it.
- */
-const declaredResult = {
-  access_url: { type: "string", title: "The link to sign in with" },
-  expires_at: { type: "string", title: "When it stops working" },
-};
-
-/**
- * The fixture map: which example on which page is held to which schema.
- *
- * Adding an example to the portal without adding it here is caught further
- * down, for the fences that carry data.
- */
-const fixtures: Fixture[] = [
-  {
-    kind: "read",
-    what: "the price question, as the portal shows it going to a price hook",
-    fence: { file: "portal/cards.md", language: "http", index: 0 },
-    schema: QuoteRequestSchema,
-  },
-  {
-    kind: "read",
-    what: "the price answer, in full",
-    fence: { file: "portal/cards.md", language: "json", index: 0 },
-    schema: QuoteResponseSchema,
-  },
-  {
-    kind: "transcribed",
-    what: "the card of the first test sale",
-    fence: { file: "portal/quickstart.md", language: "ts", index: 1 },
-    schema: CardSchema,
-    completeKeys: true,
-    value: {
-      merchant_item_id: "access-monthly",
-      title: "One month of access to the service",
-      description: "What the buyer gets, what it is good for, and what is not included.",
-      price: { amount: "5.00", currency: "USD" },
-      params: {
-        email: { type: "string", required: true, title: "Where to send it" },
-      },
-      result: {
-        access_url: { type: "string", title: "The link to sign in with" },
-      },
-      fulfillment: "sync",
-    },
-  },
-  {
-    kind: "transcribed",
-    what: "the delivery result a card declares",
-    fence: { file: "portal/cards.md", language: "ts", index: 0 },
-    schema: ParamSpecSchema,
-    completeKeys: true,
-    // The fence shows the declaration under the card field it sits in.
-    outerKeys: ["result"],
-    value: declaredResult,
-  },
-  {
-    kind: "transcribed",
-    what: "a handler refusing a synchronous order",
-    fence: { file: "portal/quickstart.md", language: "ts", index: 2 },
-    schema: HandlerAnswerSchema,
-    builtBy: "refused",
-    value: { refused: { code: "out_of_stock", message: "No seats left on that plan" } },
-  },
-  {
-    kind: "transcribed",
-    what: "a handler delivering a synchronous order",
-    fence: { file: "portal/quickstart.md", language: "ts", index: 2 },
-    schema: HandlerAnswerSchema,
-    builtBy: "delivered",
-    computed: ["access_url"],
-    value: { delivered: { access_url: "https://example.com/a/9f2c4a" } },
-  },
-  {
-    kind: "transcribed",
-    what: "the price handler in the field reference, answering that the item is there",
-    fence: { file: "portal/cards.md", language: "ts", index: 1 },
-    schema: QuoteResponseSchema,
-    builtBy: "available",
-    // Both answers share this fence, so each branch's names keep the other's
-    // alive: renaming the unavailable branch's fields left every token of its
-    // own fixture still occurring, in the other branch. The reverse check is
-    // what closes that, and this branch is the one whose names cover the fence.
-    completeKeys: true,
-    // `available` is the call the page makes, so its name is checked and its
-    // value — the branch marker — is the SDK's to write.
-    computed: ["available", "amount", "as_of"],
-    suppliedBySdk: ["price", "as_of"],
-    value: {
-      available: true,
-      price: { amount: "5.00", currency: "USD" },
-      as_of: "2026-08-26T10:15:00Z",
-    },
-  },
-  {
-    kind: "transcribed",
-    what: "the same price handler, answering that it is not",
-    fence: { file: "portal/cards.md", language: "ts", index: 1 },
-    schema: QuoteResponseSchema,
-    builtBy: "unavailable",
-    computed: ["available", "as_of"],
-    suppliedBySdk: ["as_of"],
-    value: { available: false, as_of: "2026-08-26T10:15:00Z" },
-  },
-  {
-    kind: "transcribed",
-    what: "a handler taking an asynchronous order on",
-    fence: { file: "portal/quickstart.md", language: "ts", index: 3 },
-    schema: HandlerAnswerSchema,
-    builtBy: "accepted",
-    value: { accepted: { eta_seconds: 60 } },
-  },
-  {
-    kind: "transcribed",
-    what: "a refusal sent after the order was taken on",
-    fence: { file: "portal/orders.md", language: "ts", index: 1 },
-    schema: RefusalSchema,
-    value: { code: "out_of_stock", message: "The supplier did not confirm the number" },
-  },
-  {
-    kind: "transcribed",
-    what: "the same refusal, as the quickstart writes it",
-    fence: { file: "portal/quickstart.md", language: "ts", index: 4 },
-    schema: RefusalSchema,
-    value: { code: "out_of_stock", message: "The supplier did not confirm the number" },
-  },
-  {
-    kind: "transcribed",
-    what: "a price handler answering that the item is there",
-    fence: { file: "portal/quickstart.md", language: "ts", index: 5 },
-    schema: QuoteResponseSchema,
-    builtBy: "available",
-    // The available branch names every field the fence writes on a line of
-    // its own, so it can be held to the example in both directions.
-    completeKeys: true,
-    computed: ["available", "amount", "as_of"],
-    suppliedBySdk: ["price", "as_of"],
-    value: {
-      available: true,
-      price: { amount: "5.00", currency: "USD" },
-      as_of: "2026-08-26T10:15:00Z",
-    },
-  },
-  {
-    kind: "transcribed",
-    what: "the same price handler answering that it is not",
-    fence: { file: "portal/quickstart.md", language: "ts", index: 5 },
-    schema: QuoteResponseSchema,
-    builtBy: "unavailable",
-    // No `completeKeys` here: one fence carries both answers, and `price`
-    // belongs to the other one. Asking this fixture to account for every name
-    // on the page would be asking it about a payload that is not its own.
-    computed: ["available", "as_of"],
-    suppliedBySdk: ["as_of"],
-    value: { available: false, as_of: "2026-08-26T10:15:00Z" },
-  },
-];
-
-const fenceTextOf = (fence: Fence): string => {
-  const blocks = fencesOf(readPortalPage(fence.file), fence.language);
-  const block = blocks[fence.index];
-
-  expect(
-    block,
-    `${fence.file} has no ${fence.language} example number ${fence.index}; the page was reordered or the example removed`,
-  ).toBeDefined();
-
-  return block ?? "";
-};
-
-describe("the drift check itself", () => {
-  // The promise this file makes is that a portal edit cannot pass unnoticed,
-  // and the whole promise rests on these few lines. An earlier version asked
-  // only that each token appear somewhere in the fence, and `'sync'` passed
-  // against a portal that said `'async'` while `'5.00'` passed against
-  // `'15.00'` — the guard was green and guarding nothing.
-
-  /** A token to look for, as `tokensOf` would have produced it. */
-  const token = (kind: Token["kind"], text: string, key: string | null = null): Token => ({
-    kind,
-    text,
-    key,
+describe("the portal's examples are files, and every file is checked", () => {
+  it("finds examples and includes at all", () => {
+    // The negative control for the two directory reads everything else is
+    // generated from. A portal that moved, an include syntax that changed, a
+    // filter that quietly matched nothing — any of those would leave the checks
+    // below with nothing to say and read as a clean run.
+    expect(files.length, "no example files found under portal/examples").toBeGreaterThan(0);
+    expect(included.size, "no page includes anything").toBeGreaterThan(0);
   });
 
-  it("does not let one value pass as the tail of a longer one", () => {
-    expect(occursIn("fulfillment: 'async'", token("text", "sync"))).toBe(false);
-    expect(occursIn("fulfillment: 'sync'", token("text", "sync"))).toBe(true);
+  it("keeps every example in a directory that names a schema", () => {
+    // Where an unchecked example would otherwise hide: a file dropped at the
+    // top of the tree, or a directory nobody mapped to a schema.
+    const loose = entriesOfExamples.filter((entry) => !entry.isDirectory()).map((e) => e.name);
+    const unmapped = entriesOfExamples
+      .filter((entry) => entry.isDirectory() && SCHEMAS[entry.name] === undefined)
+      .map((entry) => entry.name);
 
-    expect(occursIn("amount: '15.00'", token("text", "5.00"))).toBe(false);
-    expect(occursIn("amount: '5.00'", token("text", "5.00"))).toBe(true);
-
-    expect(occursIn("eta_seconds: 160", token("literal", "60"))).toBe(false);
-    expect(occursIn("eta_seconds: 60 }", token("literal", "60"))).toBe(true);
-  });
-
-  it("wants a name written where a name goes", () => {
-    expect(occursIn("const email = order.params.email", token("key", "email"))).toBe(false);
-    expect(occursIn("  email: { type: 'string' }", token("key", "email"))).toBe(true);
-    expect(occursIn('  "email": "buyer@example.com"', token("key", "email"))).toBe(true);
-  });
-
-  it("counts the call that builds an answer as writing that answer's name", () => {
-    // The examples stopped writing `{ delivered: … }` when the SDK grew the
-    // calls that build it. The wrapper's name is still on the page, as the
-    // call, and it is still the thing a rename would break.
-    expect(occursIn("return order.delivered({ access_url: url })", token("key", "delivered"))).toBe(
-      true,
-    );
+    expect(loose, "an example belongs in a directory named for its schema").toStrictEqual([]);
     expect(
-      occursIn("return order.handedOver({ access_url: url })", token("key", "delivered")),
-    ).toBe(false);
-
-    // And the negative branch is not the positive one: a page that only ever
-    // says "there is none" must not satisfy a fixture about a price.
-    expect(occursIn("return q.unavailable(item.checked_at)", token("key", "available"))).toBe(
-      false,
-    );
-    expect(occursIn("return q.available(price, item.checked_at)", token("key", "available"))).toBe(
-      true,
-    );
-
-    // A property read is not a call, so `item.price` still does not count as
-    // writing the name `price`.
-    expect(occursIn("{ amount: item.price }", token("key", "price"))).toBe(false);
+      unmapped,
+      "no schema is mapped to this directory, so nothing here would be validated; add it to SCHEMAS",
+    ).toStrictEqual([]);
   });
 
-  it("does not let a renamed field pass as the one it was renamed from", () => {
-    // The drift that matters most and was invisible: renaming `code:` to
-    // `reason_code:` on the portal left every fixture green, because the
-    // matcher had no left boundary and found `code:` inside the new name. A
-    // merchant would then be copying a field our schemas do not know.
-    expect(occursIn("  reason_code: 'out_of_stock'", token("key", "code"))).toBe(false);
-    expect(occursIn('  "reason_code": "out_of_stock"', token("key", "code"))).toBe(false);
-    expect(occursIn("  code: 'out_of_stock'", token("key", "code"))).toBe(true);
-    expect(occursIn("{ code: 'out_of_stock' }", token("key", "code"))).toBe(true);
-  });
+  it.each(files)("%s passes the schema its directory names", (file) => {
+    // If this fails, a merchant who copied this example got a document our own
+    // side would refuse.
+    const [directory = ""] = file.split("/");
+    const schema = SCHEMAS[directory];
 
-  it("reads the names an example writes, for the other direction", () => {
-    expect(keysWrittenIn("  price: {\n    amount: '5.00',\n  }\n  title: 'x'")).toStrictEqual([
-      "price",
-      "amount",
-      "title",
-    ]);
-  });
+    expect(file.endsWith(".json"), `${file} is not JSON, and nothing here can check it`).toBe(true);
+    expect(schema, `no schema for ${directory}`).toBeDefined();
 
-  it("reads names written inside an object on one line", () => {
-    // The hole this closes: the portal writes small objects inline, so a field
-    // added to one of them — `vat` next to `amount` in a card's price — sat
-    // where the reverse check could not see it, though `MoneySchema` would
-    // refuse that card outright.
-    expect(keysWrittenIn("  price: { amount: '5.00', currency: 'USD' },")).toStrictEqual([
-      "price",
-      "amount",
-      "currency",
-    ]);
-    expect(keysWrittenIn("  price: { amount: '5.00', vat: '0.50' },")).toContain("vat");
-  });
+    const result = schema?.safeParse(jsonOf(file));
 
-  it("reads no name out of a destructuring, which writes no colon", () => {
-    expect(keysWrittenIn("const { id, errors } = await publish({")).toStrictEqual([]);
-  });
-
-  it("keeps a value token tied to the field it came from", () => {
-    // What lets a fixture say "this one field the example works out" without
-    // that turning into "check nothing". The tie is the `key` on each token.
-    const tokens = tokensOf({ available: true, price: { amount: "5.00", currency: "USD" } });
-
-    expect(tokens.filter((token) => token.kind === "key").map((token) => token.text)).toStrictEqual(
-      ["available", "price", "amount", "currency"],
-    );
-    expect(tokens.find((token) => token.text === "5.00")?.key).toBe("amount");
-    expect(tokens.find((token) => token.kind === "literal")?.key).toBe("available");
-  });
-
-  it("lets a fixture stand in for a value the example works out, and checks it still has to", () => {
-    // A fixture can say "the example computes this one" for a timestamp off a
-    // clock or an amount off a lookup — there is no literal to compare a
-    // stand-in against. The hatch checks itself: name a field there whose
-    // value the example does write, and the test says to take it off the list.
-    // Without that, a stale entry would switch the drift check off for a field
-    // and nothing would say so.
-    const asOf = token("text", "2026-08-26T10:15:00Z", "as_of");
-    const computed = new Set(["as_of"]);
-
-    expect(driftVerdictOf("as_of: new Date().toISOString()", asOf, computed)).toBe("ok");
-    expect(driftVerdictOf("as_of: '2026-08-26T10:15:00Z'", asOf, computed)).toBe(
-      "written after all",
-    );
-    expect(driftVerdictOf("as_of: '2026-08-26T10:15:00Z'", asOf, new Set())).toBe("ok");
-    expect(driftVerdictOf("as_of: new Date().toISOString()", asOf, new Set())).toBe("missing");
-
-    // A name is always checked, computed value or not.
-    expect(driftVerdictOf("price: {}", token("key", "as_of", "as_of"), computed)).toBe("missing");
-  });
-
-  it("notices a name the example grew and the transcription never heard of", () => {
-    // The case the forward check cannot see: every token of the transcription
-    // still occurs, and the example has gained a field nothing holds to a
-    // schema.
-    const known = new Set(["merchant_item_id", "title", "fulfillment"]);
-
-    expect(namesTheFixtureLacks("  title: 'x'\n  fulfillment: 'sync'", known)).toStrictEqual([]);
-    // Both the new field and what it contains: an inline object is where a
-    // field hides most easily, so the check reaches inside it.
     expect(
-      namesTheFixtureLacks("  title: 'x'\n  subscription: { period: 'P1M' }", known),
-    ).toStrictEqual(["subscription", "period"]);
+      result?.success === true ? "" : JSON.stringify(result?.error?.issues),
+      `portal/examples/${file} does not pass ${directory}`,
+    ).toBe("");
   });
-});
 
-describe("the portal's examples pass the schemas", () => {
-  for (const fixture of fixtures) {
-    it(`${fixture.what} (${fixture.fence.file})`, () => {
-      const text = fenceTextOf(fixture.fence);
+  it.each(files)("%s is shown by a page", (file) => {
+    // An example nobody includes is an example nobody reads, and it would go on
+    // passing its schema long after the page that once showed it moved on.
+    expect(
+      included.get(`examples/${file}`) ?? [],
+      `no portal page includes portal/examples/${file}; include it or delete it`,
+    ).not.toStrictEqual([]);
+  });
 
-      if (fixture.kind === "transcribed") {
-        const computed = new Set(fixture.computed ?? []);
-        const suppliedBySdk = new Set(fixture.suppliedBySdk ?? []);
+  it("includes nothing that is not there", () => {
+    // The other direction: a page pointing at a file that does not exist
+    // renders as an empty block, and the page reads as though the example were
+    // simply missing.
+    const known = new Set(files.map((file) => `examples/${file}`));
+    const missing = [...included.entries()]
+      .filter(([path]) => !known.has(path))
+      .map(([path, where]) => `${path} (included by ${where.join(", ")})`);
 
-        // A name the SDK supplies must be one the page really does not write,
-        // or the list has gone stale and is switching the check off for a
-        // field the page could be holding.
-        for (const name of suppliedBySdk) {
-          expect(
-            occursIn(text, { kind: "key", text: name, key: name }),
-            `the example writes "${name}" after all, so it no longer belongs in this fixture's suppliedBySdk list`,
-          ).toBe(false);
-        }
+    expect(missing, "a page includes a file that is not in portal/examples").toStrictEqual([]);
+  });
 
-        // And the call this document is built by has to be on the page, which
-        // is what ties a fixture to its own line rather than to whatever else
-        // shares the fence with it.
-        if (fixture.builtBy !== undefined) {
-          expect(
-            occursIn(text, { kind: "key", text: fixture.builtBy, key: fixture.builtBy }),
-            `the example no longer calls ${fixture.builtBy}(), so nothing on the page produces this document any more`,
-          ).toBe(true);
-        }
+  it.each(pages)("%s writes no payload inline", (page) => {
+    // What keeps the mechanism whole. A payload written back into a fence is
+    // one nothing above sees: it passes no schema, it belongs to no file, and
+    // it is exactly the transcription this file was rebuilt to be rid of.
+    const inline = textOf(page)
+      .split("\n")
+      .filter((line) => /^```(json|http)\b/.test(line.trim()));
 
-        // The transcription is only worth as much as its likeness to the page.
-        for (const token of tokensOf(fixture.value)) {
-          if (token.kind === "key" && suppliedBySdk.has(token.text)) continue;
-
-          const verdict = driftVerdictOf(text, token, computed);
-          const complaint =
-            verdict === "missing"
-              ? `the example no longer writes the ${token.kind} ${JSON.stringify(token.text)}; the transcription here has to be brought back in line with the portal`
-              : `the example now writes ${JSON.stringify(token.text)} for "${token.key}" literally, so it no longer belongs in this fixture's computed list`;
-
-          expect(verdict, complaint).toBe("ok");
-        }
-
-        if (fixture.completeKeys === true) {
-          const known = new Set([
-            ...tokensOf(fixture.value)
-              .filter((token) => token.kind === "key")
-              .map((token) => token.text),
-            ...(fixture.outerKeys ?? []),
-          ]);
-
-          expect(
-            namesTheFixtureLacks(text, known),
-            "the example now writes names this fixture does not carry, so nothing holds them to a schema",
-          ).toStrictEqual([]);
-        }
-      }
-
-      const value = fixture.kind === "read" ? JSON.parse(jsonBodyOf(text)) : fixture.value;
-      const result = fixture.schema.safeParse(value);
-
-      expect(
-        result.success ? "" : JSON.stringify(result.error?.issues),
-        `${fixture.what} does not pass its schema`,
-      ).toBe("");
-    });
-  }
+    expect(
+      inline,
+      `${page} writes a payload in a fence; put it in portal/examples and include it with <<<`,
+    ).toStrictEqual([]);
+  });
 });
 
 describe("the pages agree with each other", () => {
-  it("the delivery the orders page shows satisfies the result the cards page declares", () => {
+  it("every delivery the orders page shows carries what the card example declares", () => {
     // The promise, and it spans two pages: a merchant who declares a result on
-    // one page and copies the delivery call from the other must end up with a
-    // delivery that goes through. Before the portal stated that every declared
+    // one and copies a delivery call from the other has to end up with a
+    // delivery that goes through. Before the portal said that every declared
     // field is delivered, the two pages disagreed — the declaration named two
-    // fields and the call sent one, which the compiled check now refuses.
-    const declared = ParamSpecSchema.parse(declaredResult);
-    const check = paramSpecToValidator(declared, "delivery");
-    const fence = fenceTextOf({ file: "portal/orders.md", language: "ts", index: 0 });
+    // fields and the call sent one.
+    const card = CardSchema.parse(jsonOf("card/access-monthly.json"));
+    const check = deliveryCheckFor(card);
+    const orders = textOf("orders.md");
 
-    for (const name of Object.keys(declared)) {
-      expect(
-        occursIn(fence, { kind: "key", text: name, key: name }),
-        `the orders page delivers without "${name}", which the cards page declares`,
-      ).toBe(true);
+    // Every `deliver` call on the page: what each one carries, up to the
+    // parenthesis that closes it, so a call written over several lines is read
+    // whole.
+    const calls = orders
+      .split(".deliver(")
+      .slice(1)
+      .map((rest) => {
+        const end = rest.indexOf(")");
+        return end === -1 ? rest : rest.slice(0, end);
+      });
+
+    expect(calls.length, "the orders page shows no delivery at all").toBeGreaterThan(0);
+
+    for (const call of calls) {
+      for (const name of Object.keys(card.result)) {
+        expect(
+          new RegExp(`(?<![\\w$])${name}\\s*:`).test(call),
+          `the orders page delivers without "${name}", which the card example declares: ${call}`,
+        ).toBe(true);
+      }
     }
 
-    // And a delivery of the shape that call produces passes the check, while
-    // one missing a declared field does not.
+    // And a delivery of the shape those calls produce passes the check the card
+    // compiles to, while one missing a declared field does not.
     expect(
       check.safeParse({
         access_url: "https://example.com/a/9f2c4a",
@@ -655,62 +249,4 @@ describe("the pages agree with each other", () => {
     ).toBe(true);
     expect(check.safeParse({ access_url: "https://example.com/a/9f2c4a" }).success).toBe(false);
   });
-});
-
-describe("no example on the portal goes unpinned", () => {
-  // The pages that carry data examples rather than prose. A ```json or ```http
-  // fence anywhere here is a payload a merchant will copy, so every one of
-  // them has to appear in the map above. TypeScript fences are not counted:
-  // most of them are calling code rather than a payload, and counting those
-  // would fail on every unrelated example the portal gains.
-  // Read from the directory rather than listed here. A hand-kept list guards
-  // the pages somebody remembered, and a page added to the portal — the very
-  // moment a new payload example is most likely to appear — would be guarded
-  // by nothing at all. `WRITING.md` is the house style, addressed to us.
-  const pages = readdirSync(new URL("portal", repoRoot))
-    .filter((file) => file.endsWith(".md") && file !== "WRITING.md")
-    .map((file) => `portal/${file}`)
-    .sort();
-
-  /**
-   * Every page and language where either side has something to say.
-   *
-   * The counting happens here, while the cases are being collected, and that is
-   * what keeps the guard automatic. A page carrying no data examples and
-   * pinning none was fourteen cases asserting nothing against nothing; the day
-   * such a page gains a `json` fence, this line sees it on the next run and the
-   * case appears — carrying a count the map does not have, which is the
-   * failure. A fence removed while the map still pins it comes in from the
-   * other side, which is why the filter asks about both and not only about the
-   * page.
-   */
-  const counted = pages
-    .flatMap((page) =>
-      ["json", "http"].map((language) => ({
-        page,
-        language,
-        onThePage: fencesOf(readPortalPage(page), language).length,
-        pinned: fixtures.filter(
-          (fixture) => fixture.fence.file === page && fixture.fence.language === language,
-        ).length,
-      })),
-    )
-    .filter((row) => row.onThePage > 0 || row.pinned > 0);
-
-  it("has pages with data examples to check at all", () => {
-    // The negative control for the filter above. Everything below is generated
-    // from it, and a filter that quietly matched nothing — a portal directory
-    // that moved, a fence syntax that changed — would leave this describe with
-    // no cases and read as a clean run.
-    expect(counted.length).toBeGreaterThan(0);
-  });
-
-  for (const { page, language, onThePage, pinned } of counted) {
-    it(`${page} has as many ${language} examples as the fixture map pins`, () => {
-      expect(
-        onThePage,
-        `${page} carries ${onThePage} ${language} example(s) and the fixture map pins ${pinned}; add the new one to the map so it is held to a schema`,
-      ).toBe(pinned);
-    });
-  }
 });
