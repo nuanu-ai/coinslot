@@ -859,22 +859,18 @@ describe("the worker's calls over HTTP", () => {
     expect(error.message).toContain("256kb");
   });
 
-  it("tells the four ways a body is turned away apart, and says the true one about each", async () => {
+  it("tells the refusals at the door apart, and says the true one about each", async () => {
     // The promise: an error is a claim somebody else's agent acts on, and by
     // the time these leave the parser they are one throw with a word on it.
-    // The fork in front of them is the only place they are still four things,
-    // so each one answered in another one's words sends that agent to repair
-    // something that was never broken — and, in two of the four cases here, to
-    // do it forever, because the answer will not change however many times it
-    // tries.
+    // The fork in front of them is the only place they are still separate
+    // things, so each one answered in another one's words sends that agent to
+    // repair something that was never broken — and, in most of the cases here,
+    // to do it forever, because the answer will not change however many times
+    // it tries.
     //
-    // The four are read against one gateway. A test that watched only the
-    // branch it was written for would miss a fork widened until it swallows
-    // its neighbours, which is the same defect pointing the other way.
-    //
-    // What this does not cover: an unsupported charset, which the parser also
-    // raises with a word of its own and which this fork still answers as
-    // malformed JSON. That is a fifth row and a separate repair.
+    // They are read against one gateway. A test that watched only the branch
+    // it was written for would miss a fork widened until it swallows its
+    // neighbours, which is the same defect pointing the other way.
     const { served } = await started();
 
     // A body that really was gzip and arrived cut in half — a dropped upload,
@@ -899,9 +895,9 @@ describe("the worker's calls over HTTP", () => {
       return { status: answered.status, ...error };
     };
 
-    // Nothing among the four is a failure of ours, so none of them may be
-    // written to the log as one. An operator who greps for that line and finds
-    // somebody else's broken upload goes looking for a defect in this process.
+    // None of these is a failure of ours, so none of them may be written to
+    // the log as one. An operator who greps for that line and finds somebody
+    // else's broken upload goes looking for a defect in this process.
     const complaints: string[] = [];
     const realError = console.error;
     console.error = (...args: unknown[]) => {
@@ -912,6 +908,7 @@ describe("the worker's calls over HTTP", () => {
     let tooLarge: typeof notJson;
     let encodingRefused: typeof notJson;
     let encodingBroken: typeof notJson;
+    let charsetRefused: typeof notJson;
     let goodGzipBadJson: typeof notJson;
     let brokenPath: typeof notJson;
     let blamedOnUs: string[] = [];
@@ -923,6 +920,11 @@ describe("the worker's calls over HTTP", () => {
       // inflate, so a body under any of those never reaches that branch.
       encodingRefused = await refusedFor({ "content-encoding": "compress" }, "{}");
       encodingBroken = await refusedFor({ "content-encoding": "gzip" }, halfGzip);
+      // A different header and a different refusal: the charset named on the
+      // content-type rather than the coding the body arrived under. The parser
+      // has a word of its own for this one too, and the bytes are never turned
+      // into text, so nothing about the JSON is known here either.
+      charsetRefused = await refusedFor({ "content-type": "application/json; charset=utf-77" }, "{}");
       // The negative control for the branch above it. This body declares the
       // very same header and decompresses perfectly; what is wrong is the JSON
       // inside it. A fork that read the header instead of the failure would
@@ -973,6 +975,15 @@ describe("the worker's calls over HTTP", () => {
     expect(encodingRefused.message).toContain("content-encoding");
     expect(encodingRefused.message).toContain("uncompressed");
     expect(encodingRefused.message).not.toContain("could not be read as JSON");
+
+    expect({ status: charsetRefused.status, code: charsetRefused.code }).toEqual({
+      status: 415,
+      code: "charset_unsupported",
+    });
+    // Which of the two headers was the trouble, since the caller sent both and
+    // the answer is otherwise indistinguishable from the encoding one.
+    expect(charsetRefused.message).toContain("charset");
+    expect(charsetRefused.message).not.toContain("could not be read as JSON");
 
     expect({ status: encodingBroken.status, code: encodingBroken.code }).toEqual({
       status: 400,
