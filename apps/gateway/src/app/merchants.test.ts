@@ -22,6 +22,7 @@ import {
   newKeySecret,
   registerMerchant,
   SEEDED_MERCHANT,
+  SEEDED_SERVICE_NAME,
   seedSandboxKey,
   setServiceName,
 } from "./merchants.js";
@@ -77,6 +78,18 @@ describe("seeding the sandbox", () => {
     );
   });
 
+  it("lists the merchant it issued the key to, so a fresh database comes up findable", async () => {
+    // Nobody runs a command to bring the sandbox up, so the listing name has to
+    // be there without one. A merchant with none publishes cards whose payment
+    // challenge carries no seller declaration at all, and a catalogue reading
+    // them has nothing to show — which is the one thing a sandbox exists to do.
+    const store = aStore();
+
+    await seedSandboxKey(store, countedIds(), "the-sandbox-key", 1_000);
+
+    expect((await store.merchantById(SEEDED_MERCHANT.id))?.serviceName).toBe(SEEDED_SERVICE_NAME);
+  });
+
   it("writes nothing the second time, so a restart is not a second key", async () => {
     // A restart and a second replica both run this. A seed that issued again
     // would leave a merchant with a key per boot, none of which anybody
@@ -89,6 +102,23 @@ describe("seeding the sandbox", () => {
 
     expect(again).toStrictEqual({ kind: "already_there" });
     expect(await store.keysOf(SEEDED_MERCHANT.id)).toHaveLength(1);
+  });
+
+  it("does not put back a listing name somebody took away", async () => {
+    // `merchant listed-as the_merchant --none` is how somebody takes the sandbox
+    // out of a catalogue, and this is the next boot. A listing name that is
+    // missing on a database where the key is already there is not a default
+    // waiting to be filled in — it is a choice somebody made at a terminal, and
+    // a choice a restart undoes is not a choice.
+    const store = aStore();
+    const ids = countedIds();
+    await seedSandboxKey(store, ids, "the-sandbox-key", 1_000);
+    await setServiceName(store, SEEDED_MERCHANT.id, null, 2_000);
+
+    const again = await seedSandboxKey(store, ids, "the-sandbox-key", 3_000);
+
+    expect(again).toStrictEqual({ kind: "already_there" });
+    expect((await store.merchantById(SEEDED_MERCHANT.id))?.serviceName).toBeNull();
   });
 
   it("leaves a key somebody disabled disabled, and says so", async () => {
@@ -108,6 +138,24 @@ describe("seeding the sandbox", () => {
     expect(again).toStrictEqual({ kind: "disabled" });
     expect(await store.keysOf(SEEDED_MERCHANT.id)).toHaveLength(1);
     expect(await store.workingKey(keyDigest("the-sandbox-key"))).toBeNull();
+  });
+
+  it("leaves the listing alone on the boot after the key was disabled", async () => {
+    // Shutting the sandbox down is two commands — disable the key, take the
+    // listing away — and neither half may come back by itself. This is the
+    // second half on the path where the key is there and revoked.
+    const store = aStore();
+    const ids = countedIds();
+    await seedSandboxKey(store, ids, "the-sandbox-key", 1_000);
+    const [key] = await store.keysOf(SEEDED_MERCHANT.id);
+    if (key === undefined) throw new Error("the seed wrote no key");
+    await store.disableKey(key.id, 2_000);
+    await setServiceName(store, SEEDED_MERCHANT.id, null, 2_000);
+
+    const again = await seedSandboxKey(store, ids, "the-sandbox-key", 3_000);
+
+    expect(again).toStrictEqual({ kind: "disabled" });
+    expect((await store.merchantById(SEEDED_MERCHANT.id))?.serviceName).toBeNull();
   });
 
   it("survives two processes seeding the same key at the same instant", async () => {
