@@ -109,13 +109,25 @@ const environmentSchema = z.object({
    * issue. Absent, this process writes nothing and every key is one somebody
    * made deliberately.
    *
+   * Set to nothing reads the same as never set, and that is the one spelling
+   * that matters to whoever unsets it. A deployment says this in a file the
+   * process is handed rather than by deleting a line — `SANDBOX_MERCHANT_KEY=`
+   * with nothing after it — and the reading where an empty string is a key of
+   * length zero refuses the value and stops the process, so an operator who
+   * did exactly what the paragraph above asks would find the gateway will not
+   * start. There is no reading in which nothing is a key.
+   *
    * The length floor is a floor on what a sandbox is allowed to hand out, not
    * on what a real key looks like: a real one is generated with thirty-two
    * bytes behind it and never chosen by anybody.
    */
   SANDBOX_MERCHANT_KEY: z
     .string({ error: absentOrWrong("must be a string") })
-    .min(16, "must be at least 16 characters")
+    .transform((value) => (value === "" ? null : value))
+    .refine(
+      (value) => value === null || value.length >= 16,
+      "must be at least 16 characters, or empty to seed nothing",
+    )
     .nullable()
     .default(null),
 

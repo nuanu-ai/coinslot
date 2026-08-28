@@ -209,6 +209,23 @@ describe("loadConfig", () => {
     );
   });
 
+  it("reads a seed key set to nothing the way it reads one never set", () => {
+    // The comment on this variable tells a deployment to unset it, and a
+    // deployment says that by handing the process a file with the name and
+    // nothing after it rather than by deleting the line. Read as a key of
+    // length zero that value is refused and the gateway does not start, so an
+    // operator who did exactly what they were told would be looking at a
+    // process that will not come up. Nothing is not a key.
+    expect(loadConfig({ ...required, SANDBOX_MERCHANT_KEY: "" }).sandboxMerchantKey).toBeNull();
+    // The same answer the absence gives, which is the whole claim.
+    expect(loadConfig(required).sandboxMerchantKey).toBeNull();
+    // And the floor still stands for everything that is a key: a short one is
+    // refused rather than swept in with the empty one.
+    expect(() => loadConfig({ ...required, SANDBOX_MERCHANT_KEY: " " })).toThrowError(
+      /SANDBOX_MERCHANT_KEY: must be at least 16 characters/,
+    );
+  });
+
   it("refuses a deadline that is not a whole number of milliseconds above zero", () => {
     expect(() => loadConfig({ ...required, QUOTE_RESPONSE_MS: "0" })).toThrowError(
       /QUOTE_RESPONSE_MS: must be a whole number of milliseconds above zero/,

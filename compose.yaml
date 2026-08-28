@@ -69,8 +69,10 @@
 #   COINSLOT_COOKIE_SECURE  Secure on the session cookie     false
 #   COINSLOT_MERCHANT_KEY   the key the cabinet reaches      local-sandbox-merchant-key
 #                           the gateway with
+#   COINSLOT_SEED_KEY       the key the gateway writes at    local-sandbox-merchant-key
+#                           start-up, or nothing at all
 #   COINSLOT_POSTGRES_PUBLISH  the published port of the     5432:5432
-#                           database, or "" to publish none
+#                           database, or a narrower bind
 #
 # The first three move together and there is no arithmetic between them: an
 # origin behind an edge that terminates TLS elsewhere is not derivable from a
@@ -81,6 +83,19 @@
 # On a host reached over https, COINSLOT_COOKIE_SECURE must be "true", and the
 # key must not be the one printed above: it is in a repository, and a merchant
 # key opens that merchant's cards, orders and receipts.
+#
+# The last two are one string on a laptop and two different things on a server,
+# which is why they are two variables. Seeding is what makes `docker compose up`
+# come up selling with nothing run by hand: the gateway writes that key into the
+# merchant's row at every start. That is also what makes it unrevocable — a key
+# disabled at a terminal is back after the next restart — so a deployment issues
+# a key with `merchant key` instead, puts it in COINSLOT_MERCHANT_KEY, and sets
+# COINSLOT_SEED_KEY to nothing at all:
+#
+#   COINSLOT_SEED_KEY=
+#
+# The gateway reads a name set to nothing as a name never set, and says at
+# start-up which of the two it did.
 
 # One image behind four of the services below. They are four entry points into
 # one workspace and share every dependency below their own file, so which one a
@@ -159,7 +174,16 @@ services:
       # second boot writes nothing, and a key disabled at a terminal stays
       # disabled. No deployment sets this — a key in an environment cannot be
       # revoked without a deployment, which is what moving keys into rows fixed.
-      SANDBOX_MERCHANT_KEY: "${COINSLOT_MERCHANT_KEY:-local-sandbox-merchant-key}"
+      # Its own variable rather than the one the cabinet presents, because the
+      # two part company on a server: this one is written into the merchant's
+      # row at every start, which is exactly what a key that can be revoked at a
+      # terminal must not be. Set to nothing, this process writes no key and
+      # every key is one somebody issued.
+      #
+      # The dash carries no colon on purpose: `${VAR-default}` gives the default
+      # only when nobody named the variable, so a deployment naming it with
+      # nothing after it gets nothing rather than the sandbox's key back.
+      SANDBOX_MERCHANT_KEY: "${COINSLOT_SEED_KEY-local-sandbox-merchant-key}"
       # The address an agent is sent back to in order to pay, which is the door
       # Caddy answers and not the port this process listens on. Given the
       # process's own port here, a payment challenge would name a door that is
