@@ -42,10 +42,16 @@ export const signInScreen = (base: string, problem?: string): string =>
 /**
  * The form that makes a merchant, a key and an account at once.
  *
- * Four boxes, because that is what the act needs: who signs in, what they sign
- * in with, the name the merchant is shown under in the catalogue every buyer
- * reads, and the invitation that stands in the door until registration is open
- * to everybody (ADR-0014 §3).
+ * Three boxes, and it was four. Who signs in, what they sign in with, and the
+ * invitation that stands in the door until registration is open to everybody.
+ *
+ * The fourth was the name a merchant's products are sold under, and it is gone
+ * from here on purpose. On this form it asked for a public answer at the one
+ * moment somebody knows least — no products, no catalogue seen, nothing yet to
+ * name — and what a form like that collects is whatever gets past it, which is
+ * then printed beside their products for buyers to read. It is asked for after
+ * the account exists, where it has room to say why it matters and where it can
+ * be changed. Until it is chosen, publishing a card is refused.
  *
  * The page says what the address is for and what it is not yet. A person who
  * registers has shown they hold an invitation, not that they hold the address
@@ -66,9 +72,6 @@ export const registerScreen = (base: string, minimum: number, problem?: string):
   <input id="email" name="email" type="email" autocomplete="username" autocapitalize="off" spellcheck="false" autofocus required>
   <label for="password">Password</label>
   <input id="password" name="password" type="password" autocomplete="new-password" minlength="${minimum}" required>
-  <label for="name">The name your products are sold under</label>
-  <input id="name" name="name" type="text" autocomplete="organization" maxlength="32" required>
-  <p class="quiet">Buyers read this name beside your products. At most 32 characters, all of them ordinary keyboard characters, with no space at either end — that is the rule of the catalogue that lists you, not ours.</p>
   <label for="invitation">Invitation</label>
   <input id="invitation" name="invitation" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" required>
   <p class="quiet">The code you were given along with the address of this site. Registering is not open to everybody yet, and this is what stands in the door for now.</p>

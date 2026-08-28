@@ -25,7 +25,6 @@
  */
 
 import { readFileSync } from "node:fs";
-import { ServiceNameSchema } from "@coinslot/contracts";
 import express, { type Express, type Request, type Response } from "express";
 import type { CabinetConfig } from "./config.js";
 import {
@@ -116,42 +115,19 @@ const REGISTRATION_REFUSED =
  */
 const LOOKS_LIKE_AN_ADDRESS = /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/;
 
-/**
- * What a merchant's name has to be, said in words a person can act on.
- *
- * The rule is the contract's `ServiceNameSchema` and is applied by asking it
- * rather than by writing it out again here: it is the discovery catalogue's own
- * rule, because that catalogue is where this name goes, and a second copy of it
- * in this file would be the copy that goes stale. What is written here is only
- * the sentence, because the schema's messages are one per broken rule and a
- * person filling in a form is better served by being told the whole rule once.
- *
- * It is checked here as well as at the gateway so that a name outside the rule
- * comes back as this sentence rather than as a 400 the screen would have to
- * guess at — and so that no merchant is made for a registration that was never
- * going to succeed.
- */
-const NAME_RULE =
-  "The name your products are sold under is at most 32 characters, all of them ordinary" +
-  " keyboard characters, with no space at either end. That is the rule of the catalogue that" +
-  " will list you under it, not ours.";
-
 /** What is wrong with a registration form, in a sentence, or null. */
 function whatIsWrongWith(
-  form: { email: string; password: string; name: string; invitation: string },
+  form: { email: string; password: string; invitation: string },
   shortestPassword: number,
 ): string | null {
-  if (form.email === "" || form.password === "" || form.name === "" || form.invitation === "") {
-    return "Every one of the four is needed: an address, a password, the name your products are sold under, and your invitation.";
+  if (form.email === "" || form.password === "" || form.invitation === "") {
+    return "All three are needed: an address, a password and your invitation.";
   }
   if (!LOOKS_LIKE_AN_ADDRESS.test(form.email)) {
     return "That is not an address of the shape someone@example.com.";
   }
   if (form.password.length < shortestPassword) {
     return `A password has to be at least ${shortestPassword} characters.`;
-  }
-  if (!ServiceNameSchema.safeParse(form.name).success) {
-    return NAME_RULE;
   }
   return null;
 }
@@ -431,7 +407,7 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
     // because a merchant made for a form that was never going to produce an
     // account is litter somebody has to argue about later. ADR-0014 §1 accepts
     // that litter where it cannot be avoided; this is where it can.
-    const wrong = whatIsWrongWith({ email, password, name, invitation }, shortest);
+    const wrong = whatIsWrongWith({ email, password, invitation }, shortest);
     if (wrong !== null) {
       response
         .status(400)
@@ -445,7 +421,7 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
     // an account" to somebody who has no invitation at all. Behind an
     // invitation the gateway has accepted, the address is answered the same way
     // a refused invitation is — one sentence, below.
-    const made = await registrar.register(name, invitation);
+    const made = await registrar.register(invitation);
     if (!made.ok) {
       // 403 is the only status that means the invitation was not accepted, and
       // the route answers it identically for a wrong code and for a gateway

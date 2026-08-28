@@ -1036,7 +1036,6 @@ describe("registering", () => {
   const FORM = {
     email: "fresh@example.com",
     password: "a-password-of-their-own",
-    name: "A merchant with a name",
     invitation: "the-invitation-we-handed-out",
   };
 
@@ -1049,12 +1048,12 @@ describe("registering", () => {
    */
   const registrarAnswering = (
     answer: Answer<RegisteredMerchant>,
-  ): Registrar & { asked: { name: string; invitation: string }[] } => {
-    const asked: { name: string; invitation: string }[] = [];
+  ): Registrar & { asked: { invitation: string }[] } => {
+    const asked: { invitation: string }[] = [];
     return {
       asked,
-      register: async (name, invitation) => {
-        asked.push({ name, invitation });
+      register: async (invitation) => {
+        asked.push({ invitation });
         return answer;
       },
     };
@@ -1064,7 +1063,6 @@ describe("registering", () => {
     ok: true,
     document: {
       merchant_id: "mer_the_merchant",
-      name: FORM.name,
       key: {
         id: "key_the_first_one",
         label: "the first key",
@@ -1090,7 +1088,7 @@ describe("registering", () => {
 
     expect(registered.status).toBe(303);
     expect(registered.to).toBe("/cards");
-    expect(registrar.asked).toStrictEqual([{ name: FORM.name, invitation: FORM.invitation }]);
+    expect(registrar.asked).toStrictEqual([{ invitation: FORM.invitation }]);
     // The account is there, pointed at the merchant the gateway made, and the
     // password typed into the form is the one that works.
     const made = await identity.byEmail(FORM.email);
@@ -1190,17 +1188,22 @@ describe("registering", () => {
   });
 
   it("refuses a form with a field missing, and asks the gateway for nothing", async () => {
-    // Every one of the four is required, and a merchant is not made for a form
+    // Every one of the three is required, and a merchant is not made for a form
     // that was never going to produce an account. Litter that can be avoided by
     // reading the form is litter nobody has to argue about afterwards.
+    //
+    // It was four until the name a merchant sells under moved off this form:
+    // it is a public answer nobody can give on the day they arrive, and it is
+    // asked for once the account exists.
+
     const registrar = registrarAnswering(madeAMerchant());
     const { browser, identity } = await started({ registrar });
 
-    for (const missing of ["email", "password", "name", "invitation"] as const) {
+    for (const missing of ["email", "password", "invitation"] as const) {
       const { [missing]: _absent, ...rest } = FORM;
       const answered = await browser.post("/register", rest);
       expect(answered.status, missing).toBe(400);
-      expect(readable(answered.html), missing).toMatch(/every|all four|each/i);
+      expect(readable(answered.html), missing).toMatch(/every|all three|each/i);
       expect(answered.headers.getSetCookie(), missing).toStrictEqual([]);
     }
     expect(registrar.asked).toStrictEqual([]);
@@ -1320,39 +1323,13 @@ describe("registering", () => {
     await expect(identity.byEmail(FORM.email)).resolves.toBeNull();
   });
 
-  it("refuses a name the catalogue that lists it would not carry, and says the rule", async () => {
-    // The name goes into a discovery catalogue whose rule is 32 characters of
-    // ordinary keyboard characters. A name outside it is refused by the gateway
-    // with a 400, which this screen would have to guess at; refused here, the
-    // person is told the rule and no merchant is made for an attempt that was
-    // never going to succeed.
-    const registrar = registrarAnswering(madeAMerchant());
-    const { browser } = await started({ registrar });
-
-    for (const name of ["x".repeat(33), "Кириллица", "a name with a  bell in it", "", "   "]) {
-      const answered = await browser.post("/register", { ...FORM, name });
-      expect(answered.status, name).toBe(400);
-      expect(readable(answered.html), name).toMatch(/32 characters|four is needed/);
-    }
-    expect(registrar.asked).toStrictEqual([]);
-  });
-
-  it("takes the space off a name rather than refusing it for one", async () => {
-    // A space at the front of a form field is a typing accident, and the rule
-    // that refuses it exists because a padded name survives the catalogue
-    // untouched and makes two spellings of one word. Trimming it satisfies the
-    // rule and gives the person the name they meant; refusing it would be this
-    // form being pedantic about something it can simply fix.
-    const registrar = registrarAnswering(madeAMerchant());
-    const { browser } = await started({ registrar });
-
-    const made = await browser.post("/register", { ...FORM, name: "  A merchant with a name  " });
-
-    expect(made.status).toBe(303);
-    expect(registrar.asked).toStrictEqual([
-      { name: "A merchant with a name", invitation: FORM.invitation },
-    ]);
-  });
+  // Two tests stood here and are gone with the field they were about: one
+  // refused a name the catalogue would not carry, and one took the space off a
+  // padded one. Both described this form checking a name, and this form no
+  // longer asks for one — the screen that does is where those promises are
+  // made now, and where the tests for them belong. Deleting them here rather
+  // than leaving them passing against nothing is the point: a test that
+  // survives the behaviour it described is the one that later gets believed.
 
   it("does not send somebody to check a good invitation when the gateway is the problem", async () => {
     // 403 is the only answer that means the invitation was not accepted. A
