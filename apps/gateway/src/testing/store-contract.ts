@@ -443,6 +443,38 @@ export function describeStore(name: string, open: () => Promise<Store>): void {
         expect((await store.workingKey("digest-a"))?.id).toBe("mk_a");
       });
 
+      it("is not written at all where the key beside them cannot be", async () => {
+        // The half that makes the sentence above true rather than merely
+        // intended. A digest already taken is how this fails with nothing else
+        // wrong, and the merchant must not survive it: left behind, it is a row
+        // with a generated identifier nobody holds, no way in, and foreign keys
+        // on it that stop anything sweeping it away.
+        //
+        // What the refusal says is the store's own sentence and not the
+        // driver's, for the reason the key cases give: the database's own
+        // refusal carries the digest, and this is a path a stranger reaches by
+        // registering.
+        const store = await fresh();
+        await store.registerMerchant(
+          { id: A, name: "Merchant A", serviceName: "Merchant A" },
+          { id: "mk_a", label: "the first key", digest: "digest-a" },
+          1_000,
+        );
+
+        const refused = await refusalOf(
+          store.registerMerchant(
+            { id: B, name: "Merchant B", serviceName: "Merchant B" },
+            { id: "mk_b", label: "the first key", digest: "digest-a" },
+            2_000,
+          ),
+        );
+
+        expect(String(refused)).toMatch(/a key with that digest is already written down/);
+        expect(asLogged(refused)).not.toContain("digest-a");
+        expect(await store.merchantById(B)).toBeNull();
+        expect((await store.merchants()).map((merchant) => merchant.id)).toStrictEqual([A]);
+      });
+
       it("is not written over by a second registration under the same identifier", async () => {
         // Answered rather than thrown, the way writing a merchant on its own
         // answers it, and the merchant that is there keeps its name and gains no
