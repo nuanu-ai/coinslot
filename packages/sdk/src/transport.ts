@@ -91,7 +91,15 @@ export const REACH = Object.freeze({
   NOT_RECEIVED: "not_received",
   /** The gateway answered, and the answer is not one this package can read. */
   ANSWERED: "answered",
-  /** It was sent and nothing came back. Whether it arrived is not known here. */
+  /**
+   * The exchange was cut short. What the call did is not known here.
+   *
+   * Deliberately silent about direction, because three different things end
+   * up here and they do not agree about it: an abort that may have fired
+   * before the request left, a connection that broke once it was under way,
+   * and an answer that started arriving and stopped. What they share is that
+   * no complete answer was had, and that is all this may be read as saying.
+   */
   UNKNOWN: "unknown",
 } as const);
 
@@ -210,6 +218,20 @@ const failure = (
  *
  * It lives here rather than in each caller so that the three states are
  * described in one place and cannot drift into three different vocabularies.
+ *
+ * Each clause is held to what its own reach actually knows, and the third one
+ * is the one that has to be written carefully, because it is one sentence in
+ * front of three different situations. A call abandoned on an abort throws
+ * with no code at all and may never have left this process. A connection that
+ * broke in flight was certainly sent. And an answer that stopped mid-sentence
+ * means the gateway certainly had the call — a status and part of a body came
+ * back. So this clause says nothing about direction: not that the call was
+ * sent, not that nothing came back, and not that whether it arrived is
+ * unknown, because on the third road it is known and the answer is yes. What
+ * the three share is that the exchange was cut short, and so what the call did
+ * is not known — and that is the whole of what may be claimed here. The
+ * specifics belong to the failure's own `reason`, which every caller prints
+ * immediately after this clause and which names the road it came down.
  */
 export const whatIsKnown = (failure: TransportFailure): string => {
   switch (failure.reach) {
@@ -218,7 +240,7 @@ export const whatIsKnown = (failure: TransportFailure): string => {
     case REACH.ANSWERED:
       return "it reached us and what came back could not be read, so what it did is not known here";
     case REACH.UNKNOWN:
-      return "it was sent and nothing came back, so whether it arrived is not known here";
+      return "the exchange did not finish, so what the call did is not known here";
   }
 };
 
