@@ -336,6 +336,33 @@ if (databaseUrl === null) {
       expect(mails).toStrictEqual([]);
     });
 
+    it("does not report a database that will not answer as an address being taken", async () => {
+      // Found on the first run outside the tests, against a database that had
+      // never been migrated. Every refusal used to be caught in one place, so a
+      // connection that failed came back as the component saying no — and the
+      // command answered "that address already has an account" while the real
+      // trouble was that there were no tables to look in. On the registration
+      // screen the same fault would have sent a merchant to check an invitation
+      // that was never the problem.
+      //
+      // What separates the two is the type the component throws for its own
+      // refusals. Anything else goes up, where the page says something here is
+      // broken and the log gets the exception.
+      const identity = identityOn();
+      await emptyEverything();
+
+      await expect(
+        identity.register("dmitry@example.com", PASSWORD, "A shop", MERCHANT),
+      ).rejects.toThrow();
+      await expect(identity.signIn("dmitry@example.com", PASSWORD)).rejects.toThrow();
+      await expect(identity.setPasswordFrom("a-token", PASSWORD)).rejects.toThrow();
+      // The two that answer without asking the database at all, and still
+      // answer correctly with none: a link nobody signed and a cookie nobody
+      // signed are both refused on the signature, before a query.
+      await expect(identity.confirm("a-token")).resolves.toBe(false);
+      await expect(identity.whoIs("coinslot.session_token=nonsense")).resolves.toBeNull();
+    });
+
     it("asks the database nothing about a cookie it did not sign", async () => {
       // The measurement that only means something against a real connection,
       // and the reason a browser carrying a pile of planted cookies is not a

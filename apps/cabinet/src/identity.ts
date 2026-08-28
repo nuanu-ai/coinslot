@@ -30,6 +30,7 @@
 import { type BetterAuthOptions, betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { memoryAdapter } from "better-auth/adapters/memory";
+import { APIError } from "better-auth/api";
 import { getCookies } from "better-auth/cookies";
 import { createLocalAccountIssuer } from "better-auth/db";
 import { drizzle } from "drizzle-orm/node-postgres";
@@ -601,6 +602,9 @@ export function identityFor(config: CabinetConfig, parts: IdentityParts = {}): I
           body: { currentPassword: current, newPassword: fresh, revokeOtherSessions: true },
         });
       } catch (thrown) {
+        if (!(thrown instanceof APIError)) {
+          throw thrown;
+        }
         return tooShort(thrown) ? "too-short" : "wrong-current";
       }
       // Every session that person had, including the one that asked and the
@@ -616,37 +620,32 @@ export function identityFor(config: CabinetConfig, parts: IdentityParts = {}): I
       try {
         await auth.api.requestPasswordReset({ body: { email: emailAs(email) } });
       } catch (thrown) {
-        // Nothing here is told to the person who asked, whatever happened. The
-        // screen says the same sentence either way, and a failure that changed
-        // it would turn the form into a way of asking who has an account.
+        // The one place a failure really is swallowed, and it has to be. The
+        // screen says the same sentence whatever happened, because a form that
+        // answered differently for an address nobody has would be a way of
+        // asking who sells here — so there is nothing a caller could do with
+        // this, and the log is where it goes.
         console.error("[cabinet] a new password could not be asked for", thrown);
       }
     },
 
     async setPasswordFrom(token, password) {
-      try {
-        await auth.api.resetPassword({ body: { token, newPassword: password } });
-        return true;
-      } catch {
-        return false;
-      }
+      const set = await orNull(auth.api.resetPassword({ body: { token, newPassword: password } }));
+      return set !== null;
     },
 
     async askToConfirm(email) {
-      try {
-        await auth.api.sendVerificationEmail({ body: { email: emailAs(email) } });
-      } catch (thrown) {
-        console.error("[cabinet] a confirmation could not be sent", thrown);
-      }
+      // The component's own refusal is swallowed and nothing else is. It
+      // refuses an address it has already confirmed, which is a person pressing
+      // a control that should not have been on their page any more; a database
+      // that will not answer is a different thing, and the merchant who pressed
+      // the button is entitled to be told that something here is broken rather
+      // than sent back to a page that looks as though it worked.
+      await orNull(auth.api.sendVerificationEmail({ body: { email: emailAs(email) } }));
     },
 
     async confirm(token) {
-      try {
-        await auth.api.verifyEmail({ query: { token } });
-        return true;
-      } catch {
-        return false;
-      }
+      return (await orNull(auth.api.verifyEmail({ query: { token } }))) !== null;
     },
 
     async make(email, password, merchant) {
@@ -746,18 +745,29 @@ export function identityFor(config: CabinetConfig, parts: IdentityParts = {}): I
 }
 
 /**
- * The answer, or null where the component refused.
+ * The answer, or null where the component refused — and nothing else.
  *
- * Every refusal this file cares about is one the caller turns into one sentence
- * on a screen, and the component's own words are English written for a
- * developer reading a JSON answer. The one place that is not true is a password
- * change, which has two sentences and reads the code to tell them apart.
+ * The distinction is the whole of this function. A refusal is the component
+ * saying no to what it was given, and the caller turns it into one sentence on
+ * a screen; anything else is the machinery under it failing, and there is no
+ * sentence for that which is not a lie. A database that is not there would
+ * otherwise come back as "that address already has an account", which sends a
+ * merchant to look for an account they do not have while the cabinet is the
+ * thing that is broken — and it is what this cabinet did on the first run
+ * outside its own tests.
+ *
+ * The component marks its own refusals by throwing this one type. Everything
+ * else goes up, where the error page says something here is broken and the log
+ * gets the exception.
  */
 async function orNull<T>(answering: Promise<T>): Promise<T | null> {
   try {
     return await answering;
-  } catch {
-    return null;
+  } catch (thrown) {
+    if (thrown instanceof APIError) {
+      return null;
+    }
+    throw thrown;
   }
 }
 
@@ -814,8 +824,8 @@ const confirmMessage = (to: string, link: string): Message => ({
   to,
   subject: "Confirm your address for Coinslot",
   body: [
-    "Open this to confirm that this address reaches you. It works once and stops",
-    "working after an hour:",
+    "Open this to confirm that this address reaches you. It stops working an hour",
+    "after it is sent:",
     "",
     `    ${link}`,
     "",
