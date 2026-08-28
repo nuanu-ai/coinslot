@@ -72,7 +72,11 @@ describe("seeding the sandbox", () => {
 
     const seeded = await seedSandboxKey(store, countedIds(), "the-sandbox-key", 1_000);
 
-    expect(seeded).toStrictEqual({ kind: "issued", merchantId: SEEDED_MERCHANT.id });
+    expect(seeded).toStrictEqual({
+      kind: "issued",
+      merchantId: SEEDED_MERCHANT.id,
+      listedAs: SEEDED_SERVICE_NAME,
+    });
     expect((await store.workingKey(keyDigest("the-sandbox-key")))?.merchantId).toBe(
       SEEDED_MERCHANT.id,
     );
@@ -102,6 +106,25 @@ describe("seeding the sandbox", () => {
 
     expect(again).toStrictEqual({ kind: "already_there" });
     expect(await store.keysOf(SEEDED_MERCHANT.id)).toHaveLength(1);
+  });
+
+  it("leaves a name somebody chose alone when it issues a key beside it", async () => {
+    // The other way a start can issue a key: the same database with a new
+    // string in SANDBOX_MERCHANT_KEY. The default belongs to a merchant nobody
+    // has named, and this one is named, so the run says it listed nothing.
+    const store = aStore();
+    const ids = countedIds();
+    await seedSandboxKey(store, ids, "the-sandbox-key", 1_000);
+    await setServiceName(store, SEEDED_MERCHANT.id, "Someone's shop", 2_000);
+
+    const seeded = await seedSandboxKey(store, ids, "another-sandbox-key", 3_000);
+
+    expect(seeded).toStrictEqual({
+      kind: "issued",
+      merchantId: SEEDED_MERCHANT.id,
+      listedAs: null,
+    });
+    expect((await store.merchantById(SEEDED_MERCHANT.id))?.serviceName).toBe("Someone's shop");
   });
 
   it("does not put back a listing name somebody took away", async () => {
@@ -186,9 +209,11 @@ describe("seeding the sandbox", () => {
     const broken = {
       ...store,
       addMerchant: store.addMerchant.bind(store),
-      // The seed reads the merchant back to see whether it needs a listing
-      // name, and writes one if it has none. Both are the real store's, so
-      // this stays a test about the key write and nothing else.
+      // The merchant row and the listing are the real store's, whenever the
+      // seed gets to them, so this stays a test about the key write and nothing
+      // else. As it stands the key write fails first and it never gets to the
+      // listing at all — which is itself the promise that a start-up failure
+      // leaves the sandbox listed the way it found it.
       merchantById: store.merchantById.bind(store),
       setServiceName: store.setServiceName.bind(store),
       keyByDigest: async () => null,
