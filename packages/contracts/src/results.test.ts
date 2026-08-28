@@ -187,14 +187,12 @@ describe("an error from delivering or refusing an order", () => {
     });
   }
 
-  it("refuses an error that leaves the merchant to guess whether to retry", () => {
-    // The whole point of the flag is to separate "the network dropped, call
-    // again, the call is idempotent" from "nothing you do will change this,
-    // write the case down". A missing flag turns one of those into a retry
-    // loop and the other into a lost order.
-    expect(errorOf(OrderCallErrorSchema, { code: error.code, message: error.message })).toContain(
-      "retryable",
-    );
+  it("refuses a retry flag that is not one", () => {
+    // The loop above asks about the flag being absent. This is about it being
+    // present and unreadable. The point of the flag is to separate "the
+    // network dropped, call again, the call is idempotent" from "nothing you
+    // do will change this, write the case down", and a truthy string turns one
+    // of those into a retry loop and the other into a lost order.
     for (const retryable of ["true", 1, null, "yes"]) {
       expect(
         OrderCallErrorSchema.safeParse({ ...error, retryable }).success,

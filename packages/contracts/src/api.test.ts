@@ -92,11 +92,14 @@ describe("an order read back with its state", () => {
     expect(OrderWithStatusSchema.parse(openOrder)).toStrictEqual(openOrder);
   });
 
-  for (const field of ["id", "merchant_item_id", "params", "price", "test", "status"]) {
-    it(`refuses an order read back without ${field} and names it`, () => {
-      expectMissingFieldRejected(OrderWithStatusSchema, openOrder, field);
-    });
-  }
+  // Only `status`. This schema is `OrderSchema.extend({ status })`, so the five
+  // fields under it are the order's own and `order.test.ts` asks about each of
+  // them there. What is left is the field this schema adds — and if the
+  // extension is ever replaced by a strict object written out by hand, these
+  // cases have to come back with it.
+  it("refuses an order read back without status and names it", () => {
+    expectMissingFieldRejected(OrderWithStatusSchema, openOrder, "status");
+  });
 
   it("refuses a word that is not one of the endings the agent and merchant share", () => {
     // The vocabulary is the state machine's own. A state read back under a word

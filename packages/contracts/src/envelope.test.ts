@@ -92,12 +92,17 @@ describe("the worker envelope", () => {
     expect(errorOf(WorkerEnvelopeSchema, withoutKind)).toContain("kind");
   });
 
-  for (const kind of WORKER_ENVELOPE_KINDS) {
-    for (const field of ["id", "sent_at", "payload"]) {
-      it(`refuses a ${kind} envelope without ${field} and names it`, () => {
-        expectMissingFieldRejected(WorkerEnvelopeSchema, envelopes[kind], field);
-      });
-    }
+  // Three fields of one kind rather than of all three. The union is built by
+  // `envelopeOf`, one factory called three times, so `id`, `sent_at` and
+  // `payload` are the same declaration in every branch and asking each branch
+  // separately asked the same question three times. The day a branch is
+  // written out by hand instead of built, that stops being true and the loop
+  // over the kinds has to come back — which is why it is said here rather than
+  // left for somebody to work out from a passing suite.
+  for (const field of ["id", "sent_at", "payload"]) {
+    it(`refuses an envelope without ${field} and names it`, () => {
+      expectMissingFieldRejected(WorkerEnvelopeSchema, envelopes.order, field);
+    });
   }
 
   it("holds the payload to the schema its kind names, and refuses another kind's", () => {
