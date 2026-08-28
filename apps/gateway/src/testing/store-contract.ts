@@ -66,12 +66,13 @@ const card = (merchantItemId: string, title: string): Card => ({
 /**
  * One order, as little of one as the store will accept.
  *
- * The instant it was created at is a parameter and not a constant, and that is
- * about the two adapters rather than about orders. A merchant's list comes back
- * in the order the documents were created in, which one adapter reads off a
- * column and the other off the sequence its map was filled in; orders sharing
- * one instant would come back in an order neither of them promises, and a test
- * asserting one would be asserting an accident.
+ * The instant it was created at is a parameter and not a constant, and what
+ * that buys is a stable answer rather than a known one. Nothing here asserts
+ * the order a merchant's list comes back in — the port promises none and the
+ * comparisons above sort — but the database orders that list by this instant,
+ * so orders sharing one would come back in whatever order the planner chose
+ * that time. Distinct instants are what keep a list read twice the same list,
+ * which is the difference between a suite that fails and a suite that flickers.
  */
 const anOrder = (
   id: string,
@@ -160,6 +161,20 @@ async function answeredWithin<T>(ms: number, work: Promise<T>): Promise<T | "sti
   } finally {
     clearTimeout(bell);
   }
+}
+
+/**
+ * The identifiers of a list of orders, in an order of this suite's own.
+ *
+ * Which order a merchant's orders come back in is not among the things the
+ * port promises, and the two adapters do not arrive at one the same way: a
+ * column decides it in the database and the sequence a map was filled in
+ * decides it in memory. A comparison written as a sequence would therefore be
+ * asserting whatever the fixture happened to produce, so what is compared is a
+ * set, laid out in one order so a failure still reads as a list.
+ */
+async function idsOf(orders: Promise<readonly StoredOrder[]>): Promise<string[]> {
+  return (await orders).map((held) => held.order.id).sort((one, other) => one.localeCompare(other));
 }
 
 /**
@@ -611,9 +626,15 @@ export function describeStore(name: string, open: () => Promise<Store>): void {
 
         const decided = await Promise.all([bump(), bump(), bump()]);
 
-        expect(decided.map((lookup) => (lookup.found ? lookup.result : null)).sort()).toStrictEqual(
-          [1, 2, 3],
-        );
+        // Sorted as numbers. JavaScript's own sort compares them as text, which
+        // agrees with the numbers only while there are fewer than ten of them —
+        // a comparison that would start lying the day somebody raised the count
+        // to eleven, and lie by passing.
+        expect(
+          decided
+            .map((lookup) => (lookup.found ? lookup.result : null))
+            .sort((one, other) => Number(one) - Number(other)),
+        ).toStrictEqual([1, 2, 3]);
         expect((await store.orderById("ord_1"))?.order.dispatch.attempts).toBe(3);
       });
 
@@ -749,7 +770,7 @@ export function describeStore(name: string, open: () => Promise<Store>): void {
         }));
 
         expect((await store.orderById("ord_1"))?.merchantId).toBe(A);
-        expect((await store.orders(A)).map((held) => held.order.id)).toStrictEqual(["ord_1"]);
+        expect(await idsOf(store.orders(A))).toStrictEqual(["ord_1"]);
         expect(await store.orders(B)).toStrictEqual([]);
         // And the change the decision was actually making did land.
         expect((await store.orderById("ord_1"))?.order.state).toBe("quoted");
@@ -784,13 +805,18 @@ export function describeStore(name: string, open: () => Promise<Store>): void {
           anOrder("ord_theirs", "dispatched", { merchantId: B, createdAt: 5_000 }),
         );
 
-        expect((await store.orders(A, { open: true })).map((o) => o.order.id)).toStrictEqual([
-          "ord_open",
+        // Sorted before it is compared, because which order a merchant's list
+        // comes back in is not something the port promises and not something
+        // the two adapters arrive at the same way. Written as a sequence this
+        // would be asserting an accident, and it would go red one day for a
+        // reason that has nothing to do with the open column.
+        expect(await idsOf(store.orders(A, { open: true }))).toStrictEqual([
           "ord_debt",
+          "ord_open",
           "ord_unpaid",
         ]);
         expect(await store.orders(A)).toHaveLength(4);
-        expect((await store.orders(B)).map((o) => o.order.id)).toStrictEqual(["ord_theirs"]);
+        expect(await idsOf(store.orders(B))).toStrictEqual(["ord_theirs"]);
       });
     });
 

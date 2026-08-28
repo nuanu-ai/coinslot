@@ -377,7 +377,14 @@ if (databaseUrl === null) {
 
       const results = await Promise.all([bump(), bump(), bump()]);
 
-      expect(results.map((r) => (r.found ? r.result : null)).sort()).toStrictEqual([1, 2, 3]);
+      // Sorted as numbers rather than by the default sort, which compares them
+      // as text and agrees with the numbers only while there are fewer than ten
+      // of them. Raised to eleven, the bare sort would start lying by passing.
+      expect(
+        results
+          .map((r) => (r.found ? r.result : null))
+          .sort((one, other) => Number(one) - Number(other)),
+      ).toStrictEqual([1, 2, 3]);
       expect((await store.orderById(orderId))?.order.dispatch.attempts).toBe(3);
     });
 
