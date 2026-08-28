@@ -375,6 +375,25 @@ describe("MemoryStore merchants and their keys", () => {
     expect((await store.keysOf(B)).map((key) => key.id)).toStrictEqual(["mk_b1"]);
   });
 
+  it("lists them oldest first, and settles a tie by the identifier", async () => {
+    // A merchant reads this list on a screen, so the order is the port's
+    // promise rather than whatever storage happens to hand back. Two keys made
+    // in one millisecond is the ordinary case — a registration writes a merchant
+    // and their first key at one instant — and left to insertion order here and
+    // to the planner over there, the same list would come back differently in
+    // the two places and a test about it would mean two things.
+    const store = await twoMerchants();
+    await store.addKey({ id: "mk_z", merchantId: A, label: "written first", digest: "d1" }, 1_000);
+    await store.addKey({ id: "mk_a", merchantId: A, label: "written second", digest: "d2" }, 1_000);
+    await store.addKey({ id: "mk_older", merchantId: A, label: "made earlier", digest: "d3" }, 500);
+
+    expect((await store.keysOf(A)).map((key) => key.id)).toStrictEqual([
+      "mk_older",
+      "mk_a",
+      "mk_z",
+    ]);
+  });
+
   it("finds a key by its digest whatever state it is in, which the door does not", async () => {
     // The one caller is the seed, which would otherwise issue a second key with
     // a digest already taken every time it ran against a key somebody disabled.

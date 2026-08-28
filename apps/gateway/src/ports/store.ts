@@ -422,7 +422,16 @@ export interface Store {
    */
   keyByDigest(digest: string): Promise<StoredKey | null>;
 
-  /** Every key of one merchant, disabled ones included, never their secrets. */
+  /**
+   * Every key of one merchant, disabled ones included, never their secrets.
+   *
+   * Oldest first, with the identifier settling a tie. The order is part of what
+   * this promises rather than whatever each adapter's storage happens to give,
+   * because a merchant reads this list on a screen: left to the database, two
+   * keys made in the same millisecond would swap places between two visits with
+   * nothing having changed, and a test about the list would mean one thing in
+   * memory and another against Postgres.
+   */
   keysOf(merchantId: string): Promise<readonly StoredKey[]>;
 
   /**

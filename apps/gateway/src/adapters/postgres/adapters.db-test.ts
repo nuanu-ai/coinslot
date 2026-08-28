@@ -748,6 +748,29 @@ if (databaseUrl === null) {
       expect((await store.disableKey("mk_twice", now + 9_000))?.disabledAt).toBe(now + 1_000);
     });
 
+    it("lists a merchant's keys oldest first, settling a tie by the identifier", async () => {
+      // The same order the in-memory adapter gives, which is the point: a
+      // merchant reads this list on a screen, and only a database can reorder
+      // it between two visits. Ordered by the instant alone, two keys stamped
+      // in one millisecond come back in whatever order the planner chose that
+      // time — and a registration writes a merchant and their first key at one
+      // instant, so ties are the ordinary case rather than a contrived one.
+      await store.addKey({ id: "mk_ord_z", merchantId: A, label: "z", digest: "ord-z" }, now);
+      await store.addKey({ id: "mk_ord_a", merchantId: A, label: "a", digest: "ord-a" }, now);
+      await store.addKey(
+        { id: "mk_ord_old", merchantId: A, label: "older", digest: "ord-old" },
+        now - 1_000,
+      );
+
+      const listed = (await store.keysOf(A)).map((key) => key.id);
+
+      expect(listed.filter((id) => id.startsWith("mk_ord_"))).toStrictEqual([
+        "mk_ord_old",
+        "mk_ord_a",
+        "mk_ord_z",
+      ]);
+    });
+
     it("disables a key of the merchant who asked, and finds none of anybody else's", async () => {
       // The scoping in the predicate rather than after the read, which is what
       // makes "not yours" and "not there" one answer from where the caller
