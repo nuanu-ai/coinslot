@@ -1048,11 +1048,16 @@ describe("stopping", () => {
 
     expect(problems.map((problem) => problem.kind)).toContain(WORKER_PROBLEM_KINDS.ANSWER_FAILED);
     expect(problems[0]?.subject).toBe(order.id);
-    // The answer was sent and then abandoned, so whether the gateway has it is
-    // not something this side knows. Promising a redelivery here would have a
-    // merchant waiting for an order that may already be closed.
+    // The answer was abandoned when the worker stopped, so whether the gateway
+    // has it is not something this side knows. Promising a redelivery here
+    // would have a merchant waiting for an order that may already be closed.
     expect(problems[0]?.message).toMatch(/not known here/);
     expect(problems[0]?.message).not.toMatch(/will be delivered again/);
+    // Nor may it say the answer was sent. An abort is raised against a request
+    // this process may or may not have finished writing, and the exception it
+    // arrives as carries no code to tell the two apart — so "it was sent" here
+    // is a fact nobody has, told to the one person reconciling on it.
+    expect(problems[0]?.message).not.toMatch(/it was sent/);
   });
 
   it("says how much of a batch it left unread", async () => {
