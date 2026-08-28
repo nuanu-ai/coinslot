@@ -139,3 +139,50 @@ export function facilitatorClientFor(payment: PaymentConfig): HTTPFacilitatorCli
 
   return cdpAuthenticatedClient(payment.facilitatorUrl, cdpApiKeyId, cdpApiKeySecret);
 }
+
+/**
+ * Signs one request and throws the whole deployment away if it cannot.
+ *
+ * A credential that is set is not the same as a credential that works, and the
+ * gap between the two is a gateway that starts, looks healthy, takes purchases
+ * and turns every one of them into "nobody knows". A truncated paste of a CDP
+ * secret does exactly that: it satisfies every check that asks whether the
+ * variable is there, and then fails inside the signer on each call, where the
+ * failure is indistinguishable from a facilitator that is not answering. The
+ * configuration cannot catch it — knowing whether a string is a usable key
+ * means trying to sign with it, and that is the signer's business, not a
+ * regular expression's.
+ *
+ * So it is tried, once, before the process starts selling. Nothing leaves the
+ * machine: a token is local arithmetic over the key, and the facilitator is
+ * neither contacted nor needed. A client with no credentials to prove signs
+ * nothing and passes, which is why every deployment can run the same check
+ * rather than it being a branch only some take.
+ *
+ * The signer's own complaint is not repeated, and the refusal is written here
+ * instead. A refusal is read in terminals and copied into logs, so the one
+ * thing that must never be in one is the key — and this function is never given
+ * it, which is what makes that true rather than merely intended. The cause is
+ * dropped rather than wrapped for the same reason: it is a sentence written by
+ * a library this file does not control.
+ *
+ * There was a test asserting the refusal does not contain the secret. It was
+ * deleted after the mutation check, which is the honest end for it: nothing
+ * could make it fail. The key is not in scope here, and measured against the
+ * signer, every malformed shape — truncated base64, a PEM block with rubbish
+ * inside it — produces the same sentence about key formats with no material in
+ * it. A test that cannot go red is green enclosed in itself.
+ */
+export async function refuseUnlessCredentialsSign(client: HTTPFacilitatorClient): Promise<void> {
+  try {
+    await client.createAuthHeaders("verify");
+  } catch {
+    throw new Error(
+      "The gateway cannot start, the facilitator credentials do not work — the key in " +
+        "CDP_API_KEY_SECRET is not one this can sign with. Coinbase issues an Ed25519 key as " +
+        "base64 and an EC key as a PEM block; a value truncated on the way into the environment " +
+        "reads as neither, and the gateway would have started and answered every purchase with " +
+        "“nobody knows” instead",
+    );
+  }
+}

@@ -19,7 +19,11 @@ import { generateKeyPairSync } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
-import { cdpAuthenticatedClient, facilitatorClientFor } from "./client.js";
+import {
+  cdpAuthenticatedClient,
+  facilitatorClientFor,
+  refuseUnlessCredentialsSign,
+} from "./client.js";
 
 /**
  * A CDP API key of the shape the signer takes, made here and never written
@@ -220,6 +224,41 @@ describe("choosing a facilitator client for a configuration", () => {
 
     const unsigned = facilitatorClientFor(aPayment());
     expect((await unsigned.createAuthHeaders("verify")).headers.Authorization).toBeUndefined();
+  });
+
+  it("will not start on a credential that is there but cannot sign", async () => {
+    // Being set is not the same as being usable, and the difference is a whole
+    // deployment. A truncated paste of a CDP secret passes every check that
+    // asks whether the variable exists, and then fails inside the signer on
+    // every call — so the gateway comes up healthy, takes purchases, and turns
+    // each one into "nobody knows" with nothing anywhere saying why. It costs
+    // one signature to find out, and no network: the proof is local arithmetic.
+    const client = facilitatorClientFor(
+      aPayment({
+        facilitatorUrl: "https://api.cdp.coinbase.com/platform/v2/x402",
+        cdpApiKeyId: "an-api-key",
+        cdpApiKeySecret: `${anApiKeySecret().slice(0, 20)}`,
+      }),
+    );
+
+    await expect(refuseUnlessCredentialsSign(client)).rejects.toThrow(/CDP_API_KEY_SECRET/);
+  });
+
+  it("lets a credential that can sign through, and asks nothing of one that signs nothing", async () => {
+    const signing = facilitatorClientFor(
+      aPayment({
+        facilitatorUrl: "https://api.cdp.coinbase.com/platform/v2/x402",
+        cdpApiKeyId: "an-api-key",
+        cdpApiKeySecret: anApiKeySecret(),
+      }),
+    );
+    await expect(refuseUnlessCredentialsSign(signing)).resolves.toBeUndefined();
+
+    // A facilitator that takes no credentials has none to prove, and the same
+    // check has to pass it rather than being something only CDP deployments run.
+    await expect(
+      refuseUnlessCredentialsSign(facilitatorClientFor(aPayment())),
+    ).resolves.toBeUndefined();
   });
 
   it("will not build an unauthenticated client for a facilitator that takes no request without one", async () => {

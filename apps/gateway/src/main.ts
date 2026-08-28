@@ -24,7 +24,7 @@
 import { ScriptedFacilitator } from "./adapters/memory/facilitator.js";
 import { queueOn } from "./adapters/pgboss/queue.js";
 import { connect, PostgresStore } from "./adapters/postgres/store.js";
-import { facilitatorClientFor } from "./adapters/x402/client.js";
+import { facilitatorClientFor, refuseUnlessCredentialsSign } from "./adapters/x402/client.js";
 import { X402Facilitator } from "./adapters/x402/facilitator.js";
 import { Gateway } from "./app/gateway.js";
 import { seedSandboxKey } from "./app/merchants.js";
@@ -73,8 +73,13 @@ const queue = queueOn(config.databaseUrl, {
  * this one sent Coinbase a pair of headers that facilitator has never read.
  * Nothing here failed, because nothing here is exercised until a real payment
  * meets a real facilitator.
+ *
+ * The credentials are made to sign once before this returns, and the process
+ * stops if they cannot. It asks nobody anything — a token is arithmetic over
+ * the key — so an unreachable facilitator cannot stop the gateway starting,
+ * which is the failure the spike's server had.
  */
-function paymentLayer(): Facilitator {
+async function paymentLayer(): Promise<Facilitator> {
   if (isSandboxFacilitator(config.payment.facilitatorUrl)) {
     console.warn(
       "[gateway] SANDBOX: no chain behind this process — every payment it accepts is pretend, " +
@@ -83,7 +88,9 @@ function paymentLayer(): Facilitator {
     return new ScriptedFacilitator();
   }
 
-  return new X402Facilitator(facilitatorClientFor(config.payment), edge);
+  const client = facilitatorClientFor(config.payment);
+  await refuseUnlessCredentialsSign(client);
+  return new X402Facilitator(client, edge);
 }
 
 const runtime: Runtime = {
@@ -94,7 +101,7 @@ const runtime: Runtime = {
   // (ADR-0013). Both live in the same Postgres, which is what makes it possible.
   store: new PostgresStore(db, randomIds, queue.envelopes()),
   queue,
-  facilitator: paymentLayer(),
+  facilitator: await paymentLayer(),
   clock: systemClock,
   ids: randomIds,
 };
