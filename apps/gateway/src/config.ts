@@ -54,9 +54,16 @@ const COINBASE_DOMAIN = "coinbase.com";
  * `api.cdp.coinbase.com.` is the same host as `api.cdp.coinbase.com` — the
  * trailing dot is the root label, and it is written by deployments that mean to
  * stop a resolver appending a search domain to it. The URL parser keeps it and
- * lower-cases everything else, so this is the one place the two spellings become
- * one; left apart, the fully qualified spelling would match neither comparison
- * and be handed no credentials at all.
+ * lower-cases everything else, so this is where the two spellings become one for
+ * a comparison; left apart, the fully qualified spelling would match neither
+ * comparison and be handed no credentials at all.
+ *
+ * The address a running gateway is configured with has already been through
+ * `canonicalFacilitatorUrl` before it reaches here, so on that path this finds
+ * nothing left to fold. It is still written to stand on its own: this is an
+ * exported rule about a host, answerable for any string somebody hands it, and
+ * a predicate that quietly returned the wrong answer off the configured path
+ * would be one nobody could reuse.
  *
  * Null where the string is not an address, which is a value the callers answer
  * for rather than a case they can forget: an address that cannot be parsed is
@@ -113,6 +120,38 @@ function isHttpUrl(value: string): boolean {
   }
   const { protocol } = new URL(value);
   return protocol === "http:" || protocol === "https:";
+}
+
+/**
+ * The facilitator's address in the one spelling everything downstream reads.
+ *
+ * The host is where two spellings of one deployment come from, and the trailing
+ * dot is the one that costs money. `https://api.cdp.coinbase.com./…` is the
+ * fully qualified name of Coinbase's facilitator: the door above reads it as
+ * theirs and lets the gateway start, and then that same string is handed on to
+ * the client, which signs a token naming `api.cdp.coinbase.com.` and sends it on
+ * a request whose `Host` header carries the dot as well. Whether the far end
+ * reads those as one name is not ours to decide, and if it does not, every
+ * verify comes back "unknown" and the buyer's agent retries a purchase that can
+ * never complete.
+ *
+ * So it is settled once, here, where the value is read — the same place and for
+ * the same reason as the trailing slash on `PUBLIC_BASE_URL`. What comes out of
+ * the configuration is the address the door judges, the address the client asks
+ * on and the address the signature names, and there is no second spelling left
+ * anywhere downstream to disagree with it.
+ *
+ * Only an http address is touched. `sandbox:scripted` is not one, and anything
+ * else that is not one is on its way to being refused by this variable's own
+ * rule — repairing either would be answering a question nobody asked.
+ */
+function canonicalFacilitatorUrl(value: string): string {
+  if (!isHttpUrl(value)) {
+    return value;
+  }
+  const url = new URL(value);
+  url.hostname = url.hostname.replace(/\.+$/, "");
+  return url.href;
 }
 
 function isPostgresUrl(value: string): boolean {
@@ -463,6 +502,10 @@ const environmentSchema = z.object({
    * this gateway at all (ADR-0008). It is one field with one value on purpose:
    * a deployment that names a real facilitator cannot also be in the sandbox,
    * because there is no second flag to disagree with the first.
+   *
+   * The host is written down to one spelling on the way through, which is what
+   * `canonicalFacilitatorUrl` is for and why it happens here rather than at any
+   * of the three places that read this value.
    */
   FACILITATOR_URL: z
     .string({ error: absentOrWrong("must be a string") })
@@ -470,7 +513,8 @@ const environmentSchema = z.object({
       (value) => value === SANDBOX_FACILITATOR || isHttpUrl(value),
       `must be an http address of a facilitator, or "${SANDBOX_FACILITATOR}" for a gateway with no chain behind it`,
     )
-    .default("https://x402.org/facilitator"),
+    .default("https://x402.org/facilitator")
+    .transform(canonicalFacilitatorUrl),
   /**
    * The chain, written the way x402 version two writes one: a CAIP-2
    * identifier. The default is Base Sepolia, the test network — a gateway that
