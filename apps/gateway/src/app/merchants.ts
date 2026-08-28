@@ -26,7 +26,7 @@
  */
 
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { ServiceNameSchema } from "@coinslot/contracts";
+import { EvmAddressSchema, ServiceNameSchema } from "@coinslot/contracts";
 import type { Ids } from "../ports/clock.js";
 import type { Store, StoredKey, StoredMerchant } from "../ports/store.js";
 
@@ -90,6 +90,39 @@ export async function setServiceName(
     ServiceNameSchema.parse(serviceName);
   }
   return store.setServiceName(merchantId, serviceName, at);
+}
+
+/**
+ * Sets the address one merchant's sales are paid into, and hands back the
+ * merchant as they now stand. Null where there is no such merchant.
+ *
+ * Two things happen here and both are the reason this is a function rather than
+ * a call on the store.
+ *
+ * The address is checked, and it throws rather than answering, for the reason
+ * the listing name beside it does and with more on it: the one wrong answer
+ * available is writing down an address that is not the merchant's. A mistyped
+ * address is not a malformed one — it is another perfectly good address
+ * belonging to somebody else — so nothing downstream will ever notice, and what
+ * happens instead is that every sale the merchant makes from then on is paid to
+ * a stranger, irreversibly. The capitals a wallet writes are the only warning
+ * anybody gets, and this is where it is read.
+ *
+ * And the address is lowered before it is written. An address has two
+ * spellings and the store holds one, so that a comparison somewhere else cannot
+ * come out false for two spellings of one address, and so that what a merchant
+ * reads back does not depend on which spelling they last sent.
+ */
+export async function setPayoutWallet(
+  store: Store,
+  merchantId: string,
+  payoutWallet: string,
+  at: number,
+): Promise<StoredMerchant | null> {
+  // Throws with the schema's own words, which say what is wrong with the
+  // address and what the two spellings of one are.
+  const address = EvmAddressSchema.parse(payoutWallet);
+  return store.setPayoutWallet(merchantId, address.toLowerCase(), at);
 }
 
 /** Writes down a merchant. Null where that identifier is already taken. */
