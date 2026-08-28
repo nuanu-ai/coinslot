@@ -207,6 +207,89 @@ describe("the stage-one gate: a sandbox purchase, green from catalog to receipt"
     expect(merchant.problems).toStrictEqual([]);
   }, 20_000);
 
+  it("hands the goods to the agent through its own door, on the order identifier alone", async () => {
+    // ADR-0011's door, walked by the kind of code it exists for. The test
+    // above collects the same sale through the merchant's own routes, which is
+    // the merchant's view of it; this one is the buyer's, and it is the only
+    // view an agent has.
+    //
+    // The merchant still has to deliver, and that call below is this test
+    // driving the world rather than the agent reading it — an agent cannot
+    // make a merchant issue anything. What is asserted is the other half:
+    // where the order stands and what the buyer ended up holding are read from
+    // `buyer.status` alone, with no key and no look inside the store.
+    const catalog = await buyer.catalog();
+    const esim = catalog.find((card) => card.title === EUROPE_ESIM.title);
+    if (esim === undefined) throw new Error("the eSIM is not in the catalog");
+
+    const bought = await buyer.buy(esim.id, { email: "buyer@example.com" });
+    expect(bought.status).toBe(200);
+    const orderId = fields(fields(bought.body).order).id;
+    if (typeof orderId !== "string") throw new Error("the purchase returned no order id");
+
+    // Paid for and not delivered. The word for a purchase still running exists
+    // so that an agent does not read a running sale as a refused one.
+    const waiting = await buyer.status(orderId);
+    expect(waiting.status).toBe(200);
+    expect(waiting.state).toBe("in_progress");
+    expect(waiting.delivered).toBeNull();
+
+    // The merchant issues the profile in its own time — nothing the agent does
+    // or can hurry.
+    await waitFor(() => merchant.acceptedOrders.has(orderId));
+    expect(await merchant.deliverAccepted(orderId)).toStrictEqual({
+      ok: true,
+      result: "delivered",
+    });
+
+    // The agent comes back the only way it can, and the goods are there.
+    let collected = await buyer.status(orderId);
+    const deadline = Date.now() + 10_000;
+    while (collected.state === "in_progress" && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      collected = await buyer.status(orderId);
+    }
+
+    expect(collected.state).toBe("delivered");
+    expect(() => deliveryCheckFor(EUROPE_ESIM).parse(collected.delivered)).not.toThrow();
+    expect(fields(collected.delivered).activation_code).toMatch(/^LPA:/);
+
+    // The answer is the buyer's own and not the merchant's: the five fields an
+    // agent is owed and nothing beside them. A door that handed over more
+    // would be a way of reading somebody else's business off an identifier.
+    expect(Object.keys(fields(collected.body)).sort()).toStrictEqual([
+      "delivered",
+      "order_id",
+      "price",
+      "status",
+      "test",
+    ]);
+    expect(fields(fields(collected.body).price).amount).toBe("8.00");
+    // The word that keeps this from reading as proof of a payment that moved
+    // money. On the scripted facilitator none did.
+    expect(fields(collected.body).test).toBe(true);
+  }, 20_000);
+
+  it("refuses an order identifier that names nothing, in the words the contract promises", async () => {
+    // The negative control for the agent's door. An identifier that resolves
+    // to no order is answered with one refusal and no detail — and a second
+    // guess is answered identically, so nobody counts the orders behind it by
+    // asking. If this ever answered two different ways, the door would be a
+    // way of telling a real order from an invented one.
+    const invented = await buyer.status("ord_never_issued");
+
+    expect(invented.status).toBe(404);
+    expect(invented.state).toBeNull();
+    expect(invented.delivered).toBeNull();
+    expect(invented.body).toStrictEqual({
+      error: { code: "no_such_order", message: "there is no such order" },
+    });
+
+    const another = await buyer.status("ord_nor_this_one");
+    expect(another.status).toBe(invented.status);
+    expect(another.body).toStrictEqual(invented.body);
+  }, 20_000);
+
   it("a refused payment moves no money and hands over no goods: the synchronous refusal is free", async () => {
     // The negative control for the money-safety promise. In the synchronous
     // mode the payment is verified before the merchant is asked and executed

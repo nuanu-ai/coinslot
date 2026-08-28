@@ -421,7 +421,17 @@ describe("a long walk over the machine", () => {
     expect(transition(order, event)).toStrictEqual(transition(order, event));
   });
 
-  it("visits every state of the machine for the walk to mean anything", () => {
+  // Its own timeout, because this one is genuinely slow rather than stuck: four
+  // hundred walks of two hundred steps is eighty thousand transitions and the
+  // accounting over all of them. At rest it finishes in a few seconds, and on a
+  // machine doing anything else — three builds, a database, another suite — it
+  // runs past the default five and fails for the load rather than for the code.
+  // A red build that means "the laptop was busy" teaches everybody to re-run
+  // rather than to read, which is how a real failure gets waved through.
+  //
+  // Raised rather than shortened: the four hundred is the point, and the
+  // comment below says why.
+  it("visits every state of the machine for the walk to mean anything", { timeout: 60_000 }, () => {
     // A walk that never left `created` would pass every check above while
     // testing nothing at all. A single order's life is short — most of these
     // walks fall into a closed state early — so the coverage is counted over

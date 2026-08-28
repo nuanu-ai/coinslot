@@ -1,9 +1,10 @@
-# The image both resident processes run from: the gateway and the cabinet.
+# The image four of compose.yaml's services run from: the gateway, the cabinet,
+# the mock merchant, and the migration that runs to completion before them.
 #
-# One image rather than two, because they are two entry points into one
+# One image rather than four, because they are four entry points into one
 # workspace and share every dependency below their own file. Which of them a
-# container is decides at `command`, not at build time — an image per app would
-# be the same layers twice and one more thing to keep in step.
+# container is decides at `command`, not at build time — an image per service
+# would be the same layers four times and one more thing to keep in step.
 #
 # There is no compile step. Node runs the TypeScript through tsx, the way
 # `pnpm --filter @coinslot/gateway start` does on a laptop (ADR-0003 §1), so
@@ -38,8 +39,8 @@ RUN pnpm fetch
 COPY . .
 RUN pnpm install --frozen-lockfile --offline
 
-# Not root. The process serves requests from outside and has no reason to be
-# able to write to its own source.
+# Not root. Two of the four are reached from outside through Caddy, and none of
+# them has any reason to be able to write to its own source.
 USER node
 
 # Overridden by compose; named here so the image is runnable on its own.
