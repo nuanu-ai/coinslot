@@ -128,7 +128,10 @@ const gateway = new Gateway(runtime);
  * This runs before the migrations in any deployment that has them, in the sense
  * that matters: the migration is a separate step that has already finished, and
  * it is what wrote the merchant row and gave every existing card, order and
- * receipt an owner. All this does is hang a key on it.
+ * receipt an owner. All this does is hang a key on it — and, on the one start
+ * that hangs the first key, list that merchant under a name a catalogue can
+ * read, because a database brought up from nothing has nobody to run the
+ * command that would.
  *
  * Every way this can go says which one it was, including the two that write
  * nothing. `compose.yaml` tells an operator to close the sandbox by handing the
@@ -150,7 +153,12 @@ async function seedTheSandbox(secret: string | null): Promise<void> {
   if (seeded.kind === "issued") {
     console.warn(
       `[gateway] SANDBOX: the key in SANDBOX_MERCHANT_KEY now opens ${seeded.merchantId} — ` +
-        "a key from an environment cannot be revoked without a deployment, so no deployment should set it",
+        "a key from an environment cannot be revoked without a deployment, so no deployment should set it" +
+        (seeded.listedAs === null
+          ? ""
+          : `. It had no listing name, so this start listed it as "${seeded.listedAs}" — the seller a ` +
+            `catalogue reads out of its cards; \`merchant listed-as ${seeded.merchantId} --none\` takes ` +
+            "that away, and no start that finds this key already there puts it back"),
     );
     return;
   }
