@@ -463,11 +463,17 @@ export class OrderRunner {
    * once, which is why only one runs at a time. Every arm reads the world and
    * then acts on what it read, so two runs beside each other both find the
    * envelope missing and both send it — the double hand-over the dispatch arm
-   * exists to prevent, and one of that order's deliveries spent. The overlap
-   * that makes that reachable is a second gateway, and only that: inside one
-   * process the queue's worker waits for this to return before it fetches
-   * anything else. So the work is taken under a name, and a run that finds the
-   * name held does nothing at all and says so.
+   * exists to prevent, and one of that order's deliveries spent.
+   *
+   * The overlap that makes that reachable is a second gateway, and only a
+   * second gateway: inside one process the queue's worker waits for this to
+   * return before it fetches anything else. What hands the same run to two
+   * processes is the queue's expiry. A run that takes longer than the job's
+   * expiry is failed by the library for having taken too long, and a failed job
+   * with retries left goes back on the queue — where the other process's idle
+   * worker fetches it, while this one is still going. So the work is taken
+   * under a name, and a run that finds the name held does nothing at all and
+   * says so.
    *
    * Nothing is written down about having run, and a run that skipped is not a
    * run that failed — the work it wanted is already being done. What the name

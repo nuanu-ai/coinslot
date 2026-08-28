@@ -76,14 +76,64 @@ const QUEUE_SCHEMA = "pgboss_adapters";
  * sitting idle on exactly that statement, so the wrong one was killed depending
  * on what had run before. What is left is a pid the caller knows because it
  * asked its own single-connection pool for it.
+ *
+ * The answer is read rather than discarded, and that line is the whole reason
+ * the tests below test anything. `pg_terminate_backend` returns false for a pid
+ * that is no longer a running backend, and it is a warning rather than an
+ * error, so a helper that ignores it terminates nothing and says nothing.
+ * Every assertion downstream still holds in that case: no connection breaks, no
+ * error is emitted, the unlock succeeds, the work returns what it returned.
+ * Measured — aimed at a pid that could not exist, both tests passed. So the
+ * premise they are named for is checked here, once, where the failure can still
+ * be told apart from a defect in the store.
  */
 async function terminate(pid: number): Promise<void> {
   const pool = new Pool({ connectionString: databaseUrl ?? "", max: 1 });
   try {
-    await pool.query("select pg_terminate_backend($1)", [pid]);
+    const { rows } = await pool.query<{ gone: boolean }>(
+      "select pg_terminate_backend($1) as gone",
+      [pid],
+    );
+    if (rows[0]?.gone !== true) {
+      throw new Error(
+        `backend ${pid} was not terminated, so nothing below is testing what it says it is`,
+      );
+    }
   } finally {
     await pool.end();
   }
+}
+
+/**
+ * Runs the work and hands back whatever reached Node with nobody listening for
+ * it while that was going on.
+ *
+ * The tests that terminate a connection are about an `error` event on a client
+ * no longer carrying a listener, which in Node is an uncaught exception. Left to
+ * the runner that shows up as a failed run with the errors reported beside the
+ * results — the run's exit code says something went wrong, but every assertion
+ * in the test still passes, so the test itself is green and reports nothing.
+ * That is the same shape as the helper above discarding what it was told, and
+ * it is worth not having twice.
+ *
+ * So the test asks directly. A listener of its own is on for the length of the
+ * call and off again afterwards, and what it collected is something to assert
+ * about. The runner's own listener still fires as well, which is wanted: two
+ * signals agreeing is better than one, and this one is the one that names the
+ * test.
+ */
+async function whatWentUnlistened(work: () => Promise<void>): Promise<string[]> {
+  const unlistened: string[] = [];
+  const collect = (thrown: unknown) => {
+    unlistened.push(String(thrown));
+  };
+  process.on("uncaughtException", collect);
+  try {
+    await work();
+  } finally {
+    process.removeListener("uncaughtException", collect);
+  }
+  return unlistened;
 }
 
 /** Which server session a connection is, so a lock can be attributed to it. */
@@ -351,8 +401,15 @@ if (databaseUrl === null) {
       // check below names the two backends by their identifiers, so a pool that
       // quietly opened a second connection would leave it watching a session
       // that is not doing the work.
-      const alicePool = new Pool({ connectionString: databaseUrl, max: 1 });
-      const bobPool = new Pool({ connectionString: databaseUrl, max: 1 });
+      //
+      // Through `connect` rather than built here, like every other pool a store
+      // in this file is given. That is what puts the error listener on the
+      // clients these two check out, and alice's is checked out and left idle
+      // for as long as the poll below takes.
+      const alice = connect(databaseUrl, { max: 1 });
+      const bob = connect(databaseUrl, { max: 1 });
+      const alicePool = alice.pool;
+      const bobPool = bob.pool;
       const reads: string[] = [];
       let aliceHeldBobUp = false;
 
@@ -417,9 +474,9 @@ if (databaseUrl === null) {
             return { save: { ...found, paidBy: who }, result: { took: true } };
           });
 
-        const aliceTaking = take(new PostgresStore(drizzle(alicePool), countedIds()), "alice");
+        const aliceTaking = take(new PostgresStore(alice.db, countedIds()), "alice");
         await bobMayStart;
-        const bobTaking = take(new PostgresStore(drizzle(bobPool), countedIds()), "bob");
+        const bobTaking = take(new PostgresStore(bob.db, countedIds()), "bob");
         const [first, second] = await Promise.all([aliceTaking, bobTaking]);
 
         const decided = [first, second].map((lookup) => (lookup.found ? lookup.result : null));
@@ -915,11 +972,13 @@ if (databaseUrl === null) {
       // What it costs to be wrong: both runs read the world, both find the same
       // envelope missing, and both send it. That spends one of the order's
       // deliveries, and the closure at the attempt cap is a refund.
-      const onePool = new Pool({ connectionString: databaseUrl, max: 2 });
-      const otherPool = new Pool({ connectionString: databaseUrl, max: 2 });
+      const oneGateway = connect(databaseUrl, { max: 2 });
+      const otherGateway = connect(databaseUrl, { max: 2 });
+      const onePool = oneGateway.pool;
+      const otherPool = otherGateway.pool;
       try {
-        const one = new PostgresStore(drizzle(onePool), countedIds());
-        const other = new PostgresStore(drizzle(otherPool), countedIds());
+        const one = new PostgresStore(oneGateway.db, countedIds());
+        const other = new PostgresStore(otherGateway.db, countedIds());
 
         // The first is held inside the work, so the second arrives while it is
         // genuinely still running rather than after it.
@@ -958,6 +1017,103 @@ if (databaseUrl === null) {
       }
     }, 30_000);
 
+    it("does not pile a listener onto a connection every time it is handed out", async () => {
+      // The other half of the guard. It goes on when a client is checked out and
+      // comes off when it is checked back in, and without the second half every
+      // query through the pool leaves one behind. A gateway serves the same
+      // connection thousands of times a day, so the pile is unbounded: Node
+      // starts warning about a leak at eleven listeners on one emitter, and an
+      // operator gets a warning about a defect that is not there — plus, when
+      // the connection does fail, the one failure written out once per listener.
+      //
+      // One connection in the pool and twenty turns through it, which is twice
+      // what Node tolerates and needs no timing to reproduce. The warning is
+      // what is asserted on rather than a count of listeners, because the
+      // warning is the thing somebody would actually meet.
+      const guarded = connect(databaseUrl, { max: 1 });
+      const complaints: string[] = [];
+      const noteIt = (warning: Error) => complaints.push(warning.name);
+      process.on("warning", noteIt);
+      try {
+        for (let turn = 0; turn < 20; turn += 1) {
+          await guarded.pool.query("select 1");
+        }
+        // Warnings are emitted on a later tick than the call that caused them.
+        await new Promise((resolve) => setImmediate(resolve));
+        expect(complaints.filter((name) => name === "MaxListenersExceededWarning")).toStrictEqual(
+          [],
+        );
+      } finally {
+        process.removeListener("warning", noteIt);
+        await guarded.pool.end();
+      }
+    }, 30_000);
+
+    it("survives the connection holding an order's transaction being terminated under it", async () => {
+      // The same pinned-and-idle connection as the sweep below, on the path that
+      // takes money. `withOrder` runs its work inside a drizzle transaction, and
+      // a transaction is a client checked out of the pool for the length of the
+      // callback — `connect()`, the callback, `release()` in a `finally`, and no
+      // error listener anywhere in between.
+      //
+      // It is not query-bound for that whole stretch either. The runner arms the
+      // order's deadlines inside this callback, and that is a round trip on
+      // pg-boss's own pool: the transaction's client sits idle, with no query in
+      // flight for a fatal to surface through. So a backend terminated then —
+      // an administrator, a failover, a pooler dropping an idle session — emits
+      // `error` on a client nobody is listening to, which in Node is an uncaught
+      // exception and a dead process, and this is the path a purchase runs on.
+      //
+      // Three things are checked. That nothing reached Node unlistened, asked
+      // for directly rather than left to the runner's exit code — without the
+      // guard the assertions below all pass and only the run fails, which is a
+      // test reporting nothing. That the failure reaches the caller as a
+      // failure, since the transaction cannot commit on a connection that is
+      // gone. And that the decision it was carrying was not written.
+      const owner = connect(databaseUrl, { max: 1 });
+      const ownPool = owner.pool;
+      try {
+        const published = await store.publishCard(
+          A,
+          { ...syncCard, merchant_item_id: "cut-off-mid-decision" },
+          now,
+        );
+        const offered = await gateway.beginPurchase(published.id, {});
+        if (offered.step !== "pay") throw new Error("no price was offered");
+        const orderId = offered.order.order.id;
+
+        const own = new PostgresStore(owner.db, countedIds());
+        // One connection in the pool, so this is the one the transaction will
+        // check out and the one terminated inside it. Asked for before rather
+        // than hunted for after, which is what keeps this off everybody else's.
+        const pinned = await backendPid(ownPool);
+
+        const unlistened = await whatWentUnlistened(async () => {
+          const deciding = own.withOrder(orderId, async (found) => {
+            await terminate(pinned);
+            // Long enough for the client to notice and emit. Nothing is in
+            // flight on it while this waits, which is the whole point.
+            await new Promise((resolve) => setTimeout(resolve, 250));
+            return { save: { ...found, paidBy: "whoever" }, result: "decided" };
+          });
+
+          await expect(deciding).rejects.toThrow();
+        });
+
+        expect(unlistened).toStrictEqual([]);
+
+        // And nothing was written: a decision made on a transaction that could
+        // not commit is a decision that did not happen.
+        expect((await store.orderById(orderId))?.paidBy).toBeNull();
+
+        // The pool drew a fresh connection rather than handing the broken one
+        // back out, so the store still works.
+        expect((await own.orderById(orderId))?.order.id).toBe(orderId);
+      } finally {
+        await ownPool.end();
+      }
+    }, 30_000);
+
     it("survives the connection holding the lock being terminated under it", async () => {
       // The connection is pinned out of the pool and then left idle for the
       // whole run, with no query in flight for a fatal to surface through. A
@@ -968,12 +1124,14 @@ if (databaseUrl === null) {
       // it. The triggers are ordinary: an administrator, a failover, a pooler
       // dropping an idle session, a provider's idle-session timeout.
       //
-      // Two things are checked and the first is checked by this test existing.
-      // An uncaught exception fails the run whatever the assertions say, so a
-      // pass means nothing was left unlistened. The second is the answer: the
-      // work's own result comes back, rather than the unlock's failure — which
-      // sits in a `finally` and would otherwise replace it, reporting a sweep
-      // that finished as one that failed and handing its work out again.
+      // Two things are checked. That nothing reached Node unlistened, asked for
+      // directly: leaving it to the run's exit code means every assertion here
+      // passes and only the run fails, which is a test that reports nothing.
+      // And the answer: the work's own result comes back, rather than the
+      // unlock's failure — which sits in a `finally` and would otherwise
+      // replace it, reporting a sweep that finished as one that failed and
+      // handing its work out again.
+      //
       // A pool of its own, so that what is terminated below can only ever be
       // this test's connection. Aimed at the shared one it would take the
       // gateway's own down with it, which is a thing this test did on the way
@@ -984,21 +1142,26 @@ if (databaseUrl === null) {
       // put back in the pool is a broken one it draws. With room to spare, a
       // client returned in that state is simply never used again and the test
       // watches nothing.
-      const ownPool = new Pool({ connectionString: databaseUrl, max: 1 });
+      const owner = connect(databaseUrl, { max: 1 });
+      const ownPool = owner.pool;
       try {
-        const own = new PostgresStore(drizzle(ownPool), countedIds());
+        const own = new PostgresStore(owner.db, countedIds());
         // The pool holds one connection, so this is the one `runAlone` will
         // pin and the one terminated below. Asked for before rather than
         // hunted for after, which is what keeps this off everybody else's.
         const pinned = await backendPid(ownPool);
 
-        const ran = await own.runAlone("a_terminated_sweep", async () => {
-          await terminate(pinned);
-          // Long enough for the client to notice and emit.
-          await new Promise((resolve) => setTimeout(resolve, 250));
-          return "the work still finished";
+        let ran: unknown;
+        const unlistened = await whatWentUnlistened(async () => {
+          ran = await own.runAlone("a_terminated_sweep", async () => {
+            await terminate(pinned);
+            // Long enough for the client to notice and emit.
+            await new Promise((resolve) => setTimeout(resolve, 250));
+            return "the work still finished";
+          });
         });
 
+        expect(unlistened).toStrictEqual([]);
         expect(ran).toStrictEqual({ ran: true, result: "the work still finished" });
 
         // And the store still works afterwards: the broken client was destroyed
@@ -1019,9 +1182,10 @@ if (databaseUrl === null) {
       // the work's — the connection's is logged and dropped. Swapped, an
       // operator looking for why a sweep died would find a database error in
       // place of the thing that actually went wrong.
-      const ownPool = new Pool({ connectionString: databaseUrl, max: 1 });
+      const owner = connect(databaseUrl, { max: 1 });
+      const ownPool = owner.pool;
       try {
-        const own = new PostgresStore(drizzle(ownPool), countedIds());
+        const own = new PostgresStore(owner.db, countedIds());
         const pinned = await backendPid(ownPool);
 
         const failing = own.runAlone("a_failing_terminated_sweep", async () => {
@@ -1046,9 +1210,10 @@ if (databaseUrl === null) {
       // it already holds without complaint, so a retry that happened to get the
       // same connection back would be told yes whether the first run had let go
       // or not — and this passed, wrongly, until it asked from somewhere else.
-      const otherPool = new Pool({ connectionString: databaseUrl, max: 1 });
+      const its = connect(databaseUrl, { max: 1 });
+      const otherPool = its.pool;
       try {
-        const other = new PostgresStore(drizzle(otherPool), countedIds());
+        const other = new PostgresStore(its.db, countedIds());
 
         await expect(
           store.runAlone("a_failing_sweep", async () => {
@@ -1062,6 +1227,78 @@ if (databaseUrl === null) {
         });
       } finally {
         await otherPool.end();
+      }
+    }, 30_000);
+
+    it("lets go of the name when the unlock fails on a connection that is still alive", async () => {
+      // The failure the `finally` above cannot see. A terminated backend takes
+      // its locks with it, so an unlock that fails because the connection died
+      // costs nothing; an unlock that fails on a session which is still there
+      // leaves the name held by a client that goes straight back into the pool
+      // holding it. Every sweep after that is told the name is taken and does
+      // nothing, and the line it logs is the same line a healthy skip logs —
+      // so the daily safety net for effects that went missing is off, and
+      // nothing anybody reads says so.
+      //
+      // What produces it in a deployment is a statement timeout: SQLSTATE
+      // 57014, the statement cancelled, the session untouched.
+      //
+      // Here the unlock is made to fail directly rather than by racing a
+      // timeout against a function that returns in microseconds. What is
+      // substituted is only the cause — the session is a real one, it really
+      // does still hold the lock, because the unlock genuinely never ran — and
+      // what is asserted is real database state, asked from a connection that
+      // shares nothing with it.
+      const held = connect(databaseUrl, { max: 1 });
+      const asking = connect(databaseUrl, { max: 1 });
+      try {
+        const realConnect = held.pool.connect.bind(held.pool);
+        Object.assign(held.pool, {
+          connect: async () => {
+            const client = await realConnect();
+            const realQuery = client.query.bind(client);
+            Object.assign(client, {
+              query: (...args: Parameters<typeof realQuery>) => {
+                if (typeof args[0] === "string" && args[0].includes("pg_advisory_unlock")) {
+                  return Promise.reject(
+                    Object.assign(new Error("canceling statement due to statement timeout"), {
+                      code: "57014",
+                    }),
+                  );
+                }
+                return realQuery(...args);
+              },
+            });
+            return client;
+          },
+        });
+
+        const stubborn = new PostgresStore(held.db, countedIds());
+        // The run itself is a success and is reported as one. An unlock nobody
+        // could complete is not the sweep's failure to hand back to the queue.
+        expect(await stubborn.runAlone("a_wedged_sweep", async () => "swept")).toStrictEqual({
+          ran: true,
+          result: "swept",
+        });
+
+        // And the name is free again, because the connection was released with
+        // the failure and the pool ended the session rather than keeping it.
+        // Ending a session is asynchronous, so this waits — but only for two
+        // seconds, well inside the ten the pool would otherwise take to reap an
+        // idle connection. A window that reached the reaper would pass with or
+        // without the fix.
+        const next = new PostgresStore(asking.db, countedIds());
+        const until = Date.now() + 2_000;
+        let free = await next.runAlone("a_wedged_sweep", async () => "free");
+        while (!free.ran && Date.now() < until) {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          free = await next.runAlone("a_wedged_sweep", async () => "free");
+        }
+
+        expect(free).toStrictEqual({ ran: true, result: "free" });
+      } finally {
+        await held.pool.end();
+        await asking.pool.end();
       }
     }, 30_000);
 

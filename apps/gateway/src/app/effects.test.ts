@@ -361,9 +361,12 @@ describe("the sweep of what an order is still owed", () => {
     // It is not a hypothetical overlap, and it comes from a second gateway
     // rather than from this one. Inside a process the queue's worker waits for
     // the handler before it fetches again, so a run here cannot start beside
-    // one that has not returned; two processes on one database have nothing
-    // arranging that between them. This test starts the two by hand, which is
-    // how one process reproduces what two would do.
+    // one that has not returned. What puts the same run in two processes is the
+    // queue's expiry: a run that outlasts it has its job failed for taking too
+    // long, and a failed job with retries left goes back on the queue, where
+    // the other process's idle worker takes it while the first is still going.
+    // This test starts the two by hand, which is how one process reproduces
+    // what two would do.
     const harnessed = await started();
     const orderId = await paidWithNothingOnTheStream(harnessed);
 
