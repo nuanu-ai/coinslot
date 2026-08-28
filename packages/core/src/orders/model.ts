@@ -579,6 +579,10 @@ export type Order = {
  *   that was is still unknown. Either way the machine will not spend the
  *   buyer's money again on top of it, and this is the one rejection that means
  *   "come back later" rather than "no".
+ * - `currency_changed` — the merchant's price check answered in a currency the
+ *   card does not carry. A quote moves the number; the unit is the card's, and
+ *   nothing here converts between units. Sending the same answer again gives
+ *   the same refusal, and what clears it is a quote in the card's own currency.
  */
 export const TRANSITION_REJECTION_CODES = [
   "event_not_applicable",
@@ -586,6 +590,7 @@ export const TRANSITION_REJECTION_CODES = [
   "deadline_not_yet_due",
   "delivery_before_payment",
   "settle_in_flight",
+  "currency_changed",
 ] as const;
 
 export type TransitionRejectionCode = (typeof TRANSITION_REJECTION_CODES)[number];
