@@ -26,7 +26,7 @@ import type { Card } from "@coinslot/contracts";
 import { decodePaymentRequiredHeader } from "@x402/core/http";
 import { afterEach, describe, expect, it } from "vitest";
 import { SANDBOX_FACILITATOR } from "../config.js";
-import { type Harness, harness, type Served, serve } from "../testing/harness.js";
+import { buyOverHttp, type Harness, harness, type Served, serve } from "../testing/harness.js";
 import { PAYMENT_REQUIRED_HEADER } from "./x402.js";
 
 /** The address the gateway itself is configured with: the operator's, not a merchant's. */
@@ -573,5 +573,55 @@ describe("a card whose merchant has nowhere to be paid", () => {
     await setPayoutWallet(served, key, A_WALLET);
 
     expect(await payToInTheChallenge(served, itemId)).toBe(A_WALLET);
+  });
+});
+
+describe("a wallet that moves while a sale is in flight", () => {
+  it("charges what the payer signed, not the address set since", async () => {
+    // The window is the sale itself. A payment is verified before the order
+    // goes to the merchant and charged after the goods come back, and a wallet
+    // may be moved in between — this merchant moves theirs while fulfilling,
+    // which is the ordinary way it happens rather than a contrivance. The
+    // authorisation the buyer signed names one address, so a charge sent
+    // against another is refused by the payment layer after the goods have
+    // already gone out: the merchant has delivered and cannot be paid.
+    const { served, harnessed } = await started();
+    await setPayoutWallet(served, harnessed.merchant.key, A_WALLET);
+    const itemId = await publish(served, harnessed.merchant.key, cardFor("a-room", "A room"));
+
+    const bought = await buyOverHttp(harnessed, served, itemId, {
+      onOrder: async () => {
+        await setPayoutWallet(served, harnessed.merchant.key, ANOTHER_WALLET);
+        return { delivered: { access_code: "SESAME" } };
+      },
+    });
+
+    expect(bought.status, JSON.stringify(bought.body)).toBe(200);
+    expect(harnessed.facilitator.verifies.at(-1)?.payTo).toBe(A_WALLET);
+    expect(harnessed.facilitator.settles.at(-1)?.payTo).toBe(A_WALLET);
+    // And the move was real: the next agent to ask is invited to the new one.
+    expect(await payToInTheChallenge(served, itemId)).toBe(ANOTHER_WALLET);
+  });
+
+  it("asks about the payment against the address the challenge named", async () => {
+    // The other window, and the safe direction in it. Between the challenge and
+    // the payment nothing of ours is in flight, so the address a payment is
+    // checked against is read at the verification and is the current one: a
+    // payment made out to an address the merchant has since moved off is asked
+    // about against the new one and refused there, before anything happens.
+    // (The refusal itself is the real payment layer's — `adapters/x402` — and
+    // is exercised in its own suite; what this pins is which address the
+    // question carries.)
+    const { served, harnessed } = await started();
+    await setPayoutWallet(served, harnessed.merchant.key, A_WALLET);
+    const itemId = await publish(served, harnessed.merchant.key, cardFor("a-room", "A room"));
+    expect(await payToInTheChallenge(served, itemId)).toBe(A_WALLET);
+
+    await setPayoutWallet(served, harnessed.merchant.key, ANOTHER_WALLET);
+    await buyOverHttp(harnessed, served, itemId, {
+      onOrder: () => ({ delivered: { access_code: "SESAME" } }),
+    });
+
+    expect(harnessed.facilitator.verifies.at(-1)?.payTo).toBe(ANOTHER_WALLET);
   });
 });
