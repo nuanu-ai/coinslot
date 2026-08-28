@@ -13,6 +13,7 @@
 import { scrypt } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
+  DECOY_COST,
   fingerprintOf,
   hashPassword,
   MINIMUM_PASSWORD_LENGTH,
@@ -187,30 +188,23 @@ describe("what an address with no account costs", () => {
     ]);
   });
 
-  it("costs what a wrong password against a row in the database costs", async () => {
+  it("costs what a wrong password against a row in the database costs", () => {
     // Not merely "some work" — the same work. One request, and two answers that
     // take visibly different times is a sign-in form that says which addresses
     // have accounts.
     //
-    // The row here is built at the cost above rather than by `hashPassword`, so
-    // that what is being compared is the decoy against a row as a database
-    // holds it and not the constant against itself. The bounds are generous
-    // because a clock in a test suite is: what they catch is gross drift, and
-    // the test above is what catches drift of any size at all.
-    const stored = await storedAt(PASSWORD, ROWS_ARE_AT);
-    await passwordMatches(PASSWORD, stored); // warm the pool before either clock
-
-    const timed = async (against: string | null): Promise<number> => {
-      const started = performance.now();
-      await passwordMatches("whatever-was-typed", against);
-      return performance.now() - started;
-    };
-
-    const known = Math.min(await timed(stored), await timed(stored));
-    const unknown = Math.min(await timed(null), await timed(null));
-
-    expect(unknown / known).toBeGreaterThan(0.4);
-    expect(unknown / known).toBeLessThan(2.5);
+    // Read off the parameters rather than off a stopwatch. scrypt's cost is a
+    // function of exactly these three numbers, so equal numbers are the whole
+    // of the claim, on any machine and under any load. Timed, the same claim
+    // survives only behind bounds wide enough for a busy laptop — and bounds
+    // that wide are ones a decoy made deliberately cheap fits through, which is
+    // the change this is here to stop.
+    //
+    // Against the same literal the test above holds `hashPassword` to, not
+    // against the file's own constant. The two together are the promise: a row
+    // written today and the decoy an unknown address is derived against cost
+    // the same, and neither can move without the other being asked about it.
+    expect(DECOY_COST).toStrictEqual({ N: ROWS_ARE_AT.N, r: ROWS_ARE_AT.r, p: ROWS_ARE_AT.p });
   });
 });
 
