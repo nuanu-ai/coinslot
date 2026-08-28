@@ -471,6 +471,12 @@ describe("a long walk over the machine", () => {
    * plain conditions runs in 2ms. Run as the only file, the test lands between
    * 871 and 900ms over eight runs.
    *
+   * The accounting has since been rewritten into exactly those plain
+   * conditions (expect is called where one breaks), so the figures above are
+   * the pre-rewrite measurement and the body now lands well under half a
+   * second alone. The budget below has not been re-derived yet; until it is,
+   * it stands on the old, larger cost, which errs in the only safe direction.
+   *
    * What it costs inside `pnpm test` is another matter. The suite forks a
    * worker per core and hands them seventy-odd CPU-bound files, and this is
    * the longest single stretch of computation among them, so it collects
