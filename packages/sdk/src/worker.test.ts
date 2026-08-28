@@ -974,6 +974,65 @@ describe("a reporter that itself fails", () => {
   });
 });
 
+describe("the loop failing in a way nothing in it anticipated", () => {
+  it("hands the merchant the defect instead of ending in silence", async () => {
+    // The channel that fires once everything else has already failed. Every
+    // way the loop expects to go wrong has its own kind and its own place to
+    // be caught: a poll that did not reach us, a handler that threw, an answer
+    // the gateway would not take. Arriving here means none of those applied,
+    // so the SDK has a defect and the merchant's worker is down until their
+    // process is restarted — and that is the one problem a merchant cannot
+    // learn about by waiting, because a loop that has stopped reports nothing
+    // more. Unreported, the merchant hears about it from a buyer.
+    //
+    // A defect cannot be staged from outside the package, so it is injected at
+    // the seam the loop already has for tests: the clock. This one answers the
+    // first question and fails the second, which puts the failure after a
+    // complete healthy poll rather than before the worker has done anything.
+    const problems: WorkerProblem[] = [];
+    const broken = new Error("the clock stopped");
+    let asked = 0;
+
+    gateway = await startFakeGateway({
+      apiKey: API_KEY,
+      routes: { poll_worker: polling(batch()) },
+    });
+
+    const worker = startWorker(
+      { apiKey: API_KEY, baseUrl: gateway.url },
+      { problem: (problem) => problems.push(problem) },
+      {
+        ...recordingClock(),
+        now: () => {
+          asked += 1;
+          if (asked > 1) throw broken;
+          return 0;
+        },
+      },
+    );
+
+    await waitUntil(() => problems.length > 0, "the worker to report its own failure");
+
+    const failed = problems.find((problem) => problem.kind === WORKER_PROBLEM_KINDS.WORKER_FAILED);
+
+    // Fatal, because it is: nothing restarts the loop from here.
+    expect(failed?.fatal).toBe(true);
+    // The exception itself travels with it. The sentence says where the fault
+    // lies and the cause is what a merchant sends us to have it fixed.
+    expect(failed?.cause).toBe(broken);
+    expect(failed?.message).toMatch(/defect in the Coinslot SDK/);
+    expect(failed?.message).toContain(String(broken));
+    // Not filed as a poll that failed, which is the kind a merchant waits out.
+    expect(problems.map((problem) => problem.kind)).not.toContain(WORKER_PROBLEM_KINDS.POLL_FAILED);
+    // It had been working: one poll went out and came back before this.
+    expect(gateway.callsTo("poll_worker")).toHaveLength(1);
+    // And `running()` agrees, so a process supervising its worker sees it is
+    // down without waiting for a problem that will never come.
+    await waitUntil(() => !worker.running(), "the loop to be over");
+    await expect(worker.stop()).resolves.toBeUndefined();
+  });
+});
+
 describe("stopping", () => {
   it("says so when an answer the handler produced did not get through", async () => {
     // The handler has already run: goods may have been issued. Redelivery
