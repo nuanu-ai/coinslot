@@ -19,18 +19,19 @@
  * drifted because nothing read it. The charter says a rule moves into a
  * machine once it has slipped past people, and this file is that machine.
  *
- * The example is read off the page rather than copied into this file, and that
- * is a departure from how the portal's TypeScript examples are pinned. Those
- * are transcribed by hand and kept honest by a token-by-token drift check,
- * which is the right trade for a dozen fences written in a language nothing
- * here parses. Here there is one example, and the defect being fixed is
- * precisely a copy that stopped matching what it was a copy of — a second hand
- * copy would be the same shape of thing again. So a small reader takes the
- * object literal off the page. It understands objects, quoted strings, numbers
- * and the two booleans, and it refuses everything else by name instead of
- * doing its best: a reader that guessed would certify a card the page does not
- * show, which is the failure this file exists to catch, arriving in a shape
- * nobody could see.
+ * The example is read off the page rather than copied into this file, and the
+ * reason is the landing's own shape. The portal's payload examples are files
+ * its pages include, so there is one of each and nothing to compare
+ * (`portal-fixtures.test.ts`), and its TypeScript fences are compiled against
+ * the real SDK (`packages/sdk/src/portal-fences.test.ts`). The landing is a
+ * hand-written HTML page that includes nothing from anywhere, and the defect
+ * being fixed here is precisely a copy that stopped matching what it was a copy
+ * of — a second-hand copy in this file would be the same shape of thing again.
+ * So a small reader takes the object literal off the page. It understands
+ * objects, quoted strings, numbers and the two booleans, and it refuses
+ * everything else by name instead of doing its best: a reader that guessed
+ * would certify a card the page does not show, which is the failure this file
+ * exists to catch, arriving in a shape nobody could see.
  *
  * One level down, where the page is HTML rather than source, five entities are
  * decoded: &lt; &gt; &quot; &#39; &amp;. A sixth is not decoded and reaches the
