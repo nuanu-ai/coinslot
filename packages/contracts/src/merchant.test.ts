@@ -103,8 +103,11 @@ describe("the keys a merchant holds", () => {
     // The one fact the list cannot be assembled without. A merchant cannot
     // disable the key their own cabinet is holding, so a screen that did not
     // know which key that was would offer a button the route refuses.
+    // Its absence is covered by the loop below, with every other required
+    // field; what is here is that it survives a parse and that a blank one is
+    // refused, because an empty identifier names no key and a screen reading it
+    // would match none of the rows beside it.
     expect(MerchantKeyListSchema.parse(list).this_call).toBe(working.id);
-    expectMissingFieldRejected(MerchantKeyListSchema, list, "this_call");
     expect(MerchantKeyListSchema.safeParse({ ...list, this_call: "" }).success).toBe(false);
   });
 

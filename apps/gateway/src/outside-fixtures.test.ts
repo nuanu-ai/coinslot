@@ -500,8 +500,18 @@ describe("a purchase from the outside", () => {
       );
       expect(itself.status).toBe(409);
 
-      // A second key, and the first disabled with it. This is how a merchant
-      // rotates: the new key opens the door before the old one stops.
+      // A second key for a second worker, disabled with the first — which is
+      // what a merchant does when a worker is retired, and the ordinary use of
+      // the call. It is deliberately this way round rather than the other.
+      //
+      // The other way round works too, and that is the gap worth naming here
+      // rather than demonstrating: the refusal above is about the key on the
+      // call and nothing else, so this second key could disable the first, and
+      // a merchant whose cabinet is signed in with the first would then meet
+      // "the gateway will not take this key" on every page. The gateway has no
+      // way to know which key a cabinet holds, so it cannot refuse that; the
+      // route's own description says so. A walk written the other way round
+      // would read as instructions for doing it.
       const second = await gateway.call("POST", "/v0/keys", {
         body: { label: "the second worker" },
         headers: { authorization: `Bearer ${theirKey}` },
@@ -511,22 +521,22 @@ describe("a purchase from the outside", () => {
 
       const revoked = await gateway.call(
         "POST",
-        `/v0/keys/${encodeURIComponent(made.key.id)}/disable`,
-        { headers: { authorization: `Bearer ${other.secret}` } },
+        `/v0/keys/${encodeURIComponent(other.key.id)}/disable`,
+        { headers: { authorization: `Bearer ${theirKey}` } },
       );
       expect(revoked.status).toBe(200);
 
-      const withTheOld = await gateway.call("GET", "/v0/cards", {
-        headers: { authorization: `Bearer ${theirKey}` },
-      });
-      const withTheNew = await gateway.call("GET", "/v0/cards", {
+      const withTheRetired = await gateway.call("GET", "/v0/cards", {
         headers: { authorization: `Bearer ${other.secret}` },
       });
-      expect(withTheOld.status).toBe(401);
-      expect(withTheNew.status).toBe(200);
-      expect((withTheNew.body as { cards: { id: string }[] }).cards.map((card) => card.id)).toEqual(
-        [itemId],
-      );
+      const withTheirOwn = await gateway.call("GET", "/v0/cards", {
+        headers: { authorization: `Bearer ${theirKey}` },
+      });
+      expect(withTheRetired.status).toBe(401);
+      expect(withTheirOwn.status).toBe(200);
+      expect(
+        (withTheirOwn.body as { cards: { id: string }[] }).cards.map((card) => card.id),
+      ).toEqual([itemId]);
     } finally {
       await gateway.close();
     }

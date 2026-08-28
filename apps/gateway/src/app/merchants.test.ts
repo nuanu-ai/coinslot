@@ -190,12 +190,18 @@ describe("the code in the door of registration", () => {
     expect(invitationAccepted(null, "any string whatsoever")).toBe(false);
   });
 
-  it("compares a code of any length against a code of any other", () => {
-    // The comparison is over two digests rather than two codes, which is what
-    // makes it constant-time at all: `timingSafeEqual` refuses two buffers of
-    // different lengths, so comparing the codes themselves would throw on
-    // exactly the guesses that are the wrong length and answer them differently
-    // from the ones that are not.
+  it("answers a code of the wrong length rather than throwing on it", () => {
+    // What this pins and what it does not are worth telling apart, because the
+    // reason the code is written the way it is goes further than the assertion
+    // can. The comparison is over two digests rather than two codes, and
+    // `timingSafeEqual` refuses two buffers of different lengths outright — so
+    // comparing the codes themselves would throw on exactly the guesses that
+    // are the wrong length, and a caller would learn the length one attempt at
+    // a time. That is the mutation these two lines kill.
+    //
+    // How long the comparison takes is not tested here and could not usefully
+    // be: a timing assertion in a unit suite measures the machine it runs on.
+    // An implementation that compared the two codes with `===` would pass this.
     expect(invitationAccepted("short", "a very much longer guess indeed")).toBe(false);
     expect(invitationAccepted("a very much longer code indeed", "short")).toBe(false);
   });
@@ -218,13 +224,20 @@ describe("registering a merchant", () => {
     expect(await store.keysOf(made?.merchant.id ?? "")).toHaveLength(1);
   });
 
-  it("generates the key rather than taking one, and hands it over once", async () => {
+  it("generates the key rather than taking one", async () => {
+    // Nothing in the request names a secret and nothing here reads one back:
+    // what a registration hands over is generated, and its digest is what is
+    // written down. That the row it comes back beside cannot carry the secret
+    // is the document's own promise and is held in `merchant.test.ts`.
     const store = aStore();
+    const ids = countedIds();
 
-    const made = await registerMerchant(store, countedIds(), "Someone's shop", 1_000);
+    const first = await registerMerchant(store, ids, "Someone's shop", 1_000);
+    const second = await registerMerchant(store, ids, "Another shop", 1_000);
 
-    expect(made?.secret.startsWith(KEY_PREFIX)).toBe(true);
-    expect(JSON.stringify(made?.key)).not.toContain(made?.secret ?? "");
+    expect(first?.secret.startsWith(KEY_PREFIX)).toBe(true);
+    expect(second?.secret.startsWith(KEY_PREFIX)).toBe(true);
+    expect(first?.secret).not.toBe(second?.secret);
   });
 
   it("refuses a name the catalog would cut down, and writes nothing", async () => {

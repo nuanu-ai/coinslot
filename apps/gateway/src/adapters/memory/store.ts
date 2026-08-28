@@ -266,7 +266,14 @@ export class MemoryStore implements Store {
   }
 
   async keysOf(merchantId: string): Promise<readonly StoredKey[]> {
-    return [...this.#keys.values()].filter((key) => key.merchantId === merchantId);
+    // Sorted rather than left in the order the map holds them, so that this
+    // answers with what the database answers with. The two agreeing is what
+    // makes a test about a merchant's list of keys mean the same thing in both
+    // places; left to insertion order, this one would pass on an assertion the
+    // other fails whenever two keys share an instant.
+    return [...this.#keys.values()]
+      .filter((key) => key.merchantId === merchantId)
+      .sort((one, other) => one.createdAt - other.createdAt || (one.id < other.id ? -1 : 1));
   }
 
   async disableKey(id: string, at: number): Promise<StoredKey | null> {

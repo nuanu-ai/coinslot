@@ -1066,38 +1066,10 @@ describe("the route table", () => {
     }
   });
 
-  it("takes no key on the one route whose caller cannot have one", () => {
-    // Registering is where a merchant's first key comes from, so nobody
-    // reaching it holds one. A gateway reads that off the word and not off the
-    // address: this one sits under no prefix that would give it away, and the
-    // door in front of it is a value out of the gateway's own configuration
-    // rather than anything this table carries.
-    expect(API_ROUTES.register_merchant.auth).toBe("none");
-    expect(API_ROUTES.register_merchant.request).toBe(schemas.registration_request);
-  });
-
-  it("puts a merchant's own keys behind a key of theirs", () => {
-    // The three key routes act on the merchant the caller's key resolves to and
-    // on nobody else's. Marked open, listing keys would be a list of everybody's
-    // — and issuing one would be a key on a merchant the caller chose.
-    const theKeyRoutes: RouteDefinition[] = [
-      API_ROUTES.list_keys,
-      API_ROUTES.issue_key,
-      API_ROUTES.disable_key,
-    ];
-
-    for (const route of theKeyRoutes) expect(route.auth, route.path).toBe("merchant_key");
-  });
-
-  it("disables a key by naming it in the address, and carries no body", () => {
-    // Written as one route taking a key and a word, this would accept "enable"
-    // as readily as "disable", and bringing a revoked key back is not something
-    // this surface does at all — a key that leaked is replaced, not restored.
-    const disable: RouteDefinition = API_ROUTES.disable_key;
-
-    expect(disable.request).toBeUndefined();
-    expect(pathParamsOf(disable.path)).toStrictEqual(["key_id"]);
-  });
+  // The doors and the shapes of the four calls about merchants and their keys
+  // are pinned by the surface table above, row for row, so nothing here repeats
+  // them. What the table cannot hold is the prose, and these three rules reach
+  // an SDK author only through it.
 
   it("warns whoever writes a cabinet that one key cannot be disabled from it", () => {
     // The rule lives in the route rather than on a screen, so the table is
@@ -1107,6 +1079,23 @@ describe("the route table", () => {
     // it with. This pins that the sentence is there, not what it says.
     expect(API_ROUTES.disable_key.description).toContain("this call was made with");
     expect(API_ROUTES.list_keys.description).toContain("this_call");
+  });
+
+  it("says how far the refusal that protects a merchant from themselves reaches", () => {
+    // The half that is easy to leave out and expensive to leave out. The rule
+    // is about the key on the call and not about the key a cabinet signed in
+    // with, which the gateway has no way of knowing — so a merchant with two
+    // keys can still be left with a cabinet the gateway will not take. A reader
+    // who took the first sentence for the whole promise would build on a
+    // protection that is not there.
+    expect(API_ROUTES.disable_key.description).toContain("two keys");
+  });
+
+  it("says that registering twice makes two merchants", () => {
+    // Every other write in this table says what a repeat does, and three of
+    // them say a retry after a dropped connection is safe. This one is not, and
+    // read in that company a silence would be taken for the same promise.
+    expect(API_ROUTES.register_merchant.description).toContain("two merchants");
   });
 
   it("says what a pause does and does not do to the orders already open", () => {

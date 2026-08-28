@@ -167,8 +167,13 @@ describe("registering a merchant", () => {
     // said so differently, the form would be a way of asking whether
     // registration is open here at all, which is the one thing the code in the
     // door is meant to stop being findable.
+    // The code presented to the closed gateway is the one the open gateway
+    // below accepts, and that is the whole design of this test: presented with
+    // a code that is wrong for it anyway, a closed gateway would be
+    // indistinguishable from an open one, and the override could quietly stop
+    // taking effect without anything failing.
     const closed = await started({ REGISTRATION_INVITATION: "" });
-    const shut = await register(closed.served, "Someone's shop", "any code at all");
+    const shut = await register(closed.served, "Someone's shop", INVITATION);
     const merchantsThere = (await closed.harnessed.store.merchants()).length;
     await closed.served.close();
     await closed.harnessed.stop();
@@ -228,6 +233,27 @@ describe("the keys a merchant holds", () => {
 
     expect(listed.keys.map((key) => key.id)).toStrictEqual([made.key.id]);
     expect(listed.this_call).toBe(made.key.id);
+  });
+
+  it("names a different key when the call is made with a different key", async () => {
+    // The half a merchant with one key cannot show, and the whole promise of
+    // the field: `this_call` is the key that opened this call rather than the
+    // merchant's first, their oldest, or whichever the list happens to start
+    // with. Named wrongly, a cabinet would hide the disable button on a key
+    // that works and offer it on the one the gateway answers 409 to, which is
+    // the exact failure the field exists to prevent.
+    const { served } = await started();
+    const made = await registered(served, "Someone's shop");
+    const second = await issued(served, made.secret, "a second worker");
+
+    const asTheFirst = await keysWith(served, made.secret);
+    const asTheSecond = await keysWith(served, second.secret);
+
+    expect(asTheFirst.this_call).toBe(made.key.id);
+    expect(asTheSecond.this_call).toBe(second.key.id);
+    // And the list itself is the same both times: which key asked changes the
+    // one field and nothing else.
+    expect(asTheSecond.keys).toStrictEqual(asTheFirst.keys);
   });
 
   it("lists no key of another merchant's", async () => {

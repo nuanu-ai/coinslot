@@ -530,6 +530,18 @@ export class Gateway {
    * `null` is every other key that is not this merchant's to disable — one that
    * does not exist and one belonging to somebody else, told apart nowhere, so a
    * refusal is not a way of counting another merchant's keys.
+   *
+   * How far the first refusal reaches is worth stating, because ADR-0014 §5 is
+   * written in the words "the key their cabinet is holding" and this is narrower
+   * than that. What the gateway knows is which key opened the call in front of
+   * it. Which key a cabinet signed in with is on a row on the other side of the
+   * boundary, and no call carries it — so a merchant with two keys can disable
+   * either with the other, the one their cabinet holds included, and two calls
+   * made at the same moment with two keys, each naming the other, both pass this
+   * line and leave the merchant with none. Widening the rule would mean refusing
+   * a merchant their own last working key, which is a different decision and one
+   * nobody has taken. What is here refuses the click, and the click is what §5
+   * describes.
    */
   async disableMerchantKey(
     merchantId: string,

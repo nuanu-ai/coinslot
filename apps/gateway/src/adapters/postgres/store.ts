@@ -253,11 +253,17 @@ export class PostgresStore implements Store {
   }
 
   async keysOf(merchantId: string): Promise<readonly StoredKey[]> {
+    // Oldest first, and the identifier settles a tie. Without the second column
+    // two keys stamped in the same millisecond come back in whatever order the
+    // planner chose that time, which is a merchant's list of keys reordering
+    // itself between two visits with nothing having changed — and it is what
+    // makes an assertion about this list pass in memory and fail against a
+    // database.
     const rows = await this.#db
       .select()
       .from(merchantKeys)
       .where(eq(merchantKeys.merchantId, merchantId))
-      .orderBy(merchantKeys.createdAt);
+      .orderBy(merchantKeys.createdAt, merchantKeys.id);
     return rows.map(storedKeyOf);
   }
 

@@ -175,10 +175,12 @@ export function handlersFor(gateway: Gateway): Partial<Record<RouteName, Mounted
         );
 
         if (disabled === "locked_out") {
-          // The one refusal on this surface that protects the caller from
-          // themselves. A merchant whose cabinet holds this key and disabled it
-          // would meet "the gateway will not take this key" on every page
-          // afterwards, with no terminal to undo it from (ADR-0014 §5).
+          // A refusal that protects the caller from themselves rather than from
+          // anybody else. A merchant whose cabinet holds this key and disabled
+          // it would meet "the gateway will not take this key" on every page
+          // afterwards, with no terminal to undo it from (ADR-0014 §5). It
+          // reaches only the key on this call; the flow above says what that
+          // leaves open.
           return written(
             call.response,
             CONFLICT,
