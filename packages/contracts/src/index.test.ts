@@ -344,7 +344,18 @@ describe("the contract as JSON Schema", () => {
     // `card.tags` is the same story: the rule that two tags differing only in
     // case are one tag to a discovery listing cannot be said in JSON Schema,
     // so it is a refinement here and a sentence in the document.
-    expect(refinedSchemaPaths().sort()).toStrictEqual(["card", "card.result", "card.tags"]);
+    //
+    // `evm_address` is the third of the same kind and the one with money on
+    // it: the capitals of an address are a checksum over the address, which
+    // needs a hash to check and so cannot be a pattern. It is reached from the
+    // payout wallet documents too, and reported once, under the entry the walk
+    // meets first.
+    expect(refinedSchemaPaths().sort()).toStrictEqual([
+      "card",
+      "card.result",
+      "card.tags",
+      "evm_address",
+    ]);
   });
 
   it("would notice an undescribed refinement, including a nested one", () => {
