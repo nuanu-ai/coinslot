@@ -1069,21 +1069,12 @@ describe("registering", () => {
    */
   const registrarAnswering = (
     answer: Answer<RegisteredMerchant>,
-<<<<<<< HEAD
   ): Registrar & { asked: string[] } => {
     const asked: string[] = [];
     return {
       asked,
       register: async (invitation) => {
         asked.push(invitation);
-=======
-  ): Registrar & { asked: { invitation: string }[] } => {
-    const asked: { invitation: string }[] = [];
-    return {
-      asked,
-      register: async (invitation) => {
-        asked.push({ invitation });
->>>>>>> main
         return answer;
       },
     };
@@ -1117,12 +1108,7 @@ describe("registering", () => {
     const registered = await browser.post("/register", FORM);
 
     expect(registered.status).toBe(303);
-<<<<<<< HEAD
     expect(registrar.asked).toStrictEqual([FORM.invitation]);
-=======
-    expect(registered.to).toBe("/cards");
-    expect(registrar.asked).toStrictEqual([{ invitation: FORM.invitation }]);
->>>>>>> main
     // The account is there, pointed at the merchant the gateway made, and the
     // password typed into the form is the one that works.
     const made = await identity.byEmail(FORM.email);
@@ -1388,17 +1374,6 @@ describe("registering", () => {
     await expect(identity.byEmail(FORM.email)).resolves.toBeNull();
   });
 
-<<<<<<< HEAD
-=======
-  // Two tests stood here and are gone with the field they were about: one
-  // refused a name the catalogue would not carry, and one took the space off a
-  // padded one. Both described this form checking a name, and this form no
-  // longer asks for one — the screen that does is where those promises are
-  // made now, and where the tests for them belong. Deleting them here rather
-  // than leaving them passing against nothing is the point: a test that
-  // survives the behaviour it described is the one that later gets believed.
-
->>>>>>> main
   it("does not send somebody to check a good invitation when the gateway is the problem", async () => {
     // 403 is the only answer that means the invitation was not accepted. A
     // route that is not there in a bad deployment answers 404 and a gateway
@@ -1628,6 +1603,26 @@ describe("the settings screen", () => {
     // they are actually listed under.
     expect(readable(answered.html)).toMatch(/not saved/i);
     expect(readable(answered.html)).toContain(running.harnessed.merchant.name);
+    expect(await listedAs(running)).toBe(running.harnessed.merchant.name);
+  });
+
+  it("answers an emptied box with the control that does what they meant", async () => {
+    // Emptying this box is a merchant trying to stop being listed. The route
+    // refuses it either way, so the question is which sentence they read: the
+    // rule the catalogue keeps, which is about a name they did not type, or
+    // what to do instead. Told the rule, somebody tries a shorter name; told
+    // about the selling switch, they find the control that leaves their cards
+    // where they can put them back.
+    const running = await started();
+    await running.browser.signIn();
+
+    const answered = await running.browser.post("/settings", { seller_name: "   " });
+
+    expect(answered.status).toBe(400);
+    expect(readable(answered.html)).toMatch(/stop your selling/i);
+    // And not the other sentence, which is the one the mutation that found this
+    // gap swapped in: both refuse, and only one of them is an answer.
+    expect(readable(answered.html)).not.toMatch(/not a name the catalogue will carry/i);
     expect(await listedAs(running)).toBe(running.harnessed.merchant.name);
   });
 
