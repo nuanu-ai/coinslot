@@ -1097,7 +1097,20 @@ if (databaseUrl === null) {
             return { save: { ...found, paidBy: "whoever" }, result: "decided" };
           });
 
-          await expect(deciding).rejects.toThrow();
+          // Named rather than bare, and the reason is a lesson from this very
+          // branch. `terminate` now throws when the backend it aimed at was
+          // not there — which is right — but that throw happens inside this
+          // callback, drizzle rolls it back and rethrows, and a bare
+          // `toThrow()` is satisfied by it. So a run in which nothing was
+          // terminated passed everything below, including the check that
+          // nothing went unlistened. The matcher is what makes this a test of
+          // the connection dying rather than of any failure at all.
+          // The words are drizzle's, not Postgres's: when the connection dies
+          // mid-transaction the rollback is what fails, and its wrapper carries
+          // that rather than the backend's own sentence. Matching it is still
+          // the point — a run in which nothing was terminated fails here with
+          // the terminate helper's own complaint instead.
+          await expect(deciding).rejects.toThrow(/Failed query: rollback/);
         });
 
         expect(unlistened).toStrictEqual([]);

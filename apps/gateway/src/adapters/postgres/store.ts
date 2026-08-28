@@ -409,10 +409,17 @@ export class PostgresStore implements Store {
     // that has to be considerate.
     //
     // The prefix on the name is not what keeps us apart from pg-boss. It goes
-    // through `hashtext` with everything else, so it reserves no region of a
-    // flat 32-bit key space; what it does is keep our own names from colliding
-    // with each other. Nothing here can rule out a collision with somebody
-    // else's key, and nothing needs to: what a collision costs is written above.
+    // through `hashtext` with everything else, so it reserves no region of the
+    // key space; what it does is keep our own names from colliding with each
+    // other.
+    //
+    // What does keep us apart is arithmetic nobody arranged. The single-argument
+    // lock takes a 64-bit key, and `hashtext` is 32-bit, so ours are widened and
+    // land only where the high word is all zeroes or all ones. pg-boss derives
+    // its keys from a hash spread over the whole range. So a collision needs one
+    // of its dozen or so keys to fall into that narrow band — around one chance
+    // in four billion each. It is not ruled out, and it does not need to be:
+    // what a collision costs is written above.
     const client = await this.#db.$client.connect();
     let broken: unknown = null;
 
