@@ -30,9 +30,10 @@ on that address — two spellings are two listings for one product.
 
 **The seller's listing name belongs to the merchant; the tags belong to the
 card.** A per-card name would be one seller appearing as several, so the name
-is a column on the merchants table (`merchant listed-as`), null by default and
-never filled in from the display name beside it — that one may be written in
-any alphabet, this one goes out to strangers under the catalog's ASCII rule.
+is a column on the merchants table, set by the merchant themselves over the API
+or by `merchant listed-as` at a terminal. It is null by default and never
+filled in from the display name beside it — that one may be written in any
+alphabet, this one goes out to strangers under the catalog's ASCII rule.
 Merchant-written text is held on the way in to the catalog's own limits,
 checked with the catalog's own code where that code is runnable, because the
 catalog drops what breaks its rules without telling anybody. The description's
