@@ -92,6 +92,24 @@ const RETIRED_SESSION = "coinslot_key";
 const SESSION_HOURS = 12;
 
 /**
+ * What an account with no merchant on it is told, wherever it turns up.
+ *
+ * There is one such account and it is on a deployed server: it was made before
+ * an account named its merchant, so there is no key on its row and not one
+ * screen in this cabinet can be drawn for it. The two things it must not be
+ * answered with are an empty cabinet, which reads as a catalogue somebody
+ * emptied, and an exception, which reads as a broken cabinet. So it is told
+ * what it is and what fixes it — a command somebody with the merchant's key
+ * runs — and the registration link on the same page covers the other reader,
+ * who has no merchant at the gateway at all.
+ */
+const NO_MERCHANT =
+  "This account was made before an account named the merchant it signs in for, so there is" +
+  " nothing here for it to show. Somebody holding that merchant's key makes a new account with" +
+  " `account add <address> <merchant>`; a merchant with an invitation and no account can" +
+  " register below.";
+
+/**
  * The stylesheet the cabinet serves: the shared visual language, then the
  * cabinet's own layout. Read once at startup — neither changes while we run.
  *
@@ -137,14 +155,16 @@ export interface CabinetParts {
   /** Where the people who sign in, and their sessions, are kept. */
   readonly accounts: Accounts;
   /**
-   * How the gateway is reached, with the real client as the default.
+   * How the gateway is reached on behalf of one merchant, with the real client
+   * as the default.
    *
-   * One client for the life of the process, because there is one key and it is
-   * the cabinet's own configuration now rather than a visitor's cookie. Only a
-   * test ever passes anything else, and what a deployment runs is the client
-   * that speaks the contract's route table.
+   * A function of the key rather than a client, because the key is not the
+   * cabinet's any more: it is on the row of whoever is signed in, so a client is
+   * built per request and two people signed into one cabinet are two merchants
+   * (ADR-0014 §2). Only a test ever passes anything else, and what a deployment
+   * runs is the client that speaks the contract's route table.
    */
-  readonly gateway?: GatewayClient;
+  readonly gatewayFor?: (key: string) => GatewayClient;
 }
 
 /**
@@ -162,8 +182,28 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
   const app = express();
   const base = config.basePath;
   const accounts = parts.accounts;
-  const gateway = parts.gateway ?? gatewayFor(config.gatewayUrl, config.merchantApiKey);
+  const clientFor = parts.gatewayFor ?? ((key: string) => gatewayFor(config.gatewayUrl, key));
   const cookiePath = base === "" ? "/" : base;
+
+  /**
+   * The gateway as this request's merchant, built from the key on their row.
+   *
+   * Only ever called below the gate, which is what makes the merchant's absence
+   * a defect here rather than a case: the gate refuses an account that has no
+   * key on it, with a sentence saying what to do, precisely so that no handler
+   * below has to hold an opinion about a cabinet with nothing to draw.
+   */
+  const gatewayAs = (request: Request): GatewayClient => {
+    const merchant = whoIs(request).merchant;
+    if (merchant === null) {
+      throw new Error(
+        "a handler below the gate ran for an account with no merchant on it, which means the" +
+          " gate let one through — this is a defect in how the routes are ordered, not a" +
+          " visitor's problem",
+      );
+    }
+    return clientFor(merchant.key);
+  };
 
   const forget = (response: Response): void => {
     response.clearCookie(SESSION, { path: cookiePath });
@@ -245,6 +285,18 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
       return;
     }
 
+    if (person.merchant === null) {
+      // The password was right and there is still nothing to show: this is the
+      // account made before an account named its merchant, and no screen in the
+      // cabinet can be drawn without a key. Said rather than served empty,
+      // because an empty cabinet reads as a catalogue somebody emptied.
+      console.log(
+        `[cabinet] a sign-in for ${person.email} was refused: the account has no merchant`,
+      );
+      response.status(403).type("html").send(signInScreen(base, NO_MERCHANT));
+      return;
+    }
+
     // A fresh identifier every time. Nothing here can adopt an identifier the
     // visitor arrived holding, which is what makes a session handed to somebody
     // in a link impossible rather than merely unlikely.
@@ -286,6 +338,20 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
           // through this gate again on every click.
           forget(response);
           response.redirect(303, `${base}/sign-in`);
+          return;
+        }
+        if (person.merchant === null) {
+          // A session outlives a deployment, so somebody signed in on the
+          // cabinet as it was before an account named its merchant arrives here
+          // holding one. They are told the same thing the sign-in tells them
+          // rather than redirected to it: they have a live session, and sending
+          // them to type a password that will be accepted and then refused is a
+          // longer way to the same sentence.
+          //
+          // The session is left alone. Ending it would take away the one thing
+          // that still works about the account for no gain, and nothing this
+          // person can reach does anything with a merchant.
+          response.status(403).type("html").send(signInScreen(base, NO_MERCHANT));
           return;
         }
         people.set(request, person);
@@ -377,7 +443,7 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
   });
 
   app.get(`${base}/cards`, async (request, response) => {
-    const cards = await gateway.cards();
+    const cards = await gatewayAs(request).cards();
     if (!cards.ok) {
       return trouble(response, base, cards);
     }
@@ -388,6 +454,7 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
     // Only the exact word narrows the list, which is what the contract says
     // and what a merchant reconciling their books relies on.
     const open = request.query.open === "true";
+    const gateway = gatewayAs(request);
     const [cards, orders] = await Promise.all([gateway.cards(), gateway.orders(open)]);
     if (!cards.ok) {
       return trouble(response, base, cards);
@@ -401,6 +468,7 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
   });
 
   app.get(`${base}/receipts`, async (request, response) => {
+    const gateway = gatewayAs(request);
     const [cards, receipts] = await Promise.all([gateway.cards(), gateway.receipts()]);
     if (!cards.ok) {
       return trouble(response, base, cards);
@@ -419,7 +487,7 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
   ] as const) {
     app.post(`${base}/cards/:item_id/${verb}`, async (request, response) => {
       const itemId = request.params.item_id ?? "";
-      const switched = await gateway.pauseCard(itemId, paused);
+      const switched = await gatewayAs(request).pauseCard(itemId, paused);
       if (!switched.ok) {
         return trouble(response, base, switched);
       }
@@ -430,7 +498,7 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
     });
 
     app.post(`${base}/selling/${verb}`, async (request, response) => {
-      const switched = await gateway.setSelling(!paused);
+      const switched = await gatewayAs(request).setSelling(!paused);
       if (!switched.ok) {
         return trouble(response, base, switched);
       }
@@ -667,19 +735,26 @@ function trouble(response: Response, base: string, answer: Answer<unknown>): voi
     return;
   }
   if (answer.status === 401) {
-    // The key is the cabinet's own configuration now (ADR-0009 §4), so this is
-    // a broken cabinet rather than a person who should sign in again. Signing
-    // them out here would send them to type a password that cannot fix it and
+    // The key is on the row of whoever is signed in (ADR-0014 §2), so this is
+    // still not a person who should sign in again: their password is right and
+    // typing it again cannot make the gateway accept a key it has stopped
+    // accepting. Signing them out here would send them to do exactly that and
     // land them straight back on this page, with nothing said about the fault.
+    //
+    // What is said instead is the whole truth, including the part that is
+    // uncomfortable: rotating the key a cabinet is holding is named in
+    // ADR-0014 §5 as not built, so there is no page in here that fixes this.
     response
       .status(502)
       .type("html")
       .send(
         problemPage(
           base,
-          "The gateway did not accept this cabinet's merchant key. Nothing you do here" +
-            " changes that: the key the cabinet is configured with has to be one the gateway" +
-            " knows. Your sign-in is unaffected.",
+          "The gateway will not accept the key stored for this account, so none of these" +
+            " screens can be drawn. Nothing you do here changes that, and there is no page in" +
+            " this cabinet that replaces the key it signs in with — a new account has to be" +
+            " made for this merchant, by somebody holding a key the gateway still accepts." +
+            " Your sign-in itself is unaffected.",
         ),
       );
     return;

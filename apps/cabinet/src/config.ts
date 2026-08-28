@@ -12,7 +12,13 @@
  * reason that section gives is dogfooding: a screen the cabinet cannot draw is
  * API the merchant does not have either.
  *
- * Both secrets in here are read and never printed. The sentence this file
+ * There is no merchant key here, and its absence is the point rather than an
+ * omission. The cabinet used to read one at start-up and use it for the life of
+ * the process, which made every screen show that one merchant's money whoever
+ * was signed in. The key is on the row of the person signed in now (ADR-0014
+ * §2), so a deployment has one less thing to set and one more thing to back up.
+ *
+ * The one secret left in here is read and never printed. The sentence this file
  * throws names the variable that is wrong and not the value it held, because a
  * startup failure goes to a log and a log goes places the environment does not.
  */
@@ -43,18 +49,6 @@ const environmentSchema = z.object({
   DATABASE_URL: z
     .string({ error: absentOrWrong("must be a string") })
     .refine(isPostgresUrl, "must be an address of the form postgres://user@host:port/database"),
-
-  /**
-   * The key the cabinet reaches the gateway with.
-   *
-   * ADR-0009 §4: machine to machine, out of the cabinet's own configuration
-   * rather than out of a visitor's cookie. The length floor is the gateway's
-   * own — the comparison at the other end is constant-time over equal lengths,
-   * and a key short enough to walk through makes that care pointless.
-   */
-  MERCHANT_API_KEY: z
-    .string({ error: absentOrWrong("must be a string") })
-    .min(16, "must be at least 16 characters"),
 
   /** The port the cabinet answers on; from outside it is behind Caddy. */
   PORT: z
@@ -112,7 +106,6 @@ export interface CabinetConfig {
   readonly basePath: string;
   readonly cookieSecure: boolean;
   readonly databaseUrl: string;
-  readonly merchantApiKey: string;
 }
 
 export function loadConfig(environment: Record<string, string | undefined>): CabinetConfig {
@@ -137,6 +130,5 @@ export function loadConfig(environment: Record<string, string | undefined>): Cab
     basePath: parsed.data.BASE_PATH,
     cookieSecure: parsed.data.COOKIE_SECURE,
     databaseUrl: parsed.data.DATABASE_URL,
-    merchantApiKey: parsed.data.MERCHANT_API_KEY,
   };
 }

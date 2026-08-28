@@ -50,17 +50,6 @@ export interface GatewayClient {
 }
 
 /**
- * A client bound to one merchant's key.
- *
- * The key is a parameter rather than something this module reads, so a client
- * can be built per request the day the cabinet has a key per request. It does
- * not today: `buildApp` builds one from `MERCHANT_API_KEY` for the life of the
- * process, so this cabinet serves the one merchant that key resolves to at the
- * gateway. What changes that is accounts naming their own merchant, which is a
- * step still to come (ADR-0010); the shape here is what makes it a change to
- * where the key comes from rather than to this file.
- */
-/**
  * How long the cabinet waits for the gateway before giving up on one call.
  *
  * A number here rather than in the configuration on purpose: this is not the
@@ -74,6 +63,15 @@ export interface GatewayClient {
  */
 const ANSWER_WITHIN_MS = 10_000;
 
+/**
+ * A client bound to one merchant's key.
+ *
+ * The key is a parameter rather than something this module reads, and the
+ * cabinet builds one of these per request from the key on the row of whoever is
+ * signed in (ADR-0014 §2). Two people signed into one cabinet are therefore two
+ * merchants, which is what a client held for the life of the process could
+ * never be.
+ */
 export const gatewayFor = (
   baseUrl: string,
   key: string,

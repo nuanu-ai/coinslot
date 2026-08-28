@@ -210,11 +210,14 @@ async function visiting(
   accounts: Accounts,
   environment: Record<string, string> = {},
 ): Promise<{ browser: Browser; url: string }> {
+  // No merchant key in the environment, which is the point: the cabinet builds
+  // its client from the key on the row of whoever is signed in, so what these
+  // tests drive is the real client against the real gateway with the key the
+  // harness seeded (ADR-0014 §2).
   const app = buildApp(
     loadConfig({
       GATEWAY_URL: gatewayUrl,
       DATABASE_URL: "postgres://nobody@nowhere:5432/unused",
-      MERCHANT_API_KEY: KEY,
       ...(basePath === "" ? {} : { BASE_PATH: basePath }),
       ...environment,
     }),
@@ -673,35 +676,30 @@ describe("getting into the cabinet", () => {
     ).resolves.toBeNull();
   });
 
-  it("keeps a person signed in when the merchant key is rotated under them", async () => {
-    // The promise this whole decision was written for. Before it, the key in
-    // the cabinet was the person's password: rotating it signed the human out
+  it("keeps a person signed in when the key their cabinet holds stops working", async () => {
+    // The promise ADR-0009 was written for, held against the real gateway now
+    // that a key is a row there too. Before that decision, the key in the
+    // cabinet was the person's password: taking it away signed the human out
     // and broke the merchant's own code in the same instant, and neither could
-    // be done alone. Here the key changes and the session does not notice.
-    const { browser, accounts, gateway } = await started();
+    // be done alone. Here the gateway really stops accepting the key — the same
+    // act ADR-0014 §5 puts behind a control on the keys screen — and the
+    // session does not notice.
+    const { browser, gateway, harnessed } = await started();
     await publish(gateway, roomCard);
     await browser.signIn();
-    const held = browser.sessionToken() ?? "";
 
-    // The same cabinet, restarted with a different key — and the same store,
-    // because the sessions are rows and not something the process holds.
-    const rotated = await visiting(gateway.url, "", accounts, {
-      MERCHANT_API_KEY: "a-different-merchant-key",
-    });
-    try {
-      const after = await rotated.browser.withRawCookie(`${COOKIE}=${held}`).get("/cards");
+    await harnessed.disableKey(harnessed.merchant.keyId);
+    const after = await browser.get("/cards");
 
-      // Still signed in: the session survived a key it never held.
-      expect(after.status).not.toBe(303);
-      expect(after.to).toBeNull();
-      // The gateway does not know the new key, so the cabinet says its own key
-      // is not accepted — and says nothing about the person's sign-in.
-      expect(after.status).toBe(502);
-      expect(readable(after.html)).toMatch(/key/i);
-      expect(after.headers.getSetCookie().join(" ")).not.toContain(`${COOKIE}=;`);
-    } finally {
-      await rotated.browser.close();
-    }
+    // Still signed in: the session is a row of the cabinet's and has nothing to
+    // do with what the gateway thinks of a key.
+    expect(after.to).toBeNull();
+    expect(after.status).toBe(502);
+    expect(readable(after.html)).toMatch(/key/i);
+    expect(after.headers.getSetCookie().join(" ")).not.toContain(`${COOKIE}=;`);
+    // And it says there is no page here that fixes it, which is true: rotating
+    // the key a cabinet holds is named in ADR-0014 §5 as not built.
+    expect(readable(after.html)).toMatch(/no page in this cabinet/i);
   });
 
   it("clears the old cookie that used to hold a live merchant key", async () => {
@@ -1348,17 +1346,17 @@ describe("when something goes wrong that the merchant has to get out of", () => 
       loadConfig({
         GATEWAY_URL: "http://127.0.0.1:1",
         DATABASE_URL: "postgres://nobody@nowhere:5432/unused",
-        MERCHANT_API_KEY: KEY,
       }),
       {
         accounts,
-        gateway: {
-          cards: answer,
-          pauseCard: answer,
-          setSelling: answer,
-          orders: answer,
-          receipts: answer,
-        } as never,
+        gatewayFor: () =>
+          ({
+            cards: answer,
+            pauseCard: answer,
+            setSelling: answer,
+            orders: answer,
+            receipts: answer,
+          }) as never,
       },
     );
     const server = app.listen(0);
