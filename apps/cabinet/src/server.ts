@@ -504,7 +504,55 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
  * on is same-origin navigation, and refusing an absent header would turn away
  * the merchant's own browser and every command-line client along with it. This
  * is a cheap second lock, not the lock.
+ *
+ * What is compared is the host and not the whole origin, and the scheme is
+ * deliberately not part of it any more. The earlier version took the scheme out
+ * of `X-Forwarded-Proto` and refused an origin that disagreed, and its own
+ * comment said what that would cost: over https with a terminator that sets
+ * nothing, every form post on the site is refused. On the first real
+ * deployment that is what happened — a browser signing in at
+ * `https://coinslot.nuanu.ai` was told its form came from somewhere else, while
+ * the identical request from a command line was let through. That difference
+ * was never explained; what it showed is that the scheme half of this check
+ * turns a header set by whatever is in front into a merchant who cannot reach
+ * the control that stops their selling.
+ *
+ * Dropping it costs the distinction between a page served over http and one
+ * served over https on the same host, and that distinction is already made
+ * where it can be made without trusting anybody: the session cookie is
+ * `Secure` wherever the cabinet is served over https (ADR-0009 §3), so a page
+ * on the http origin has no session to forge a post with. A guard cannot be
+ * the reason a merchant is locked out.
  */
+/**
+ * Whether an `Origin` names the same host the request was addressed to.
+ *
+ * Both sides are parsed rather than compared as text, because both can be
+ * written more than one way and only one of those ways is the same string. A
+ * host header can carry a port, an origin drops the port that is default for
+ * its scheme, and an IPv6 literal is full of colons that a hand-written split
+ * would cut in the wrong place. `URL` settles all three, and the port is left
+ * out of the comparison on purpose: it is not a boundary a browser enforces
+ * — a page on another port of the same host is same-site to SameSite — so
+ * requiring it to match would only produce refusals a merchant cannot act on.
+ *
+ * Anything unparseable is not the same host. An `Origin` of `null`, which a
+ * sandboxed document sends, lands there and is refused.
+ */
+const sameHost = (origin: string, host: string): boolean => {
+  const hostOf = (value: string): string | null => {
+    try {
+      return new URL(value).hostname || null;
+    } catch {
+      return null;
+    }
+  };
+  // The host header is not a URL, so it is made into one before it is read.
+  // The scheme in front of it is arbitrary and never compared against anything.
+  const here = hostOf(`http://${host}`);
+  return here !== null && hostOf(origin) === here;
+};
+
 function sameOriginUnder(base: string) {
   return (request: Request, response: Response, next: () => void): void => {
     const origin = request.headers.origin;
@@ -513,40 +561,9 @@ function sameOriginUnder(base: string) {
       return;
     }
 
-    // The whole origin and not merely the host. A scheme is part of an origin,
-    // and a page served over http on the same host is a different origin from
-    // one served over https — which is exactly the distinction this check
-    // exists to make, since SameSite does not make it either. The scheme comes
-    // from the forwarded header where a terminator set one, because behind
-    // Caddy this process speaks http and the browser does not.
-    //
-    // The first value in the header and not the last, which is worth arguing
-    // because the reverse looks safer. What this is compared against is the
-    // `Origin` a browser sent, and that names the scheme the browser used at
-    // the edge of the chain — which is the leftmost value, by what the header
-    // means. The last value is the scheme between the final two hops, and
-    // preferring it would answer "this form did not come from the cabinet" to
-    // an honest merchant behind a chain that terminates TLS early.
-    //
-    // The usual argument for the last value is that a chain which appends
-    // rather than replaces leaves a client's own claim leftmost. It does not
-    // reach this check: the only attacker this refusal is for is a page in a
-    // browser, a page cannot put a header on a form post at all, and a `fetch`
-    // that sets one is held for a preflight this cabinet answers with a
-    // redirect and no CORS headers, which browsers refuse. A client that can
-    // set `X-Forwarded-Proto` can also leave `Origin` off, and this middleware
-    // waves that through by design.
-    //
-    // What the fallback costs when the header is absent is worth knowing
-    // before it happens: over https with a terminator that sets nothing, the
-    // scheme reads "http", every origin then mismatches, and every form post
-    // on the site — the sign-in included — is refused.
-    const forwarded = request.headers["x-forwarded-proto"];
-    const said = Array.isArray(forwarded) ? forwarded[0] : forwarded;
-    const scheme = said?.split(",")[0]?.trim();
     const asked = request.headers.host;
 
-    if (asked !== undefined && origin === `${scheme ?? "http"}://${asked}`) {
+    if (asked !== undefined && sameHost(origin, asked)) {
       next();
       return;
     }

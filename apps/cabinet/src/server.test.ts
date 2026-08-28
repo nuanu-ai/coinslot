@@ -1545,16 +1545,18 @@ describe("when something goes wrong that the merchant has to get out of", () => 
     expect(await purchasable(gateway, itemId)).toBe(true);
   });
 
-  it("takes the scheme from the terminator in front of it, or refuses every form", async () => {
-    // Behind Caddy this process speaks http and the browser speaks https, so
-    // the origin a browser sends says "https" and the request arriving here
-    // says nothing of the sort. A cabinet that did not read the forwarded
-    // scheme would compare `https://host` against `http://host`, decide the
-    // form came from somewhere else, and refuse every form post on the site —
-    // the sign-in included, which is a cabinet nobody can get into.
+  it("lets a merchant in whatever the terminator in front of it says about the scheme", async () => {
+    // The failure this pins happened on the first real deployment, and it made
+    // the site unusable: a browser signing in at https://coinslot.nuanu.ai was
+    // told its form came from somewhere else. The check used to build the
+    // origin it expected out of `X-Forwarded-Proto`, so whatever is in front
+    // decided whether a merchant could sign in, and when that header did not
+    // say what the browser said, every form post on the site was refused — the
+    // sign-in included, which is a cabinet nobody can get into.
     //
     // The sign-in is what this drives for exactly that reason: it is the post
-    // that has to work before any other one can.
+    // that has to work before any other one can. Each case below is a shape
+    // that header can arrive in, and none of them may keep a merchant out.
     const { browser, url } = await started();
     const asHttps = `https://${new URL(url).host}`;
     const credentials = { email: PERSON, password: PASSWORD };
@@ -1565,34 +1567,60 @@ describe("when something goes wrong that the merchant has to get out of", () => 
     expect(behindTls.status).toBe(303);
     expect(behindTls.to).toBe("/cards");
 
-    // With no terminator in front at all, the scheme falls back to http, which
-    // is what the cabinet is actually speaking when it is run on its own —
-    // which is how it is developed and how every test here drives it. A
-    // fallback of https instead would refuse every form post on that setup,
-    // the sign-in included, and there would be no way in.
+    // The one that was actually broken: an https origin with nothing in the
+    // request saying so. This is a terminator that sets no forwarded header,
+    // and it used to be the refusal that locked the site.
+    const nothingForwarded = await browser
+      .sending({ origin: asHttps })
+      .post("/sign-in", credentials);
+    expect(nothingForwarded.status).toBe(303);
+    expect(nothingForwarded.to).toBe("/cards");
+
+    // Run on its own with no terminator at all, which is how it is developed
+    // and how every test here drives it.
     const onItsOwn = await browser
       .sending({ origin: `http://${new URL(url).host}` })
       .post("/sign-in", credentials);
     expect(onItsOwn.status).toBe(303);
-    expect(onItsOwn.to).toBe("/cards");
 
-    // The leftmost value, not the last. What this is compared against is the
-    // scheme the browser used at the edge of the chain, and that is the first
-    // entry; preferring the last would tell an honest merchant behind a chain
-    // that terminates TLS early that their form came from somewhere else.
+    // A chain that terminates TLS early and disagrees with itself end to end.
     const throughAChain = await browser
       .sending({ origin: asHttps, "x-forwarded-proto": "https, http" })
       .post("/sign-in", credentials);
     expect(throughAChain.status).toBe(303);
 
-    // And the scheme is part of the origin rather than decoration: a page
-    // served over http on the same host is a different origin, which is the
-    // distinction this check exists to make because SameSite does not make it.
+    // And the scheme disagreeing outright, which the earlier version refused
+    // and this one does not. What that costs is written where the check is: a
+    // page on the http origin of the same host cannot carry a session anyway,
+    // because the cookie is Secure wherever the cabinet is served over https.
     const overHttp = await browser
       .sending({ origin: `http://${new URL(url).host}`, "x-forwarded-proto": "https" })
       .post("/sign-in", credentials);
-    expect(overHttp.status).toBe(403);
-    expect(readable(overHttp.html)).toContain("did not come from the cabinet");
+    expect(overHttp.status).toBe(303);
+  });
+
+  it("still refuses a form from another host, whatever it claims about the scheme", async () => {
+    // The negative control for the test above. Loosening the check to the host
+    // must not loosen it to everybody: this is the reason the check exists at
+    // all, because SameSite is scoped to the registrable domain and a sibling
+    // subdomain is "same site" to it.
+    const { browser, url } = await started();
+    const credentials = { email: PERSON, password: PASSWORD };
+
+    for (const origin of [
+      "https://evil.example.com",
+      // A sibling subdomain, which SameSite would let through.
+      `https://elsewhere.${new URL(url).hostname}`,
+      // The host as a prefix of a longer one, which a text comparison that
+      // used `startsWith` would wave through.
+      `https://${new URL(url).hostname}.evil.example.com`,
+      // An opaque origin, which a sandboxed document sends.
+      "null",
+    ]) {
+      const forged = await browser.sending({ origin }).post("/sign-in", credentials);
+      expect(forged.status, origin).toBe(403);
+      expect(readable(forged.html), origin).toContain("did not come from the cabinet");
+    }
   });
 });
 
