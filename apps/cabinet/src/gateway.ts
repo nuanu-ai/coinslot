@@ -29,6 +29,77 @@ import {
   type ReceiptList,
   ReceiptListSchema,
 } from "@coinslot/contracts";
+import { z } from "zod";
+
+/**
+ * The four routes ADR-0014 adds, written here because the contract's table does
+ * not carry them yet.
+ *
+ * Every one of these — the paths and the schemas below them — is replaced by
+ * the matching entry of `API_ROUTES` and the matching contract schema when the
+ * two branches meet. They are the only addresses written down anywhere in this
+ * cabinet, and the file's opening paragraph says why that is a thing to be
+ * uncomfortable about: a second transcription of a surface is a second chance
+ * for it to come apart. The discomfort is the point of this comment.
+ */
+const PENDING_ROUTES = {
+  /** Makes a merchant and its first key. No key: nobody registering has one. */
+  register_merchant: { method: "POST", path: "/v0/merchants" },
+  /** Every key of the merchant the calling key resolves to. */
+  list_keys: { method: "GET", path: "/v0/keys" },
+  /** Issues one more key for that merchant. The secret comes back once. */
+  issue_key: { method: "POST", path: "/v0/keys" },
+  /** Stops one key working. The gateway refuses the key of the caller. */
+  disable_key: { method: "POST", path: "/v0/keys/:key_id/disable" },
+} as const;
+
+/**
+ * One key, as the gateway describes it.
+ *
+ * `disabled_at` is null while the key works, which is what makes a disabled key
+ * a row that is still there rather than a row that is gone: a merchant looking
+ * at their keys needs to see the one they revoked last week, or the list
+ * answers "which key did I turn off" with silence.
+ *
+ * The secret is not in here and never comes back: it is answered once, by the
+ * call that issued it, and nothing on this side can ask for it again.
+ */
+const MerchantKeySchema = z.object({
+  id: z.string().min(1),
+  label: z.string(),
+  created_at: z.iso.datetime({ offset: true }),
+  disabled_at: z.iso.datetime({ offset: true }).nullable(),
+});
+
+const KeyListSchema = z.object({
+  keys: z.array(MerchantKeySchema),
+  /**
+   * Which of those keys this call was made with.
+   *
+   * It exists so that the screen does not offer a control the route will
+   * refuse: the gateway will not disable the key its caller is holding, because
+   * one click would otherwise stand between a merchant and a cabinet that
+   * answers every page with "the gateway will not take this key" (ADR-0014 §5).
+   */
+  this_call: z.string().min(1),
+});
+
+const IssuedKeySchema = z.object({ key: MerchantKeySchema, secret: z.string().min(1) });
+
+const DisabledKeySchema = z.object({ key: MerchantKeySchema });
+
+const NewMerchantSchema = z.object({
+  merchant_id: z.string().min(1),
+  name: z.string(),
+  key: MerchantKeySchema,
+  /** The key's secret, which is what the cabinet writes onto the account. */
+  secret: z.string().min(1),
+});
+
+export type MerchantKey = z.infer<typeof MerchantKeySchema>;
+export type KeyList = z.infer<typeof KeyListSchema>;
+export type IssuedKey = z.infer<typeof IssuedKeySchema>;
+export type NewMerchant = z.infer<typeof NewMerchantSchema>;
 
 /** What a call came to, in the two shapes a page has to draw differently. */
 export type Answer<T> =
@@ -47,6 +118,22 @@ export interface GatewayClient {
   setSelling(selling: boolean): Promise<Answer<MerchantCardList>>;
   orders(open: boolean): Promise<Answer<OrderList>>;
   receipts(): Promise<Answer<ReceiptList>>;
+  keys(): Promise<Answer<KeyList>>;
+  issueKey(label: string): Promise<Answer<IssuedKey>>;
+  disableKey(keyId: string): Promise<Answer<MerchantKey>>;
+}
+
+/**
+ * The one call the cabinet makes with no key at all.
+ *
+ * Separate from the client above rather than a method on it, because it is a
+ * different thing: every other call is made as some merchant, and this one is
+ * made by somebody who is not a merchant yet. A `register` sitting on a client
+ * bound to a key would be a method whose key is ignored, which is the kind of
+ * shape somebody later reads as an accident.
+ */
+export interface Registrar {
+  register(name: string, invitation: string): Promise<Answer<NewMerchant>>;
 }
 
 /**
@@ -63,33 +150,41 @@ export interface GatewayClient {
  */
 const ANSWER_WITHIN_MS = 10_000;
 
+/** What one call needs beyond its route and the shape of its answer. */
+interface Sending {
+  /** The values for a path that names parameters, such as `:key_id`. */
+  readonly values?: Readonly<Record<string, string>>;
+  readonly query?: string;
+  /** A document to send, for the routes that take one. */
+  readonly body?: unknown;
+}
+
 /**
- * A client bound to one merchant's key.
+ * One caller, bound to a key or to nothing at all.
  *
- * The key is a parameter rather than something this module reads, and the
- * cabinet builds one of these per request from the key on the row of whoever is
- * signed in (ADR-0014 §2). Two people signed into one cabinet are therefore two
- * merchants, which is what a client held for the life of the process could
- * never be.
+ * A null key means no key header on the request, which is registration and
+ * nothing else. It is spelled as an absence rather than as an empty string
+ * because the gateway would read an empty bearer token as a key it does not
+ * know, and a 401 is a worse answer than the one a keyless route gives.
  */
-export const gatewayFor = (
-  baseUrl: string,
-  key: string,
-  answerWithinMs: number = ANSWER_WITHIN_MS,
-): GatewayClient => {
-  const call = async <T>(
+const caller =
+  (baseUrl: string, key: string | null, answerWithinMs: number) =>
+  async <T>(
     route: { readonly method: string; readonly path: string },
     schema: { parse: (value: unknown) => T },
-    values: Readonly<Record<string, string>> = {},
-    query = "",
+    sending: Sending = {},
   ): Promise<Answer<T>> => {
-    const url = `${baseUrl}${expandPath(route.path, values)}${query}`;
+    const url = `${baseUrl}${expandPath(route.path, sending.values ?? {})}${sending.query ?? ""}`;
 
     let answered: Response;
     try {
       answered = await fetch(url, {
         method: route.method,
-        headers: { [MERCHANT_KEY_HEADER]: merchantKeyHeaderValue(key) },
+        headers: {
+          ...(key === null ? {} : { [MERCHANT_KEY_HEADER]: merchantKeyHeaderValue(key) }),
+          ...(sending.body === undefined ? {} : { "content-type": "application/json" }),
+        },
+        ...(sending.body === undefined ? {} : { body: JSON.stringify(sending.body) }),
         signal: AbortSignal.timeout(answerWithinMs),
       });
     } catch (thrown) {
@@ -115,16 +210,61 @@ export const gatewayFor = (
     return { ok: true, document };
   };
 
+/**
+ * A client bound to one merchant's key.
+ *
+ * The key is a parameter rather than something this module reads, and the
+ * cabinet builds one of these per request from the key on the row of whoever is
+ * signed in (ADR-0014 §2). Two people signed into one cabinet are therefore two
+ * merchants, which is what a client held for the life of the process could
+ * never be.
+ */
+export const gatewayFor = (
+  baseUrl: string,
+  key: string,
+  answerWithinMs: number = ANSWER_WITHIN_MS,
+): GatewayClient => {
+  const call = caller(baseUrl, key, answerWithinMs);
+
   return {
     cards: () => call(API_ROUTES.list_merchant_cards, MerchantCardListSchema),
     pauseCard: (itemId, paused) =>
       call(paused ? API_ROUTES.pause_card : API_ROUTES.resume_card, MerchantCardSchema, {
-        item_id: itemId,
+        values: { item_id: itemId },
       }),
     setSelling: (selling) =>
       call(selling ? API_ROUTES.resume_selling : API_ROUTES.pause_selling, MerchantCardListSchema),
-    orders: (open) => call(API_ROUTES.list_orders, OrderListSchema, {}, open ? "?open=true" : ""),
+    orders: (open) =>
+      call(API_ROUTES.list_orders, OrderListSchema, { query: open ? "?open=true" : "" }),
     receipts: () => call(API_ROUTES.list_receipts, ReceiptListSchema),
+    keys: () => call(PENDING_ROUTES.list_keys, KeyListSchema),
+    issueKey: (label) => call(PENDING_ROUTES.issue_key, IssuedKeySchema, { body: { label } }),
+    disableKey: async (keyId) => {
+      const answered = await call(PENDING_ROUTES.disable_key, DisabledKeySchema, {
+        values: { key_id: keyId },
+      });
+      return answered.ok ? { ok: true, document: answered.document.key } : answered;
+    },
+  };
+};
+
+/**
+ * A caller with no key, which can do exactly one thing.
+ *
+ * The invitation is not the cabinet's to check and is not in its configuration:
+ * it is one value out of the gateway's, handed to a merchant along with the
+ * address of the site (ADR-0014 §3). What arrives here is whatever was typed
+ * into the form, and what comes back says only that it was accepted or that it
+ * was not.
+ */
+export const registrarFor = (
+  baseUrl: string,
+  answerWithinMs: number = ANSWER_WITHIN_MS,
+): Registrar => {
+  const call = caller(baseUrl, null, answerWithinMs);
+  return {
+    register: (name, invitation) =>
+      call(PENDING_ROUTES.register_merchant, NewMerchantSchema, { body: { name, invitation } }),
   };
 };
 

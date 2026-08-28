@@ -28,8 +28,8 @@ import { buyOverHttp, type Harness, harness, type Served, serve } from "@coinslo
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type Accounts, memoryAccounts } from "./accounts.js";
 import { loadConfig } from "./config.js";
-import { fingerprintOf, hashPassword } from "./credentials.js";
-import type { Answer } from "./gateway.js";
+import { fingerprintOf, hashPassword, passwordMatches } from "./credentials.js";
+import type { Answer, NewMerchant, Registrar } from "./gateway.js";
 import { buildApp } from "./server.js";
 import { sessionFor } from "./testing/accounts-contract.js";
 
@@ -168,13 +168,31 @@ const started = async (
     readonly base?: string;
     readonly gateway?: Record<string, string>;
     readonly cabinet?: Record<string, string>;
+    /**
+     * How the route that makes a merchant answers.
+     *
+     * Stubbed rather than real, and this is the one seam in this file that is
+     * not: the gateway route behind it is being added on another branch, so
+     * what these tests hold is the cabinet's half — what it does with an answer
+     * of each shape. What it makes of a successful one is checked against the
+     * real gateway anyway, because the key such an answer carries is the key
+     * the harness seeded, so the screens that follow the redirect are drawn
+     * from real documents.
+     */
+    readonly registrar?: Registrar;
   } = {},
 ): Promise<Running> => {
   const harnessed = await harness({ PAY_TO_ADDRESS: PAY_TO, ...options.gateway });
   const gateway = await serve(harnessed);
   const accounts = await withAccounts();
   const basePath = options.base ?? "";
-  const { browser, url } = await visiting(gateway.url, basePath, accounts, options.cabinet);
+  const { browser, url } = await visiting(
+    gateway.url,
+    basePath,
+    accounts,
+    options.cabinet,
+    options.registrar,
+  );
   let stopped = false;
 
   open = {
@@ -209,6 +227,7 @@ async function visiting(
   basePath: string,
   accounts: Accounts,
   environment: Record<string, string> = {},
+  registrar?: Registrar,
 ): Promise<{ browser: Browser; url: string }> {
   // No merchant key in the environment, which is the point: the cabinet builds
   // its client from the key on the row of whoever is signed in, so what these
@@ -221,7 +240,7 @@ async function visiting(
       ...(basePath === "" ? {} : { BASE_PATH: basePath }),
       ...environment,
     }),
-    { accounts },
+    { accounts, ...(registrar === undefined ? {} : { registrar }) },
   );
   const server = app.listen(0);
   await new Promise<void>((resolve) => server.once("listening", resolve));
@@ -869,6 +888,267 @@ describe("getting into the cabinet", () => {
 
     expect(sheet.html).not.toContain("@import");
     expect(sheet.html).not.toMatch(/https?:\/\//);
+  });
+});
+
+describe("registering", () => {
+  const FORM = {
+    email: "fresh@example.com",
+    password: "a-password-of-their-own",
+    name: "A merchant with a name",
+    invitation: "the-invitation-we-handed-out",
+  };
+
+  /**
+   * A registrar that answers as the test says and remembers what it was asked.
+   *
+   * The successful answer carries the key the harness seeded, so a registration
+   * that goes through leaves an account whose screens are drawn from the real
+   * gateway — which is what makes the redirect at the end of it worth anything.
+   */
+  const registrarAnswering = (
+    answer: Answer<NewMerchant>,
+  ): Registrar & { asked: { name: string; invitation: string }[] } => {
+    const asked: { name: string; invitation: string }[] = [];
+    return {
+      asked,
+      register: async (name, invitation) => {
+        asked.push({ name, invitation });
+        return answer;
+      },
+    };
+  };
+
+  const madeAMerchant = (): Answer<NewMerchant> => ({
+    ok: true,
+    document: {
+      merchant_id: "mer_the_merchant",
+      name: FORM.name,
+      key: {
+        id: "key_the_first_one",
+        label: "the first key",
+        created_at: "2026-08-28T09:00:00.000Z",
+        disabled_at: null,
+      },
+      secret: KEY,
+    },
+  });
+
+  /** The gateway refusing, which is a wrong invitation and a closed door alike. */
+  const refused = (why: string): Answer<NewMerchant> => ({ ok: false, status: 403, why });
+
+  it("makes a merchant, writes the account and signs the person in where they stand", async () => {
+    // ADR-0014 §1: one form, one act, and what comes back is a session. A
+    // registration that ended at the sign-in page would be a password typed
+    // twice for no reason.
+    const registrar = registrarAnswering(madeAMerchant());
+    const { browser, gateway, accounts } = await started({ registrar });
+    await publish(gateway, roomCard);
+
+    const registered = await browser.post("/register", FORM);
+
+    expect(registered.status).toBe(303);
+    expect(registered.to).toBe("/cards");
+    expect(registrar.asked).toStrictEqual([{ name: FORM.name, invitation: FORM.invitation }]);
+    // The account is there, pointed at the merchant the gateway made, and the
+    // password typed into the form is the one that works.
+    const made = await accounts.byEmail(FORM.email);
+    expect(made?.merchant).toStrictEqual({ id: "mer_the_merchant", key: KEY });
+    await expect(passwordMatches(FORM.password, made?.passwordHash ?? "")).resolves.toBe(true);
+    // And they are signed in already: the next page is a real screen drawn from
+    // the real gateway, not another form.
+    expect(browser.sessionToken()).not.toBeNull();
+    const cards = await browser.get("/cards");
+    expect(cards.status).toBe(200);
+    expect(readable(cards.html)).toContain(FORM.email);
+  });
+
+  it("answers a refused invitation and a closed door with one sentence, not two", async () => {
+    // ADR-0014 §3: wrong code and a registration that is not open answer the
+    // same way at the gateway, and a screen that turned the gateway's two
+    // sentences into two of its own would undo that at the last step.
+    const wrong = await started({
+      registrar: registrarAnswering(refused("that code is not one we accept")),
+    });
+    const one = await wrong.browser.post("/register", { ...FORM, invitation: "not-the-code" });
+    await wrong.browser.close();
+    await wrong.accounts.close();
+    await wrong.stopGateway();
+
+    const closed = await started({
+      registrar: registrarAnswering(refused("registration is closed")),
+    });
+    const other = await closed.browser.post("/register", FORM);
+
+    expect(one.status).toBe(other.status);
+    expect(readable(one.html)).toBe(readable(other.html));
+    expect(one.headers.getSetCookie()).toStrictEqual([]);
+  });
+
+  it("refuses an address that already has an account without saying that is why", async () => {
+    // The sign-in next door derives against a decoy so that its timing does not
+    // say who has an account here. A registration that answered "that address is
+    // taken" in its own words would be the same question answered outright, so
+    // the refusal is the one the invitation gets and nothing else.
+    const { browser } = await started({ registrar: registrarAnswering(madeAMerchant()) });
+
+    const taken = await browser.post("/register", { ...FORM, email: PERSON });
+    const bad = await started({ registrar: registrarAnswering(refused("no")) });
+    const invitation = await bad.browser.post("/register", FORM);
+
+    expect(taken.status).toBe(invitation.status);
+    expect(readable(taken.html)).toBe(readable(invitation.html));
+    expect(taken.headers.getSetCookie()).toStrictEqual([]);
+  });
+
+  it("tells nobody without an invitation which addresses have accounts", async () => {
+    // The promise that survives being looked at: the address is only reached
+    // after the gateway has accepted the invitation, so somebody without one
+    // gets the same answer for an address that exists and one that does not.
+    const { browser } = await started({ registrar: registrarAnswering(refused("no")) });
+
+    const known = await browser.post("/register", { ...FORM, email: PERSON });
+    const unknown = await browser.post("/register", { ...FORM, email: "nobody@example.com" });
+
+    expect(readable(known.html)).toBe(readable(unknown.html));
+    expect(known.status).toBe(unknown.status);
+  });
+
+  it("does not say it worked when the merchant was made and the account was not", async () => {
+    // ADR-0014 §1 calls this litter rather than damage — the address is free
+    // and the next attempt makes a new merchant — but the person on the other
+    // end must not be told it went through.
+    const registrar = registrarAnswering(madeAMerchant());
+    const { browser, accounts } = await started({ registrar });
+    accounts.add = async () => {
+      throw new Error("the cabinet's account was not answered by the database");
+    };
+
+    const failed = await browser.post("/register", FORM);
+
+    expect(failed.status).toBe(500);
+    const text = readable(failed.html);
+    expect(text).toMatch(/not/i);
+    expect(text).not.toMatch(/signed in/i);
+    expect(failed.headers.getSetCookie()).toStrictEqual([]);
+  });
+
+  it("refuses a form with a field missing, and asks the gateway for nothing", async () => {
+    // Every one of the four is required, and a merchant is not made for a form
+    // that was never going to produce an account. Litter that can be avoided by
+    // reading the form is litter nobody has to argue about afterwards.
+    const registrar = registrarAnswering(madeAMerchant());
+    const { browser, accounts } = await started({ registrar });
+
+    for (const missing of ["email", "password", "name", "invitation"] as const) {
+      const { [missing]: _absent, ...rest } = FORM;
+      const answered = await browser.post("/register", rest);
+      expect(answered.status, missing).toBe(400);
+      expect(readable(answered.html), missing).toMatch(/every|all four|each/i);
+      expect(answered.headers.getSetCookie(), missing).toStrictEqual([]);
+    }
+    expect(registrar.asked).toStrictEqual([]);
+    await expect(accounts.byEmail(FORM.email)).resolves.toBeNull();
+  });
+
+  it("refuses a password too short to be worth having, before making anything", async () => {
+    const registrar = registrarAnswering(madeAMerchant());
+    const { browser } = await started({ registrar });
+
+    const answered = await browser.post("/register", { ...FORM, password: "short" });
+
+    expect(answered.status).toBe(400);
+    expect(readable(answered.html)).toMatch(/12 characters/);
+    expect(registrar.asked).toStrictEqual([]);
+  });
+
+  it("refuses something that is not an address before it makes a merchant", async () => {
+    const registrar = registrarAnswering(madeAMerchant());
+    const { browser } = await started({ registrar });
+
+    const answered = await browser.post("/register", { ...FORM, email: "not-an-address" });
+
+    expect(answered.status).toBe(400);
+    expect(readable(answered.html)).toMatch(/address/i);
+    expect(registrar.asked).toStrictEqual([]);
+  });
+
+  it("says on the page that nobody has confirmed the address", async () => {
+    // ADR-0014 §4. Nothing is sent anywhere, so a merchant who registers has
+    // shown they hold an invitation and not that they hold the address they
+    // typed. Every screen that shows the address says so, and this is the first
+    // of them.
+    const { browser } = await started({ registrar: registrarAnswering(madeAMerchant()) });
+
+    const form = readable((await browser.get("/register")).html);
+
+    expect(form).toMatch(/not confirmed|nobody confirms|no.*sent to it/i);
+  });
+
+  it("is reachable without a session, and is linked from the sign-in", async () => {
+    // ADR-0009 §5 puts every other address behind the gate. This one cannot be:
+    // somebody registering has no session by definition. The sign-in's own
+    // comment used to say a link here would be a door onto a corridor that was
+    // never built — the corridor is built.
+    const { browser } = await started({ registrar: registrarAnswering(madeAMerchant()) });
+
+    const form = await browser.get("/register");
+    const signIn = await browser.get("/sign-in");
+
+    expect(form.status).toBe(200);
+    expect(readable(form.html)).toMatch(/register/i);
+    expect(signIn.html).toContain('href="/register"');
+  });
+
+  it("puts neither the password nor the merchant's key on the page or in the log", async () => {
+    // The key comes back from the gateway once and goes onto the row. A page or
+    // a log carrying it would be the secret loose in exactly the two places
+    // ADR-0014 §2 says it must not reach.
+    const said: string[] = [];
+    const collect = (...parts: unknown[]) => said.push(parts.map(String).join(" "));
+    const log = vi.spyOn(console, "log").mockImplementation(collect);
+    const error = vi.spyOn(console, "error").mockImplementation(collect);
+    try {
+      const { browser, gateway } = await started({
+        registrar: registrarAnswering(madeAMerchant()),
+      });
+      await publish(gateway, roomCard);
+
+      const registered = await browser.post("/register", FORM);
+      const after = await browser.get("/cards");
+
+      expect(registered.html).not.toContain(KEY);
+      expect(registered.html).not.toContain(FORM.password);
+      expect(after.html).not.toContain(KEY);
+      expect(said.join("\n")).not.toContain(KEY);
+      expect(said.join("\n")).not.toContain(FORM.password);
+    } finally {
+      log.mockRestore();
+      error.mockRestore();
+    }
+  });
+
+  it("turns away a registration posted from another site", async () => {
+    // A public form that makes a merchant is worth the same second lock every
+    // other form here has: a page elsewhere must not be able to make somebody's
+    // browser register an account the page's author then signs into.
+    const registrar = registrarAnswering(madeAMerchant());
+    const { browser } = await started({ registrar });
+
+    const forged = await browser.from("https://evil.example.com").post("/register", FORM);
+
+    expect(forged.status).toBe(403);
+    expect(registrar.asked).toStrictEqual([]);
+  });
+
+  it("sends somebody who is already signed in to their cards rather than a second account", async () => {
+    const { browser } = await started({ registrar: registrarAnswering(madeAMerchant()) });
+    await browser.signIn();
+
+    const answered = await browser.get("/register");
+
+    expect(answered.status).toBe(303);
+    expect(answered.to).toBe("/cards");
   });
 });
 
