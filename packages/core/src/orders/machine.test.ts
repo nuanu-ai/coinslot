@@ -1135,9 +1135,14 @@ describe("while the settle is in flight", () => {
   });
 
   it("turns the guess into a fact once, and no more than once", () => {
-    // The counter behind the double-charge check moves on every accepted
-    // settle outcome. An unbounded stream of them on a closed order would
-    // drive it below zero and disarm the check that guards a second charge.
+    // Nothing in the machine counts charges. The counter that guards against a
+    // second one is the walk's accounting in `walk.test.ts`: it goes up on
+    // every charge sent for execution and down on every accepted settle
+    // outcome, and it is read against a floor of nought as well as a ceiling
+    // of one. So this arm is what holds that counter honest — an unbounded
+    // stream of settle outcomes accepted on a closed order would drive it
+    // below zero and leave room underneath it for a charge the walk would no
+    // longer notice.
     const closed = walk(settling(), [
       { kind: "deadline_expired", at: T0 + 999_999, deadline: "settle_response" },
     ]);
