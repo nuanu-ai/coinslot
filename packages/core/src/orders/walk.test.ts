@@ -228,6 +228,21 @@ type Step = {
  * The floor of nought under the charges matters as much as the ceiling of one:
  * a counter driven negative by a run of settle outcomes on a closed order
  * would leave room underneath it for a genuine second charge.
+ *
+ * Each check is a condition, and `expect` is called on the step where one of
+ * them is broken rather than on every step. Over the four hundred walks of two
+ * hundred steps that is most of a million assertions otherwise, and the
+ * assertion machinery — not the machine under test — was all but a fraction of
+ * what the walk cost: the coverage test took 4.1s, 4.9s and 6.1s on an idle
+ * machine against the suite's five-second default, and takes 0.24s, 0.25s and
+ * 0.48s now. It was failing that default about a third of the time on an idle
+ * machine and most of the time beside another suite, which made a green
+ * `pnpm test` a matter of what else the machine was doing.
+ *
+ * A broken check still fails through `expect`, with the value and the message
+ * it always had, so a red run reads exactly as it did before. Two mutations
+ * say so: a second `execute_payment` on the settle, and a money invariant made
+ * to fire on every delivered order.
  */
 function accountFor(seed: number, trace: readonly Step[]): void {
   // What the gateway would have been told to do, so far.
@@ -242,29 +257,45 @@ function accountFor(seed: number, trace: readonly Step[]): void {
     // counter below zero on nothing at all.
     if (!step.accepted) continue;
     accepted += 1;
-    const where = `seed ${seed}, step ${index}, ${step.event} -> ${step.after}`;
+    const where = () => `seed ${seed}, step ${index}, ${step.event} -> ${step.after}`;
 
-    expect(moneyInvariantViolations(step.order), where).toStrictEqual([]);
-    expect(ORDER_STATES, where).toContain(step.order.state);
-    expect(ORDER_OUTCOMES, where).toContain(outcomeFor(step.order));
+    const violations = moneyInvariantViolations(step.order);
+    if (violations.length !== 0) {
+      expect(violations, where()).toStrictEqual([]);
+    }
+    if (!ORDER_STATES.includes(step.order.state)) {
+      expect(ORDER_STATES, where()).toContain(step.order.state);
+    }
+    const outcome = outcomeFor(step.order);
+    if (!ORDER_OUTCOMES.includes(outcome)) {
+      expect(ORDER_OUTCOMES, where()).toContain(outcome);
+    }
 
     for (const kind of step.effects) {
       if (kind === "execute_payment") chargesInFlight += 1;
       if (kind === "release_goods_to_agent") goodsReleased += 1;
       if (kind === "issue_receipt") receipts += 1;
-      if (kind === "mark_refund_due") {
+      if (kind === "mark_refund_due" && step.order.payment !== "settled") {
         // A debt is a claim that the buyer's money is with the merchant.
-        expect(step.order.payment, `${where}: a refund marked without a charge`).toBe("settled");
+        expect(step.order.payment, `${where()}: a refund marked without a charge`).toBe("settled");
       }
     }
     if (step.event === "payment_settled" || step.event === "payment_settle_failed") {
       chargesInFlight -= 1;
     }
 
-    expect(chargesInFlight, `${where}: charges in flight`).toBeGreaterThanOrEqual(0);
-    expect(chargesInFlight, `${where}: charges in flight`).toBeLessThanOrEqual(1);
-    expect(goodsReleased, `${where}: the goods went out twice`).toBeLessThanOrEqual(1);
-    expect(receipts, `${where}: two receipts for one order`).toBeLessThanOrEqual(1);
+    if (chargesInFlight < 0) {
+      expect(chargesInFlight, `${where()}: charges in flight`).toBeGreaterThanOrEqual(0);
+    }
+    if (chargesInFlight > 1) {
+      expect(chargesInFlight, `${where()}: charges in flight`).toBeLessThanOrEqual(1);
+    }
+    if (goodsReleased > 1) {
+      expect(goodsReleased, `${where()}: the goods went out twice`).toBeLessThanOrEqual(1);
+    }
+    if (receipts > 1) {
+      expect(receipts, `${where()}: two receipts for one order`).toBeLessThanOrEqual(1);
+    }
   }
 
   // A floor under the loop: a machine that refused everything would sail
