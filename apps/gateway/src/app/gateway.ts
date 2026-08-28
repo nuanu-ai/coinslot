@@ -22,10 +22,14 @@ import {
   type CatalogPage,
   CONTRACT_VERSION,
   type Delivery,
+  type DisabledKey,
   deliveryCheckFor,
   type HandlerAnswer,
+  type IssuedKey,
   type MerchantCard,
   type MerchantCardList,
+  type MerchantKey,
+  type MerchantKeyList,
   type OrderAcceptResponse,
   type OrderCallError,
   type OrderCallResponse,
@@ -37,6 +41,7 @@ import {
   type QuoteResponse,
   type ReceiptList,
   type Refusal,
+  type RegisteredMerchant,
   type WorkerEnvelope,
   type WorkerPollResponse,
 } from "@coinslot/contracts";
@@ -44,9 +49,9 @@ import type { MerchantSelling, TransitionRejection } from "@coinslot/core";
 import { createOrder, fulfillmentDeadline, isOpen, outcomeFor } from "@coinslot/core";
 import { asTimestamp } from "../ports/clock.js";
 import type { Reminder } from "../ports/queue.js";
-import type { StoredCard, StoredOrder } from "../ports/store.js";
+import type { StoredCard, StoredKey, StoredOrder } from "../ports/store.js";
 import { orderCallResponseOf } from "./answers.js";
-import { keyDigest } from "./merchants.js";
+import { invitationAccepted, issueKey, keyDigest, registerMerchant } from "./merchants.js";
 import { OrderRunner, orderDocumentOf, SWEEP_EFFECTS } from "./runner.js";
 import {
   modeForCard,
@@ -439,6 +444,105 @@ export class Gateway {
     return { receipts: [...(await this.runtime.store.receipts(merchantId))] };
   }
 
+  // --- merchants and their keys ---------------------------------------------
+
+  /**
+   * Registers a merchant: the merchant, the name they are listed under and
+   * their first key, in one act. Null where the invitation is not the one this
+   * gateway holds, or where it holds none.
+   *
+   * The two refusals are one value on purpose. Registration being closed is a
+   * fact about this deployment rather than about the caller, and the route above
+   * answers both in the same words and the same status — otherwise the form is
+   * a way of asking whether registration is open here, which is what the code in
+   * the door exists to stop being findable (ADR-0014 §3).
+   */
+  async registerMerchant(name: string, invitation: string): Promise<RegisteredMerchant | null> {
+    if (!invitationAccepted(this.runtime.config.registrationInvitation, invitation)) {
+      return null;
+    }
+
+    const registered = await registerMerchant(
+      this.runtime.store,
+      this.runtime.ids,
+      name,
+      this.runtime.clock(),
+    );
+
+    if (registered === null) {
+      // The identifier is generated with the same source every other one of ours
+      // comes from, so this is a collision rather than somebody registering
+      // twice, and there is nothing a caller could do about it.
+      throw new Error(
+        "registering made no merchant: the identifier it generated was already taken",
+      );
+    }
+
+    const { merchant, key, secret } = registered;
+    if (merchant.serviceName === null) {
+      // Registering writes the listing name with the merchant, so this cannot
+      // happen — and if it did, the merchant would publish cards whose challenge
+      // names no seller, which is the defect worth stopping loudly rather than
+      // papering over with the merchant's own name.
+      throw new Error(`the merchant ${merchant.id} was registered under no listing name`);
+    }
+
+    return {
+      merchant_id: merchant.id,
+      name: merchant.serviceName,
+      key: merchantKeyOf(key),
+      secret,
+    };
+  }
+
+  /**
+   * Every key of this merchant, and the one the call was made with.
+   *
+   * The caller's own key travels through rather than being looked up again: the
+   * door resolved it a moment ago, and a second lookup would be a second chance
+   * for the two to disagree about which key opened this call.
+   */
+  async merchantKeys(merchantId: string, thisCall: string): Promise<MerchantKeyList> {
+    const keys = await this.runtime.store.keysOf(merchantId);
+    return { keys: keys.map(merchantKeyOf), this_call: thisCall };
+  }
+
+  /** Issues another key to this merchant, and hands the secret back once. */
+  async issueMerchantKey(merchantId: string, label: string): Promise<IssuedKey> {
+    const issued = await issueKey(
+      this.runtime.store,
+      this.runtime.ids,
+      merchantId,
+      label,
+      this.runtime.clock(),
+    );
+    return { key: merchantKeyOf(issued.key), secret: issued.secret };
+  }
+
+  /**
+   * Stops one of this merchant's keys working.
+   *
+   * Three answers, and two of them are refusals with different shapes because
+   * they are different facts. `locked_out` is the key this very call was made
+   * with: a merchant who disabled it would be left with a cabinet the gateway
+   * will not take and a terminal they do not have (ADR-0014 §5), so it is
+   * refused before anything is read, which also means it can never half-happen.
+   * `null` is every other key that is not this merchant's to disable — one that
+   * does not exist and one belonging to somebody else, told apart nowhere, so a
+   * refusal is not a way of counting another merchant's keys.
+   */
+  async disableMerchantKey(
+    merchantId: string,
+    keyId: string,
+    thisCall: string,
+  ): Promise<DisabledKey | "locked_out" | null> {
+    if (keyId === thisCall) {
+      return "locked_out";
+    }
+    const disabled = await this.runtime.store.disableKeyOf(merchantId, keyId, this.runtime.clock());
+    return disabled === null ? null : { key: merchantKeyOf(disabled) };
+  }
+
   // --- buying ---------------------------------------------------------------
 
   /**
@@ -683,16 +787,20 @@ export class Gateway {
   }
 
   /**
-   * Which merchant a presented key belongs to, or nothing.
+   * Which key a request presented, or nothing at all.
    *
    * The lookup is by the digest of what was presented, so nothing here compares
    * one secret against another and the time it takes says nothing about how
    * much of a key was right. A key nobody was ever issued and a key that has
    * been disabled come back identically, which is the store's promise and not
    * this line's.
+   *
+   * The whole row and not the merchant alone, because the door is the only place
+   * that knows which key opened a call, and one route needs that: a merchant
+   * cannot disable the key they are holding.
    */
-  async merchantForKey(presented: string): Promise<string | null> {
-    return this.runtime.store.merchantForKey(keyDigest(presented));
+  async keyBehind(presented: string): Promise<StoredKey | null> {
+    return this.runtime.store.workingKey(keyDigest(presented));
   }
 
   // --- the merchant's stream ------------------------------------------------
@@ -1333,6 +1441,24 @@ function merchantCardOf(stored: StoredCard, merchant: MerchantSelling): Merchant
     card: stored.card,
     selling: sellingFor(merchant, stored),
     paused: stored.paused,
+  };
+}
+
+/**
+ * One stored key as its own merchant reads it.
+ *
+ * Built field by field rather than by taking the row and dropping what should
+ * not go out. The row carries no secret today — what is kept is a digest — so
+ * the two would produce the same document; assembled by addition, a column added
+ * to the row later arrives nowhere until somebody writes a line for it, and
+ * assembled by subtraction it would arrive on every screen the moment it exists.
+ */
+function merchantKeyOf(stored: StoredKey): MerchantKey {
+  return {
+    id: stored.id,
+    label: stored.label,
+    created_at: asTimestamp(stored.createdAt),
+    disabled_at: stored.disabledAt === null ? null : asTimestamp(stored.disabledAt),
   };
 }
 

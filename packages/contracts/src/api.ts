@@ -50,6 +50,14 @@ import { z } from "zod";
 import { CardSchema, MerchantCardSchema, PublicCardSchema } from "./card.js";
 import { WorkerEnvelopeSchema } from "./envelope.js";
 import { AcceptanceSchema, DeliverySchema, HandlerAnswerSchema, RefusalSchema } from "./handler.js";
+import {
+  DisabledKeySchema,
+  IssuedKeySchema,
+  IssueKeyRequestSchema,
+  MerchantKeyListSchema,
+  RegisteredMerchantSchema,
+  RegistrationRequestSchema,
+} from "./merchant.js";
 import { OrderSchema } from "./order.js";
 import { OrderStatusSchema } from "./order-status.js";
 import { ParamNameSchema } from "./param-spec.js";
@@ -631,6 +639,44 @@ export const API_ROUTES = Object.freeze({
     description:
       "Starts selling again. Cards paused in their own right stay paused: stopping all selling did not forget which they were, and putting them all back on sale would sell products their merchant took off. The answer is the whole catalog, so which cards actually came back is a fact rather than an inference. A merchant who has left is refused: leaving closed the orders that were open and left refunds owed, and this switch unwinds none of it, so a departure is not undone here.",
     response: { document: MerchantCardListSchema },
+  },
+
+  register_merchant: {
+    method: "POST",
+    path: "/v0/merchants",
+    auth: "none",
+    description:
+      "Makes a merchant, lists them under the name given here, and issues their first key — all three or none of them. It takes no key because nobody registering has one yet; what stands in the door instead is an invitation code out of the gateway's own configuration, and a gateway with no code configured refuses every registration in the same words a wrong code gets, so this call is not a way of finding out whether registration is open. The name is the one a discovery catalog lists this seller under, which is why it is held to that catalog's rule rather than to ours. The key comes back once and is readable nowhere afterwards. Nothing about an account, an address or a password reaches this call: those belong to whatever signs a person in, on the other side of it.",
+    request: RegistrationRequestSchema,
+    response: { document: RegisteredMerchantSchema },
+  },
+
+  list_keys: {
+    method: "GET",
+    path: "/v0/keys",
+    auth: "merchant_key",
+    description:
+      "Every key of the merchant this call's own key belongs to, the revoked ones among them, and never the keys themselves. The answer also names the key the call was made with, as this_call, and that field is the reason this is not a bare list: a merchant cannot disable the key their cabinet is holding, so a screen drawn without knowing which key that is would offer a button the gateway refuses.",
+    response: { document: MerchantKeyListSchema },
+  },
+
+  issue_key: {
+    method: "POST",
+    path: "/v0/keys",
+    auth: "merchant_key",
+    description:
+      "Issues another key to the merchant this call's own key belongs to. The key is generated here and never taken from the caller, and it comes back exactly once — what is kept afterwards is a digest, so nothing can show it again. A merchant with several keys can hand one to each worker and revoke one without touching the others, which is the whole reason a key is a row.",
+    request: IssueKeyRequestSchema,
+    response: { document: IssuedKeySchema },
+  },
+
+  disable_key: {
+    method: "POST",
+    path: "/v0/keys/:key_id/disable",
+    auth: "merchant_key",
+    description:
+      "Stops one of this merchant's keys working, from that instant, touching no other key and no session. Disabling a key that is already disabled changes nothing and answers the same way, keeping the instant it was first revoked at, so a retry after a dropped connection is safe. Two refusals are worth knowing before a screen is built on this. A key belonging to another merchant is answered exactly as a key that does not exist, so this call is not a way of counting somebody else's keys. And the key this call was made with cannot be disabled by it: that is one click between a merchant and a cabinet the gateway will not take, and the way back is a terminal they do not have. Rotating the key a cabinet itself holds is a separate act and is not this call.",
+    response: { document: DisabledKeySchema },
   },
 
   get_order: {

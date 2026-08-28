@@ -1093,8 +1093,10 @@ describe("the route table", () => {
     // Written as one route taking a key and a word, this would accept "enable"
     // as readily as "disable", and bringing a revoked key back is not something
     // this surface does at all — a key that leaked is replaced, not restored.
-    expect(API_ROUTES.disable_key.request).toBeUndefined();
-    expect(pathParamsOf(API_ROUTES.disable_key.path)).toStrictEqual(["key_id"]);
+    const disable: RouteDefinition = API_ROUTES.disable_key;
+
+    expect(disable.request).toBeUndefined();
+    expect(pathParamsOf(disable.path)).toStrictEqual(["key_id"]);
   });
 
   it("warns whoever writes a cabinet that one key cannot be disabled from it", () => {

@@ -65,6 +65,18 @@ export interface RouteCall {
    * none.
    */
   readonly merchantId: string | null;
+  /**
+   * Which key opened this call, resolved in the same lookup as the merchant.
+   *
+   * One route needs it and the reason is a rule rather than a convenience: a
+   * merchant cannot disable the key their own call was made with (ADR-0014 §5),
+   * and this is the only place that knows which key that was. Read again in a
+   * handler it would be a second hash of the same header and a second chance for
+   * the two answers to disagree.
+   *
+   * Null on an open route, exactly as the merchant is, and for the same reason.
+   */
+  readonly keyId: string | null;
   readonly request: Request;
   readonly response: Response;
 }
@@ -214,8 +226,8 @@ async function answer(
   gateway: Gateway,
   carriesBody: boolean,
 ): Promise<void> {
-  const merchantId = await merchantBehind(route.auth, request, gateway);
-  if (merchantId === REFUSED) {
+  const caller = await callerBehind(route.auth, request, gateway);
+  if (caller === REFUSED) {
     // Which key would have worked is not said, whether one was sent at all is
     // not said, and a key that was issued and then revoked is refused in
     // exactly these words — all three are answers to somebody who is guessing.
@@ -247,7 +259,8 @@ async function answer(
     params: request.params as Record<string, string>,
     body,
     query,
-    merchantId,
+    merchantId: caller?.merchantId ?? null,
+    keyId: caller?.keyId ?? null,
     request,
     response,
   });
@@ -270,9 +283,15 @@ async function answer(
 /** The door said no. A value rather than null, which is what an open route has. */
 const REFUSED = Symbol("the key on this call opens nothing");
 
+/** Who made a call that came through a door: the merchant, and which key. */
+interface Caller {
+  readonly merchantId: string;
+  readonly keyId: string;
+}
+
 /**
- * Which merchant is behind this call: one of them, nobody at all on a route
- * that takes no key, or the refusal.
+ * Who is behind this call: a merchant and the key they presented, nobody at all
+ * on a route that takes no key, or the refusal.
  *
  * Every door the contract has is named below, and the last branch is why: a
  * mode added to the contract and not answered here stops the build, naming the
@@ -294,18 +313,19 @@ const REFUSED = Symbol("the key on this call opens nothing");
  * have to answer for how long a revoked key goes on working, which is the one
  * thing revoking a key is for.
  */
-async function merchantBehind(
+async function callerBehind(
   auth: AuthMode,
   request: Request,
   gateway: Gateway,
-): Promise<string | null | typeof REFUSED> {
+): Promise<Caller | null | typeof REFUSED> {
   switch (auth) {
     case "merchant_key": {
       const presented = bearerIn(request.header(MERCHANT_KEY_HEADER) ?? undefined);
       if (presented === null) {
         return REFUSED;
       }
-      return (await gateway.merchantForKey(presented)) ?? REFUSED;
+      const key = await gateway.keyBehind(presented);
+      return key === null ? REFUSED : { merchantId: key.merchantId, keyId: key.id };
     }
 
     // Neither of these carries a key, and they are two different reasons for
