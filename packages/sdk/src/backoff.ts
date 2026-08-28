@@ -28,7 +28,17 @@
 /** The wait after the first failed call. */
 export const FIRST_RETRY_MS = 500;
 
-/** The longest this file will ever ask a worker to wait. */
+/**
+ * The longest this file will ever ask a worker to wait.
+ *
+ * Copied outside this package, and the copy is named here rather than only
+ * where it is read, because whoever raises this number opens this file and not
+ * that one. `DOUBT_MS` in packages/slice/src/subscription.ts is the window a
+ * mock merchant waits before it decides its subscription is alive again, and it
+ * is this ceiling plus the poll deadline plus a margin. Raise this and that
+ * window is too narrow, which makes a healthcheck report a dead subscription as
+ * a live one.
+ */
 export const RETRY_CEILING_MS = 30_000;
 
 /** What the wait is multiplied by for each further failure in a row. */

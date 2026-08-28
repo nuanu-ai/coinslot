@@ -26,11 +26,17 @@
  *   GATEWAY_URL=http://localhost:8080 MERCHANT_API_KEY=… pnpm --filter @coinslot/slice serve
  */
 
-import { writeFileSync } from "node:fs";
+import { renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { WORKER_PROBLEM_KINDS } from "@coinslot/sdk";
 import { startMerchant } from "./merchant.js";
+import {
+  DOUBT_MS,
+  NOTHING_HAS_GONE_WRONG,
+  readProblems,
+  subscriptionLine,
+  type WhatIsKnown,
+} from "./subscription.js";
 
 const baseUrl = process.env.GATEWAY_URL ?? "http://localhost:8080";
 const apiKey = process.env.MERCHANT_API_KEY;
@@ -61,14 +67,15 @@ const SWEEP_MS = 500;
  * checked there, because either can be true while the other is not.
  *
  * What the line is derived from is worth knowing, because it bounds what it may
- * claim. Nothing in the SDK announces a poll that succeeded — the worker reports
- * only what it could not get through — so "getting through" here means that no
- * poll failure has been reported for DOUBT_MS, and nothing stronger. That is
- * exact about an outage, which reports a failure at every retry for as long as
- * it lasts, and it is late about a recovery by up to that window. It says
- * nothing at all about whether the catalogue is still published or whether a
- * paid order would be routed here: a database emptied under a live subscription
- * leaves this line reading `selling` and the shelf bare.
+ * claim, and `subscription.ts` is where that reasoning lives and is tested.
+ * The short of it: "getting through" means no poll failure has been reported
+ * for DOUBT_MS, and nothing stronger. It is late at both ends — a gateway that
+ * freezes rather than refusing goes unnoticed until the poll in flight times
+ * out, and a recovery is noticed up to ninety seconds after it happens, so a
+ * gateway restarted on purpose shows this container red for about that long. It
+ * says nothing at all about whether the catalogue is still published or whether
+ * a paid order would be routed here: a database emptied under a live
+ * subscription leaves this line reading `selling` and the shelf bare.
  *
  * The name is written out a second time in compose.yaml, which is the price of
  * not having an environment variable for a path that is nobody's to configure.
@@ -78,19 +85,16 @@ const SWEEP_MS = 500;
 const SUBSCRIPTION_FILE = join(tmpdir(), "coinslot-merchant-subscription");
 
 /**
- * How long one reported poll failure keeps the subscription in doubt.
+ * Where the line is written before it is moved into place.
  *
- * It is the SDK's own retry ceiling with a little on top — `RETRY_CEILING_MS`
- * in its backoff.ts, thirty seconds, drawn down to between half and all of it.
- * A gateway that is down produces a failure at least that often, so a window
- * wider than the widest gap is what stops the quiet between two retries from
- * reading as a recovery. The number is copied rather than imported because the
- * SDK does not publish it and a merchant's healthcheck is no reason to widen
- * what the SDK publishes; the cost of that copy is that an SDK which raised its
- * ceiling would leave this one stale in the direction of claiming too much, and
- * this sentence is where whoever raises it finds out.
+ * A reader on the other side of this is a healthcheck that runs whenever it
+ * likes, and a plain write truncates first: there is a moment in every one of
+ * them where the file exists and is empty, and a probe that lands in it reads
+ * no verdict at all. Writing beside it and renaming makes the swap atomic, so
+ * the reader sees either the old line or the new one and never the gap between
+ * them. Same directory, or the rename stops being a rename.
  */
-const DOUBT_MS = 35_000;
+const SUBSCRIPTION_FILE_BEING_WRITTEN = `${SUBSCRIPTION_FILE}.writing`;
 
 const merchant = startMerchant(baseUrl, apiKey);
 
@@ -134,71 +138,33 @@ const sweep = (): void => {
   }
 };
 
-/** How much of `merchant.problems` has been read. That list only ever grows. */
-let problemsRead = 0;
-
-/** When the last poll failure was reported, while the doubt it raised stands. */
-let lastPollFailure: number | undefined;
-
-/** Why the worker will not poll again, once something has ended it for good. */
-let stoppedBecause: string | undefined;
+/** What the SDK's reports have added up to. `subscription.ts` does the adding. */
+let known: WhatIsKnown = NOTHING_HAS_GONE_WRONG;
 
 /** Whether the last attempt to write the file failed, so it is said once. */
 let writingFailed = false;
 
-/** The one line of SUBSCRIPTION_FILE. */
-const whatIsKnown = (now: number): string => {
-  if (stoppedBecause !== undefined) {
-    return `stopped: ${stoppedBecause}`;
-  }
-  if (lastPollFailure !== undefined) {
-    const ago = Math.round((now - lastPollFailure) / 1_000);
-    return `doubting: a poll failed ${ago}s ago, and nothing here is told when one succeeds`;
-  }
-  return `selling: subscribed to ${baseUrl}`;
-};
-
-/**
- * Reads what the SDK could not get through, and writes down what follows.
- *
- * Two of the problems the worker reports are about the subscription itself: a
- * poll that failed, and anything fatal. The loop ends on a fatal one and the
- * process stays up, deaf, which is the state this whole arrangement exists to
- * make visible. Everything else the worker reports is about one order or one
- * price question — a handler that threw leaves a merchant selling, and turning
- * this container red for it would be a claim about the wrong thing.
- */
+/** Reads what the SDK could not get through, and writes down what follows. */
 const sayWhatIsKnown = (): void => {
   const now = Date.now();
+  const reading = readProblems(merchant.problems, known, now);
+  known = reading.known;
 
-  for (const problem of merchant.problems.slice(problemsRead)) {
-    if (problem.fatal) {
-      if (stoppedBecause === undefined) {
-        console.error(
-          `[merchant] the subscription is over and will not resume: ${problem.message}`,
-        );
-      }
-      stoppedBecause = problem.message;
-      continue;
+  for (const announcement of reading.announce) {
+    if (announcement.said === "over") {
+      console.error(`[merchant] the subscription is over and will not resume: ${announcement.why}`);
+    } else if (announcement.said === "not_getting_through") {
+      console.error(`[merchant] not getting through to ${baseUrl}: ${announcement.why}`);
+    } else {
+      console.log(
+        `[merchant] no poll has failed for ${DOUBT_MS / 1_000}s, so ${baseUrl} is taken to be answering again`,
+      );
     }
-    if (problem.kind === WORKER_PROBLEM_KINDS.POLL_FAILED) {
-      if (lastPollFailure === undefined) {
-        console.error(`[merchant] not getting through to ${baseUrl}: ${problem.message}`);
-      }
-      lastPollFailure = now;
-    }
-  }
-  problemsRead = merchant.problems.length;
-
-  if (lastPollFailure !== undefined && now - lastPollFailure >= DOUBT_MS) {
-    lastPollFailure = undefined;
-    console.log(
-      `[merchant] no poll has failed for ${DOUBT_MS / 1_000}s, so ${baseUrl} is taken to be answering again`,
-    );
   }
 
   try {
-    writeFileSync(SUBSCRIPTION_FILE, `${whatIsKnown(now)}\n`);
+    writeFileSync(SUBSCRIPTION_FILE_BEING_WRITTEN, `${subscriptionLine(known, baseUrl, now)}\n`);
+    renameSync(SUBSCRIPTION_FILE_BEING_WRITTEN, SUBSCRIPTION_FILE);
     writingFailed = false;
   } catch (thrown) {
     // Not fatal and not silent. A file that stops being written goes stale, and
@@ -230,7 +196,7 @@ const shutDown = async (signal: string): Promise<void> => {
   clearInterval(sweeping);
   // So that the file left behind says the process went on purpose, rather than
   // reading as a heartbeat that froze.
-  stoppedBecause = signal;
+  known = { ...known, stoppedBecause: signal };
   sayWhatIsKnown();
   await merchant.stop();
   process.exit(0);
