@@ -400,9 +400,12 @@ describe("when a delivery goes unanswered", () => {
     const harnessed = await started({
       HANDLER_ANSWER_MS: "10",
       // Short enough that a redelivery, if one were decided on, would be drawn
-      // well inside the wait below rather than after the test had finished.
+      // and answered long before the order's own deadline arrives.
       REDELIVERY_BASE_DELAY_MS: "5",
-      DEFAULT_ASYNC_FULFILLMENT_MS: "3000",
+      // The order's own deadline, and the only thing this test waits for. It is
+      // far behind the reminder above so that the reminder has had its whole
+      // life by the time the deadline is reached.
+      DEFAULT_ASYNC_FULFILLMENT_MS: "150",
     });
     const orderId = await bought(harnessed, asyncCard);
     await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
@@ -410,17 +413,29 @@ describe("when a delivery goes unanswered", () => {
     const taking = workUntilStopped(harnessed, {
       onOrder: () => ({ accepted: { eta_seconds: 60 } }),
     });
-    await vi.waitFor(
-      async () => expect((await state(harnessed, orderId))?.dispatch.accepted).toBe(true),
-      { timeout: 2_000, interval: 5 },
-    );
 
-    // Long enough for the reminder against that delivery to have fired and for
-    // any redelivery it decided on to have been drawn.
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    // The wait is for the order's own deadline to expire, and not for a stretch
+    // of wall time. That is the whole difference: a sleep and then "he was not
+    // asked again" passes on a machine so loaded that the reminder had not run
+    // yet, which is the test agreeing with itself. The deadline is a later
+    // reminder on the same queue, so reaching it means the earlier one has been
+    // and gone — and on a loaded machine this waits longer rather than
+    // concluding sooner, or gives up and says so.
+    await vi.waitFor(
+      async () => expect((await state(harnessed, orderId))?.state).toBe("refund_due"),
+      { timeout: 5_000, interval: 5 },
+    );
     await taking.stop();
 
-    expect((await state(harnessed, orderId))?.dispatch.attempts).toBe(1);
+    // One hand-over for the whole life of the order. Every repeat is counted
+    // here, so a reminder that fired behind the merchant shows up as two.
+    const owed = await state(harnessed, orderId);
+    expect(owed?.dispatch.attempts).toBe(1);
+    expect(owed?.dispatch.accepted).toBe(true);
+    expect(owed?.closure).toStrictEqual({
+      cause: "deadline_expired",
+      deadline: "async_fulfillment",
+    });
   });
 
   it("spends one delivery on one silence, though the same reminder arrives twice", async () => {
