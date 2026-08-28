@@ -872,27 +872,47 @@ export function describeStore(name: string, open: () => Promise<Store>): void {
       it("is forgotten once it is older than the instant asked about", async () => {
         // They cannot be kept forever: the route that makes them takes no key, so
         // anybody can make as many as they like and a table that only grows under
-        // an open door is a table that fills up.
+        // an open door is a table that fills up. And they cannot be thrown away
+        // early either — a claim swept while the payment it guards is still
+        // between verification and charge is the replay guard being off for that
+        // payment, silently.
         //
-        // When a claim was made is the one instant neither adapter takes from the
-        // caller — each stamps it with its own clock — so this is asked with an
-        // instant a minute either side of now rather than with a count. A sweep
-        // reaching a minute into the future takes what was just claimed; one
-        // reaching a minute into the past takes nothing.
+        // Which means the sweep has to tell one claim's age from another's, and
+        // the two extremes cannot show that. A sweep reaching a minute ahead
+        // taking everything and one reaching a minute back taking nothing is
+        // also what a sweep that ignored the instant entirely would do, if it
+        // simply compared against now. So there is a claim on either side of an
+        // instant in the middle, and the sweep is asked about that instant.
+        //
+        // When a claim was made is the one thing neither adapter takes from the
+        // caller — each stamps it with its own clock — so the gap between the
+        // two is real elapsed time rather than a number handed in. Twenty-five
+        // milliseconds either side, which is nothing to wait for and far wider
+        // than the microseconds either clock resolves to.
         const store = await twoMerchants();
-        await store.claimPayment("fp-1", "ord_1");
-        await store.claimPayment("fp-2", "ord_2");
 
+        await store.claimPayment("fp-old", "ord_1");
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        const between = Date.now();
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        await store.claimPayment("fp-fresh", "ord_2");
+
+        // Nothing is old enough for a sweep reaching a minute back.
         expect(await store.forgetClaimsBefore(Date.now() - 60_000)).toBe(0);
-        expect(await store.claimPayment("fp-1", "ord_3")).toStrictEqual({
+
+        // One of the two is older than the instant in the middle, and it is the
+        // older one that goes.
+        expect(await store.forgetClaimsBefore(between)).toBe(1);
+        expect(await store.claimPayment("fp-old", "ord_3")).toStrictEqual({ claimed: true });
+        expect(await store.claimPayment("fp-fresh", "ord_3")).toStrictEqual({
           claimed: false,
-          heldBy: "ord_1",
+          heldBy: "ord_2",
         });
 
+        // And a sweep reaching past all of them takes what is left. Two, because
+        // the older fingerprint was claimed again above.
         expect(await store.forgetClaimsBefore(Date.now() + 60_000)).toBe(2);
-        // Free again, both of them, and free for whoever asks next.
-        expect(await store.claimPayment("fp-1", "ord_3")).toStrictEqual({ claimed: true });
-        expect(await store.claimPayment("fp-2", "ord_3")).toStrictEqual({ claimed: true });
+        expect(await store.claimPayment("fp-fresh", "ord_3")).toStrictEqual({ claimed: true });
       });
     });
 
