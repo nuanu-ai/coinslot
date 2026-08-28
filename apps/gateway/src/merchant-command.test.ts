@@ -244,7 +244,12 @@ describe("the name a merchant is listed under", () => {
     expect((await terminal.store.merchantById(made?.id ?? ""))?.serviceName).toBeNull();
   });
 
-  it("takes it away when nothing is named", async () => {
+  it("takes it away when nothing is named, and says the cards come off sale with it", async () => {
+    // What the verb now does, and the person running it has to be told: a card
+    // sells only under a name, because that name is what the payment request
+    // calls the seller. So `--none` is not merely a row edited — it is this
+    // merchant's whole catalog off sale, and somebody who reads "nothing about
+    // the seller goes out" and walks away has been told the small half of it.
     const terminal = aTerminal();
     await terminal.run("add", "A merchant");
     const [made] = await terminal.store.merchants();
@@ -254,6 +259,7 @@ describe("the name a merchant is listed under", () => {
 
     expect(code).toBe(0);
     expect((await terminal.store.merchantById(made?.id ?? ""))?.serviceName).toBeNull();
+    expect(terminal.text()).toMatch(/off sale/i);
   });
 
   it("says there is no such merchant rather than writing a row for one", async () => {

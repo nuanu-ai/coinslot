@@ -1,9 +1,12 @@
 /**
- * The fold from three facts to the one word the order machine is given.
+ * The fold from four facts to the one word the order machine is given.
  *
- * A merchant can stop selling altogether, can take one card off sale, and can
- * have nowhere for the money to go — and the machine has exactly one guard for
- * all three. `sellingFor` is where they become the one.
+ * A merchant can stop selling altogether, can take one card off sale, can have
+ * nowhere for the money to go, and can be listed under no name for the sale to
+ * be made under — and the machine has exactly one guard for all four.
+ * `sellingFor` is where they become the one; the last two reach it through
+ * `sellableBy`, because from the order's side they are one fact: this merchant
+ * cannot make a sale.
  *
  * What is here is only what a purchase cannot reach. Every combination a
  * merchant can actually get into is bought against over HTTP — the two switches
@@ -20,8 +23,10 @@
 import type { Card } from "@coinslot/contracts";
 import { MERCHANT_SELLING } from "@coinslot/core";
 import { describe, expect, it } from "vitest";
+import { SANDBOX_FACILITATOR } from "../config.js";
 import type { StoredCard } from "../ports/store.js";
-import { sellingFor } from "./runtime.js";
+import { testConfig } from "../testing/harness.js";
+import { sellableBy, sellingFor } from "./runtime.js";
 
 const card: Card = {
   merchant_item_id: "room-101",
@@ -62,12 +67,47 @@ describe("what the order machine is told about one card", () => {
     // its own exhaustiveness check at the birth of somebody's order.
     for (const merchant of MERCHANT_SELLING) {
       for (const paused of [true, false]) {
-        for (const payable of [true, false]) {
-          expect(MERCHANT_SELLING, `${merchant} + ${paused} + ${payable}`).toContain(
-            sellingFor(merchant, stored(paused), payable),
+        for (const sellable of [true, false]) {
+          expect(MERCHANT_SELLING, `${merchant} + ${paused} + ${sellable}`).toContain(
+            sellingFor(merchant, stored(paused), sellable),
           );
         }
       }
     }
+  });
+});
+
+describe("whether a merchant could make a sale at all", () => {
+  const real = testConfig();
+  const sandbox = testConfig({ FACILITATOR_URL: SANDBOX_FACILITATOR });
+  const wallet = "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed";
+
+  it("says no to a merchant with nobody for the payment request to name", () => {
+    // The state a merchant is put in by `merchant listed-as <id> --none`, with
+    // cards already published and selling. A payment request carries the name
+    // of the seller, and a card of theirs would go out inside one that names
+    // nobody: the agent is invited to pay a stranger it cannot identify, and
+    // the gateway has shipped exactly that once. Off sale is the honest answer
+    // and the merchant already knows how to put it right.
+    expect(sellableBy({ payoutWallet: wallet, serviceName: null }, real)).toBe(false);
+    // And the other half, or the line above would pass against a gateway that
+    // had stopped selling for everybody.
+    expect(sellableBy({ payoutWallet: wallet, serviceName: "Someone's shop" }, real)).toBe(true);
+  });
+
+  it("says no to a merchant with nowhere for the money to go", () => {
+    expect(sellableBy({ payoutWallet: null, serviceName: "Someone's shop" }, real)).toBe(false);
+  });
+
+  it("excuses the wallet in the sandbox and never the name", () => {
+    // The two rules are not one rule. The sandbox settles against nothing, so
+    // there is no money to send and no address to be missing (ADR-0008) — but
+    // the name is not about money at all: it is what the request calls the
+    // seller, and a challenge in a sandbox names one exactly as a real one
+    // does. A local stack sells with no wallet configured anywhere; nothing
+    // sells under nobody's name.
+    expect(sellableBy({ payoutWallet: null, serviceName: "Someone's shop" }, sandbox)).toBe(true);
+    expect(sellableBy({ payoutWallet: null, serviceName: null }, sandbox)).toBe(false);
+    expect(sellableBy({ payoutWallet: wallet, serviceName: null }, sandbox)).toBe(false);
   });
 });
