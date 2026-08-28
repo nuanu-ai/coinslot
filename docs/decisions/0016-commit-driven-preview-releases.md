@@ -21,12 +21,13 @@ that workflow's exact commit and sends its `git archive` to one fixed server
 command. That command mirrors the archive to `/home/dmitry/coinslot` without
 replacing `.env` and uses the fixed Compose project name `coinslot`. It builds
 SHA-tagged images, runs the database suite against `coinslot_test`, starts the
-stack, and checks the four public surfaces from both sides of the ingress. Only
-then does it write `.coinslot-revision`.
+stack, and checks its four HTTPS surfaces through the backend route used by the
+ingress. Only then does it write `.coinslot-revision`.
 
 GitHub Actions reaches the host with a dedicated SSH key forced to that command.
 The key has no shell, forwarding or terminal. The host key is pinned in the
-workflow.
+workflow. The self-hosted runner uses the backend address directly because the
+Comino network does not hairpin through its own public SSH forwarding.
 
 The resident services use `restart: unless-stopped`. There are no release
 directories, confirmation protocol or automatic rollback in Stage 0. A failed
