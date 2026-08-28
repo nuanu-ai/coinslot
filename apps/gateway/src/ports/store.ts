@@ -337,6 +337,16 @@ export interface CatalogEntry {
   readonly card: StoredCard;
   /** The card's own merchant's word, which is not every merchant's word. */
   readonly merchant: MerchantSelling;
+  /**
+   * Where that merchant is paid, or nothing where they have set none.
+   *
+   * It travels with the entry because whether a card may be offered at all
+   * depends on it: a payment request names the seller's own address, so a card
+   * whose merchant has none cannot be sold where the money is real, and a
+   * catalog that listed one would be making an offer every purchase of which
+   * comes back refused.
+   */
+  readonly payoutWallet: string | null;
 }
 
 /** Which merchant an order belongs to, where a read is one merchant's alone. */
@@ -412,10 +422,12 @@ export interface Store {
    * out before it is stored.
    *
    * There is no clearing it, and the absence of a null is the difference from
-   * the listing name beside it. A merchant whose address was taken away keeps
-   * every card they published on sale, and a payment request for one of them
-   * cannot be written at all — so the products would stop being buyable with
-   * nothing anywhere saying why.
+   * the listing name beside it. A payment request cannot be written without an
+   * address, so a merchant whose address was taken away would have every card
+   * of theirs go off sale at once — the selling word folds that in — and what
+   * somebody reaching for this wants is either a different address, which is
+   * this same call, or an end to selling, which is the pause and says so in its
+   * own name.
    */
   setPayoutWallet(id: string, payoutWallet: string, at: number): Promise<StoredMerchant | null>;
 

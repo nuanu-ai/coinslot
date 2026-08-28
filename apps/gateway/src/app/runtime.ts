@@ -13,7 +13,7 @@
 import type { Card } from "@coinslot/contracts";
 import type { MerchantSelling, OrderMode, OrderPolicy } from "@coinslot/core";
 import { modeOf } from "@coinslot/core";
-import type { GatewayConfig } from "../config.js";
+import { type GatewayConfig, isSandboxFacilitator } from "../config.js";
 import type { Clock, Ids } from "../ports/clock.js";
 import type { Facilitator } from "../ports/facilitator.js";
 import type { Queue } from "../ports/queue.js";
@@ -79,17 +79,45 @@ export function quoteReachesTheMerchant(card: Card): boolean {
  * The one word the order machine is given about whether this card may be sold.
  *
  * There are two switches a merchant can press — one card off sale, or the whole
- * catalog — and there is exactly one guard in the machine. This is where the
- * two become the one, and it is a translation rather than a second notion of
- * pausing: what comes out is the machine's own vocabulary, and a card that
- * comes out `paused` refuses new orders through the guard that already exists,
- * with the rejection and the message that already exist.
+ * catalog — and a third thing that stops a sale without anybody pressing
+ * anything: a merchant with nowhere for the money to go. There is exactly one
+ * guard in the machine. This is where the three become the one, and it is a
+ * translation rather than a second notion of pausing: what comes out is the
+ * machine's own vocabulary, and a card that comes out `paused` refuses new
+ * orders through the guard that already exists, with the rejection and the
+ * message that already exist.
+ *
+ * The wallet belongs here rather than at the purchase, and the difference is a
+ * row in a database. A challenge for such a card cannot be written at all —
+ * there is no address to put in it and the operator's own will not stand in
+ * (ADR-0019) — so a purchase that checked at the till would have opened the
+ * order first and failed afterwards, leaving one nobody can pay and nothing
+ * will ever collect. Folded in here, the card is not offered, not listed, and
+ * refused with the word an agent's client already knows.
  *
  * A departed merchant stays departed whatever a card says. Leaving is not a
  * pause a card can be excused from, and reading a card as merely paused would
  * be the difference between "no new orders" and "the open ones closed and the
  * money for the undelivered is yours to return".
  */
-export function sellingFor(merchant: MerchantSelling, card: StoredCard): MerchantSelling {
-  return merchant === "open" && card.paused ? "paused" : merchant;
+export function sellingFor(
+  merchant: MerchantSelling,
+  card: StoredCard,
+  payable: boolean,
+): MerchantSelling {
+  return merchant === "open" && (card.paused || !payable) ? "paused" : merchant;
+}
+
+/**
+ * Whether a sale of this merchant's card could be paid for at all.
+ *
+ * It is the publish door's own rule, read at every later moment as well: an
+ * address is what a payment request names, so a merchant who has none has
+ * nothing that can be sold where the money is real. The sandbox asks for none
+ * and this says so, because there is nothing to send and no chain to send it on
+ * (ADR-0008) — a local stack that stopped selling over an address nobody can be
+ * paid at would be a stack nobody can bring up.
+ */
+export function payableTo(payoutWallet: string | null, config: GatewayConfig): boolean {
+  return payoutWallet !== null || isSandboxFacilitator(config.payment.facilitatorUrl);
 }
