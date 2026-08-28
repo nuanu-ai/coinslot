@@ -97,7 +97,9 @@ describe("issuing a key", () => {
       .map((line) => line.trim())
       .find((line) => line.startsWith("csk_"));
     expect(printed).toBeDefined();
-    expect(await terminal.store.merchantForKey(keyDigest(printed ?? ""))).toBe(merchantId);
+    expect((await terminal.store.workingKey(keyDigest(printed ?? "")))?.merchantId).toBe(
+      merchantId,
+    );
   });
 
   it("refuses to issue a key for a merchant nobody made", async () => {

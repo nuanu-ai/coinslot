@@ -19,10 +19,15 @@
  * Two are the sweep's — `openOrders` and `deliveredWithoutReceipt` — which ask
  * what is still owed across every merchant, because an effect that went missing
  * is not one merchant's problem to notice. The rest are the merchants and their
- * keys, whose caller is somebody at a terminal or the door itself, and none of
- * them is reachable from a request. `withOrder` is in none of the four: it
- * takes the merchant when there is one to take and says in its own place what
- * leaving it out means.
+ * keys, whose caller is somebody at a terminal, the door itself, or the one
+ * route that makes a merchant and so has none to be scoped to. `withOrder` is
+ * in none of the four: it takes the merchant when there is one to take and says
+ * in its own place what leaving it out means.
+ *
+ * Disabling a key comes in a scoped and an unscoped form, and which is which
+ * matters. `disableKeyOf` takes the merchant and serves the button a merchant
+ * presses in their cabinet; `disableKey` names a key alone and serves the
+ * command somebody types, where one identifier is the whole of what they have.
  *
  * One method is not an accessor and is the reason this is an interface rather
  * than three maps. `withOrder` holds an order still while a decision is made
@@ -249,9 +254,10 @@ export type PaymentClaim =
  * about them.
  *
  * The name is what a person reads in a list at a terminal, and nothing on the
- * wire carries it. Registration — an address, a confirmation, a password — is
- * a decision nobody has taken (ADR-0010), so there is no column here standing
- * in for one.
+ * wire carries it. There is no address, no password and no record of who signed
+ * this merchant up, and there is not meant to be: registering makes a merchant
+ * and a key here and an account on the other side of the boundary, and the
+ * address and the password belong to whatever signs a person in (ADR-0014 §1).
  */
 export interface StoredMerchant {
   readonly id: string;
@@ -327,6 +333,34 @@ export interface Store {
     at: number,
   ): Promise<StoredMerchant | null>;
 
+  /**
+   * Writes down a merchant, the name they are listed under, and their first
+   * key, together or not at all. Null where that identifier is taken, and then
+   * nothing was written.
+   *
+   * The three in one write is ADR-0014 §1, and what it buys is worth stating
+   * because the failure it prevents looks harmless. A merchant written without
+   * a key is a merchant nobody can reach; the identifier was generated, so
+   * nobody outside this call ever held it, and nothing afterwards would point at
+   * it. That is litter rather than damage, and it is litter with a foreign key
+   * on it — cards, orders and receipts all reference merchants, so the row
+   * cannot simply be swept.
+   *
+   * The listing name is written here rather than by a second call for the same
+   * reason. A merchant with none publishes cards whose payment challenge
+   * carries no seller declaration at all, and a registration that failed
+   * between the merchant and the name would leave one.
+   *
+   * The name is expected to have been held to the catalog's rule already; the
+   * caller that does it is `registerMerchant` in `app/merchants.ts`, beside the
+   * other place a listing name is written.
+   */
+  registerMerchant(
+    merchant: { readonly id: string; readonly name: string; readonly serviceName: string },
+    key: { readonly id: string; readonly label: string; readonly digest: string },
+    at: number,
+  ): Promise<{ readonly merchant: StoredMerchant; readonly key: StoredKey } | null>;
+
   merchantById(id: string): Promise<StoredMerchant | null>;
 
   /** Every merchant, for the command that lists them. */
@@ -358,9 +392,8 @@ export interface Store {
   ): Promise<StoredKey>;
 
   /**
-   * Which merchant a working key belongs to, by the digest of the key
-   * presented — and nothing at all where there is no such key or where the key
-   * there is has been disabled.
+   * The key a request presented, by its digest — and nothing at all where there
+   * is no such key or where the key there is has been disabled.
    *
    * The two silences are deliberately the same one. A door that answered "that
    * key exists but is off" differently from "that is not a key" would be a way
@@ -370,20 +403,35 @@ export interface Store {
    * This is what makes the check constant-time by construction: nothing here
    * compares a secret with a secret. What travels is a digest, always the same
    * size, and what answers is an index.
+   *
+   * The whole row rather than the merchant alone, and the difference is a rule
+   * rather than a convenience: a merchant cannot disable the key their own call
+   * was made with (ADR-0014 §5), and the door is the only place that knows
+   * which key that was. Answered with a merchant, the route would have to hash
+   * the header a second time and look it up again to find out.
    */
-  merchantForKey(digest: string): Promise<string | null>;
+  workingKey(digest: string): Promise<StoredKey | null>;
 
   /**
    * The key with this digest, working or not.
    *
-   * Separate from {@link merchantForKey} because the two questions are
-   * different and only one of them is asked at the door: this one is for the
-   * command that would otherwise issue a second key with a digest already
-   * taken, and it is never reachable from a request.
+   * Separate from {@link workingKey} because the two questions are different and
+   * only one of them is asked at the door: this one is for the command that
+   * would otherwise issue a second key with a digest already taken, and it is
+   * never reachable from a request.
    */
   keyByDigest(digest: string): Promise<StoredKey | null>;
 
-  /** Every key of one merchant, disabled ones included, never their secrets. */
+  /**
+   * Every key of one merchant, disabled ones included, never their secrets.
+   *
+   * Oldest first, with the identifier settling a tie. The order is part of what
+   * this promises rather than whatever each adapter's storage happens to give,
+   * because a merchant reads this list on a screen: left to the database, two
+   * keys made in the same millisecond would swap places between two visits with
+   * nothing having changed, and a test about the list would mean one thing in
+   * memory and another against Postgres.
+   */
   keysOf(merchantId: string): Promise<readonly StoredKey[]>;
 
   /**
@@ -397,14 +445,29 @@ export interface Store {
    * It names a key and no merchant, and that is safe only because nothing
    * reachable from a request calls it — the callers are the command somebody
    * types, where one identifier already names the row, and the test harness.
-   * The cabinet's screens for making and revoking keys are the step after this
-   * one (ADR-0010), and what serves them wants a second method that takes the
-   * merchant, the way every other scoped write here does. Checking the caller's
-   * merchant against the key's own before calling this would work — nothing
-   * ever moves a key between merchants — but it is a fact a reader has to go
-   * and establish, and it is the shape this change removed everywhere else.
+   * What the cabinet's own button calls is {@link disableKeyOf}, which takes the
+   * merchant the way every other scoped write here does.
    */
   disableKey(id: string, at: number): Promise<StoredKey | null>;
+
+  /**
+   * Stops one of this merchant's keys working and hands back where it now
+   * stands. Null where this merchant has no such key — which is the same answer
+   * as no such key anywhere, on purpose.
+   *
+   * The sameness is the point rather than a simplification. Told apart, this
+   * call would count somebody else's keys: a merchant walking identifiers would
+   * learn which of them are real, and the identifiers of a merchant's keys are
+   * not secrets — they are printed in their own list and in ours.
+   *
+   * The merchant is in the predicate rather than checked after the read, so a
+   * key of somebody else's is never selected and there is no window between
+   * finding out whose it is and writing to it.
+   *
+   * Disabling a key that is already disabled keeps the instant it was first
+   * revoked at, exactly as {@link disableKey} does.
+   */
+  disableKeyOf(merchantId: string, id: string, at: number): Promise<StoredKey | null>;
 
   // --- the catalog ----------------------------------------------------------
 

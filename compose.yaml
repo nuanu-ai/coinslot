@@ -71,6 +71,8 @@
 #                           the gateway with
 #   COINSLOT_SEED_KEY       the key the gateway writes at    local-sandbox-merchant-key
 #                           start-up, or nothing at all
+#   COINSLOT_INVITATION     the code registration is         register-on-this-laptop
+#                           behind, or nothing at all
 #   COINSLOT_POSTGRES_PUBLISH  the published port of the     5432:5432
 #                           database, or a narrower bind
 #
@@ -96,6 +98,17 @@
 #
 # The gateway reads a name set to nothing as a name never set, and says at
 # start-up which of the two it did.
+#
+# COINSLOT_INVITATION is the code somebody has to type to register a merchant
+# here (ADR-0014 §3). On a laptop it is a word in this file, so `docker compose
+# up` gives a stack anybody can sign up on; a deployment hands out a code of its
+# own, and a deployment that wants no registrations at all sets it to nothing:
+#
+#   COINSLOT_INVITATION=
+#
+# The gateway then refuses every registration, in the same words and the same
+# status a wrong code gets — so the form is not a way of asking whether
+# registration is open here.
 
 # One image behind four of the services below. They are four entry points into
 # one workspace and share every dependency below their own file, so which one a
@@ -184,6 +197,18 @@ services:
       # only when nobody named the variable, so a deployment naming it with
       # nothing after it gets nothing rather than the sandbox's key back.
       SANDBOX_MERCHANT_KEY: "${COINSLOT_SEED_KEY-local-sandbox-merchant-key}"
+      # The code that stands in the door of registration. Nobody registering has
+      # a key yet, so this is what is between a stranger who finds the hostname
+      # and a merchant of their own — and the catalogue is one across merchants,
+      # so an open form would put a stranger's words in front of every buyer.
+      # A word in this file on a laptop, for the reason the password above it is:
+      # this stack holds a developer's own test orders and talks to nothing real.
+      #
+      # The dash carries no colon for the same reason the line above it does:
+      # `${VAR-default}` gives the default only when nobody named the variable,
+      # so a deployment naming it with nothing after it takes no registrations
+      # rather than getting this word back.
+      REGISTRATION_INVITATION: "${COINSLOT_INVITATION-register-on-this-laptop}"
       # The address an agent is sent back to in order to pay, which is the door
       # Caddy answers and not the port this process listens on. Given the
       # process's own port here, a payment challenge would name a door that is

@@ -1,12 +1,12 @@
 /**
  * Making a merchant, and issuing a key to one.
  *
- * It is one small module rather than three copies because there are three
- * callers and they must not drift: the command somebody runs at a terminal, the
- * seed the sandbox comes up with, and the test harness. A second way of turning
- * a secret into a digest would be a key that works in one of them and not the
- * others, and the failure would look like a wrong key rather than like two
- * hashes.
+ * It is one small module rather than a copy per caller because there are four
+ * and they must not drift: the command somebody runs at a terminal, the seed the
+ * sandbox comes up with, the routes a merchant reaches from their cabinet, and
+ * the test harness. A second way of turning a secret into a digest would be a
+ * key that works in one of them and not the others, and the failure would look
+ * like a wrong key rather than like two hashes.
  *
  * Two things here are decisions rather than conveniences.
  *
@@ -24,7 +24,7 @@
  * the old, which is exactly what keys being rows is for.
  */
 
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { ServiceNameSchema } from "@coinslot/contracts";
 import type { Ids } from "../ports/clock.js";
 import type { Store, StoredKey, StoredMerchant } from "../ports/store.js";
@@ -124,6 +124,103 @@ export async function issueKey(
     at,
   );
   return { key, secret };
+}
+
+/**
+ * What a merchant's first key is called until they name one of their own.
+ *
+ * Every key carries a label so that one of several can be told from the others,
+ * and this one is made by a route rather than by a person, so the label has to
+ * be written somewhere. It says where the key came from, because that is the
+ * one thing its owner does not know about it: they never chose it.
+ */
+export const FIRST_KEY_LABEL = "the key this merchant registered with";
+
+/**
+ * A value nothing presented can ever equal, used where registration is closed.
+ *
+ * It exists so that a gateway with no invitation configured still does the same
+ * work per attempt as one that has an invitation and was given the wrong code.
+ * Thirty-two bytes of randomness, fresh in every process, so it is not a code
+ * anybody could hold.
+ */
+const NO_INVITATION = randomBytes(32).toString("hex");
+
+/**
+ * Whether the code presented is the one this gateway is configured with.
+ *
+ * Two things are going on here and both are the reason it is a function rather
+ * than an `===` at the call site.
+ *
+ * The comparison is over digests rather than over the codes themselves. That is
+ * what makes it constant-time at all: `timingSafeEqual` refuses two buffers of
+ * different lengths outright, so comparing the codes would throw on exactly the
+ * guesses that are the wrong length and answer those differently from the ones
+ * that are not — which is a way of learning the length one attempt at a time.
+ * Two digests are always the same size.
+ *
+ * And a gateway with no code configured still does the whole comparison, against
+ * a decoy, before answering no. Registration being closed is a fact about this
+ * deployment and not about the caller, and a door that answered it faster would
+ * be telling every passer-by which deployment takes registrations. The route
+ * above it keeps the other half of that promise by answering closed and wrong
+ * in the same words.
+ */
+export function invitationAccepted(expected: string | null, presented: string): boolean {
+  const same = timingSafeEqual(
+    createHash("sha256")
+      .update(expected ?? NO_INVITATION, "utf8")
+      .digest(),
+    createHash("sha256").update(presented, "utf8").digest(),
+  );
+  // The digest of the decoy cannot be guessed, so this second test changes no
+  // answer. It is here because "there is no code" must not depend on that.
+  return same && expected !== null;
+}
+
+/** A merchant that has just been registered, with their first key, once. */
+export interface Registration {
+  readonly merchant: StoredMerchant;
+  readonly key: StoredKey;
+  /** The only time this is ever readable. Nothing keeps it. */
+  readonly secret: string;
+}
+
+/**
+ * Makes a merchant, lists them under that name, and issues their first key —
+ * all three or none of them (ADR-0014 §1). Null where the identifier is taken,
+ * which a generated one never is.
+ *
+ * The name does two jobs and it is worth saying which. It is the merchant's own
+ * name, the one somebody reads in a list at a terminal, and it is the name the
+ * seller is listed under in a discovery catalog. Elsewhere those are two fields
+ * because they answer to different rules; here they start out as one string
+ * because there is only one the person typed, and the catalog's rule is the
+ * stricter of the two, so it is what the string is held to.
+ *
+ * The check is here rather than in the store, for the reason `setServiceName`
+ * gives beside it: this is the second of the two places a listing name is
+ * written, and the catalog drops a name it cannot render without telling
+ * anybody. Throwing is right — the route above holds the same rule on the way
+ * in, so reaching this is a caller that skipped it.
+ */
+export async function registerMerchant(
+  store: Store,
+  ids: Ids,
+  name: string,
+  at: number,
+): Promise<Registration | null> {
+  // Throws with the schema's own words, which name the rule and the number.
+  ServiceNameSchema.parse(name);
+
+  const secret = newKeySecret();
+  const written = await store.registerMerchant(
+    { id: ids("mch"), name, serviceName: name },
+    { id: ids("mk"), label: FIRST_KEY_LABEL, digest: keyDigest(secret) },
+    at,
+  );
+
+  return written === null ? null : { merchant: written.merchant, key: written.key, secret };
 }
 
 /**

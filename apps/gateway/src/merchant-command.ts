@@ -1,12 +1,17 @@
 /**
  * The commands that make a merchant and keep their keys.
  *
- * There is no route behind any of this and that is the decision rather than the
- * stage it stopped at (ADR-0010): a merchant makes and revokes their own keys
- * from the cabinet, and the screens for it are the step after this one. Until
- * they exist, the keys are made the way the cabinet's accounts are — by
- * somebody at a terminal, through a tested module with the terminal handed to
- * it rather than a script that prints as it goes.
+ * A merchant now makes and revokes their own keys over the API, from their
+ * cabinet (ADR-0014 §5), so this is no longer the only way any of it happens.
+ * What it is for is everything those routes deliberately cannot do: making a
+ * merchant without an invitation, issuing a key to somebody who has lost every
+ * key they had, and disabling a key by naming it alone — which is what the
+ * route refuses when it is the key the caller is holding. Somebody at a
+ * terminal has the whole database in front of them and needs no merchant to be
+ * scoped to; that is the difference, and it is why these verbs stay.
+ *
+ * It is a tested module with the terminal handed to it rather than a script
+ * that prints as it goes, for the reason the cabinet's account command is.
  *
  * A key is never taken as an argument. One typed on a command line is in the
  * shell's history and in the process list of everybody on the machine, so this
