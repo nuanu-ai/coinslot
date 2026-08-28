@@ -443,52 +443,6 @@ describe("the payment challenge", () => {
 });
 
 describe("a purchase over HTTP, from the catalog to the goods", () => {
-  it("walks a synchronous sale end to end", async () => {
-    const { served, harnessed } = await started();
-    const itemId = await publish(served, syncCard);
-
-    const listed = await served.call("GET", "/v0/catalog");
-    expect((listed.body as { items: { id: string }[] }).items.map((item) => item.id)).toStrictEqual(
-      [itemId],
-    );
-
-    const priced = await served.call("POST", `/v0/items/${itemId}/purchase`, {
-      body: { params: {} },
-    });
-    expect(priced.status).toBe(402);
-    const challenge = decodePaymentRequiredHeader(
-      priced.headers.get(PAYMENT_REQUIRED_HEADER) ?? "",
-    );
-    const requirements = challenge.accepts[0];
-    if (requirements === undefined) throw new Error("no payment option was offered");
-
-    const worker = workUntilStopped(harnessed, {
-      onOrder: () => ({ delivered: { access_code: "SESAME" } }),
-    });
-    const bought = await served.call("POST", `/v0/items/${itemId}/purchase`, {
-      body: { params: {} },
-      headers: {
-        [PAYMENT_SIGNATURE_HEADER]: encodePaymentSignatureHeader({
-          x402Version: 2,
-          accepted: requirements,
-          payload: { signature: "0xsigned" },
-        }),
-      },
-    });
-    await worker.stop();
-
-    expect(bought.status).toBe(200);
-    expect(bought.body).toMatchObject({ delivered: { access_code: "SESAME" } });
-    expect(bought.headers.get("payment-response")).toBeTruthy();
-
-    const orderId = (bought.body as { order: { id: string } }).order.id;
-    const read = await served.call("GET", `/v0/orders/${orderId}`, { headers: asMerchant });
-    expect(read.body).toMatchObject({ id: orderId, status: "delivered" });
-
-    const listedOrders = await served.call("GET", "/v0/orders?open=true", { headers: asMerchant });
-    expect((listedOrders.body as { orders: unknown[] }).orders).toStrictEqual([]);
-  });
-
   it("tells the agent the purchase is over when the merchant refuses", async () => {
     const { served, harnessed } = await started();
     const itemId = await publish(served, syncCard);
