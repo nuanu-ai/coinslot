@@ -49,8 +49,17 @@ const CARD = "portal/examples/card/access-monthly.json";
 
 const fileOf = (path: string): string => readFileSync(new URL(path, repoRoot), "utf8");
 
-/** The panel's line. A value that will not fit inside it goes onto lines of its own. */
-const WIDTH = 76;
+/**
+ * The panel's line, in characters.
+ *
+ * Measured rather than chosen. The hero's code panel is five columns of the
+ * grid, and at a window 1440 wide its content box is 487 pixels — sixty-four
+ * characters of a mono face at 12.5px. The block scrolls sideways past that,
+ * and a line a reader has to drag into view is a line they do not read: the
+ * first thing that went off the edge here was half of what the buyer has to
+ * send at purchase.
+ */
+const WIDTH = 64;
 
 /** A string as the source writes it, then as the page has to carry it. */
 const quoted = (text: string): string =>
@@ -88,9 +97,15 @@ const linesOf = (value: Record<string, unknown>, indent: string): string[] =>
   Object.entries(value).flatMap(([name, child]) => {
     const together = `${indent}${name}: ${inlineOf(child)},`;
 
-    if (width(together) <= WIDTH || !isRecord(child)) return [together];
+    if (width(together) <= WIDTH) return [together];
 
-    return [`${indent}${name}: {`, ...linesOf(child, `${indent}  `), `${indent}},`];
+    if (isRecord(child)) {
+      return [`${indent}${name}: {`, ...linesOf(child, `${indent}  `), `${indent}},`];
+    }
+
+    // A long string has nowhere to break, so it goes under its own name — which
+    // is how the page wrote its one long line before any of this was rendered.
+    return [`${indent}${name}:`, `${indent}  ${inlineOf(child)},`];
   });
 
 /** The example the landing has to carry, whole. */
