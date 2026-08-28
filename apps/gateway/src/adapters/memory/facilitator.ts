@@ -23,21 +23,30 @@ import type { Charge, Facilitator, SettleOutcome, VerifyOutcome } from "../../po
  * two authorisations come back under one address however differently the two
  * were spelled — which is the whole reason a repeat is recognisable as the same
  * buyer's. So this reads the same field the wire carries rather than a
- * convention of its own: a payment header is base64 JSON, and the exact-EVM
- * scheme puts the signer at `payload.authorization.from`. That is one field and
- * this reaches exactly that far; nothing is verified, because this is the
- * sandbox and no signature here is evidence of anything.
+ * convention of its own: a payment header is base64 JSON, and an EIP-3009
+ * authorisation, which is what the exact-EVM scheme signs for a token that
+ * supports one, names its signer at `payload.authorization.from`. That is one
+ * field and this reaches exactly that far; nothing is verified, because this is
+ * the sandbox and no signature here is evidence of anything.
  *
  * This used to derive the payer from the shape of the payment string — the part
  * before a `#` or `:` — which no real header has, so every fresh authorisation
  * was a fresh owner and a buyer's own repeat was refused as a stranger's.
  *
- * A payment that will not decode, or one carrying no authorisation, names
- * nobody, and `null` says so. It is not a refusal: the port has a word for a
- * verified payment whose payer is unnamed, the real facilitator answers `null`
- * in the same place when the layer vouches without naming an address, and the
- * gateway's stand-in for it is the payment's own fingerprint. A test that wants
- * a refusal asks for one.
+ * The address is lowercased for the same reason the fingerprint lowercases hex
+ * (`paymentFingerprint` in `http/x402.ts` makes the argument): `0xAB` and `0xab`
+ * are one address to the chain, to the facilitator and to the signature, and
+ * two owners here would be a buyer's own repeat refused because their client
+ * changed its mind about capitals.
+ *
+ * A payment that will not decode, one carrying no authorisation, and one whose
+ * signer is blank or is not a string all name nobody, and `null` says so. It is
+ * not a refusal: the port has a word for a verified payment whose payer is
+ * unnamed, the real facilitator answers `null` in the same place when the layer
+ * vouches without naming an address, and the gateway's stand-in for it is the
+ * payment's own fingerprint. Naming a stand-in here instead would make every
+ * such payment one buyer, and hand the second sender the first one's purchase.
+ * A test that wants a refusal asks for one.
  */
 const scriptedPayer = (payment: string): string | null => {
   let signed: unknown;
@@ -48,7 +57,11 @@ const scriptedPayer = (payment: string): string | null => {
   }
 
   const from = (signed as { authorization?: { from?: unknown } } | undefined)?.authorization?.from;
-  return typeof from === "string" ? from : null;
+  if (typeof from !== "string") {
+    return null;
+  }
+  const wallet = from.trim().toLowerCase();
+  return wallet === "" ? null : wallet;
 };
 
 export class ScriptedFacilitator implements Facilitator {

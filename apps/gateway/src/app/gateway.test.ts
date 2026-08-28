@@ -18,6 +18,8 @@ import { orderDocumentOf } from "./runner.js";
 /** Two wallets, for the tests that turn on which of them signed. */
 const ALICE = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const BOB = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+/** Alice's own address as another client would write it. One wallet, not two. */
+const ALICE_SHOUTED = "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
 const syncCard: Card = {
   merchant_item_id: "room-101",
@@ -371,9 +373,12 @@ describe("an asynchronous purchase", () => {
 
     // Both payments are signed from one wallet, so the repeat comes from the
     // buyer who bought — carrying a fresh authorisation, which is a different
-    // signed thing and a different fingerprint.
+    // signed thing and a different fingerprint. The second spells the address
+    // in capitals, which is a thing clients differ on and the chain does not:
+    // a buyer refused their own repeat over the shift key would be this whole
+    // defect again, in miniature.
     const first = authorisation(harnessed, ALICE, "0x01");
-    const second = authorisation(harnessed, ALICE, "0x02");
+    const second = authorisation(harnessed, ALICE_SHOUTED, "0x02");
     const worker = workUntilStopped(harnessed, {
       onOrder: () => ({ delivered: { access_code: "SESAME" } }),
     });
@@ -1099,15 +1104,18 @@ describe("two payments racing one order", () => {
     expect(harnessed.facilitator.settles[0]?.payment).toBe("buyer");
   });
 
-  it("does not make two payments the sandbox cannot read into one buyer", async () => {
+  it("does not make two payments with nobody in them into one buyer", async () => {
     // The sandbox reads who paid out of the payment, and the interesting case
-    // is the one where there is nothing to read. Naming nobody is the answer
-    // that keeps the two apart: the gateway then stands the fingerprint of what
-    // was signed in for a payer, and two unreadable payments are two of those.
-    // A stand-in invented here would be the same stand-in for every unreadable
-    // payment, and the second sender would be handed the first one's purchase —
-    // which is the defect this whole rule exists to stop, moved one branch
-    // over.
+    // is the one where there is nobody to read. Naming nobody is the answer
+    // that keeps two of those apart: the gateway then stands the fingerprint of
+    // what was signed in for a payer, and two such payments are two of those. A
+    // stand-in invented here would be the same stand-in every time, and the
+    // second sender would be handed the first one's purchase — which is the
+    // defect this whole rule exists to stop, moved one branch over.
+    //
+    // There are two ways to have nobody in you, and they are one case: a
+    // payment the sandbox cannot read at all, and a payment it reads perfectly
+    // well that names a blank signer. A blank is not a name.
     const harnessed = await started();
     const itemId = await published(harnessed, asyncCard);
     const offered = await harnessed.gateway.beginPurchase(itemId, {});
@@ -1121,6 +1129,25 @@ describe("two payments racing one order", () => {
 
     expect(meddling.step).toBe("not_this_purchase");
     expect((await harnessed.store.orderById(orderId))?.paidBy).toBe("NOT-A-PAYMENT");
+
+    const second = await harnessed.gateway.beginPurchase(itemId, {});
+    if (second.step !== "pay") throw new Error("the second purchase did not reach a payment");
+    const nameless = authorisation(harnessed, "", "0x01");
+    const alsoNameless = authorisation(harnessed, "", "0x02");
+
+    const took = await harnessed.gateway.payPurchase(
+      second.order.order.id,
+      nameless.payment,
+      nameless.fingerprint,
+    );
+    expect(took.step).toBe("under_way");
+
+    const meddlingAgain = await harnessed.gateway.payPurchase(
+      second.order.order.id,
+      alsoNameless.payment,
+      alsoNameless.fingerprint,
+    );
+    expect(meddlingAgain.step).toBe("not_this_purchase");
   });
 });
 
