@@ -18,13 +18,21 @@
  * answer to both is one file with two readers.
  *
  * So the card is not written on this page at all, and it is not written here
- * either. `portal/examples/card/access-monthly.json` is the card: the card
- * reference prints it as JSON, `portal-fixtures.test.ts` holds it to
+ * either. `portal/examples/card/access-monthly-short.json` is the card: the
+ * card reference prints it as JSON, `portal-fixtures.test.ts` holds it to
  * `CardSchema`, and what this file renders is that same file as the call a
  * merchant would write. Nothing here needs to check that the landing shows a
  * card our door accepts, because the landing shows the card the schema already
  * passed. A card edited in the one place it lives reaches the landing; a
  * landing edited by hand does not stay edited.
+ *
+ * The shop window shows that card written short — the price as one string, each
+ * delivered field as its type word, no fulfillment mode — because what a
+ * stranger is deciding from this page is how much of their day an integration
+ * costs, and the shortest honest answer to that is the smallest card that
+ * sells. The reference prints the same card in full, and the second check below
+ * is what stops those two drifting into two different products: the short one
+ * has to open out into the long one exactly.
  *
  * Holding the rendering against the committed HTML is a comparison of two
  * texts, and here that is honest in a way it would not be for the portal:
@@ -41,11 +49,17 @@
 
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { CardSchema } from "./card.js";
 
 const repoRoot = new URL("../../../", import.meta.url);
 
 const LANDING = "apps/landing/public/index.html";
-const CARD = "portal/examples/card/access-monthly.json";
+
+/** The card the shop window shows: the smallest one that sells, written short. */
+const CARD = "portal/examples/card/access-monthly-short.json";
+
+/** The same card as the reference prints it, with nothing left short. */
+const REFERENCE_CARD = "portal/examples/card/access-monthly.json";
 
 const fileOf = (path: string): string => readFileSync(new URL(path, repoRoot), "utf8");
 
@@ -172,6 +186,21 @@ describe("the landing's code example", () => {
     const missing = wordsOf(card).filter((word) => !sourceOf(shown).includes(word));
 
     expect(missing, `${LANDING} shows a card with these left out`).toStrictEqual([]);
+  });
+
+  it("is the reference's own card, written short", () => {
+    // The claim that makes one example out of two files. The shop window may
+    // show a shorter spelling than the reference; it may not show a different
+    // product, a different price or a different promise. Anything the short
+    // form gained or lost on its way — a field, a currency, a delivered value —
+    // is a landing that sells something the documentation does not describe.
+    //
+    // Written as a comparison of two parses rather than of two files, because
+    // what has to agree is the card each of them becomes at our door: the short
+    // form is opened out there, and the two are the same card or they are not.
+    expect(CardSchema.parse(JSON.parse(fileOf(CARD)))).toStrictEqual(
+      CardSchema.parse(JSON.parse(fileOf(REFERENCE_CARD))),
+    );
   });
 
   it("is the only code the page shows", () => {
