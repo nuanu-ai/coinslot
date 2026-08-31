@@ -15,7 +15,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { runAccount } from "./account-command.js";
+import { type CabinetKeyCheck, runAccount } from "./account-command.js";
 import { loadConfig } from "./config.js";
 import { type Identity, identityFor } from "./identity.js";
 
@@ -118,17 +118,35 @@ interface Run {
  */
 const NOON = new Date("2026-08-27T12:00:00.000Z");
 
+/**
+ * What the gateway says when the command asks whether a key is a cabinet's.
+ *
+ * The default is the answer a key made for a cabinet gets: another one, which
+ * this command throws away. A test that is about the refusals hands over its
+ * own, and one that is about anything else never notices this is here.
+ */
+const takesTheKey: CabinetKeyCheck = async () => ({
+  ok: true,
+  document: "another-cabinet-key-nobody-keeps",
+});
+
 const running = async (
   identity: Identity,
   argv: readonly string[],
   readKey: () => Promise<string> = async () => KEY,
+  ask: CabinetKeyCheck = takesTheKey,
 ): Promise<Run> => {
   const lines: string[] = [];
-  const code = await runAccount(argv, identity, {
-    say: (line) => lines.push(line),
-    readKey,
-    now: () => NOON,
-  });
+  const code = await runAccount(
+    argv,
+    identity,
+    {
+      say: (line) => lines.push(line),
+      readKey,
+      now: () => NOON,
+    },
+    ask,
+  );
   const said = lines.join("\n");
   // The command prints a password indented on a line of its own, so that it can
   // be copied without picking it out of a sentence.
@@ -226,6 +244,78 @@ describe("making an account", () => {
     // the right one, and a terminal's scrollback is where it should not be.
     expect(tried.said).not.toContain("walk-through");
     await expect(identity.byEmail("dmitry@example.com")).resolves.toBeNull();
+  });
+
+  it("refuses a key the merchant made for their own code, and says which kind is wanted", async () => {
+    // Accepted quietly, such a key makes a cabinet that works by halves: every
+    // sign-in fails to replace it and says so in the log nobody is reading, and
+    // the keys screen grows a Revoke button the gateway then refuses. The
+    // gateway can tell the two kinds apart and this is the call that asks it —
+    // the same call the sign-in makes afterwards, so the question is not
+    // invented for the occasion.
+    const { identity } = store();
+
+    const tried = await running(
+      identity,
+      ["add", "dmitry@example.com", MERCHANT],
+      async () => KEY,
+      async () => ({
+        ok: false,
+        status: 403,
+        why: "this call is made with the key a cabinet signs in with, and that is not one",
+      }),
+    );
+
+    expect(tried.code).not.toBe(0);
+    expect(tried.said).toMatch(/own code/i);
+    expect(tried.said).not.toContain(KEY);
+    await expect(identity.byEmail("dmitry@example.com")).resolves.toBeNull();
+  });
+
+  it("writes nothing when the gateway does not answer, rather than guessing", async () => {
+    // "I could not ask" is not "the key is fine". An account written on a guess
+    // is the same half-working cabinet, found later and by somebody else.
+    const { identity } = store();
+
+    const tried = await running(
+      identity,
+      ["add", "dmitry@example.com", MERCHANT],
+      async () => KEY,
+      async () => ({ ok: false, status: 0, why: "the gateway could not be reached" }),
+    );
+
+    expect(tried.code).not.toBe(0);
+    expect(tried.said).toMatch(/gateway/i);
+    await expect(identity.byEmail("dmitry@example.com")).resolves.toBeNull();
+  });
+
+  it("asks the gateway with the key as it will be stored, and not before the shape is right", async () => {
+    // Trimmed, because that is the value that goes on the row and asking about
+    // a different one would be asking about nothing. And not at all for a key
+    // that is already refused here: a command that reached the network to find
+    // out what it can see for itself is a command that hangs when the gateway
+    // is down for a reason that has nothing to do with the gateway.
+    const { identity } = store();
+    const asked: string[] = [];
+    const remember: CabinetKeyCheck = async (key) => {
+      asked.push(key);
+      return { ok: true, document: "another-cabinet-key-nobody-keeps" };
+    };
+
+    await running(
+      identity,
+      ["add", "dmitry@example.com", MERCHANT],
+      async () => `  ${KEY}\n`,
+      remember,
+    );
+    await running(
+      identity,
+      ["add", "someone@example.com", MERCHANT],
+      async () => "too-short",
+      remember,
+    );
+
+    expect(asked).toStrictEqual([KEY]);
   });
 
   it("says what it wanted when it is given no merchant to make the account for", async () => {
