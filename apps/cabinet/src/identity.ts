@@ -147,6 +147,22 @@ export interface Identity {
    */
   register(email: string, password: string, merchant: AccountMerchant): Promise<Registration>;
   /**
+   * Puts a fresh gateway key on an account's row, over whatever is there.
+   *
+   * ADR-0014 §2: the key is made afresh at every sign-in, so that a copy of
+   * this database is a set of keys that stops working rather than one that
+   * works for good. The merchant is not touched — it is the same merchant,
+   * reached with another of their keys.
+   *
+   * False is a write that did not happen, whatever the reason, and it is
+   * answered rather than thrown because the caller has to carry on: the row
+   * still names the key it named before, that key still works, and signing
+   * somebody in matters more than replacing it. What the caller must not do on
+   * a false is sweep — the key it would sweep with is one this row does not
+   * name.
+   */
+  replaceMerchantKey(personId: string, key: string): Promise<boolean>;
+  /**
    * Whose session this cookie header carries, having asked the component.
    *
    * Null covers every way of not being signed in and does not distinguish them.
@@ -545,6 +561,23 @@ export function identityFor(config: CabinetConfig, parts: IdentityParts = {}): I
           cookies: made.headers.getSetCookie(),
         },
       };
+    },
+
+    async replaceMerchantKey(personId, key) {
+      try {
+        const written = await (await contextOf()).internalAdapter.updateUser(personId, {
+          merchantKey: key,
+        });
+        // Read back from what the write answered rather than assumed from the
+        // absence of a throw. A store that took the call and changed nothing —
+        // an identifier naming no row is the way that happens — would otherwise
+        // report a key onto a row that still holds the old one, and the sweep
+        // that follows would take the old one away.
+        return (written as { merchantKey?: unknown } | null)?.merchantKey === key;
+      } catch (thrown) {
+        console.error("[cabinet] a fresh gateway key could not be written onto a row", thrown);
+        return false;
+      }
     },
 
     async whoIs(cookieHeader) {

@@ -909,9 +909,11 @@ describe("getting into the cabinet", () => {
     expect(after.status).toBe(502);
     expect(readable(after.html)).toMatch(/key/i);
     expect(after.headers.getSetCookie().join(" ")).not.toContain(`${COOKIE}=;`);
-    // And it says there is no page here that fixes it, which is true: rotating
-    // the key a cabinet holds is named in ADR-0014 §5 as not built.
-    expect(readable(after.html)).toMatch(/no page in this cabinet/i);
+    // And it does not send them round the one loop that looks like a way out.
+    // The cabinet does replace this key, at every sign-in — with the key it is
+    // already holding, which is the one the gateway has just stopped taking. So
+    // signing in again cannot be the advice.
+    expect(readable(after.html)).toMatch(/signing in again does not help/i);
   });
 
   it("clears the old cookie that used to hold a live merchant key", async () => {
@@ -2850,6 +2852,13 @@ describe("when something goes wrong that the merchant has to get out of", () => 
           receipts: answer,
           sellerName: answer,
           setSellerName: answer,
+          // The two the sign-in makes about this cabinet's own key answer the
+          // same way as everything else here. A merchant whose gateway is
+          // refusing every call is refused these too, and what the tests below
+          // are about is the page they land on afterwards — so the sign-in that
+          // gets them there has to survive it.
+          issueCabinetKey: answer,
+          forgetCabinetKeys: answer,
         }) as never,
     });
     const server = app.listen(0, "127.0.0.1");
@@ -3913,17 +3922,41 @@ describe("the key the cabinet signs in with", () => {
     // anybody finds out the key has stopped being replaced.
     const { browser } = await started({ cabinet: { GATEWAY_URL: "http://127.0.0.1:1" } });
 
-    let posted: Visit | null = null;
+    const posted: Visit[] = [];
     const written = await said(async () => {
-      posted = await browser.post("/sign-in", { email: PERSON, password: PASSWORD });
+      posted.push(await browser.post("/sign-in", { email: PERSON, password: PASSWORD }));
     });
 
-    expect(posted?.status).toBe(303);
+    expect(posted[0]?.status).toBe(303);
     expect(keyOnTheRowOf(PERSON)).toBe(KEY);
     expect(written).toContain(PERSON);
     expect(written).toMatch(/key/i);
     // And what it says about it is never the key itself.
     expect(written).not.toContain(KEY);
+  });
+
+  it("lets a person in when the gateway answers something the contract refuses", async () => {
+    // The third way this can go wrong, and the only one that arrives as a
+    // throw: the client holds every answer to the contract's schema, so a
+    // gateway answering a key document with no key in it raises rather than
+    // returning a refusal. `gateway.test.ts` holds that it raises; this holds
+    // that a person signing in never finds out.
+    const { another } = await aRegisteredMerchant({
+      client: (real) => ({
+        ...real,
+        issueCabinetKey: async () => {
+          throw new Error("the answer was not a document this contract knows");
+        },
+      }),
+    });
+    const before = keyOnTheRowOf(FRESH.email);
+
+    const device = await another();
+    const inside = await device.signIn(FRESH.email, FRESH.password);
+
+    expect(inside.status).toBe(200);
+    expect(keyOnTheRowOf(FRESH.email)).toBe(before);
+    expect(await theGatewayTakes(before)).toBe(true);
   });
 
   it("does not spend a screen's worth of waiting on a gateway that says nothing", async () => {

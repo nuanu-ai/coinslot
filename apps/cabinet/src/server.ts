@@ -70,6 +70,21 @@ import {
 const RETIRED = ["coinslot_key", "coinslot_session"];
 
 /**
+ * How long the cabinet waits on the gateway for its own key, per call.
+ *
+ * Shorter than the deadline every screen gets, and that is the whole reason
+ * there are two numbers. A screen is worth ten seconds because somebody is
+ * looking at it and would rather wait than start again. The two calls that
+ * replace this cabinet's key are not a screen: nobody asked for them, nothing
+ * on the page depends on them, and a sign-in held open for as long as a
+ * catalogue is the same locked door as a gateway that is down, only slower and
+ * less honest about it. Two seconds a call, so the worst a silent gateway can
+ * add to somebody's sign-in is four — and what it costs is that the key is not
+ * replaced this time, which is a thing that can wait until the next sign-in.
+ */
+const KEY_AT_SIGN_IN_MS = 2_000;
+
+/**
  * What an account with no merchant on it is told, wherever it turns up.
  *
  * There is one such account and it is on a deployed server: it was made before
@@ -200,8 +215,13 @@ export interface CabinetParts {
    * built per request and two people signed into one cabinet are two merchants
    * (ADR-0014 §2). Only a test ever passes anything else, and what a deployment
    * runs is the client that speaks the contract's route table.
+   *
+   * The deadline is the caller's because not every call is made in front of a
+   * person: a screen is worth waiting on, and the two calls that replace this
+   * cabinet's own key while somebody signs in are not. Left out, the client's
+   * own is used.
    */
-  readonly gatewayFor?: (key: string) => GatewayClient;
+  readonly gatewayFor?: (key: string, answerWithinMs?: number) => GatewayClient;
   /**
    * How a merchant is made, which is the one call the cabinet makes with no key.
    *
@@ -227,7 +247,9 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
   const base = config.basePath;
   const identity = parts.identity;
   const shortest = identity.shortestPassword;
-  const clientFor = parts.gatewayFor ?? ((key: string) => gatewayFor(config.gatewayUrl, key));
+  const clientFor =
+    parts.gatewayFor ??
+    ((key: string, answerWithinMs?: number) => gatewayFor(config.gatewayUrl, key, answerWithinMs));
   const registrar = parts.registrar ?? registrarFor(config.gatewayUrl);
   const cookiePath = base === "" ? "/" : base;
 
@@ -314,6 +336,92 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
     response.type("html").send(signInScreen(base));
   });
 
+  /**
+   * Replaces the key on somebody's row with a fresh one, as they sign in.
+   *
+   * ADR-0014 §2 asks for it: the key is stored as the gateway issued it, so a
+   * copy of this cabinet's database is a set of working keys, and what decides
+   * how long they are worth stealing is this. After it, every key that copy
+   * holds is one the gateway has forgotten.
+   *
+   * The order is the substance and it is not free to rearrange. Ask for a key
+   * with the one already on the row; write it down; then sweep the rest away,
+   * with the new one. Cut the power at any point and a working key is on the
+   * row: after the first step the old one, still live; after the second the new
+   * one, with the old one alive beside it; after the third the new one alone.
+   * The reverse — sweeping before the write — is the single arrangement that
+   * cannot be interrupted safely, because the row would be left naming a key
+   * the sweep had just removed, and the person it belongs to would be locked
+   * out of their own cabinet by the act of signing into it.
+   *
+   * None of it may stand between a person and their cabinet. A gateway that is
+   * down, one that refuses, one that answers something the contract does not
+   * recognise — each costs a line in the log and nothing more, and they are
+   * signed in on the key they had, which still works. The last of those three
+   * arrives as a throw rather than as an answer, which is why the whole of this
+   * is caught: the client holds what comes back to the contract's schema, and a
+   * document it refuses must not become a person who cannot sign in. Nothing
+   * about signing in belongs to the gateway anyway — the password, the session
+   * and the row are this cabinet's own.
+   *
+   * It runs before the cookies are handed over rather than after the answer,
+   * and that is not tidiness. The key is read off the row on every request, so
+   * a first request racing a sweep that had not finished could read the old key
+   * and be refused with it. What is left is a narrower window that cannot be
+   * closed from here: a request already in flight from another device, which
+   * read the row before the write, is made with a key the sweep is about to
+   * remove and is refused. It is milliseconds wide, it costs a page reload, and
+   * the only way to buy it off would be to leave the old key alive for a while
+   * — which is the thing this exists to stop.
+   */
+  const replaceTheKeyOf = async (person: Person): Promise<void> => {
+    const holding = person.merchant?.key;
+    if (holding === undefined) {
+      return;
+    }
+
+    try {
+      const made = await clientFor(holding, KEY_AT_SIGN_IN_MS).issueCabinetKey();
+      if (!made.ok) {
+        console.error(
+          `[cabinet] ${person.email} is signed in on the key their account already held:` +
+            ` no fresh one was made — ${made.why}`,
+        );
+        return;
+      }
+
+      if (!(await identity.replaceMerchantKey(person.id, made.document))) {
+        // Nothing is swept, deliberately. The row still names the key they came
+        // in with, and a sweep made with the key that was not written down
+        // would remove exactly that one. The fresh key is left where it is:
+        // nobody holds it, nobody can reach it, and the next sign-in that gets
+        // as far as writing one down sweeps it up.
+        console.error(
+          `[cabinet] ${person.email} is signed in on the key their account already held:` +
+            " a fresh one was made and could not be written down",
+        );
+        return;
+      }
+
+      const swept = await clientFor(made.document, KEY_AT_SIGN_IN_MS).forgetCabinetKeys();
+      if (!swept.ok) {
+        console.error(
+          `[cabinet] ${person.email} is signed in on a fresh key and the older ones are still` +
+            ` there: ${swept.why}`,
+        );
+      }
+    } catch (thrown) {
+      // Which step it was is in the exception and not worth unpacking into
+      // three sentences: whichever it was, the row names a key the gateway
+      // takes, because the only write here happens after a key was made and
+      // the only sweep after that write went through.
+      console.error(
+        `[cabinet] ${person.email} is signed in and the key on their account was not replaced`,
+        thrown,
+      );
+    }
+  };
+
   app.post(`${base}/sign-in`, async (request, response) => {
     // `?? {}` and not a cast alone: express leaves `body` undefined when the
     // content type is not the one the form parser handles, and reading a field
@@ -364,6 +472,11 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
       response.status(403).type("html").send(signInScreen(base, NO_MERCHANT));
       return;
     }
+
+    // Before the cookies rather than after the answer: the reasons are on the
+    // function, and the short of it is that the first request this browser
+    // makes must not be able to read the row while the sweep is running.
+    await replaceTheKeyOf(signed.opened.person);
 
     carryCookies(response, signed.opened.cookies);
     console.log(`[cabinet] ${signed.opened.person.email} signed in`);
@@ -1307,8 +1420,11 @@ function trouble(response: Response, base: string, answer: Answer<unknown>): voi
     // land them straight back on this page, with nothing said about the fault.
     //
     // What is said instead is the whole truth, including the part that is
-    // uncomfortable: rotating the key a cabinet is holding is named in
-    // ADR-0014 §5 as not built, so there is no page in here that fixes this.
+    // uncomfortable. The cabinet does replace this key, at every sign-in — and
+    // it asks for the replacement with the key it is already holding, which is
+    // the one being refused here. So signing in again is not the way out
+    // either, and saying "try signing in again" would be sending somebody
+    // around a loop we know the shape of.
     response
       .status(502)
       .type("html")
@@ -1316,10 +1432,10 @@ function trouble(response: Response, base: string, answer: Answer<unknown>): voi
         problemPage(
           base,
           "The gateway will not accept the key stored for this account, so none of these" +
-            " screens can be drawn. Nothing you do here changes that, and there is no page in" +
-            " this cabinet that replaces the key it signs in with — a new account has to be" +
-            " made for this merchant, by somebody holding a key the gateway still accepts." +
-            " Your sign-in itself is unaffected.",
+            " screens can be drawn. Signing in again does not help: the cabinet asks for a" +
+            " fresh key with the one it is holding, and that is the key being refused. A new" +
+            " account has to be made for this merchant, by somebody holding a key the gateway" +
+            " still accepts. Your sign-in itself is unaffected.",
         ),
       );
     return;
