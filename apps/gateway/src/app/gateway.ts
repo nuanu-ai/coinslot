@@ -16,7 +16,7 @@
  * nothing yet to tell them apart with.
  */
 
-import type { MerchantSelling, TransitionRejection } from "@coinslot/core";
+import type { Environment, MerchantSelling, TransitionRejection } from "@coinslot/core";
 import { createOrder, fulfillmentDeadline, isOpen, outcomeFor } from "@coinslot/core";
 import {
   type Acceptance,
@@ -573,6 +573,7 @@ export class Gateway {
       this.runtime.store,
       this.runtime.ids,
       this.runtime.clock(),
+      this.runtime.config.environment,
     );
 
     if (registered === null) {
@@ -733,6 +734,7 @@ export class Gateway {
       merchantId,
       label,
       this.runtime.clock(),
+      this.runtime.config.environment,
     );
     return { key: merchantKeyOf(issued.key), secret: issued.secret };
   }
@@ -765,6 +767,7 @@ export class Gateway {
       this.runtime.ids,
       merchantId,
       this.runtime.clock(),
+      this.runtime.config.environment,
     );
     return { secret: issued.secret };
   }
@@ -1135,6 +1138,11 @@ export class Gateway {
    */
   async keyBehind(presented: string): Promise<StoredKey | null> {
     return this.runtime.store.workingKey(keyDigest(presented));
+  }
+
+  /** Which site this is, for the one refusal that says so out loud. */
+  get environment(): Environment {
+    return this.runtime.config.environment;
   }
 
   // --- the merchant's stream ------------------------------------------------

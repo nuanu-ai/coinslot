@@ -20,6 +20,7 @@
 import type { Card, MerchantKeyList } from "@nuanu-ai/coinslot-contracts";
 import { decodePaymentRequiredHeader } from "@x402/core/http";
 import { afterEach, describe, expect, it } from "vitest";
+import { keyDigest } from "../app/merchants.js";
 import { type Harness, harness, type Served, serve } from "../testing/harness.js";
 import { PAYMENT_REQUIRED_HEADER } from "./x402.js";
 
@@ -748,6 +749,86 @@ describe("forgetting the key a call was made with", () => {
     expect(await opensTheDoor(served, fresh)).toBe(true);
     // One row went and no more, however many times it was asked for.
     expect(await keysInAll(harnessed, made.merchant_id)).toBe(before - 1);
+  });
+});
+
+/** The code and the sentence out of a refusal, which is what this door says. */
+const refusalIn = (answered: { readonly body: unknown }): { code: string; message: string } =>
+  (answered.body as { error: { code: string; message: string } }).error;
+
+describe("a key from the other site", () => {
+  it("is told it is a test key and where test keys work", async () => {
+    // The gateway under test is live; the key presented is a test one. The
+    // harness wires the scripted facilitator whatever the configuration says,
+    // so naming Coinbase's here buys the derivation and nothing else.
+    const { served } = await started({
+      PAYMENT_NETWORK: "eip155:8453",
+      FACILITATOR_URL: "https://api.cdp.coinbase.com/platform/v2/x402",
+      CDP_API_KEY_ID: "key-id",
+      CDP_API_KEY_SECRET: "secret",
+    });
+
+    const answered = await served.call("GET", "/v0/cards", {
+      headers: bearer("csk_test_whatever-this-is"),
+    });
+
+    expect(answered.status).toBe(401);
+    // The same code every other refusal at this door carries. What changes is
+    // the sentence: a new machine-readable code would be a new value in a
+    // closed response enum, which by ADR-0006 moves CONTRACT_VERSION from "1"
+    // and stops every installed worker at startup — a heavy price for words,
+    // and the charter's answer to a finding is honest words at the door rather
+    // than a wider surface.
+    const said = refusalIn(answered);
+    expect(said.code).toBe("not_authorised");
+    expect(said.message).toContain("test key");
+    expect(said.message).toContain("test.coinslot.nuanu.ai");
+  });
+
+  it("says nothing more to a key that names no environment at all", async () => {
+    // The bare prefix, a guess, a stranger's key: all one answer, because a
+    // door that told them apart would confirm which guesses had once been real
+    // keys — which is exactly what revoking one has to stop. A key that names
+    // the other environment is the one exception, and it gives nothing away:
+    // whoever presents it can read its own prefix.
+    const { served } = await started();
+
+    const answered = await served.call("GET", "/v0/cards", {
+      headers: bearer("csk_not-an-environment"),
+    });
+
+    expect(answered.status).toBe(401);
+    const said = refusalIn(answered);
+    expect(said.code).toBe("not_authorised");
+    expect(said.message).not.toContain("coinslot.nuanu.ai");
+  });
+
+  it("turns away a key from before this change, whose digest is still in the database", async () => {
+    // The delete-first promise, made by the door rather than by a database
+    // somebody emptied: the row is there, the digest matches, and the key still
+    // opens nothing. Without this the promise would hold only because the host
+    // reset destroyed both volumes, which is a fact about an afternoon rather
+    // than about the system.
+    const { harnessed, served } = await started();
+    const legacy = "a-merchant-key-long-enough";
+    await harnessed.store.addKey(
+      {
+        id: "mk_legacy",
+        merchantId: harnessed.merchant.id,
+        label: "issued before the split",
+        purpose: "merchant_code",
+        digest: keyDigest(legacy),
+      },
+      harnessed.now(),
+    );
+
+    expect(await opensTheDoor(served, legacy)).toBe(false);
+  });
+
+  it("lets this environment's own key through to the lookup", async () => {
+    const { harnessed, served } = await started();
+
+    expect(await opensTheDoor(served, harnessed.merchant.key)).toBe(true);
   });
 });
 

@@ -10,6 +10,7 @@
  * revoked on purpose.
  */
 
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { MemoryStore } from "../adapters/memory/store.js";
 import { countedIds } from "../testing/harness.js";
@@ -18,7 +19,6 @@ import {
   invitationAccepted,
   issueCabinetKey,
   issueKey,
-  KEY_PREFIX,
   keyDigest,
   makeMerchant,
   newKeySecret,
@@ -38,12 +38,23 @@ describe("a key", () => {
     // A key somebody chooses is a key somebody reuses, and this one is compared
     // against nothing — so generating it is what makes having no length rule
     // safe rather than merely tidy.
-    const first = newKeySecret();
-    const second = newKeySecret();
+    const first = newKeySecret("test");
+    const second = newKeySecret("test");
 
     expect(first).not.toBe(second);
-    expect(first.startsWith(KEY_PREFIX)).toBe(true);
-    expect(second.startsWith(KEY_PREFIX)).toBe(true);
+  });
+
+  it("issues a key carrying the prefix of its environment", () => {
+    expect(newKeySecret("test").startsWith("csk_test_")).toBe(true);
+    expect(newKeySecret("live").startsWith("csk_live_")).toBe(true);
+  });
+
+  it("hashes and looks up a key exactly as it did before", () => {
+    // The prefix changed and the digest must not have. This is the test that
+    // would catch a prefix change that quietly broke every key.
+    const secret = newKeySecret("test");
+    expect(keyDigest(secret)).toBe(createHash("sha256").update(secret, "utf8").digest("hex"));
+    expect(keyDigest(secret)).toHaveLength(64);
   });
 
   it("is stored as a digest and never comes back out", async () => {
@@ -52,7 +63,7 @@ describe("a key", () => {
     const store = aStore();
     await makeMerchant(store, countedIds(), "A merchant", 1_000, "mch_1");
 
-    const issued = await issueKey(store, countedIds(), "mch_1", "the worker's", 1_000);
+    const issued = await issueKey(store, countedIds(), "mch_1", "the worker's", 1_000, "test");
 
     expect(JSON.stringify(issued.key)).not.toContain(issued.secret);
     expect((await store.workingKey(keyDigest(issued.secret)))?.merchantId).toBe("mch_1");
@@ -70,8 +81,8 @@ describe("a key", () => {
     const ids = countedIds();
     await makeMerchant(store, ids, "A merchant", 1_000, "mch_1");
 
-    const theirs = await issueKey(store, ids, "mch_1", "the worker's", 1_000);
-    const cabinet = await issueCabinetKey(store, ids, "mch_1", 2_000);
+    const theirs = await issueKey(store, ids, "mch_1", "the worker's", 1_000, "test");
+    const cabinet = await issueCabinetKey(store, ids, "mch_1", 2_000, "test");
 
     expect((await store.codeKeysOf("mch_1")).map((key) => key.id)).toStrictEqual([theirs.key.id]);
     expect(cabinet.key.purpose).toBe("cabinet");
@@ -87,7 +98,7 @@ describe("a key", () => {
     const store = aStore();
     await makeMerchant(store, countedIds(), "A merchant", 1_000, "mch_1");
 
-    const cabinet = await issueCabinetKey(store, countedIds(), "mch_1", 1_000);
+    const cabinet = await issueCabinetKey(store, countedIds(), "mch_1", 1_000, "test");
 
     expect(cabinet.key.label).toBe(CABINET_KEY_LABEL);
   });
@@ -387,7 +398,7 @@ describe("registering a merchant", () => {
     // this call and that nobody outside it ever held.
     const store = aStore();
 
-    const made = await registerMerchant(store, countedIds(), 1_000);
+    const made = await registerMerchant(store, countedIds(), 1_000, "test");
 
     expect((await store.workingKey(keyDigest(made?.secret ?? "")))?.merchantId).toBe(
       made?.merchant.id,
@@ -402,7 +413,7 @@ describe("registering a merchant", () => {
     // the first thing their keys screen ever draws.
     const store = aStore();
 
-    const made = await registerMerchant(store, countedIds(), 1_000);
+    const made = await registerMerchant(store, countedIds(), 1_000, "test");
 
     expect(made?.key.purpose).toBe("cabinet");
     expect(await store.codeKeysOf(made?.merchant.id ?? "")).toStrictEqual([]);
@@ -414,7 +425,7 @@ describe("registering a merchant", () => {
     // front of every buyer who reads a catalogue.
     const store = aStore();
 
-    const made = await registerMerchant(store, countedIds(), 1_000);
+    const made = await registerMerchant(store, countedIds(), 1_000, "test");
 
     expect(made?.merchant.serviceName).toBeNull();
   });
@@ -426,7 +437,7 @@ describe("registering a merchant", () => {
     // looks chosen, it would be a name somebody goes looking for the owner of.
     const store = aStore();
 
-    const made = await registerMerchant(store, countedIds(), 1_000);
+    const made = await registerMerchant(store, countedIds(), 1_000, "test");
 
     expect(made?.merchant.name).toBe(REGISTERED_MERCHANT_NAME);
     expect(made?.merchant.name).not.toBe("");
@@ -440,11 +451,11 @@ describe("registering a merchant", () => {
     const store = aStore();
     const ids = countedIds();
 
-    const first = await registerMerchant(store, ids, 1_000);
-    const second = await registerMerchant(store, ids, 1_000);
+    const first = await registerMerchant(store, ids, 1_000, "test");
+    const second = await registerMerchant(store, ids, 1_000, "test");
 
-    expect(first?.secret.startsWith(KEY_PREFIX)).toBe(true);
-    expect(second?.secret.startsWith(KEY_PREFIX)).toBe(true);
+    expect(first?.secret.startsWith("csk_test_")).toBe(true);
+    expect(second?.secret.startsWith("csk_test_")).toBe(true);
     expect(first?.secret).not.toBe(second?.secret);
   });
 
@@ -452,8 +463,8 @@ describe("registering a merchant", () => {
     const store = aStore();
     const ids = countedIds();
 
-    const first = await registerMerchant(store, ids, 1_000);
-    const second = await registerMerchant(store, ids, 2_000);
+    const first = await registerMerchant(store, ids, 1_000, "test");
+    const second = await registerMerchant(store, ids, 2_000, "test");
 
     expect(first?.merchant.id).not.toBe(second?.merchant.id);
     expect((await store.merchants()).length).toBe(2);

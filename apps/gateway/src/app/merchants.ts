@@ -26,6 +26,7 @@
  */
 
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { type Environment, keyPrefixFor } from "@coinslot/core";
 import {
   checksummedAddressOf,
   EvmAddressSchema,
@@ -41,15 +42,15 @@ import type { Store, StoredKey, StoredMerchant } from "../ports/store.js";
 const KEY_BYTES = 32;
 
 /**
- * What every key starts with, so that one found in a log or a paste is
- * recognisable as ours and can be searched for by people who scan for leaked
- * credentials.
+ * A fresh key, in the only form its owner will ever see it.
+ *
+ * The prefix carries the environment because that is the one thing about a key
+ * that a person holding it can read without asking us, and it is what lets the
+ * door tell somebody their key works — on the other site — instead of handing
+ * them a bare 401 with nothing wrong with the key.
  */
-export const KEY_PREFIX = "csk_";
-
-/** A fresh key, in the only form its owner will ever see it. */
-export function newKeySecret(): string {
-  return `${KEY_PREFIX}${randomBytes(KEY_BYTES).toString("base64url")}`;
+export function newKeySecret(environment: Environment): string {
+  return `${keyPrefixFor(environment)}${randomBytes(KEY_BYTES).toString("base64url")}`;
 }
 
 /**
@@ -165,8 +166,9 @@ export async function issueKey(
   merchantId: string,
   label: string,
   at: number,
+  environment: Environment,
 ): Promise<IssuedKey> {
-  const secret = newKeySecret();
+  const secret = newKeySecret(environment);
   const key = await store.addKey(
     { id: ids("mk"), merchantId, label, digest: keyDigest(secret), purpose: "merchant_code" },
     at,
@@ -186,8 +188,9 @@ export async function issueCabinetKey(
   ids: Ids,
   merchantId: string,
   at: number,
+  environment: Environment,
 ): Promise<IssuedKey> {
-  const secret = newKeySecret();
+  const secret = newKeySecret(environment);
   const key = await store.addKey(
     {
       id: ids("mk"),
@@ -312,8 +315,9 @@ export async function registerMerchant(
   store: Store,
   ids: Ids,
   at: number,
+  environment: Environment,
 ): Promise<Registration | null> {
-  const secret = newKeySecret();
+  const secret = newKeySecret(environment);
   const written = await store.registerMerchant(
     { id: ids("mch"), name: REGISTERED_MERCHANT_NAME },
     { id: ids("mk"), label: CABINET_KEY_LABEL, digest: keyDigest(secret) },

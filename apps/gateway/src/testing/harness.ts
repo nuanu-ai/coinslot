@@ -109,8 +109,15 @@ export interface Harness {
   stop(): Promise<void>;
 }
 
-/** The key the merchant every ordinary test sells as opens the door with. */
-export const THE_MERCHANT_KEY = "a-merchant-key-long-enough";
+/**
+ * The key the merchant every ordinary test sells as opens the door with.
+ *
+ * It carries a prefix because the door reads one: `testConfig()` defaults to
+ * Base Sepolia, so this harness is a test environment and its key is a test
+ * key. Without the prefix every HTTP test in this repository would meet the
+ * refusal a key from the other site gets.
+ */
+export const THE_MERCHANT_KEY = "csk_test_a-merchant-key-long-enough";
 
 export async function harness(overrides: Record<string, string> = {}): Promise<Harness> {
   // A clock that starts at a readable instant and only moves when a test says
@@ -190,7 +197,7 @@ export async function harness(overrides: Record<string, string> = {}): Promise<H
     await setPayoutWallet(store, made.id, wallet, now);
     const issued =
       secret === undefined
-        ? await issueKey(store, ids, made.id, "the harness", now)
+        ? await issueKey(store, ids, made.id, "the harness", now, config.environment)
         : await addKnownKey(store, ids, made.id, secret, now);
     return { id: made.id, name: made.name, key: issued.secret, keyId: issued.key.id, wallet };
   };
@@ -218,7 +225,7 @@ export async function harness(overrides: Record<string, string> = {}): Promise<H
       },
       addMerchant: (name = `Merchant ${countedName()}`) => seed(name),
       addKey: async (merchantId, label = "another of the harness's") =>
-        (await issueKey(store, ids, merchantId, label, now)).secret,
+        (await issueKey(store, ids, merchantId, label, now, config.environment)).secret,
       disableKey: async (keyId) => {
         const disabled = await store.disableKey(keyId, now);
         if (disabled === null) {

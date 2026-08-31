@@ -32,7 +32,12 @@ import { keyDigest, setPayoutWallet, setServiceName } from "./app/merchants.js";
 import { loadConfig } from "./config.js";
 import { buildApp } from "./http/server.js";
 
-const MERCHANT_KEY = "the-merchant-key-for-this-walk";
+/**
+ * The key this walk carries. It is prefixed because the door reads the prefix
+ * before it looks a digest up, and the gateway below is configured with the
+ * default chain, which is a test one.
+ */
+const MERCHANT_KEY = "csk_test_the-merchant-key-for-this-walk";
 
 /** The address this gateway itself is configured with: the operator's. */
 const PAY_TO = "0x00000000000000000000000000000000000000aa";

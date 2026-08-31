@@ -320,11 +320,17 @@ const environmentSchema = z.object({
    * string is also given to the cabinet and to the merchant process, next to
    * the database password and for the same reason.
    *
-   * Unset it anywhere that is not a sandbox. A key in an environment is a key
-   * that cannot be revoked without a deployment, which is the thing keys became
-   * rows in order to fix, and a key nobody typed is a key nobody meant to
-   * issue. Absent, this process writes nothing and every key is one somebody
-   * made deliberately.
+   * A deployment sets it too, to a key generated for that host, kept in its own
+   * file, and carrying that site's prefix, because a database brought up from
+   * nothing has no keys at all and nothing on the host can sell until one
+   * exists. What to keep in mind is that a key in an environment is a key that
+   * cannot be revoked without a deployment, which is the thing keys became rows
+   * in order to fix: disabling its row stops it opening anything, and the string
+   * is still handed to this process at every start, so a fresh database is
+   * seeded off that same line again. So it is unset once nothing presents that
+   * key any more — once whatever sells on that host has a key of its own.
+   * Absent, this process writes nothing and every key is one somebody made
+   * deliberately.
    *
    * Set to nothing reads the same as never set, and that is the one spelling
    * that matters to whoever unsets it. A deployment says this in a file the

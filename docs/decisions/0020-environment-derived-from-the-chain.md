@@ -38,28 +38,42 @@ are deliberately absent, because they are chains we do not sell on.
 
 A live chain settles through Coinbase's facilitator at
 `https://api.cdp.coinbase.com/platform/v2/x402`, with `CDP_API_KEY_ID` and
-`CDP_API_KEY_SECRET` both set, and through nothing else. Every part of that
-address is the rule and not the host alone: `FACILITATOR_URL` takes `http:` as
-readily as `https:` and Coinbase is recognised by hostname, so the right host
-over plain text satisfies every other check and puts both credentials on the
-wire, and the gateway builds `/verify` and `/settle` under whatever base it was
-given, so a wrong path — or a port nothing answers on — comes up healthy and
-fails at the first buyer.
+`CDP_API_KEY_SECRET` both set, and through nothing else. The scheme and the
+path are part of that address rather than decoration: the right host over plain
+text satisfies every other check and puts both credentials on the wire, and the
+gateway builds `/verify` and `/settle` under whatever base it was given, so a
+wrong path comes up healthy and fails at the first buyer.
+
+Every key carries the environment it was issued in as its prefix — `csk_test_`
+on one site, `csk_live_` on the other — and the door reads that prefix before
+it looks a digest up. A key from the other site is refused with words rather
+than with a status code: the same `not_authorised` and the same 401 as every
+other refusal there, and a sentence naming the site the key does work on. That
+gives nothing away, since whoever presents a key can read its own prefix. A key
+naming no environment at all gets the plain refusal, because a door that told a
+bare key from a guess apart would confirm which guesses had once been real keys.
 
 ## Consequences
 
 What this buys: neither site can be talked into being the other by a second
-field left set from yesterday. What it costs: a chain nobody has written down
-cannot be tried by editing an environment file, and the live site has one
-facilitator an operator cannot change. The trigger to widen that is a second
-facilitator whose credentials we hold and whose settlements reach the catalog a
-listing depends on (ADR-0001); the single address becomes a list.
+field left set from yesterday, and a merchant who pastes the wrong key is told
+which site it belongs to instead of meeting a bare 401. What it costs: an
+unwritten chain cannot be tried by editing an environment file, the live site
+has one facilitator an operator cannot change, and every key issued before the
+prefix existed stops opening anything at the door, whatever a database holds.
 
-Rejected: `COINSLOT_ENV=test|live` beside the chain — the same behaviour and a
-worse shape, for ADR-0008's reason, because the field that survives a copied
-environment file is the one still saying "test" in a place that means to move
-real money. Reading an unknown chain as live to be safe — safe for spending and
-wrong on the wire, which is the half that leaves the building. Naming the live
-facilitator by host alone, the way ADR-0008's credentials door does — that door
-asks who may be handed a bearer token, and this one asks where money that is
-real may be settled, which the scheme and the path are part of.
+Two triggers. The facilitator becomes a list on the day there is a second one
+whose credentials we hold and whose settlements reach the catalog a listing
+depends on (ADR-0001). The prefix is revisited on the day a live gateway has to
+issue a test key — a merchant trying their own integration against the live
+site — and the prefix is the seam that change runs along: what the door reads
+stops being "this site's own" and becomes the prefixes this site accepts.
+
+Rejected: `COINSLOT_ENV=test|live` beside the chain — ADR-0008's reason, since
+the field that survives a copied environment file is the one still saying
+"test" where real money moves. Reading an unknown chain as live to be safe —
+safe for spending and wrong on the wire, which is the half that leaves the
+building. A machine-readable code of its own for the key from the other site —
+`ERROR_CODES` is closed and the SDK parses strictly against its own copy, so a
+value added there moves `CONTRACT_VERSION` and stops every installed worker
+until its merchant upgrades: an enormous price for a sentence.

@@ -26,7 +26,6 @@ export { Gateway, type PurchaseAttempt } from "./app/gateway.js";
 export {
   type IssuedKey,
   issueKey,
-  KEY_PREFIX,
   keyDigest,
   makeMerchant,
   newKeySecret,

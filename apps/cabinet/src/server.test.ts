@@ -26,7 +26,14 @@ import { readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { connect } from "node:net";
-import { buyOverHttp, type Harness, harness, type Served, serve } from "@coinslot/gateway/testing";
+import {
+  buyOverHttp,
+  type Harness,
+  harness,
+  type Served,
+  serve,
+  THE_MERCHANT_KEY,
+} from "@coinslot/gateway/testing";
 import {
   type Card,
   checksummedAddressOf,
@@ -41,7 +48,13 @@ import { type Identity, identityFor } from "./identity.js";
 import type { Message } from "./mail.js";
 import { buildApp } from "./server.js";
 
-const KEY = "a-merchant-key-long-enough";
+/**
+ * The key the gateway harness's own merchant holds, named rather than spelled
+ * again. Every call in this file goes to a real gateway, whose door reads the
+ * environment off the prefix, so a second copy of the string here would come
+ * apart from the harness the first time that prefix changed.
+ */
+const KEY = THE_MERCHANT_KEY;
 const asMerchant = { authorization: `Bearer ${KEY}` };
 const PAY_TO = "0x0000000000000000000000000000000000000001";
 

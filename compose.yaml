@@ -72,9 +72,9 @@
 #   COINSLOT_PUBLIC_ORIGIN  what a browser types             http://localhost:8080
 #   COINSLOT_WEB_PUBLISH    the published port of the door   8080:8080
 #   COINSLOT_COOKIE_SECURE  Secure on the session cookie     false
-#   COINSLOT_MERCHANT_KEY   the key the mock merchant        local-sandbox-merchant-key
+#   COINSLOT_MERCHANT_KEY   the key the mock merchant        csk_test_local-sandbox-merchant-key
 #                           sells with
-#   COINSLOT_SEED_KEY       the key the gateway writes at    local-sandbox-merchant-key
+#   COINSLOT_SEED_KEY       the key the gateway writes at    csk_test_local-sandbox-merchant-key
 #                           start-up, or nothing at all
 #   COINSLOT_INVITATION     the code registration is         register-on-this-laptop
 #                           behind, or nothing at all
@@ -96,13 +96,23 @@
 # come up selling with nothing run by hand: at start the gateway hangs a row for
 # that key on the sandbox's merchant, if there is not one there already. A
 # second boot writes nothing, and a key disabled at a terminal is left disabled
-# — revoking one is not a thing a restart undoes. What a key kept in a file
-# cannot do is go away: disabling its row stops it opening anything, but the
-# string is still in the file the gateway is handed at every start, so retiring
-# it is an edit and a deployment rather than a row disabled, and a database
-# brought up from nothing is seeded off that same line again. A deployment
-# therefore issues a key with `merchant key` instead, puts it in
-# COINSLOT_MERCHANT_KEY, and sets COINSLOT_SEED_KEY to nothing at all:
+# — revoking one is not a thing a restart undoes.
+#
+# A stack on a server is seeded too, with a key of its own: one generated for
+# that host, kept in its `.env`, and carrying the prefix of the site it is for —
+# `csk_test_` on the test site, `csk_live_` on the live one. The door reads that
+# prefix before it looks anything up, so a key carrying the other site's is
+# turned away there whatever the database holds, and a key seeded under the
+# wrong prefix opens nothing on the host it was seeded into.
+#
+# What a key kept in a file cannot do is go away: disabling its row stops it
+# opening anything, but the string is still in the file the gateway is handed at
+# every start, so retiring it is an edit and a deployment rather than a row
+# disabled, and a database brought up from nothing is seeded off that same line
+# again. That is the reason to stop seeding once nothing presents that key any
+# more — once whatever sells on that host has a key of its own, issued with
+# `merchant key` and put in COINSLOT_MERCHANT_KEY, the deployment sets seeding
+# to nothing:
 #
 #   COINSLOT_SEED_KEY=
 #
@@ -212,7 +222,7 @@ services:
       # The dash carries no colon on purpose: `${VAR-default}` gives the default
       # only when nobody named the variable, so a deployment naming it with
       # nothing after it gets nothing rather than the sandbox's key back.
-      SANDBOX_MERCHANT_KEY: "${COINSLOT_SEED_KEY-local-sandbox-merchant-key}"
+      SANDBOX_MERCHANT_KEY: "${COINSLOT_SEED_KEY-csk_test_local-sandbox-merchant-key}"
       # The code that stands in the door of registration. Nobody registering has
       # a key yet, so this is what is between a stranger who finds the hostname
       # and a merchant of their own — and the catalogue is one across merchants,
@@ -384,7 +394,7 @@ services:
       # "MERCHANT_API_KEY is not set … there is no default for it" — which is
       # what a deployment that emptied the variable should get, rather than the
       # key printed in this file quietly selling on a server.
-      MERCHANT_API_KEY: "${COINSLOT_MERCHANT_KEY-local-sandbox-merchant-key}"
+      MERCHANT_API_KEY: "${COINSLOT_MERCHANT_KEY-csk_test_local-sandbox-merchant-key}"
     depends_on:
       gateway:
         condition: service_healthy

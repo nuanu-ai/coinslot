@@ -41,8 +41,12 @@ import {
  * from `compose.yaml` (ADR-0010) and through the same function — so what this
  * gate exercises is the door a deployment actually has, a digest looked up in a
  * table, and not a comparison written for tests.
+ *
+ * The prefix is part of that door: a key that does not carry this deployment's
+ * own is turned away above the lookup, and this harness settles on Base Sepolia
+ * unless the smoke points it somewhere else.
  */
-export const SLICE_MERCHANT_KEY = "slice-merchant-key-please";
+export const SLICE_MERCHANT_KEY = "csk_test_slice-merchant-key-please";
 
 /**
  * The address the merchant in this harness is paid at. On the scripted

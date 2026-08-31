@@ -11,14 +11,20 @@
  * there, disabling a key twice, running a verb with half its arguments.
  */
 
+import type { Environment } from "@coinslot/core";
 import { describe, expect, it } from "vitest";
 import { MemoryStore } from "./adapters/memory/store.js";
 import { issueCabinetKey, keyDigest } from "./app/merchants.js";
 import { runMerchant } from "./merchant-command.js";
 import { countedIds } from "./testing/harness.js";
 
-/** A store, the identifiers, a fixed clock, and everything the command said. */
-function aTerminal() {
+/**
+ * A store, the identifiers, a fixed clock, and everything the command said.
+ *
+ * The environment is a parameter because it is the one thing about this command
+ * a caller has to be told rather than work out, and the keys it issues carry it.
+ */
+function aTerminal(environment: Environment = "test") {
   const store = new MemoryStore(countedIds());
   const said: string[] = [];
   const at = Date.parse("2026-08-27T12:00:00.000Z");
@@ -32,6 +38,7 @@ function aTerminal() {
       ids,
       () => at,
       (line) => said.push(line),
+      environment,
     );
   return { store, said, at, ids, run, text: () => said.join("\n") };
 }
@@ -145,6 +152,22 @@ describe("issuing a key", () => {
     );
   });
 
+  it("prints a key for the site it was told it is issuing on", async () => {
+    // The command is pointed at a database, and a database address says nothing
+    // about which chain the gateway in front of it settles on. Told the wrong
+    // one, this prints a key that opens nothing and reads as a key somebody
+    // typed in wrong — so the environment it was told is what the key carries.
+    const live = aTerminal("live");
+    await live.run("add", "Someone's shop");
+    const merchantId = (await live.store.merchants())[0]?.id ?? "";
+    live.said.length = 0;
+
+    expect(await live.run("key", merchantId, "the shop's own worker")).toBe(0);
+
+    const printed = live.said.map((line) => line.trim()).find((line) => line.startsWith("csk_"));
+    expect(printed?.startsWith("csk_live_")).toBe(true);
+  });
+
   it("refuses to issue a key for a merchant nobody made", async () => {
     // Named rather than left to the database's foreign key, so somebody who
     // mistyped an identifier reads a sentence instead of a driver's error.
@@ -192,7 +215,7 @@ describe("issuing a key", () => {
     await terminal.run("key", merchantId, "the worker's");
     // Through the terminal's own generator, because two of them would issue two
     // keys under one identifier, exactly as two processes would.
-    await issueCabinetKey(terminal.store, terminal.ids, merchantId, terminal.at);
+    await issueCabinetKey(terminal.store, terminal.ids, merchantId, terminal.at, "test");
     terminal.said.length = 0;
 
     expect(await terminal.run("keys", merchantId)).toBe(0);
