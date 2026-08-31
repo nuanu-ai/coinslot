@@ -321,9 +321,12 @@ const environmentSchema = z.object({
    * the database password and for the same reason.
    *
    * A deployment sets it too, to a key generated for that host, kept in its own
-   * file, and carrying that site's prefix, because a database brought up from
-   * nothing has no keys at all and nothing on the host can sell until one
-   * exists. What to keep in mind is that a key in an environment is a key that
+   * file, and carrying that site's prefix, because the merchant process a stack
+   * runs beside the gateway reads its key out of that file and has nothing to
+   * present until a row for it exists. A person needs none of this — an
+   * invitation makes them a merchant with a key of their own and no terminal
+   * (ADR-0014 §3) — so what seeding is for is whatever the stack itself sells
+   * as. What to keep in mind is that a key in an environment is a key that
    * cannot be revoked without a deployment, which is the thing keys became rows
    * in order to fix: disabling its row stops it opening anything, and the string
    * is still handed to this process at every start, so a fresh database is

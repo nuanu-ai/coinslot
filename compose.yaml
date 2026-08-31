@@ -210,14 +210,17 @@ services:
       # merchant every card, order and receipt here belongs to, so that the two
       # services below are recognised without anybody running a command. A
       # second boot writes nothing, and a key disabled at a terminal stays
-      # disabled. No deployment sets this — a key in an environment cannot be
-      # revoked without a deployment, which is what moving keys into rows fixed.
-      # Its own variable rather than the one the cabinet presents, because the
-      # two part company on a server: this one is read from a file at every
-      # start and put back into the database whenever the row is missing, which
-      # is what makes it a key nobody can retire without a deployment. Set to
-      # nothing, this process writes no key and every key is one somebody
-      # issued.
+      # disabled. A deployment sets this too, to a key generated for that host
+      # and carrying that site's prefix, because the merchant service below
+      # reads its key out of a file and has nothing to present until a row for
+      # it exists; a person registering with an invitation needs none of it. It
+      # is unset once nothing presents that key any more — once whatever sells
+      # there has a key of its own. Its own variable rather than
+      # the one the cabinet presents, because the two part company on a server:
+      # this one is read from a file at every start and put back into the
+      # database whenever the row is missing, which is what makes it a key
+      # nobody can retire without a deployment. Set to nothing, this process
+      # writes no key and every key is one somebody issued.
       #
       # The dash carries no colon on purpose: `${VAR-default}` gives the default
       # only when nobody named the variable, so a deployment naming it with
