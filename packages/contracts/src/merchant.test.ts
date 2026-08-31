@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  CabinetKeySchema,
   DisabledKeySchema,
+  ForgottenCabinetKeysSchema,
   IssuedKeySchema,
   IssueKeyRequestSchema,
   MerchantKeyListSchema,
@@ -214,6 +216,60 @@ describe("a key that has been disabled", () => {
     // beside the key — how many keys still work, say — a bare document would
     // have to change shape under every reader.
     expect(DisabledKeySchema.safeParse(revoked).success).toBe(false);
+  });
+});
+
+describe("the key a cabinet holds", () => {
+  const held = { secret };
+
+  it("is the secret and nothing else", () => {
+    // A cabinet takes this key and puts it on the row of whoever signed in.
+    // There is no row document beside it, unlike every other answer that makes
+    // a key, and the absence is the decision: a key made for a cabinet is in no
+    // merchant's list, so an identifier here would name a row nobody can find,
+    // list or revoke, and the first screen built on it would offer all three.
+    expect(CabinetKeySchema.parse(held)).toStrictEqual(held);
+  });
+
+  it("refuses an answer with no secret in it and names it", () => {
+    expectMissingFieldRejected(CabinetKeySchema, held, "secret");
+  });
+
+  it("refuses a secret that could not travel as a key", () => {
+    expect(CabinetKeySchema.safeParse({ secret: "" }).success).toBe(false);
+    expect(CabinetKeySchema.safeParse({ secret: "csk_ two halves" }).success).toBe(false);
+  });
+
+  it("carries no row for a key that is in no list", () => {
+    expect(errorOf(CabinetKeySchema, { ...held, key: working })).toContain("key");
+  });
+});
+
+describe("the cabinet keys that were swept up", () => {
+  const swept = { removed: 2 };
+
+  it("says how many keys stopped existing", () => {
+    expect(ForgottenCabinetKeysSchema.parse(swept)).toStrictEqual(swept);
+  });
+
+  it("says nothing was there rather than leaving the field out", () => {
+    // Zero is the ordinary answer — one device, signed in twice, sweeping up
+    // after itself — and it is a number rather than an absent field for the
+    // reason every other nullable answer here is: a reader cannot tell a
+    // silence from a client that dropped it.
+    expect(ForgottenCabinetKeysSchema.parse({ removed: 0 }).removed).toBe(0);
+    expectMissingFieldRejected(ForgottenCabinetKeysSchema, swept, "removed");
+  });
+
+  it("refuses a count that is not a count of rows", () => {
+    expect(ForgottenCabinetKeysSchema.safeParse({ removed: -1 }).success).toBe(false);
+    expect(ForgottenCabinetKeysSchema.safeParse({ removed: 1.5 }).success).toBe(false);
+  });
+
+  it("names no key it removed", () => {
+    // The identifiers of keys nobody could ever list are not an answer to
+    // anything: what the caller needs to know is that the sweep happened.
+    expect(errorOf(ForgottenCabinetKeysSchema, { ...swept, keys: [working.id] })).toContain("keys");
   });
 });
 

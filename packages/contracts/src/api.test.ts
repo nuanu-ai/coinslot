@@ -829,6 +829,16 @@ describe("the route table", () => {
     ["list_keys", "GET", "/v0/keys", "merchant_key", "-", "-", "merchant_key_list"],
     ["issue_key", "POST", "/v0/keys", "merchant_key", "-", "issue_key_request", "issued_key"],
     ["disable_key", "POST", "/v0/keys/:key_id/disable", "merchant_key", "-", "-", "disabled_key"],
+    ["issue_cabinet_key", "POST", "/v0/keys/cabinet", "merchant_key", "-", "-", "cabinet_key"],
+    [
+      "forget_cabinet_keys",
+      "DELETE",
+      "/v0/keys/cabinet",
+      "merchant_key",
+      "-",
+      "-",
+      "forgotten_cabinet_keys",
+    ],
     ["get_order", "GET", "/v0/orders/:order_id", "merchant_key", "-", "-", "order_with_status"],
     ["list_orders", "GET", "/v0/orders", "merchant_key", "order_list_query", "-", "order_list"],
     ["list_receipts", "GET", "/v0/receipts", "merchant_key", "-", "-", "receipt_list"],
@@ -1104,6 +1114,25 @@ describe("the route table", () => {
     // it with. This pins that the sentence is there, not what it says.
     expect(API_ROUTES.disable_key.description).toContain("this call was made with");
     expect(API_ROUTES.list_keys.description).toContain("this_call");
+  });
+
+  it("warns that the key a call was made with is not always among the keys listed", () => {
+    // The one thing about this list that a reader would otherwise get wrong,
+    // and it fails silently: `this_call` names the key on the call, and a
+    // cabinet's key is in nobody's list — so a screen matching that identifier
+    // against the rows finds nothing, and a client that took the match for
+    // granted would either draw a row it invented or throw on the one page a
+    // merchant reaches their keys through.
+    expect(API_ROUTES.list_keys.description).toContain("not among");
+  });
+
+  it("says the two cabinet calls are refused to a merchant's own key", () => {
+    // The refusal is not hygiene and a reader has to know which key to make
+    // these with: a sweep made with a key of the merchant's own code would take
+    // away the credential a cabinet is signed in on and lock its owner out.
+    for (const route of [API_ROUTES.issue_cabinet_key, API_ROUTES.forget_cabinet_keys]) {
+      expect(route.description).toContain("refused");
+    }
   });
 
   it("says how far the refusal that protects a merchant from themselves reaches", () => {
