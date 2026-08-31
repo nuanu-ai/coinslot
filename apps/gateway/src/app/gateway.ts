@@ -550,7 +550,7 @@ export class Gateway {
   // --- merchants and their keys ---------------------------------------------
 
   /**
-   * Registers a merchant: the merchant and their first key, in one act. Null
+   * Registers a merchant: the merchant and their cabinet's key, in one act. Null
    * where the invitation is not the one this gateway holds, or where it holds
    * none.
    *

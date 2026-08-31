@@ -3,11 +3,10 @@
  * wallet their sales are paid into, and the keys they open the door with.
  *
  * The first two belong together because registering is the act that produces
- * both: one call makes the merchant and issues their first key, and what comes
- * back carries the key's own row as well as the secret. Split across two files,
- * the key document would have to be imported by the registration answer anyway,
- * and a reader looking for "what does a key look like" would have two places to
- * look. The name is here for the same reason read the other way round — it is a
+ * both: one call makes the merchant and the key its cabinet will call as them
+ * with, and what comes back carries that key once. Split across two files, a
+ * reader working out what registering leaves a merchant holding would have to
+ * read both to find that it is a key of a kind no list here carries. The name is here for the same reason read the other way round — it is a
  * fact about the merchant and about none of their cards, and the one question a
  * reader arrives with is which of the two names a merchant has is which.
  *

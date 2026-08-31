@@ -427,7 +427,7 @@ export interface Store {
   ): Promise<StoredMerchant | null>;
 
   /**
-   * Writes down a merchant and their first key, together or not at all. Null
+   * Writes down a merchant and their cabinet's key, together or not at all. Null
    * where that identifier is taken, and then nothing was written.
    *
    * The two in one write is ADR-0014 §1, and what it buys is worth stating
