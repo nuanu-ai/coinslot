@@ -23,6 +23,7 @@
  */
 
 import { readFileSync } from "node:fs";
+import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { connect } from "node:net";
 import { buyOverHttp, type Harness, harness, type Served, serve } from "@coinslot/gateway/testing";
@@ -254,35 +255,41 @@ interface Running {
 
 let open: Running | null = null;
 
-const started = async (
-  options: {
-    readonly base?: string;
-    readonly gateway?: Record<string, string>;
-    readonly cabinet?: Record<string, string>;
-    /**
-     * How the route that makes a merchant answers.
-     *
-     * Stubbed rather than real, and this is the one seam in this file that is
-     * not: the gateway route behind it is being added on another branch, so
-     * what these tests hold is the cabinet's half — what it does with an answer
-     * of each shape. What it makes of a successful one is checked against the
-     * real gateway anyway, because the key such an answer carries is the key
-     * the harness seeded, so the screens that follow the redirect are drawn
-     * from real documents.
-     */
-    readonly registrar?: Registrar;
-    /**
-     * The real client, with some of its calls answered by the test instead.
-     *
-     * A decorator rather than a replacement, so that everything a test is not
-     * about still goes to the real gateway. The three key routes are what this
-     * is for: they are being added on another branch, so the cabinet's half of
-     * them is what can be held here, while the sign-in and the screens either
-     * side of the one under test stay real.
-     */
-    readonly client?: (real: GatewayClient) => GatewayClient;
-  } = {},
-): Promise<Running> => {
+/** What one test asks of the cabinet it stands up. */
+interface Starting {
+  readonly base?: string;
+  readonly gateway?: Record<string, string>;
+  readonly cabinet?: Record<string, string>;
+  /**
+   * How the route that makes a merchant answers.
+   *
+   * Stubbed rather than real for the tests that are about what the cabinet does
+   * with an answer of each shape. Left alone, the real registrar goes to the
+   * real gateway — which is where a real key made for a cabinet comes from, and
+   * the only way to get an account row that holds one.
+   */
+  readonly registrar?: Registrar;
+  /**
+   * The real client, with some of its calls answered by the test instead.
+   *
+   * A decorator rather than a replacement, so that everything a test is not
+   * about still goes to the real gateway. What it is for is the answers the
+   * gateway will not give on command: a call that is refused, or one that
+   * nothing answers at all.
+   */
+  readonly client?: (real: GatewayClient) => GatewayClient;
+  /**
+   * The real component, with some of its calls answered by the test instead.
+   *
+   * The same shape as the client above and for the same reason. One thing the
+   * store cannot be asked for is a write that fails, and what the cabinet does
+   * when the fresh key cannot be written onto a row is the case that decides
+   * whether somebody is locked out of their own cabinet.
+   */
+  readonly identity?: (real: Identity) => Identity;
+}
+
+const started = async (options: Starting = {}): Promise<Running> => {
   const harnessed = await harness({ PAY_TO_ADDRESS: PAY_TO, ...options.gateway });
   const gateway = await serve(harnessed);
   const basePath = options.base ?? "";
@@ -291,9 +298,7 @@ const started = async (
     gateway.url,
     basePath,
     mails,
-    options.cabinet,
-    options.registrar,
-    options.client,
+    options,
   );
   let stopped = false;
 
@@ -319,11 +324,36 @@ const started = async (
   return open;
 };
 
+/**
+ * A server that accepts the connection and then says nothing, ever.
+ *
+ * The worst shape a gateway fails in, and the only one that costs wall time: a
+ * refused connection comes back at once, while this holds the caller until the
+ * caller gives up. One test points a cabinet at it to find out how long that is.
+ */
+let silent: Server | null = null;
+const silentGateway = async (): Promise<string> => {
+  const server = createServer(() => {
+    // Deliberately no answer: the point is that the caller is the one that
+    // has to stop waiting.
+  });
+  silent = server;
+  await new Promise<void>((ready) => server.listen(0, "127.0.0.1", ready));
+  const address = server.address();
+  if (address === null || typeof address === "string") {
+    throw new Error("the silent gateway did not take a port");
+  }
+  return `http://127.0.0.1:${address.port}`;
+};
+
 afterEach(async () => {
   await open?.browser.close();
   await open?.identity.close();
   await open?.stopGateway();
   open = null;
+  silent?.closeAllConnections();
+  silent?.close();
+  silent = null;
 });
 
 /** The cabinet on a port, and a cookie jar of one. */
@@ -331,9 +361,7 @@ async function visiting(
   gatewayUrl: string,
   basePath: string,
   mails: Message[],
-  environment: Record<string, string> = {},
-  registrar?: Registrar,
-  client?: (real: GatewayClient) => GatewayClient,
+  options: Starting,
 ): Promise<{
   browser: Browser;
   url: string;
@@ -355,17 +383,22 @@ async function visiting(
     DATABASE_URL: "postgres://nobody@nowhere:5432/unused",
     AUTH_SECRET: "a-secret-that-is-at-least-32-characters-long",
     ...(basePath === "" ? {} : { BASE_PATH: basePath }),
-    ...environment,
+    ...(options.cabinet ?? {}),
   });
   const { identity, forgetMerchant, rows } = await withIdentity(config, async (message) => {
     mails.push(message);
   });
   const app = buildApp(config, {
-    identity,
-    ...(registrar === undefined ? {} : { registrar }),
-    gatewayFor: (key: string) => {
-      const real = gatewayFor(gatewayUrl, key);
-      return client === undefined ? real : client(real);
+    identity: options.identity === undefined ? identity : options.identity(identity),
+    ...(options.registrar === undefined ? {} : { registrar: options.registrar }),
+    // Built from the configured address and given the deadline it was asked
+    // for, so that a test which points the cabinet somewhere else — at nothing
+    // at all, or at a server that never answers — is answered the way a
+    // deployment would be, and so that how long the cabinet is willing to wait
+    // is its own decision and not this seam's.
+    gatewayFor: (key: string, answerWithinMs?: number) => {
+      const real = gatewayFor(config.gatewayUrl, key, answerWithinMs);
+      return options.client === undefined ? real : options.client(real);
     },
   });
   // On the address it is called at, rather than on the wildcard: the gateway's
@@ -3702,4 +3735,210 @@ describe("what the cabinet writes down about what people do", () => {
     expect(said).not.toContain("hunter2-typed-in-the-wrong-box");
     expect(said).toContain(PERSON);
   });
+});
+
+describe("the key the cabinet signs in with", () => {
+  /**
+   * A merchant who registered for themselves, whose row holds a real key made
+   * for a cabinet.
+   *
+   * Every other account in this file was seeded with the harness's own key,
+   * which is one of the merchant's own — the shape a deployment only reaches
+   * when somebody at a terminal made the account, and one the gateway refuses
+   * both of these calls to. So these tests go in through the form, against the
+   * real gateway, and what comes back onto the row is the real thing.
+   */
+  const aRegisteredMerchant = async (over: Starting = {}): Promise<Running> => {
+    const running = await started({
+      gateway: { REGISTRATION_INVITATION: INVITATION, ...over.gateway },
+      ...over,
+    });
+    const made = await running.browser.post("/register", { ...FRESH, invitation: INVITATION });
+    if (made.status !== 303) {
+      throw new Error(`the registration did not go through: ${made.status}`);
+    }
+    return running;
+  };
+
+  /** The key the cabinet would call as this person with, off their row. */
+  const keyOnTheRowOf = (email: string): string => {
+    const row = (open?.rows.cabinet_accounts ?? []).find((one) => one.email === email);
+    const key = row?.merchantKey;
+    if (typeof key !== "string" || key === "") {
+      throw new Error(`there is no account for ${email} with a key on it`);
+    }
+    return key;
+  };
+
+  /**
+   * Whether the gateway still takes that key, asked of the gateway itself.
+   *
+   * Not "is it on a row" and not "did the cabinet think it swept": a key is
+   * alive or dead at the gateway, and that is the fact both halves of this turn
+   * on — the one that got somebody in has to work, and the one before it has to
+   * have stopped.
+   */
+  const theGatewayTakes = async (key: string): Promise<boolean> =>
+    (await gatewayFor(open?.gateway.url ?? "", key).keys()).ok;
+
+  /** Everything the process said while `during` ran. */
+  const said = async (during: () => Promise<void>): Promise<string> => {
+    const lines: string[] = [];
+    const collect = (...parts: unknown[]) => lines.push(parts.map(String).join(" "));
+    const log = vi.spyOn(console, "log").mockImplementation(collect);
+    const error = vi.spyOn(console, "error").mockImplementation(collect);
+    try {
+      await during();
+    } finally {
+      log.mockRestore();
+      error.mockRestore();
+    }
+    return lines.join("\n");
+  };
+
+  it("writes a key made a moment ago onto the row, over the one that was there", async () => {
+    // ADR-0014 §2. A copy of this cabinet's database is a set of keys, and this
+    // is what decides how long they are worth having: until the person they
+    // belong to signs in again.
+    const { another } = await aRegisteredMerchant();
+    const before = keyOnTheRowOf(FRESH.email);
+
+    const device = await another();
+    await device.signIn(FRESH.email, FRESH.password);
+
+    const now = keyOnTheRowOf(FRESH.email);
+    expect(now).not.toBe(before);
+    // And it is a key, not a string that looks like one: the gateway takes it.
+    expect(await theGatewayTakes(now)).toBe(true);
+  });
+
+  it("takes the key that was on the row away, and spares the one that replaced it", async () => {
+    // The sweep is the half that makes the replacement worth anything: a key
+    // left behind at every sign-in is a pile of live credentials nobody is
+    // holding. What it must never take is the key it was made with, which is
+    // the one now on the row.
+    const { another } = await aRegisteredMerchant();
+    const before = keyOnTheRowOf(FRESH.email);
+
+    const device = await another();
+    await device.signIn(FRESH.email, FRESH.password);
+
+    expect(await theGatewayTakes(before)).toBe(false);
+    expect(await theGatewayTakes(keyOnTheRowOf(FRESH.email))).toBe(true);
+  });
+
+  it("leaves the browser that was already signed in able to go on working", async () => {
+    // Two devices, one account. The key is read off the row on every request
+    // rather than kept anywhere, so the session that was open before the swap
+    // reaches the gateway with the key the swap wrote — it does not have to
+    // notice that anything happened.
+    const { browser, another } = await aRegisteredMerchant();
+
+    const device = await another();
+    await device.signIn(FRESH.email, FRESH.password);
+
+    const seen = await browser.get("/keys");
+    expect(seen.status).toBe(200);
+  });
+
+  it("lets a person in on the key they had when no fresh one could be made", async () => {
+    // The first of the three steps, cut. Nothing was made, so nothing is
+    // written and nothing is swept: they sign in as they always did, and the
+    // gateway being unwell is not allowed to be a locked door.
+    const { another } = await aRegisteredMerchant({
+      client: (real) => ({
+        ...real,
+        issueCabinetKey: async () => ({ ok: false, status: 0, why: "nothing answered" }),
+      }),
+    });
+    const before = keyOnTheRowOf(FRESH.email);
+
+    const device = await another();
+    const inside = await device.signIn(FRESH.email, FRESH.password);
+
+    expect(inside.status).toBe(200);
+    expect(keyOnTheRowOf(FRESH.email)).toBe(before);
+    expect(await theGatewayTakes(before)).toBe(true);
+  });
+
+  it("sweeps nothing when the fresh key could not be written onto the row", async () => {
+    // The second step, cut, and the one arrangement that can lock somebody out
+    // of their own cabinet. The row still names the key they came in with; a
+    // sweep made with the new one would remove exactly that key, and the next
+    // request from any device would be refused with nothing to do about it.
+    // So the sweep does not happen at all, and the key nobody wrote down is
+    // left for the next sign-in that gets further than this one.
+    const { another } = await aRegisteredMerchant({
+      identity: (real) => ({ ...real, replaceMerchantKey: async () => false }),
+    });
+    const before = keyOnTheRowOf(FRESH.email);
+
+    const device = await another();
+    const inside = await device.signIn(FRESH.email, FRESH.password);
+
+    expect(inside.status).toBe(200);
+    expect(keyOnTheRowOf(FRESH.email)).toBe(before);
+    expect(await theGatewayTakes(before)).toBe(true);
+    // And the screens really are drawn, which is the same fact from the other
+    // side: the cabinet reaches the gateway with what is on the row.
+    expect((await device.get("/keys")).status).toBe(200);
+  });
+
+  it("keeps the fresh key when the sweep is the step that failed", async () => {
+    // The third step, cut. The row names the key that was just made and it
+    // works; the older ones are still alive, which is the state every sign-in
+    // before this one left behind anyway, and the next sweep clears them.
+    const { another } = await aRegisteredMerchant({
+      client: (real) => ({
+        ...real,
+        forgetCabinetKeys: async () => ({ ok: false, status: 0, why: "nothing answered" }),
+      }),
+    });
+    const before = keyOnTheRowOf(FRESH.email);
+
+    const device = await another();
+    const inside = await device.signIn(FRESH.email, FRESH.password);
+
+    expect(inside.status).toBe(200);
+    const now = keyOnTheRowOf(FRESH.email);
+    expect(now).not.toBe(before);
+    expect(await theGatewayTakes(now)).toBe(true);
+  });
+
+  it("signs a person in with the gateway not there at all, and writes down why", async () => {
+    // Nothing about signing in belongs to the gateway: the password, the
+    // session and the row are all this cabinet's. A person shut out of their
+    // own account because a service they never asked about is down would be
+    // this replacement costing more than it buys. The line in the log is how
+    // anybody finds out the key has stopped being replaced.
+    const { browser } = await started({ cabinet: { GATEWAY_URL: "http://127.0.0.1:1" } });
+
+    let posted: Visit | null = null;
+    const written = await said(async () => {
+      posted = await browser.post("/sign-in", { email: PERSON, password: PASSWORD });
+    });
+
+    expect(posted?.status).toBe(303);
+    expect(keyOnTheRowOf(PERSON)).toBe(KEY);
+    expect(written).toContain(PERSON);
+    expect(written).toMatch(/key/i);
+    // And what it says about it is never the key itself.
+    expect(written).not.toContain(KEY);
+  });
+
+  it("does not spend a screen's worth of waiting on a gateway that says nothing", async () => {
+    // The worst case: the connection is accepted and then held open. A screen
+    // gets ten seconds before the cabinet gives up, because somebody is looking
+    // at it and would rather wait than reload. A sign-in is not that — the two
+    // calls behind it are the cabinet looking after its own credential, and
+    // nobody asked for them — so the wait is its own, and shorter.
+    const { browser } = await started({ cabinet: { GATEWAY_URL: await silentGateway() } });
+
+    const began = Date.now();
+    const posted = await browser.post("/sign-in", { email: PERSON, password: PASSWORD });
+    const took = Date.now() - began;
+
+    expect(posted.status).toBe(303);
+    expect(took).toBeLessThan(9_000);
+  }, 30_000);
 });
