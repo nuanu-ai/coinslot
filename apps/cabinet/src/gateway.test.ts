@@ -9,11 +9,12 @@
  * The screen a merchant is holding at that moment may be the one that stops
  * their selling, so a call with no deadline is a merchant who cannot stop.
  *
- * The second is the four calls ADR-0014 adds: registering, listing keys,
- * issuing one and revoking one. The screens above them are driven in
- * `server.test.ts` against a client the test supplies, so nothing there ever
- * sends a request — what a `POST /v0/keys` actually puts on the wire, and what
- * the cabinet does with an answer the contract refuses, is held here instead.
+ * The second is the six calls ADR-0014 adds: registering, listing keys,
+ * issuing one and revoking one, and the two the cabinet makes about the key it
+ * signs in with. The screens above them are driven in `server.test.ts` against
+ * a client the test supplies, so nothing there ever sends a request — what a
+ * `POST /v0/keys` actually puts on the wire, and what the cabinet does with an
+ * answer the contract refuses, is held here instead.
  *
  * The server on the other end records what arrived and answers what the test
  * says. What it is not is a gateway: it agrees with whatever is sent, so these
@@ -475,5 +476,85 @@ describe("the calls a merchant makes about their keys", () => {
     });
 
     await expect(gatewayFor(url, KEY).keys()).rejects.toThrow();
+  });
+});
+
+describe("the two calls about the key the cabinet itself holds", () => {
+  it("asks for a fresh one at the cabinet's own address, with the key it is holding now", async () => {
+    // Made with the key on the account row rather than with anything else,
+    // because the gateway answers this only to a key of that kind — and
+    // because the whole point is a merchant asking for another of their own.
+    const { url, arrived } = await recordingServer(200, { secret: "the-next-one" });
+
+    const asked = await gatewayFor(url, KEY).issueCabinetKey();
+
+    expect(arrived[0]?.method).toBe("POST");
+    expect(arrived[0]?.path).toBe("/v0/keys/cabinet");
+    expect(arrived[0]?.key).toBe(`Bearer ${KEY}`);
+    if (!asked.ok) {
+      throw new Error(`no key was made: ${asked.why}`);
+    }
+    // The secret itself and not the object it arrived in: what the caller does
+    // with this is write it onto a row, and a caller reaching through a wrapper
+    // is a caller to edit the day the wrapper grows a field.
+    expect(asked.document).toBe("the-next-one");
+  });
+
+  it("refuses an answer with no secret in it rather than writing an empty key onto a row", async () => {
+    // The one field this call exists for. An answer without it, taken at its
+    // word, would put an empty string where the credential goes — and the next
+    // request that person makes would meet a 401 with nothing on the page to
+    // say why.
+    const { url } = await recordingServer(200, {});
+
+    await expect(gatewayFor(url, KEY).issueCabinetKey()).rejects.toThrow();
+  });
+
+  it("sweeps the rest away at the same address, and says how many went", async () => {
+    // The sweep takes no parameters: the rule is the route's own, "all but the
+    // key on this call", and a cabinet that named which ones to remove could
+    // name the one it is holding.
+    const { url, arrived } = await recordingServer(200, { removed: 2 });
+
+    const swept = await gatewayFor(url, KEY).forgetCabinetKeys();
+
+    expect(arrived[0]?.method).toBe("DELETE");
+    expect(arrived[0]?.path).toBe("/v0/keys/cabinet");
+    expect(arrived[0]?.key).toBe(`Bearer ${KEY}`);
+    expect(arrived[0]?.body).toBe("");
+    if (!swept.ok) {
+      throw new Error(`nothing was swept: ${swept.why}`);
+    }
+    expect(swept.document).toBe(2);
+  });
+
+  it("refuses an answer to the sweep that does not say how many went", async () => {
+    // Zero and "the field was dropped" are different news, and only one of them
+    // means there was nothing else to remove.
+    const { url } = await recordingServer(200, {});
+
+    await expect(gatewayFor(url, KEY).forgetCabinetKeys()).rejects.toThrow();
+  });
+
+  it("carries through the gateway's refusal to make one of these for a merchant's own key", async () => {
+    // The account row can hold a key of the merchant's own — somebody at a
+    // terminal put one there — and the gateway refuses both of these calls to
+    // it by name. The refusal has to arrive as a refusal, because the caller's
+    // next move turns on it: nothing was made, so nothing may be swept.
+    const { url } = await recordingServer(403, {
+      error: {
+        code: "not_a_cabinet_key",
+        message: "this call is made with the key a cabinet signs in with, and that is not one",
+      },
+    });
+
+    const refused = await gatewayFor(url, KEY).issueCabinetKey();
+
+    expect(refused.ok).toBe(false);
+    if (refused.ok) {
+      throw new Error("a refused call answered as though a key had been made");
+    }
+    expect(refused.status).toBe(403);
+    expect(refused.why).toContain("that is not one");
   });
 });
