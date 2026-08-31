@@ -4044,6 +4044,12 @@ describe("the key the cabinet signs in with", () => {
     //
     // What is asserted is not who won. It is the only thing anybody is locked
     // out by: the key the row names opens the gateway's door.
+    //
+    // Its own timeout, and shorter than the file's, for the reason the test
+    // beside it has one: the two sign-ins are held in front of each other on
+    // purpose, so an arrangement that never lets one of them go fails by
+    // waiting rather than by an assertion. The gateway is in this process, so
+    // ten seconds is not a slow machine — it is a deadlock.
     const first = aStep();
     const second = aStep();
     let stopped = 0;
@@ -4087,7 +4093,7 @@ describe("the key the cabinet signs in with", () => {
     await signingInB;
 
     expect(await theGatewayTakes(keyOnTheRowOf(FRESH.email))).toBe(true);
-  }, 30_000);
+  }, 10_000);
 
   it("does not call a key written when there was no account to write it onto", async () => {
     // What forgetting a key is allowed to happen after. The store takes a write for a
