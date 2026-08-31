@@ -27,6 +27,22 @@ const runCli = (channel: string, input: string) =>
     input,
   });
 
+/** Values a public preflight diagnostic must never repeat from a fixture. */
+const expectNoFixtureSecrets = (stderr: string, resolved: ResolvedCompose): void => {
+  const values = [
+    resolved.services.gateway.environment?.SANDBOX_MERCHANT_KEY,
+    resolved.services.gateway.environment?.REGISTRATION_INVITATION,
+    resolved.services.gateway.environment?.CDP_API_KEY_ID,
+    resolved.services.gateway.environment?.CDP_API_KEY_SECRET,
+    resolved.services.cabinet.environment?.AUTH_SECRET,
+  ];
+  for (const value of values) {
+    if (value !== undefined && value !== "") {
+      expect(stderr).not.toContain(value);
+    }
+  }
+};
+
 /** The document with one service's one variable changed, or taken away. */
 const withEnv = (
   resolved: ResolvedCompose,
@@ -253,6 +269,32 @@ describe("the release entry point", () => {
     expect(result.status).toBe(65);
     expect(result.stdout).toBe("");
     expect(result.stderr).toContain("preview is not a release channel");
+  });
+
+  it("refuses a cabinet public origin that diverges from the gateway", () => {
+    // Deleting the cabinet origin check would send a signed-in merchant to the wrong public door.
+    const wrong = withEnv(TEST_CHANNEL, "cabinet", "PUBLIC_BASE_URL", "http://localhost:8080");
+    const result = runCli("test", JSON.stringify(wrong));
+    const stderr = result.stderr ?? "";
+    expect(result.status).toBe(65);
+    expect(result.stdout ?? "").toBe("");
+    expect(stderr).toContain("cabinet: PUBLIC_BASE_URL");
+    expectNoFixtureSecrets(stderr, TEST_CHANNEL);
+  });
+
+  it("refuses two otherwise valid public bindings", () => {
+    // Deleting the one-binding rule would publish a second public door outside the edge contract.
+    const wrong = structuredClone(TEST_CHANNEL);
+    wrong.services.web.ports = [
+      { mode: "ingress", host_ip: "10.20.10.20", target: 443, published: "8443", protocol: "tcp" },
+      { mode: "ingress", host_ip: "10.20.10.20", target: 443, published: "8443", protocol: "tcp" },
+    ];
+    const result = runCli("test", JSON.stringify(wrong));
+    const stderr = result.stderr ?? "";
+    expect(result.status).toBe(65);
+    expect(result.stdout ?? "").toBe("");
+    expect(stderr).toContain("web: the published bindings");
+    expectNoFixtureSecrets(stderr, TEST_CHANNEL);
   });
 
   it("refuses malformed JSON without printing input", () => {
