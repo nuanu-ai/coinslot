@@ -182,14 +182,15 @@ if (process.argv[1]?.endsWith("preflight.mjs")) {
     chunks.push(chunk);
   }
 
-  let problems;
+  let resolved;
   try {
-    problems = problemsWith(channel, JSON.parse(Buffer.concat(chunks).toString("utf8")));
-  } catch (thrown) {
-    console.error(`preflight: the resolved configuration did not read as JSON — ${thrown}`);
+    resolved = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  } catch {
+    console.error("preflight: the resolved configuration did not read as JSON");
     process.exit(65);
   }
 
+  const problems = problemsWith(channel, resolved);
   if (problems.length > 0) {
     console.error(`preflight: the ${channel} channel is not what it claims to be:`);
     for (const problem of problems) {

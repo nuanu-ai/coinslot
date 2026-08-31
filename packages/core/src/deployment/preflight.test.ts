@@ -8,6 +8,7 @@
  * pretended about here.
  */
 
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { ResolvedCompose } from "./preflight.d.mts";
@@ -18,6 +19,13 @@ const fixture = (name: string): ResolvedCompose =>
 
 const TEST_CHANNEL = fixture("test-channel");
 const LIVE_CHANNEL = fixture("live-channel");
+
+/** The release entry point, run in a separate Node process with controlled stdin. */
+const runCli = (channel: string, input: string) =>
+  spawnSync(process.execPath, [new URL("./preflight.mjs", import.meta.url).pathname, channel], {
+    encoding: "utf8",
+    input,
+  });
 
 /** The document with one service's one variable changed, or taken away. */
 const withEnv = (
@@ -113,6 +121,12 @@ describe("the cabinet was handed the gateway's pair", () => {
   it("refuses a cabinet on a different chain from its gateway", () => {
     const wrong = withEnv(TEST_CHANNEL, "cabinet", "PAYMENT_NETWORK", "eip155:8453");
     expect(problemsWith("test", wrong)).toContainEqual(expect.stringMatching(/cabinet/));
+  });
+
+  it("refuses a cabinet whose public origin does not name the gateway's door", () => {
+    // Prevents a merchant who signed into the cabinet being sent to a different public site.
+    const wrong = withEnv(TEST_CHANNEL, "cabinet", "PUBLIC_BASE_URL", "http://localhost:8080");
+    expect(problemsWith("test", wrong)).toContainEqual(expect.stringMatching(/PUBLIC_BASE_URL/));
   });
 });
 
@@ -219,5 +233,35 @@ describe("no laptop default survived", () => {
       { mode: "ingress", target: 443, published: "8443", protocol: "tcp" },
     ];
     expect(problemsWith("test", everywhere)).toContainEqual(expect.stringMatching(/8443/));
+  });
+
+  it("refuses two otherwise correct public bindings", () => {
+    // Prevents a release from publishing a second public door that the edge never owns.
+    const wrong = structuredClone(TEST_CHANNEL);
+    wrong.services.web.ports = [
+      { mode: "ingress", host_ip: "10.20.10.20", target: 443, published: "8443", protocol: "tcp" },
+      { mode: "ingress", host_ip: "10.20.10.20", target: 443, published: "8443", protocol: "tcp" },
+    ];
+    expect(problemsWith("test", wrong)).toContainEqual(expect.stringMatching(/8443/));
+  });
+});
+
+describe("the release entry point", () => {
+  it("refuses an unknown channel without starting a release", () => {
+    // Prevents a typo from being treated as a valid channel with a guessed policy.
+    const result = runCli("preview", JSON.stringify(TEST_CHANNEL));
+    expect(result.status).toBe(65);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("preview is not a release channel");
+  });
+
+  it("refuses malformed JSON without printing input", () => {
+    // Prevents a parser diagnostic from copying a credential fragment into the release log.
+    const sentinel = "synthetic-credential-fragment";
+    const result = runCli("live", `{"credential":"${sentinel}"`);
+    expect(result.status).toBe(65);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe("preflight: the resolved configuration did not read as JSON\n");
+    expect(result.stderr).not.toContain(sentinel);
   });
 });

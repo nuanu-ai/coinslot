@@ -14,7 +14,6 @@
       "!portal",
       "!spikes",
       "!apps/gateway/drizzle",
-      "!packages/core/src/deployment/fixtures",
       "!pnpm-lock.yaml"
     ]
   },
@@ -24,7 +23,12 @@
     "indentWidth": 2,
     "lineWidth": 100,
     "lineEnding": "lf",
-    "formatWithErrors": false
+    "formatWithErrors": false,
+    "includes": [
+      "**",
+      "!packages/core/src/deployment/fixtures/test-channel.json",
+      "!packages/core/src/deployment/fixtures/live-channel.json"
+    ]
   },
   "javascript": {
     "formatter": {
