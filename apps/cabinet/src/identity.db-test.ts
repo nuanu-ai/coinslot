@@ -274,6 +274,44 @@ if (databaseUrl === null) {
       expect(rows[0]?.merchant_key).toBe(MERCHANT.key);
     });
 
+    it("replaces the key on a row, and says so from what the write answered", async () => {
+      // Every sign-in does this, and what it turns on is a claim about drizzle
+      // rather than about the memory store the rest of the suite runs on: that
+      // an update answers with the row it wrote, carrying the columns this
+      // cabinet added to the component's model. If it did not, the write would
+      // land and be reported as though it had not, the key would never be
+      // replaced on a deployed server, and the only sign of it would be a line
+      // in the log at every sign-in. So the answer is checked against the
+      // column, and both halves are read here.
+      const identity = identityOn();
+      await identity.register("dmitry@example.com", PASSWORD, MERCHANT);
+      const who = await identity.byEmail("dmitry@example.com");
+
+      const written = await identity.replaceMerchantKey(who?.id ?? "", "the-next-key-long-enough");
+
+      expect(written).toBe(true);
+      const { rows } = await pool.query<{ merchant_key: string; merchant_id: string }>(
+        "select merchant_key, merchant_id from cabinet_accounts where email = $1",
+        ["dmitry@example.com"],
+      );
+      expect(rows[0]?.merchant_key).toBe("the-next-key-long-enough");
+      // And the merchant beside it is untouched: this is the same merchant,
+      // reached with another of their keys.
+      expect(rows[0]?.merchant_id).toBe(MERCHANT.id);
+    });
+
+    it("does not report a key written onto a row the database does not have", async () => {
+      // What the sweep is allowed to happen after. An update that matched
+      // nothing must not read as a key written down, because the sweep that
+      // would follow removes every cabinet key but the one it was made with —
+      // and that one is not on any row.
+      const identity = identityOn();
+
+      expect(await identity.replaceMerchantKey("no-such-account", "the-next-key-long-enough")).toBe(
+        false,
+      );
+    });
+
     it("refuses a second account at one address, because the database says so", async () => {
       // Not because something looked first: a check ahead of an insert is two
       // statements with a gap between them, and two registrations at once fit
