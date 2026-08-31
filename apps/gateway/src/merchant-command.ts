@@ -331,7 +331,7 @@ async function listKeys(
   const widest = Math.max(...keys.map((key) => key.id.length));
   for (const key of keys) {
     say(
-      `${key.id.padEnd(widest)}  ${dayOf(key.createdAt)}  ${standingOf(key)}  ${madeFor(key)}  ${key.label}`,
+      `${key.id.padEnd(widest)}  ${dayOf(key.createdAt)}  ${standingOf(key)}  ${madeFor(key)}  ${lastCallOf(key)}  ${key.label}`,
     );
   }
   return 0;
@@ -384,6 +384,35 @@ function standingOf(key: StoredKey): string {
  */
 function madeFor(key: StoredKey): string {
   return key.purpose === "cabinet" ? "cabinet " : "own code";
+}
+
+/**
+ * When anything last called with this key, in a phrase wide enough for all
+ * three answers.
+ *
+ * The operator asks this about the keys a merchant never sees. A merchant's own
+ * screen leaves the key their cabinet signs in with off the list, so "has that
+ * cabinet stopped signing in" — the thing worth knowing before a row is cleared
+ * away — can be read nowhere but here.
+ *
+ * The two blanks are different answers and are printed as different sentences,
+ * for the reason the screen does it: a key nothing has called since it was made
+ * is idle, and a key made before any of this was recorded is one nobody looked
+ * at. Only the first is something to act on. The second cannot arise from a key
+ * this code wrote — every key it writes says its use is recorded — so it is
+ * reachable only for rows the column found already there, and no test in this
+ * repository can produce one. That is the honest state of it rather than a gap:
+ * the day it stops being reachable at all is the day the last such row goes.
+ *
+ * A day rather than an instant, like the two columns before it. The mark is
+ * written every few minutes at best, so the seconds it carries would be a
+ * precision this column does not have.
+ */
+function lastCallOf(key: StoredKey): string {
+  if (key.lastUsedAt !== null) {
+    return `called ${dayOf(key.lastUsedAt)}`;
+  }
+  return key.useRecordedSinceMade ? "never called     " : "no record of use ";
 }
 
 const dayOf = (instant: number): string => new Date(instant).toISOString().slice(0, 10);
