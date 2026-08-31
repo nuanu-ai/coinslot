@@ -7,7 +7,7 @@
  * key, and without touching anybody's session in this cabinet — and ADR-0014 §5
  * brings that from a command somebody runs at a terminal to a screen.
  *
- * Two things about the list are decisions rather than layout. The revoked keys
+ * Three things about the list are decisions rather than layout. The revoked keys
  * are on it, because "which key did I turn off, and when" is a question
  * somebody has on exactly this screen and a list of only the working ones
  * answers it with silence. And every row on it is a key the merchant asked for:
@@ -16,7 +16,10 @@
  * that could take a merchant's cabinet away from them. What the gateway does
  * say beside the list, as `this_call`, is the identifier of that key — for a
  * caller reaching the API with a key of the merchant's own, which is what needs
- * to know. This screen is not one of those and does not read it.
+ * to know. This screen is not one of those and does not read it. The third is
+ * the last call each key was seen on, which is the thing a merchant is here to
+ * find out and the one place this screen can mislead them; `lastCall` below is
+ * where the two ways of having nothing to show are kept apart.
  *
  * An empty list follows from the same fact and is the ordinary state of a
  * merchant who has just registered: they have a cabinet because they signed
@@ -39,10 +42,50 @@ const keyRow = (base: string, entry: MerchantKey): string => {
   return `<tr class="${revoked ? "off" : ""}">
 <td><div class="title">${escaped(entry.label)}</div><div class="under mono">${escaped(entry.id)}</div></td>
 <td class="quiet">${escaped(moment(entry.created_at))}</td>
+<td class="quiet">${escaped(lastCall(entry))}</td>
 <td class="quiet">${revoked ? escaped(`Revoked ${moment(entry.disabled_at ?? "")}`) : "Works"}</td>
 <td class="control">${keyControl(base, entry)}</td>
 </tr>`;
 };
+
+/**
+ * When something last called with this key, in the words a merchant reads.
+ *
+ * This is the column the screen is worth opening for — a merchant with three
+ * keys is asking which of them is safe to turn off, and nothing else on the row
+ * answers that. So it is also the column where being wrong costs the most, and
+ * two of the three answers below are the same blank on the wire.
+ *
+ * A key made since the gateway started writing this down and never called is
+ * idle: nobody is using it, and that is a fact to revoke on. A key made before
+ * then carries the same blank for a completely different reason — nothing was
+ * being recorded — and the honest word for that is not "never". Printed as one,
+ * the screen would be handing over a confident sentence nobody checked, and the
+ * key revoked on the strength of it may be the one in the merchant's worker.
+ * They fill in on their own as the old keys are used again, and until then this
+ * says which kind of blank it is looking at.
+ *
+ * The instant goes through `moment` like every other instant on these screens.
+ * A second way of writing a time would put two formats on one page and a
+ * merchant comparing them.
+ */
+const lastCall = (entry: MerchantKey): string => {
+  if (entry.last_used_at !== null) {
+    return moment(entry.last_used_at);
+  }
+  return entry.use_recorded_since_made ? NO_CALLS_YET : NOT_RECORDED;
+};
+
+/**
+ * The two blanks, named once because the note under the table quotes them.
+ *
+ * Written out in both places they would drift, and the drift is not cosmetic:
+ * the note is what tells a merchant that one of these is a fact about their key
+ * and the other is a fact about us. A word in the table that the explanation
+ * below no longer mentions is a word with nothing explaining it.
+ */
+const NO_CALLS_YET = "No calls yet";
+const NOT_RECORDED = "Not recorded";
 
 /**
  * What a merchant can do to one key from this list, which is sometimes nothing.
@@ -104,13 +147,21 @@ ${
   none
     ? '<div class="scroller"><p class="empty">No keys yet.</p></div>'
     : `<div class="scroller"><table>
-<thead><tr><th>Name</th><th>Made</th><th>State</th><th></th></tr></thead>
+<thead><tr><th>Name</th><th>Made</th><th>Last call</th><th>State</th><th></th></tr></thead>
 <tbody>${keys.keys.map((entry) => keyRow(base, entry)).join("")}</tbody>
 </table></div>
   <div class="note"><span class="mark">&#8627;</span><span>${escaped(
     "This is what the gateway answered with, and its answer does not say whether it is all of" +
       " them. Nothing pages this list yet and nothing here counts your keys for you — the number" +
       " above counts the rows below and nothing more.",
+  )}</span></div>
+  <div class="note"><span class="mark">&#8627;</span><span>${escaped(
+    "The last call is written down every few minutes rather than on every one, so a key" +
+      ` something is using right now shows a time that far behind. "${NO_CALLS_YET}" means` +
+      ` nothing has called with that key since it was made. "${NOT_RECORDED}" is a different` +
+      " answer and it is not about the key: that key was made before we started writing this" +
+      " down, so we do not know whether anything has been using it. Those rows show a time as" +
+      " soon as the key is used again.",
   )}</span></div>`
 }
   <div class="lede">
