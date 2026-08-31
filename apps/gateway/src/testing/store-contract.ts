@@ -920,6 +920,72 @@ export function describeStore(name: string, open: () => Promise<Store>): void {
         expect((await store.workingKey("d4"))?.id).toBe("mk_b");
       });
 
+      it("leaves its digest free once it is gone, which revoking one does not", async () => {
+        // What tells a removal from a revocation on the one side a caller can
+        // see: a revoked key holds its digest for good — writing that secret
+        // again is refused, which is what keeps the sandbox's seed from issuing
+        // a second key for a key somebody turned off — and a key that was swept
+        // away holds nothing. Without this the two stores could disagree about
+        // it and both would look right: the door answers nothing for a digest
+        // either way, and only a write finds out.
+        const store = await twoMerchants();
+        await store.addKey(
+          {
+            id: "mk_gone",
+            merchantId: A,
+            label: "an older sign-in",
+            digest: "d1",
+            purpose: "cabinet",
+          },
+          1_000,
+        );
+        await store.addKey(
+          {
+            id: "mk_off",
+            merchantId: A,
+            label: "a worker",
+            digest: "d2",
+            purpose: "merchant_code",
+          },
+          2_000,
+        );
+        await store.addKey(
+          { id: "mk_now", merchantId: A, label: "this sign-in", digest: "d3", purpose: "cabinet" },
+          3_000,
+        );
+        await store.disableKey("mk_off", 4_000);
+
+        await store.forgetCabinetKeysOf(A, "mk_now");
+
+        // The swept key's digest is nobody's, so the same secret can be written
+        // again and it opens the door as the new key it now is.
+        await store.addKey(
+          {
+            id: "mk_again",
+            merchantId: A,
+            label: "a worker",
+            digest: "d1",
+            purpose: "merchant_code",
+          },
+          5_000,
+        );
+        expect((await store.workingKey("d1"))?.id).toBe("mk_again");
+
+        // The revoked key's is still its own, and writing it again is refused.
+        await expect(
+          store.addKey(
+            {
+              id: "mk_twice",
+              merchantId: A,
+              label: "a worker",
+              digest: "d2",
+              purpose: "merchant_code",
+            },
+            6_000,
+          ),
+        ).rejects.toThrow(/a key with that digest is already written down/);
+      });
+
       it("is swept a second time with nothing left to sweep", async () => {
         // A retry after a dropped connection is safe and says so: nought is an
         // answer rather than a failure, and it is also the ordinary answer for
