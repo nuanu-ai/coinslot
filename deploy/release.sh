@@ -6,11 +6,11 @@
 #
 # The line a release crosses is its first resident migration, which happens
 # inside `up` before the gateway and the cabinet report healthy. A release that
-# fails before that point — preflight, build, the scratch suite — has changed
-# nothing. A release that fails after it has already moved the schema, whatever
-# else went wrong, so a failed health check is not a release that did not
-# happen: it is one that left the database ahead of whichever application is
-# running.
+# fails before that point — preflight, build, the scratch suite — has not
+# changed the resident deployment database or its schema. A release that fails
+# after it has already moved the schema, whatever else went wrong, so a failed
+# health check is not a release that did not happen: it is one that left the
+# database ahead of whichever application is running.
 #
 # The repair is to deliver a known commit again. What that costs is that a
 # schema which has moved forward is not carried back by it, which is the price
@@ -71,9 +71,6 @@ fi
 
 readonly environment_file="${deployment}/.env"
 
-[[ -f "${environment_file}" ]] || fail 'server .env is missing'
-[[ "$(stat -c '%a' "${environment_file}")" == '600' ]] || fail 'server .env is not 0600'
-
 # One lock for both channels, not one each. They share a Docker daemon, a build
 # cache and a host, and the reset ceremony in
 # docs/research/24-two-environments-runbook.md holds this same file for its
@@ -91,8 +88,16 @@ mkdir -p "${HOME}/.cache"
 exec 9>"${HOME}/.cache/coinslot-deploy.lock"
 flock -w 600 9 || fail 'another release held the lock for ten minutes'
 
+[[ -f "${environment_file}" ]] || fail 'server .env is missing'
+[[ "$(stat -c '%a' "${environment_file}")" == '600' ]] || fail 'server .env is not 0600'
+
 incoming="$(mktemp -d "${HOME}/.cache/coinslot-release.XXXXXX")"
-trap 'rm -rf -- "${incoming}"' EXIT
+cleanup_incoming() {
+  local status=$?
+  rm -rf -- "${incoming}" || true
+  exit "${status}"
+}
+trap cleanup_incoming EXIT
 archive="${incoming}/release.tar"
 payload="${incoming}/payload"
 mkdir "${payload}"
@@ -158,8 +163,14 @@ scratch_compose=(
   docker compose --project-name "${scratch_project}" --env-file "${environment_file}"
   "${compose_files[@]}"
 )
-scratch_down() { "${scratch_compose[@]}" down -v --remove-orphans >/dev/null 2>&1 || true; }
-trap 'scratch_down; rm -rf -- "${incoming}"' EXIT
+scratch_down() { "${scratch_compose[@]}" down -v --remove-orphans; }
+cleanup_scratch() {
+  local status=$?
+  scratch_down >/dev/null 2>&1 || true
+  rm -rf -- "${incoming}" || true
+  exit "${status}"
+}
+trap cleanup_scratch EXIT
 
 "${scratch_compose[@]}" up -d --wait postgres
 "${scratch_compose[@]}" run --rm --no-deps --user root \
@@ -178,6 +189,22 @@ compose=(
 )
 "${compose[@]}" config --quiet
 
+write_marker() {
+  local state="$1"
+  local marker="${deployment}/.coinslot-revision"
+  local marker_temporary
+
+  marker_temporary="$(mktemp "${marker}.XXXXXX")" || fail 'could not create the revision marker temporary file'
+  if ! printf '%s status=%s\n' "${released_as}" "${state}" >"${marker_temporary}"; then
+    rm -f -- "${marker_temporary}" || true
+    fail 'could not write the revision marker temporary file'
+  fi
+  if ! mv -f -- "${marker_temporary}" "${marker}"; then
+    rm -f -- "${marker_temporary}" || true
+    fail 'could not replace the revision marker'
+  fi
+}
+
 # The marker is written here, before `up`, and not only after the probes.
 #
 # `up` is where the line is crossed: it runs the resident migration and
@@ -187,9 +214,9 @@ compose=(
 # trying to find out what is running. So the marker says which candidate and
 # how far it got, and "I do not know whether this worked" is a state it can
 # hold rather than one it renders as the previous success.
-printf '%s status=activating\n' "${released_as}" >.coinslot-revision
+write_marker activating
 "${compose[@]}" up -d --wait --remove-orphans
-printf '%s status=activated\n' "${released_as}" >.coinslot-revision
+write_marker activated
 
 # The three surfaces that answer without a session, each of which has to carry
 # the mode this channel is. A probe that asked only whether a banner was
@@ -200,14 +227,14 @@ readonly base="https://${site}:${port}"
 readonly resolve="${site}:${port}:10.20.10.20"
 
 for path in / /docs/ /cabinet/sign-in; do
-  page="$(curl -fsS --max-time 15 --resolve "${resolve}" "${base}${path}")" \
+  page="$(curl --disable -fsS --noproxy '*' --max-time 15 --resolve "${resolve}" "${base}${path}")" \
     || fail "${path} did not answer"
   grep -q "data-coinslot-surface=\"${channel}\"" <<<"${page}" \
     || fail "${path} does not say it is the ${channel} environment"
 done
 
 for path in /healthz /v0/catalog; do
-  curl -fsS --max-time 15 --resolve "${resolve}" "${base}${path}" >/dev/null \
+  curl --disable -fsS --noproxy '*' --max-time 15 --resolve "${resolve}" "${base}${path}" >/dev/null \
     || fail "${path} did not answer"
 done
 
@@ -221,5 +248,5 @@ done
 # released, which is written into the runbook rather than into this script,
 # because a probe of the public name from this host is not a probe of the same
 # journey either.
-printf '%s status=origin-verified\n' "${released_as}" >.coinslot-revision
+write_marker origin-verified
 printf 'deployed=%s channel=%s\n' "${revision}" "${channel}"
