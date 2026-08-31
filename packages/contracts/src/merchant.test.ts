@@ -107,11 +107,15 @@ describe("the keys a merchant holds", () => {
 
   it("names the key this very call was made with", () => {
     // The one fact the list cannot be assembled without. A merchant cannot
-    // disable the key their own cabinet is holding, so a screen that did not
-    // know which key that was would offer a button the route refuses.
+    // disable the key their own call was made with, so a client that did not
+    // know which key that was would offer a button the route refuses. It names
+    // the key on the call and not whichever key some cabinet happens to hold,
+    // which the gateway has no way of knowing — and a caller signed into a
+    // cabinet is named a key that is on none of the rows beside it, because the
+    // kind a cabinet holds is in no merchant's list.
     // Its absence is covered by the loop below, with every other required
     // field; what is here is that it survives a parse and that a blank one is
-    // refused, because an empty identifier names no key and a screen reading it
+    // refused, because an empty identifier names no key and a client reading it
     // would match none of the rows beside it.
     expect(MerchantKeyListSchema.parse(list).this_call).toBe(working.id);
     expect(MerchantKeyListSchema.safeParse({ ...list, this_call: "" }).success).toBe(false);
