@@ -31,6 +31,7 @@
  * testnet settlement.
  */
 
+import { isTestnetChain } from "@coinslot/core";
 import {
   type Facilitator,
   type GatewayConfig,
@@ -44,9 +45,6 @@ import { makeBuyer } from "./buyer.js";
 import { EUROPE_ESIM } from "./cards.js";
 import { bootGateway, SLICE_MERCHANT_KEY, sliceEnv } from "./gateway-harness.js";
 import { startMerchant } from "./merchant.js";
-
-/** Networks where the money is not real. Everything else is treated as mainnet. */
-const TESTNETS = new Set(["eip155:84532", "eip155:11155111", "eip155:80002"]);
 
 /** The CDP x402 facilitator, and the public one that needs no credentials. */
 const CDP_FACILITATOR_URL = "https://api.cdp.coinbase.com/platform/v2/x402";
@@ -133,7 +131,7 @@ async function main(): Promise<void> {
   }
 
   const network = process.env.SMOKE_NETWORK ?? "eip155:84532";
-  if (!TESTNETS.has(network) && process.env.SMOKE_ALLOW_MAINNET !== "1") {
+  if (!isTestnetChain(network) && process.env.SMOKE_ALLOW_MAINNET !== "1") {
     die(
       `${network} is not a known testnet; real money needs an explicit SMOKE_ALLOW_MAINNET=1, which this command is not meant for`,
     );

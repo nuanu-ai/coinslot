@@ -69,6 +69,7 @@
  * facilitator's own words.
  */
 
+import { isTestnetChain } from "@coinslot/core";
 import { x402Client } from "@x402/core/client";
 import { decodePaymentRequiredHeader } from "@x402/core/http";
 import { findDefaultAsset } from "@x402/evm";
@@ -94,9 +95,6 @@ export const DISCOVERY_PAGE_SIZE = 1000;
 
 /** A ceiling on the walk, so a catalog that never ends does not run forever. */
 const MOST_PAGES = 200;
-
-/** Networks where the money is not real. Everything else is treated as mainnet. */
-export const TESTNETS = new Set(["eip155:84532", "eip155:11155111", "eip155:80002"]);
 
 /** The default ceiling on one purchase, and on everything a run may spend. */
 export const DEFAULT_MAX_USD = "0.05";
@@ -942,7 +940,7 @@ function gateOneProduct(
     );
   }
 
-  if (!TESTNETS.has(challenge.network) && !run.settings.allowMainnet) {
+  if (!isTestnetChain(challenge.network) && !run.settings.allowMainnet) {
     return `${challenge.network} is not a known testnet, and real money needs SMOKE_ALLOW_MAINNET=1 said out loud`;
   }
 
