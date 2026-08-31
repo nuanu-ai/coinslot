@@ -19,7 +19,7 @@
 
 import type { Card, MerchantKeyList } from "@nuanu-ai/coinslot-contracts";
 import { decodePaymentRequiredHeader } from "@x402/core/http";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { type Harness, harness, type Served, serve } from "../testing/harness.js";
 import { PAYMENT_REQUIRED_HEADER } from "./x402.js";
 
@@ -54,6 +54,9 @@ afterEach(async () => {
   await open?.served.close();
   await open?.harnessed.stop();
   open = null;
+  // One case silences the log to read it. Left standing it would silence every
+  // case after it in this file, including the ones a failure is reported by.
+  vi.restoreAllMocks();
 });
 
 const bearer = (key: string): Record<string, string> => ({ authorization: `Bearer ${key}` });
@@ -748,6 +751,137 @@ describe("forgetting the key a call was made with", () => {
     expect(await opensTheDoor(served, fresh)).toBe(true);
     // One row went and no more, however many times it was asked for.
     expect(await keysInAll(harnessed, made.merchant_id)).toBe(before - 1);
+  });
+});
+
+/**
+ * The mark the door leaves on the key a call was made with.
+ *
+ * It is the one thing on that screen a merchant cannot work out for
+ * themselves: three keys, and which of them is safe to revoke. Everything below
+ * is about the two ways of getting it wrong. Writing it on every call would put
+ * a database write in front of every purchase for the sake of a column somebody
+ * reads once a week; writing it too rarely, or against the wrong row, would
+ * answer the question wrongly on the one screen where being wrong ends with a
+ * live key revoked.
+ *
+ * The instants are read out of the store rather than off the surface, because
+ * the surface carries the key's own mark and these cases are about a key the
+ * call was not made with.
+ */
+describe("the mark a call leaves on the key it was made with", () => {
+  /** When the store last saw a call on one key, straight off the row. */
+  const markOn = async (
+    harnessed: Harness,
+    merchantId: string,
+    keyId: string,
+  ): Promise<number | null> => {
+    const found = (await harnessed.store.keysOf(merchantId)).find((key) => key.id === keyId);
+    if (found === undefined) {
+      throw new Error(`the key ${keyId} is not among ${merchantId}'s`);
+    }
+    return found.lastUsedAt;
+  };
+
+  /** Another key of one merchant's own, and the row it is. */
+  const spareKey = async (served: Served, key: string, label: string): Promise<string> => {
+    const answered = await served.call("POST", "/v0/keys", {
+      body: { label },
+      headers: bearer(key),
+    });
+    expect(answered.status, JSON.stringify(answered.body)).toBe(200);
+    return (answered.body as { key: { id: string } }).key.id;
+  };
+
+  /** The smallest call there is, made with one key. */
+  const callWith = async (served: Served, key: string): Promise<void> => {
+    const answered = await served.call("GET", "/v0/cards", { headers: bearer(key) });
+    expect(answered.status, JSON.stringify(answered.body)).toBe(200);
+  };
+
+  it("marks the key the call came in on and leaves the merchant's others blank", async () => {
+    // The row and not the merchant. A merchant hands one key to each worker
+    // precisely so that one can be revoked without touching the rest, and a
+    // mark that landed on all of them would say every key is in use — which is
+    // the answer that stops anybody revoking anything.
+    const { served, harnessed } = await started();
+    const { merchant } = harnessed;
+    const idle = await spareKey(served, merchant.key, "the one nobody calls");
+
+    await callWith(served, merchant.key);
+
+    expect(await markOn(harnessed, merchant.id, merchant.keyId)).toBe(harnessed.now());
+    expect(await markOn(harnessed, merchant.id, idle)).toBeNull();
+  });
+
+  it("leaves the mark where it is on a second call made straight after the first", async () => {
+    // The door reads this row on every call behind it, and writing to it on
+    // every call would be a write in front of every purchase for a fact nobody
+    // reads twice a day. So the mark is refreshed only once it has gone stale,
+    // and this is that: the thinning is behaviour rather than an optimisation,
+    // and without a case it would come out in a refactor with nothing failing.
+    const { served, harnessed } = await started();
+    const { merchant } = harnessed;
+
+    await callWith(served, merchant.key);
+    const first = await markOn(harnessed, merchant.id, merchant.keyId);
+
+    harnessed.advance(60_000);
+    await callWith(served, merchant.key);
+
+    expect(first).toBe(harnessed.now() - 60_000);
+    expect(await markOn(harnessed, merchant.id, merchant.keyId)).toBe(first);
+  });
+
+  it("moves the mark on for a call that comes in long after the last one", async () => {
+    // The other half of the same rule, and the half a merchant is looking at.
+    // A mark that stopped moving would answer "last used in August" about a key
+    // somebody's worker is calling with this morning.
+    const { served, harnessed } = await started();
+    const { merchant } = harnessed;
+
+    await callWith(served, merchant.key);
+    harnessed.advance(60 * 60_000);
+    await callWith(served, merchant.key);
+
+    expect(await markOn(harnessed, merchant.id, merchant.keyId)).toBe(harnessed.now());
+  });
+
+  it("does not move one merchant's mark when another merchant calls", async () => {
+    // Two merchants prove what one cannot. A gateway that wrote the mark
+    // without scoping it to the row would pass every assertion a single
+    // merchant can make, and would report a key as busy on the strength of
+    // somebody else's traffic.
+    const { served, harnessed } = await started();
+    const theirs = await harnessed.addMerchant();
+    const ours = harnessed.merchant;
+    await callWith(served, ours.key);
+    const before = await markOn(harnessed, ours.id, ours.keyId);
+
+    harnessed.advance(60 * 60_000);
+    await callWith(served, theirs.key);
+
+    expect(await markOn(harnessed, theirs.id, theirs.keyId)).toBe(harnessed.now());
+    expect(await markOn(harnessed, ours.id, ours.keyId)).toBe(before);
+  });
+
+  it("answers the call when the mark cannot be written, and says so in the log", async () => {
+    // The mark is what somebody reads on a screen; the call behind it is
+    // somebody's purchase. A database that will not take the one must not
+    // refuse the other — and it must not do it quietly either, or the column
+    // goes stale across a deployment with nothing anywhere saying why.
+    const { served, harnessed } = await started();
+    const said = vi.spyOn(console, "error").mockImplementation(() => {});
+    harnessed.store.noteKeyUse = async () => {
+      throw new Error("the database would not take it");
+    };
+
+    const answered = await served.call("GET", "/v0/cards", {
+      headers: bearer(harnessed.merchant.key),
+    });
+
+    expect(answered.status).toBe(200);
+    expect(said).toHaveBeenCalled();
   });
 });
 
