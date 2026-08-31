@@ -25,7 +25,7 @@ import {
   ORDER_STATUSES,
   SELLING_STATES,
   RECOMMENDED_REFUSAL_CODES as WIRE_REFUSAL_CODES,
-} from "@coinslot/contracts";
+} from "@nuanu-ai/coinslot-contracts";
 import { describe, expect, it } from "vitest";
 
 import { MERCHANT_SELLING } from "./create.js";

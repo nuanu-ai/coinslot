@@ -63,8 +63,8 @@
       (`MERCHANT_KEY_HEADER`, `merchantKeyHeaderValue`, `merchantKeyFrom` в
       `packages/contracts/src/api.ts`); гейтвей и SDK импортируют один
       источник, drift ловит тест api.test.ts
-- [x] Сборка публикуемых пакетов → есть. `tsc` собирает `@coinslot/sdk` и
-      `@coinslot/contracts` в `dist` — JS плюс декларации рядом; бандлер не
+- [x] Сборка публикуемых пакетов → есть. `tsc` собирает `@nuanu-ai/coinslot` и
+      `@nuanu-ai/coinslot-contracts` в `dist` — JS плюс декларации рядом; бандлер не
       заводили, потому что исходники и так импортируют друг друга через
       `.js`-спецификаторы, которые `tsc` переносит как есть. Внутри монорепо
       ничего не поменялось: `exports` по-прежнему указывает на `src`, а на

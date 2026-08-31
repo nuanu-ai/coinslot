@@ -24,7 +24,7 @@
  * driver can turn one into a float.
  */
 
-import type { Card, Receipt } from "@coinslot/contracts";
+import type { Card, Receipt } from "@nuanu-ai/coinslot-contracts";
 import { boolean, index, jsonb, pgTable, text, timestamp, unique } from "drizzle-orm/pg-core";
 import type { StoredOrder } from "../../ports/store.js";
 

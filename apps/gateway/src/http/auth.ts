@@ -19,12 +19,12 @@
  * care, which is why the care is no longer written down anywhere.
  */
 
-import { merchantKeyFrom } from "@coinslot/contracts";
+import { merchantKeyFrom } from "@nuanu-ai/coinslot-contracts";
 
 /**
  * The key inside the merchant-key header value, or nothing.
  *
- * The parse itself lives in `@coinslot/contracts`, because the header the key
+ * The parse itself lives in `@nuanu-ai/coinslot-contracts`, because the header the key
  * arrives in is the one thing the gateway and the SDK have to agree on and the
  * route table does not carry — so it is held in the one place both import
  * rather than written out here and, identically but separately, in the SDK.

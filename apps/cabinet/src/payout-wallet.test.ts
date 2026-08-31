@@ -11,7 +11,7 @@
  * The routes that save one are driven over HTTP in `server.test.ts`.
  */
 
-import { checksummedAddressOf } from "@coinslot/contracts";
+import { checksummedAddressOf } from "@nuanu-ai/coinslot-contracts";
 import { describe, expect, it } from "vitest";
 import { payoutWalletBlock, whatIsWrongWithTheWallet } from "./payout-wallet.js";
 import type { Viewer } from "./screens.js";

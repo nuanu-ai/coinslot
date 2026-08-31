@@ -17,7 +17,7 @@
  * exactly the fields each card declares and no others.
  */
 
-import type { Card, Delivery } from "@coinslot/contracts";
+import type { Card, Delivery } from "@nuanu-ai/coinslot-contracts";
 
 /** The instant written the way every timestamp on the wire is written. */
 const asTimestamp = (at: number): string => new Date(at).toISOString();

@@ -24,7 +24,7 @@
  * and nothing here has to keep a clock of its own.
  */
 
-import type { WorkerEnvelope } from "@coinslot/contracts";
+import type { WorkerEnvelope } from "@nuanu-ai/coinslot-contracts";
 import type { DrawnEnvelope, Queue, Reminder, ReminderPatience } from "../../ports/queue.js";
 
 type Waiter = () => void;

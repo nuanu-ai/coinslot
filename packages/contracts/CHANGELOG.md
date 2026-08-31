@@ -1,4 +1,4 @@
-# @coinslot/contracts
+# @nuanu-ai/coinslot-contracts
 
 ## 0.1.0
 

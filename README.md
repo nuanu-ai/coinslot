@@ -62,7 +62,7 @@ repository adds is knowing which order a payment is for.
 The merchant's side is one process standing beside their existing API: a
 handler. It listens on no port — it opens a single outgoing subscription and
 receives paid orders, price questions and order events on that one stream
-(ADR-0004). Everything it is written against is `@coinslot/sdk`.
+(ADR-0004). Everything it is written against is `@nuanu-ai/coinslot`.
 
 The order is a state machine of sixteen states in `packages/core`, a pure
 function with no IO. The gateway feeds it events and gets back the next state

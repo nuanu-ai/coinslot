@@ -4,7 +4,7 @@
 #
 # Everything else about the packaging can be green while the answer is no. The
 # unit tests read our own `package.json` and believe it; the type checker
-# resolves `@coinslot/sdk` through the workspace link and never looks at what
+# resolves `@nuanu-ai/coinslot` through the workspace link and never looks at what
 # `files` would ship; `pnpm test` imports TypeScript that a merchant's Node
 # would refuse. Each of those passes on a package that installs into someone
 # else's project and dies on first use. So this check does the only thing that
@@ -16,8 +16,8 @@
 # is why it lives beside `pnpm smoke` and not inside `pnpm test`, which is free,
 # offline and fast and must stay that way.
 #
-# Two packages are packed and not one. `@coinslot/sdk` depends on
-# `@coinslot/contracts`, so a merchant who installs the SDK installs both, and a
+# Two packages are packed and not one. `@nuanu-ai/coinslot` depends on
+# `@nuanu-ai/coinslot-contracts`, so a merchant who installs the SDK installs both, and a
 # check that packed only the SDK would prove nothing about the half that carries
 # the schemas.
 
@@ -73,8 +73,8 @@ rm -rf "$repo/packages/sdk/dist" "$repo/packages/contracts/dist"
 # `pnpm pack` applies `publishConfig`, so these tarballs carry the built entry
 # points and the command — not the source paths the working tree develops
 # against — and `workspace:*` has become a real version range.
-pnpm --filter @coinslot/contracts exec pnpm pack --pack-destination "$scratch" >/dev/null
-pnpm --filter @coinslot/sdk exec pnpm pack --pack-destination "$scratch" >/dev/null
+pnpm --filter @nuanu-ai/coinslot-contracts exec pnpm pack --pack-destination "$scratch" >/dev/null
+pnpm --filter @nuanu-ai/coinslot exec pnpm pack --pack-destination "$scratch" >/dev/null
 ls -1 "$scratch"
 
 echo
@@ -90,7 +90,7 @@ echo "What the tarballs would ship"
 # compiled into it — which is a build that stopped excluding them, not a stray
 # file. The allowlist alone would pass exactly that, and nothing else pins the
 # exclusions in tsconfig.build.json.
-for tarball in "$scratch"/coinslot-*.tgz; do
+for tarball in "$scratch"/nuanu-ai-coinslot-*.tgz; do
   unexpected="$(tar -tzf "$tarball" |
     grep -vE '^package/(package\.json|README\.md|dist/)' || true)"
   compiled_tests="$(tar -tzf "$tarball" | grep -E '\.test\.|/testing/' || true)"
@@ -99,7 +99,7 @@ for tarball in "$scratch"/coinslot-*.tgz; do
 done
 
 contains "the command is in it" "package/dist/cli.js" \
-  "$(tar -tzf "$scratch"/coinslot-sdk-*.tgz)"
+  "$(tar -tzf "$scratch"/nuanu-ai-coinslot-[0-9]*.tgz)"
 
 echo
 echo "Installing the tarballs into $scratch"
@@ -118,7 +118,8 @@ cat > package.json <<'JSON'
 }
 JSON
 
-npm install --no-audit --no-fund ./coinslot-contracts-*.tgz ./coinslot-sdk-*.tgz
+npm install --no-audit --no-fund \
+  ./nuanu-ai-coinslot-contracts-*.tgz ./nuanu-ai-coinslot-[0-9]*.tgz
 
 # The package is TypeScript even when the merchant's program is not. Its
 # declarations must stand on their own in a strict project rather than borrow
@@ -127,7 +128,7 @@ npm install --no-audit --no-fund ./coinslot-contracts-*.tgz ./coinslot-sdk-*.tgz
 # the consumer declares that library explicitly while still excluding every
 # ambient package through `types: []`.
 cat > consumer.ts <<'TS'
-import { createClient } from "@coinslot/sdk";
+import { createClient } from "@nuanu-ai/coinslot";
 
 const client = createClient({
   apiKey: "merchant_key_for_typechecking_only",
@@ -223,7 +224,7 @@ echo "Step 3 of the quickstart: importing the package"
 # out of it is the working code rather than an empty shape.
 imported="$(node --input-type=module -e '
   import { readFileSync } from "node:fs";
-  import { checkCard, createClient, contractVersion } from "@coinslot/sdk";
+  import { checkCard, createClient, contractVersion } from "@nuanu-ai/coinslot";
   const read = (file) => JSON.parse(readFileSync(file, "utf8"));
   const complete = checkCard(read("card.json")).problems.length === 0;
   const short = checkCard(read("short-card.json")).problems.length === 0;
@@ -247,7 +248,7 @@ echo "Step 4 of the quickstart: npx coinslot verify"
 # instead of saying our command is missing.
 linked="$(readlink node_modules/.bin/coinslot 2>&1 || true)"
 check "npx will find our command and not a stranger's" \
-  "../@coinslot/sdk/dist/cli.js" "$linked"
+  "../@nuanu-ai/coinslot/dist/cli.js" "$linked"
 
 run() {
   set +e

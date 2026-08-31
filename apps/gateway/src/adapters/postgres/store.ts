@@ -19,8 +19,8 @@
  * answer from where the caller stands.
  */
 
-import type { Card, Receipt, WorkerEnvelope } from "@coinslot/contracts";
 import { isOpen, MERCHANT_SELLING, type MerchantSelling } from "@coinslot/core";
+import type { Card, Receipt, WorkerEnvelope } from "@nuanu-ai/coinslot-contracts";
 import { and, eq, exists, isNull, lt, not, sql } from "drizzle-orm";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool, type PoolConfig } from "pg";

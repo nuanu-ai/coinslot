@@ -3,7 +3,7 @@
  * shape of a result rather than against the library that produces it.
  *
  * The reason is the dependency tree a merchant installs. The SDK declares one
- * runtime dependency, `@coinslot/contracts`, and zod arrives underneath it
+ * runtime dependency, `@nuanu-ai/coinslot-contracts`, and zod arrives underneath it
  * (ADR-0003 §8). Importing zod here by name would add a package to that tree
  * without a recorded decision — and under a strict install it would not even
  * resolve, because zod is the contracts package's dependency and not ours. So
@@ -15,7 +15,7 @@
  * shape a merchant reads.
  */
 
-import type { PublishError } from "@coinslot/contracts";
+import type { PublishError } from "@nuanu-ai/coinslot-contracts";
 
 /**
  * One finding of a schema, as much of it as this package reads.

@@ -11,7 +11,12 @@
  * weaker thing. `words.ts` carries those cases and the reasons.
  */
 
-import type { MerchantCard, MerchantCardList, OrderList, ReceiptList } from "@coinslot/contracts";
+import type {
+  MerchantCard,
+  MerchantCardList,
+  OrderList,
+  ReceiptList,
+} from "@nuanu-ai/coinslot-contracts";
 import { escaped, page, state, type Tab, table } from "./html.js";
 import type { PayoutWallet } from "./payout-wallet.js";
 import {

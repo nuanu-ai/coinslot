@@ -3,8 +3,8 @@
 The tag `sdk-v<version>` publishes two public npm packages from one immutable
 commit:
 
-- `@coinslot/contracts`, because every SDK install resolves it at runtime;
-- `@coinslot/sdk`, whose version must be the version written in the tag.
+- `@nuanu-ai/coinslot-contracts`, because every SDK install resolves it at runtime;
+- `@nuanu-ai/coinslot`, whose version must be the version written in the tag.
 
 The workflow is `.github/workflows/publish-sdk.yml`. It runs on the Comino
 self-hosted pool, accepts GitHub's OIDC token through `id-token: write`, and
@@ -56,9 +56,9 @@ instead of deriving another public channel from an unchecked name.
 npm can attach a trusted publisher only after a package name exists. The first
 release therefore needs one authenticated publication from the exact commit
 after its CI and deployment have succeeded. Use an npm account that owns the
-`@coinslot` scope and requires 2FA. Create the release tag locally but do not
-push it yet, check that it names `HEAD`, and let Changesets publish contracts
-before the SDK:
+`nuanu-ai` organization and requires 2FA. Create the release tag locally but do
+not push it yet, check that it names `HEAD`, and let Changesets publish
+contracts before the SDK:
 
 ```sh
 git tag sdk-v0.1.0
@@ -76,10 +76,10 @@ After both names exist, npm 11.15 or newer can configure the same trusted
 publisher on each package:
 
 ```sh
-npm trust github @coinslot/contracts --repo nuanu-ai/coinslot --file publish-sdk.yml --allow-publish --yes
-npm trust github @coinslot/sdk --repo nuanu-ai/coinslot --file publish-sdk.yml --allow-publish --yes
-npm trust list @coinslot/contracts
-npm trust list @coinslot/sdk
+npm trust github @nuanu-ai/coinslot-contracts --repo nuanu-ai/coinslot --file publish-sdk.yml --allow-publish --yes
+npm trust github @nuanu-ai/coinslot --repo nuanu-ai/coinslot --file publish-sdk.yml --allow-publish --yes
+npm trust list @nuanu-ai/coinslot-contracts
+npm trust list @nuanu-ai/coinslot
 git push origin sdk-v0.1.0
 ```
 

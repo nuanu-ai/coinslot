@@ -18,7 +18,7 @@
 
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import type { CatalogPage } from "@coinslot/contracts";
+import type { CatalogPage } from "@nuanu-ai/coinslot-contracts";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   overTheNetwork,

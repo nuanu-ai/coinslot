@@ -1,4 +1,4 @@
-import type { Card } from "@coinslot/contracts";
+import type { Card } from "@nuanu-ai/coinslot-contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Reminder } from "../ports/queue.js";
 import { authorisation, type Harness, harness, workUntilStopped } from "../testing/harness.js";

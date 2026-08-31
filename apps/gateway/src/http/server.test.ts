@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { gzipSync } from "node:zlib";
-import type { Card, MerchantCardList, Receipt } from "@coinslot/contracts";
-import { API_ROUTES, ERROR_CODES, mountableRoutes } from "@coinslot/contracts";
+import type { Card, MerchantCardList, Receipt } from "@nuanu-ai/coinslot-contracts";
+import { API_ROUTES, ERROR_CODES, mountableRoutes } from "@nuanu-ai/coinslot-contracts";
 import { decodePaymentRequiredHeader, encodePaymentSignatureHeader } from "@x402/core/http";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";

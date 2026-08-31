@@ -23,7 +23,7 @@
  * run under `pnpm test:db`.
  */
 
-import type { WorkerEnvelope } from "@coinslot/contracts";
+import type { WorkerEnvelope } from "@nuanu-ai/coinslot-contracts";
 import { Pool } from "pg";
 import { type Queue as LibraryQueueOptions, PgBoss } from "pg-boss";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";

@@ -31,8 +31,8 @@ import type {
   OrderCallResponse,
   OrderEvent,
   WorkerProblem,
-} from "@coinslot/sdk";
-import { createClient } from "@coinslot/sdk";
+} from "@nuanu-ai/coinslot";
+import { createClient } from "@nuanu-ai/coinslot";
 import {
   CATALOG,
   EUROPE_ESIM,

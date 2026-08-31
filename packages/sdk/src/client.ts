@@ -66,7 +66,7 @@ import type {
   QuoteRequest,
   QuoteResponse,
   Refusal,
-} from "@coinslot/contracts";
+} from "@nuanu-ai/coinslot-contracts";
 import {
   callRoute,
   type Gateway,

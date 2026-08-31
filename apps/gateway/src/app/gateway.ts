@@ -16,6 +16,8 @@
  * nothing yet to tell them apart with.
  */
 
+import type { MerchantSelling, TransitionRejection } from "@coinslot/core";
+import { createOrder, fulfillmentDeadline, isOpen, outcomeFor } from "@coinslot/core";
 import {
   type Acceptance,
   CardSchema,
@@ -46,9 +48,7 @@ import {
   type SellerName,
   type WorkerEnvelope,
   type WorkerPollResponse,
-} from "@coinslot/contracts";
-import type { MerchantSelling, TransitionRejection } from "@coinslot/core";
-import { createOrder, fulfillmentDeadline, isOpen, outcomeFor } from "@coinslot/core";
+} from "@nuanu-ai/coinslot-contracts";
 import { asTimestamp } from "../ports/clock.js";
 import type { Reminder } from "../ports/queue.js";
 import type { StoredCard, StoredKey, StoredOrder } from "../ports/store.js";

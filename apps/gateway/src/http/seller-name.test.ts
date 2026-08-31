@@ -16,7 +16,7 @@
  * would pass against a gateway that refused everything or refused nothing.
  */
 
-import type { Card } from "@coinslot/contracts";
+import type { Card } from "@nuanu-ai/coinslot-contracts";
 import { decodePaymentRequiredHeader } from "@x402/core/http";
 import { afterEach, describe, expect, it } from "vitest";
 import { setServiceName } from "../app/merchants.js";

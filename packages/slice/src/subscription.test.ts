@@ -18,7 +18,7 @@
  * separately.
  */
 
-import { WORKER_PROBLEM_KINDS, type WorkerProblem } from "@coinslot/sdk";
+import { WORKER_PROBLEM_KINDS, type WorkerProblem } from "@nuanu-ai/coinslot";
 import { describe, expect, it } from "vitest";
 import {
   DOUBT_MS,

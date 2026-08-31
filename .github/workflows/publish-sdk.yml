@@ -129,7 +129,7 @@ jobs:
         run: |
           set -euo pipefail
           missing=0
-          for package in @coinslot/contracts @coinslot/sdk; do
+          for package in @nuanu-ai/coinslot-contracts @nuanu-ai/coinslot; do
             if ! npm view "$package" name >/dev/null 2>&1; then
               echo "::error::$package does not exist on npm; complete the one-time authenticated bootstrap before rerunning this workflow"
               missing=1
@@ -168,21 +168,21 @@ jobs:
             return 1
           }
 
-          expect_version "@coinslot/contracts@${{ steps.release.outputs.contracts_version }}" "${{ steps.release.outputs.contracts_version }}"
-          expect_version "@coinslot/sdk@${{ steps.release.outputs.sdk_version }}" "${{ steps.release.outputs.sdk_version }}"
-          expect_version "@coinslot/contracts@${{ steps.release.outputs.dist_tag }}" "${{ steps.release.outputs.contracts_version }}"
-          expect_version "@coinslot/sdk@${{ steps.release.outputs.dist_tag }}" "${{ steps.release.outputs.sdk_version }}"
+          expect_version "@nuanu-ai/coinslot-contracts@${{ steps.release.outputs.contracts_version }}" "${{ steps.release.outputs.contracts_version }}"
+          expect_version "@nuanu-ai/coinslot@${{ steps.release.outputs.sdk_version }}" "${{ steps.release.outputs.sdk_version }}"
+          expect_version "@nuanu-ai/coinslot-contracts@${{ steps.release.outputs.dist_tag }}" "${{ steps.release.outputs.contracts_version }}"
+          expect_version "@nuanu-ai/coinslot@${{ steps.release.outputs.dist_tag }}" "${{ steps.release.outputs.sdk_version }}"
 
           install_dir="$(mktemp -d)"
           trap 'rm -rf "$install_dir"' EXIT
           cd "$install_dir"
           npm init --yes >/dev/null
           npm install --ignore-scripts --no-audit --no-fund --save-exact \
-            "@coinslot/contracts@${{ steps.release.outputs.contracts_version }}" \
-            "@coinslot/sdk@${{ steps.release.outputs.sdk_version }}"
+            "@nuanu-ai/coinslot-contracts@${{ steps.release.outputs.contracts_version }}" \
+            "@nuanu-ai/coinslot@${{ steps.release.outputs.sdk_version }}"
           node --input-type=module -e '
-            const contracts = await import("@coinslot/contracts");
-            const sdk = await import("@coinslot/sdk");
+            const contracts = await import("@nuanu-ai/coinslot-contracts");
+            const sdk = await import("@nuanu-ai/coinslot");
             if (sdk.contractVersion !== contracts.CONTRACT_VERSION) {
               throw new Error("SDK contract " + sdk.contractVersion + " != contracts " + contracts.CONTRACT_VERSION);
             }

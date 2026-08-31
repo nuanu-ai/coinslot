@@ -25,14 +25,14 @@
 import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { connect } from "node:net";
+import { buyOverHttp, type Harness, harness, type Served, serve } from "@coinslot/gateway/testing";
 import {
   type Card,
   checksummedAddressOf,
   type MerchantKey,
   type MerchantKeyList,
   type RegisteredMerchant,
-} from "@coinslot/contracts";
-import { buyOverHttp, type Harness, harness, type Served, serve } from "@coinslot/gateway/testing";
+} from "@nuanu-ai/coinslot-contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type CabinetConfig, loadConfig } from "./config.js";
 import { type Answer, type GatewayClient, gatewayFor, type Registrar } from "./gateway.js";

@@ -2,7 +2,7 @@
  * Making one call of the surface.
  *
  * Every address, method and answer document comes out of the route table in
- * `@coinslot/contracts`. No path is written down in this package, and the
+ * `@nuanu-ai/coinslot-contracts`. No path is written down in this package, and the
  * table's own `expandPath` does the substituting, because an identifier we
  * accept may hold a slash or a space and pasted into an address unencoded it
  * becomes two segments and a different route.
@@ -17,7 +17,7 @@
  * gateway's and ours to match — and matching it by each writing the same two
  * strings down was agreement by luck, where a call behind that door fails with
  * an authorisation error and nothing in either repository says why. So the name
- * and the scheme live in `@coinslot/contracts`, in the one place both sides
+ * and the scheme live in `@nuanu-ai/coinslot-contracts`, in the one place both sides
  * already import: `merchantKeyHeaderValue` builds the value this package sends,
  * and `merchantKeyFrom` is what the gateway reads it back with.
  *
@@ -52,7 +52,7 @@ import {
   MERCHANT_KEY_HEADER,
   merchantKeyHeaderValue,
   type RouteName,
-} from "@coinslot/contracts";
+} from "@nuanu-ai/coinslot-contracts";
 
 /** Where the gateway is and which key opens its doors. */
 export interface Gateway {

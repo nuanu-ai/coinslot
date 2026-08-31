@@ -6,7 +6,7 @@
  * whether the money moves, whether there is another delivery — and everything
  * here loads an order, hands it one event, writes down what comes back and
  * carries out the effects. The HTTP surface is mounted from the table in
- * `@coinslot/contracts` rather than transcribed, so the addresses both sides use
+ * `@nuanu-ai/coinslot-contracts` rather than transcribed, so the addresses both sides use
  * cannot come apart (ADR-0003 §7).
  *
  * Three ports hold all the IO. Behind them in a deployment sit one Postgres,

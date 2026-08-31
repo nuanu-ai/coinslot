@@ -18,14 +18,14 @@
  * work does not.
  */
 
+import { ScriptedFacilitator } from "@coinslot/gateway";
+import { WORKER_PROBLEM_KINDS } from "@nuanu-ai/coinslot";
 import {
   AgentOrderStatusSchema,
   type Card,
   deliveryCheckFor,
   ReceiptSchema,
-} from "@coinslot/contracts";
-import { ScriptedFacilitator } from "@coinslot/gateway";
-import { WORKER_PROBLEM_KINDS } from "@coinslot/sdk";
+} from "@nuanu-ai/coinslot-contracts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { makeBuyer } from "./buyer.js";
 import { EUROPE_ESIM, RENTED_NUMBER } from "./cards.js";

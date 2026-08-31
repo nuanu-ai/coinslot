@@ -39,8 +39,8 @@
  * gets charged twice.
  */
 
-import type { Card, Delivery, Receipt, WorkerEnvelope } from "@coinslot/contracts";
 import type { MerchantSelling, Order } from "@coinslot/core";
+import type { Card, Delivery, Receipt, WorkerEnvelope } from "@nuanu-ai/coinslot-contracts";
 
 /** A card as its merchant published it, under the catalog identifier we issued. */
 export interface StoredCard {

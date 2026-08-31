@@ -34,7 +34,13 @@
  * gateway that is nothing but the route table.
  */
 
-import type { Card, HandlerAnswer, Order, OrderEvent, QuoteRequest } from "@coinslot/contracts";
+import type {
+  Card,
+  HandlerAnswer,
+  Order,
+  OrderEvent,
+  QuoteRequest,
+} from "@nuanu-ai/coinslot-contracts";
 import { afterEach, expect, it } from "vitest";
 import { checkCard } from "./check-card.js";
 import type { OrderHandle } from "./client.js";

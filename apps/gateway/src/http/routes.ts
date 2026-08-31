@@ -15,6 +15,7 @@
  * the order it made, in the document the agent's own door answers with.
  */
 
+import { outcomeFor } from "@coinslot/core";
 import type {
   IssueKeyRequest,
   OrderListQuery,
@@ -25,8 +26,7 @@ import type {
   RouteName,
   SellerNameRequest,
   WorkerPollRequest,
-} from "@coinslot/contracts";
-import { outcomeFor } from "@coinslot/core";
+} from "@nuanu-ai/coinslot-contracts";
 import type { Gateway, PurchaseAttempt } from "../app/gateway.js";
 import { agentOrderStatusOf, orderDocumentOf } from "../app/runner.js";
 import type { MountedRoute, RouteAnswer, RouteCall } from "./server.js";

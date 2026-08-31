@@ -22,7 +22,7 @@
 
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
-import type { PublishError } from "@coinslot/contracts";
+import type { PublishError } from "@nuanu-ai/coinslot-contracts";
 import { checkCard } from "./check-card.js";
 import { describeProblems } from "./schema.js";
 

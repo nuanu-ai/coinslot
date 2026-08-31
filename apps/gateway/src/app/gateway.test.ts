@@ -1,9 +1,9 @@
-import type { Card } from "@coinslot/contracts";
+import type { Card } from "@nuanu-ai/coinslot-contracts";
 import {
   CatalogPageSchema,
   PublishResultSchema,
   WorkerPollResponseSchema,
-} from "@coinslot/contracts";
+} from "@nuanu-ai/coinslot-contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { asTimestamp } from "../ports/clock.js";
 import {

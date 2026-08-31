@@ -27,7 +27,7 @@
  * if nobody writes it down, so it is written down here and it exits non-zero.
  */
 
-import { API_ROUTES, expandPath } from "@coinslot/contracts";
+import { API_ROUTES, expandPath } from "@nuanu-ai/coinslot-contracts";
 import { z } from "zod";
 
 /**

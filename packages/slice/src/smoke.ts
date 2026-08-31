@@ -31,13 +31,13 @@
  * testnet settlement.
  */
 
-import type { Card } from "@coinslot/contracts";
 import {
   type Facilitator,
   type GatewayConfig,
   PaymentEdge,
   X402Facilitator,
 } from "@coinslot/gateway";
+import type { Card } from "@nuanu-ai/coinslot-contracts";
 import { HTTPFacilitatorClient } from "@x402/core/server";
 import { getDefaultAsset } from "@x402/evm";
 import { makeBuyer } from "./buyer.js";

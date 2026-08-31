@@ -22,7 +22,7 @@ in one table at the end.
 
 ::: warning The field names are preliminary
 What is fixed is the model and not the signatures. Of the machine names `id`,
-`merchant_item_id` and `as_of` are final; the package is `@coinslot/sdk`, while
+`merchant_item_id` and `as_of` are final; the package is `@nuanu-ai/coinslot`, while
 the function names and the rest of the names in this reference can still change
 in a new package and contract version before the pilot.
 :::

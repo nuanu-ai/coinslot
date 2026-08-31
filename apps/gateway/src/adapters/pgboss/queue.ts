@@ -32,7 +32,7 @@
  * to the machine.
  */
 
-import type { WorkerEnvelope } from "@coinslot/contracts";
+import type { WorkerEnvelope } from "@nuanu-ai/coinslot-contracts";
 import { sql } from "drizzle-orm";
 import { type DrizzleTransactionLike, fromDrizzle, type Job, PgBoss } from "pg-boss";
 import type { DrawnEnvelope, Queue, Reminder, ReminderPatience } from "../../ports/queue.js";

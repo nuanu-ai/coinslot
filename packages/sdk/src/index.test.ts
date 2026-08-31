@@ -1,9 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
-import { CONTRACT_VERSION } from "@coinslot/contracts";
+import { CONTRACT_VERSION } from "@nuanu-ai/coinslot-contracts";
 import { describe, expect, it } from "vitest";
 import { contractVersion, speaksContract } from "./index.js";
 
 const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
+  name?: string;
   version?: string;
   private?: boolean;
   files?: readonly string[];
@@ -35,7 +36,7 @@ const sourceOf = (published: string): string =>
 
 const inPackage = (path: string): boolean => existsSync(new URL(`../${path}`, import.meta.url));
 
-describe("@coinslot/sdk", () => {
+describe("@nuanu-ai/coinslot", () => {
   it("checks the contract version and refuses a foreign one", () => {
     // The promise to the merchant: a divergence of dialects is discovered at
     // worker startup, not on an order, where it costs the buyer money.
@@ -45,7 +46,7 @@ describe("@coinslot/sdk", () => {
   });
 
   it("declares no third-party dependency of its own", () => {
-    // The tree the merchant gets is `@coinslot/contracts` and `zod`, nothing
+    // The tree the merchant gets is `@nuanu-ai/coinslot-contracts` and `zod`, nothing
     // else. This is one half of the pin — the SDK adds nothing of its own; the
     // other half is the contracts test, which holds contracts to exactly zod.
     // A failing check means a third-party package entered the merchant's
@@ -107,6 +108,7 @@ describe("@coinslot/sdk", () => {
     // produces a tarball holding nothing but this manifest — no error, no
     // warning — while `publishConfig` still names an entry point and a command
     // that are not in it. That package installs and dies on first use.
+    expect(manifest.name).toBe("@nuanu-ai/coinslot");
     expect(manifest.private).toBeUndefined();
     expect(manifest.version).not.toBe("0.0.0");
     expect(manifest.files).toStrictEqual(["dist"]);

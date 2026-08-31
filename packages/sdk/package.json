@@ -1,5 +1,5 @@
 {
-  "name": "@coinslot/sdk",
+  "name": "@nuanu-ai/coinslot",
   "version": "0.1.0",
   "type": "module",
   "description": "Coinslot merchant SDK — the fulfillment worker and the integration check",
@@ -36,7 +36,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@coinslot/contracts": "workspace:*"
+    "@nuanu-ai/coinslot-contracts": "workspace:*"
   },
   "devDependencies": {
     "vitest": "^4.1.11"

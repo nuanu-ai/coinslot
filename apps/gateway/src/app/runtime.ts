@@ -10,9 +10,9 @@
  * money.
  */
 
-import type { Card } from "@coinslot/contracts";
 import type { MerchantSelling, OrderMode, OrderPolicy } from "@coinslot/core";
 import { modeOf } from "@coinslot/core";
+import type { Card } from "@nuanu-ai/coinslot-contracts";
 import { type GatewayConfig, isSandboxFacilitator } from "../config.js";
 import type { Clock, Ids } from "../ports/clock.js";
 import type { Facilitator } from "../ports/facilitator.js";

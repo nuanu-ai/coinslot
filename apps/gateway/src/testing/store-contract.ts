@@ -55,8 +55,8 @@
  * both files check theirs where the failure lives.
  */
 
-import type { Card, Receipt } from "@coinslot/contracts";
 import type { Order } from "@coinslot/core";
+import type { Card, Receipt } from "@nuanu-ai/coinslot-contracts";
 import { describe, expect, it } from "vitest";
 import type { Store, StoredOrder } from "../ports/store.js";
 

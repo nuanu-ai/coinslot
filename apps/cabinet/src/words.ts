@@ -26,7 +26,7 @@
  * nothing — not that nothing was charged.
  */
 
-import type { Fulfillment, OrderStatus, SellingState } from "@coinslot/contracts";
+import type { Fulfillment, OrderStatus, SellingState } from "@nuanu-ai/coinslot-contracts";
 
 /** How a state reads to the eye, before any word is read. */
 export type Tone = "ok" | "warn" | "busy" | "quiet";

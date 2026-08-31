@@ -20,8 +20,8 @@
  * product does not yet produce, which is what the totality loop is for.
  */
 
-import type { Card } from "@coinslot/contracts";
 import { MERCHANT_SELLING } from "@coinslot/core";
+import type { Card } from "@nuanu-ai/coinslot-contracts";
 import { describe, expect, it } from "vitest";
 import { SANDBOX_FACILITATOR } from "../config.js";
 import type { StoredCard } from "../ports/store.js";

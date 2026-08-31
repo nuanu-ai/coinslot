@@ -126,7 +126,7 @@ const refinedSchemasWithoutDescription = (): string[] =>
     .filter((entry) => !entry.described)
     .map((entry) => entry.path);
 
-describe("@coinslot/contracts", () => {
+describe("@nuanu-ai/coinslot-contracts", () => {
   it("declares the contract version and keeps zod its only runtime dependency", () => {
     // The version is what the merchant's SDK and the gateway use to tell that
     // they are talking about the same thing. Version 0 meant that no external

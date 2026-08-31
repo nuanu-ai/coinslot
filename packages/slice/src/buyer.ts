@@ -20,7 +20,7 @@
  *
  * One thing here looks like carelessness and is the point of the file. The
  * addresses are written out as strings and the answers are read field by field,
- * where importing the route table and the schemas from `@coinslot/contracts`
+ * where importing the route table and the schemas from `@nuanu-ai/coinslot-contracts`
  * would be shorter and safer. This is a stranger's agent: it has the portal and
  * no package of ours, so code that leaned on our types would prove only that
  * our types agree with themselves. Written this way, a green run says the wire
@@ -36,7 +36,7 @@
  * importing the contracts costs nothing, and not here.
  */
 
-import { CatalogPageSchema, type PublicCard } from "@coinslot/contracts";
+import { CatalogPageSchema, type PublicCard } from "@nuanu-ai/coinslot-contracts";
 import { x402Client } from "@x402/core/client";
 import { decodePaymentRequiredHeader } from "@x402/core/http";
 import type { PaymentRequired, SettleResponse } from "@x402/core/types";

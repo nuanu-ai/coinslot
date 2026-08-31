@@ -36,7 +36,7 @@
 import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Card, Receipt, WorkerEnvelope } from "@coinslot/contracts";
+import type { Card, Receipt, WorkerEnvelope } from "@nuanu-ai/coinslot-contracts";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool } from "pg";

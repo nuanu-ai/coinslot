@@ -1,5 +1,5 @@
 {
-  "name": "@coinslot/contracts",
+  "name": "@nuanu-ai/coinslot-contracts",
   "version": "0.1.0",
   "type": "module",
   "description": "Coinslot public contract schemas — card, order, price hook, receipt",

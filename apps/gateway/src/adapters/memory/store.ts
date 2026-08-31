@@ -26,8 +26,8 @@
  * somebody else's cabinet.
  */
 
-import type { Card, Receipt, WorkerEnvelope } from "@coinslot/contracts";
 import { isOpen, type MerchantSelling } from "@coinslot/core";
+import type { Card, Receipt, WorkerEnvelope } from "@nuanu-ai/coinslot-contracts";
 import type { Clock, Ids } from "../../ports/clock.js";
 import type {
   CatalogEntry,

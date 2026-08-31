@@ -17,7 +17,7 @@
  * back is a terminal they do not have.
  */
 
-import type { Card, MerchantKeyList } from "@coinslot/contracts";
+import type { Card, MerchantKeyList } from "@nuanu-ai/coinslot-contracts";
 import { decodePaymentRequiredHeader } from "@x402/core/http";
 import { afterEach, describe, expect, it } from "vitest";
 import { type Harness, harness, type Served, serve } from "../testing/harness.js";

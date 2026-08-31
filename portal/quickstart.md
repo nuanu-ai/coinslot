@@ -35,7 +35,7 @@ up and run the link to an online shop ourselves. Both are described on
   a link, a key, a set of fields. Its shape is declared in the card.
 
 ::: warning The tool surface is preliminary
-The package name is `@coinslot/sdk`. The function names and field names in the
+The package name is `@nuanu-ai/coinslot`. The function names and field names in the
 examples below remain preliminary: of the machine names only
 `merchant_item_id`, `as_of` and our catalogue `id` are final. Changes arrive in
 a new package and contract version before the gateway speaks them.
@@ -48,7 +48,7 @@ listed outright: our contracts package, and zod, the library that validates
 data. Nothing beyond those arrives in your project.
 
 ```sh
-npm install @coinslot/sdk
+npm install @nuanu-ai/coinslot
 ```
 
 Release tags publish this package to the public npm registry. A stable release
@@ -59,7 +59,7 @@ You are given a key to our API when you connect, and you keep it wherever you
 keep the rest of your secrets.
 
 ```ts
-import { createClient } from '@coinslot/sdk'
+import { createClient } from '@nuanu-ai/coinslot'
 
 const coinslot = createClient({
   apiKey: process.env.COINSLOT_API_KEY,
@@ -351,7 +351,7 @@ npx coinslot verify card.json
 
 Run it from the project you installed into. The bare name `coinslot` belongs to
 somebody else's package on npm, so `npx` in a directory without our package
-fetches theirs; once `@coinslot/sdk` is installed beside you, `npx` finds ours
+fetches theirs; once `@nuanu-ai/coinslot` is installed beside you, `npx` finds ours
 first and the stranger's never enters it.
 
 Name the card files. The command does not go looking for them: it takes no key

@@ -15,7 +15,7 @@
  * would send.
  */
 
-import type { WorkerEnvelope } from "@coinslot/contracts";
+import type { WorkerEnvelope } from "@nuanu-ai/coinslot-contracts";
 import { contractVersion } from "../contract.js";
 import type { GatewayAnswer } from "./fake-gateway.js";
 

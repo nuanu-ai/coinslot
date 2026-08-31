@@ -22,7 +22,7 @@
  * not sell without an address on a chain would be a stack nobody can bring up.
  */
 
-import type { Card } from "@coinslot/contracts";
+import type { Card } from "@nuanu-ai/coinslot-contracts";
 import { decodePaymentRequiredHeader } from "@x402/core/http";
 import { afterEach, describe, expect, it } from "vitest";
 import { SANDBOX_FACILITATOR } from "../config.js";

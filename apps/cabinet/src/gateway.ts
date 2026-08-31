@@ -38,7 +38,7 @@ import {
   type RegisteredMerchant,
   RegisteredMerchantSchema,
   SellerNameSchema,
-} from "@coinslot/contracts";
+} from "@nuanu-ai/coinslot-contracts";
 /** What a call came to, in the two shapes a page has to draw differently. */
 export type Answer<T> =
   | { readonly ok: true; readonly document: T }

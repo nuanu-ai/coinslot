@@ -37,11 +37,11 @@ const resolverFor = (
   chmodSync(executable, 0o755);
   writeFileSync(
     join(root, "packages", "sdk", "package.json"),
-    JSON.stringify({ name: "@coinslot/sdk", version: sdkVersion }),
+    JSON.stringify({ name: "@nuanu-ai/coinslot", version: sdkVersion }),
   );
   writeFileSync(
     join(root, "packages", "contracts", "package.json"),
-    JSON.stringify({ name: "@coinslot/contracts", version: contractsVersion }),
+    JSON.stringify({ name: "@nuanu-ai/coinslot-contracts", version: contractsVersion }),
   );
   if (extraPublicPackage) {
     mkdirSync(join(root, "packages", "extra"), { recursive: true });
@@ -95,12 +95,12 @@ describe("the SDK release tag", () => {
   });
 
   it("refuses to let Changesets publish another public workspace package", () => {
-    const result = spawnSync(resolverFor("0.1.0", "0.1.0", "@coinslot/extra"), ["sdk-v0.1.0"], {
+    const result = spawnSync(resolverFor("0.1.0", "0.1.0", "@nuanu-ai/extra"), ["sdk-v0.1.0"], {
       encoding: "utf8",
     });
 
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("SDK release may publish only");
-    expect(result.stderr).toContain("@coinslot/extra");
+    expect(result.stderr).toContain("@nuanu-ai/extra");
   });
 });

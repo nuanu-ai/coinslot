@@ -1,4 +1,4 @@
-# `@coinslot/sdk`
+# `@nuanu-ai/coinslot`
 
 The Coinslot merchant SDK connects a seller's existing service to Coinslot. It
 publishes product cards, receives paid orders and price questions through one
@@ -11,13 +11,13 @@ understand.
 ## Install
 
 ```sh
-npm install @coinslot/sdk
+npm install @nuanu-ai/coinslot
 ```
 
 Node.js 24 or newer is required.
 
 ```ts
-import { createClient } from '@coinslot/sdk'
+import { createClient } from '@nuanu-ai/coinslot'
 
 const coinslot = createClient({
   apiKey: process.env.COINSLOT_API_KEY,

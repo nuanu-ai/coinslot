@@ -1,4 +1,4 @@
-import { PublishErrorSchema } from "@coinslot/contracts";
+import { PublishErrorSchema } from "@nuanu-ai/coinslot-contracts";
 import { describe, expect, it } from "vitest";
 import { checkCard } from "./check-card.js";
 

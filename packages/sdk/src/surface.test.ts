@@ -24,7 +24,7 @@ import type {
   OrderWithStatus,
   QuoteRequest,
   WorkerEnvelope,
-} from "@coinslot/contracts";
+} from "@nuanu-ai/coinslot-contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CoinslotClient, HandlerKind, OrderCalls } from "./client.js";
 import { createClient } from "./index.js";

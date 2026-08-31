@@ -26,7 +26,7 @@ importers:
 
   apps/cabinet:
     dependencies:
-      '@coinslot/contracts':
+      '@nuanu-ai/coinslot-contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
       better-auth:
@@ -69,7 +69,7 @@ importers:
       '@coinbase/cdp-sdk':
         specifier: 1.55.0
         version: 1.55.0(@x402/core@2.23.0)(@x402/evm@2.23.0(typescript@7.0.2))(@x402/extensions@2.23.0(typescript@7.0.2))(typescript@7.0.2)
-      '@coinslot/contracts':
+      '@nuanu-ai/coinslot-contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
       '@coinslot/core':
@@ -130,7 +130,7 @@ importers:
 
   packages/core:
     devDependencies:
-      '@coinslot/contracts':
+      '@nuanu-ai/coinslot-contracts':
         specifier: workspace:*
         version: link:../contracts
       vitest:
@@ -139,7 +139,7 @@ importers:
 
   packages/sdk:
     dependencies:
-      '@coinslot/contracts':
+      '@nuanu-ai/coinslot-contracts':
         specifier: workspace:*
         version: link:../contracts
     devDependencies:
@@ -149,7 +149,7 @@ importers:
 
   packages/slice:
     devDependencies:
-      '@coinslot/contracts':
+      '@nuanu-ai/coinslot-contracts':
         specifier: workspace:*
         version: link:../contracts
       '@coinslot/core':
@@ -158,7 +158,7 @@ importers:
       '@coinslot/gateway':
         specifier: workspace:*
         version: link:../../apps/gateway
-      '@coinslot/sdk':
+      '@nuanu-ai/coinslot':
         specifier: workspace:*
         version: link:../sdk
       '@x402/core':

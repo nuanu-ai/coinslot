@@ -1,4 +1,4 @@
-# @coinslot/sdk
+# @nuanu-ai/coinslot
 
 ## 0.1.0
 
@@ -9,4 +9,4 @@
 ### Patch Changes
 
 - Updated dependencies
-  - @coinslot/contracts@0.1.0
+  - @nuanu-ai/coinslot-contracts@0.1.0

@@ -14,8 +14,12 @@
  * can carry. Nothing is stubbed — there is nothing here to stub.
  */
 
-import type { OrderList, ReceiptList } from "@coinslot/contracts";
-import { MerchantCardListSchema, OrderListSchema, ReceiptListSchema } from "@coinslot/contracts";
+import type { OrderList, ReceiptList } from "@nuanu-ai/coinslot-contracts";
+import {
+  MerchantCardListSchema,
+  OrderListSchema,
+  ReceiptListSchema,
+} from "@nuanu-ai/coinslot-contracts";
 import { describe, expect, it } from "vitest";
 import { ordersScreen, receiptsScreen, type Viewer } from "./screens.js";
 import { readable } from "./testing/html.js";

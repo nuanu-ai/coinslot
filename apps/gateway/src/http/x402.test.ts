@@ -1,4 +1,4 @@
-import { CardSchema } from "@coinslot/contracts";
+import { CardSchema } from "@nuanu-ai/coinslot-contracts";
 import { decodePaymentRequiredHeader } from "@x402/core/http";
 import type { DiscoveryExtension } from "@x402/extensions/bazaar";
 import {

@@ -26,7 +26,11 @@
  */
 
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { checksummedAddressOf, EvmAddressSchema, ServiceNameSchema } from "@coinslot/contracts";
+import {
+  checksummedAddressOf,
+  EvmAddressSchema,
+  ServiceNameSchema,
+} from "@nuanu-ai/coinslot-contracts";
 import type { Ids } from "../ports/clock.js";
 import type { Store, StoredKey, StoredMerchant } from "../ports/store.js";
 

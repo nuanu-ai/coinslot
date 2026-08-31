@@ -41,14 +41,6 @@
  */
 
 import type {
-  AgentOrderStatus,
-  Delivery,
-  Order as OrderDocument,
-  Receipt,
-  SalePrice,
-  WorkerEnvelope,
-} from "@coinslot/contracts";
-import type {
   Deadline,
   Effect,
   MerchantAnswer,
@@ -66,6 +58,14 @@ import {
   outcomeFor,
   transition,
 } from "@coinslot/core";
+import type {
+  AgentOrderStatus,
+  Delivery,
+  Order as OrderDocument,
+  Receipt,
+  SalePrice,
+  WorkerEnvelope,
+} from "@nuanu-ai/coinslot-contracts";
 import { asTimestamp } from "../ports/clock.js";
 import type { Reminder } from "../ports/queue.js";
 import type {

@@ -4,7 +4,7 @@ import type {
   OrderEvent,
   QuoteRequest,
   WorkerEnvelope,
-} from "@coinslot/contracts";
+} from "@nuanu-ai/coinslot-contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FIRST_RETRY_MS } from "./backoff.js";
 import { createClient, type QuoteHandler } from "./client.js";

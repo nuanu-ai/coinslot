@@ -27,8 +27,8 @@
  * the stream.
  */
 
-import type { Card } from "@coinslot/contracts";
 import type { Order } from "@coinslot/core";
+import type { Card } from "@nuanu-ai/coinslot-contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type Harness, harness, workOnce } from "../testing/harness.js";
 import { SWEEP_EFFECTS, type Swept } from "./runner.js";

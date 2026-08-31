@@ -13,7 +13,7 @@
  * that name.
  *
  * The runtime dependency tree is minimal and listed in full: our own
- * `@coinslot/contracts`, and zod underneath it, and nothing else. A merchant
+ * `@nuanu-ai/coinslot-contracts`, and zod underneath it, and nothing else. A merchant
  * installing the SDK into their production should know exactly what arrives
  * with it, rather than inherit a foreign package tree they would then be
  * maintaining themselves. Every new third-party package in this tree is a
@@ -49,8 +49,8 @@ export type {
   Refusal,
   RefusalCode,
   SalePrice,
-} from "@coinslot/contracts";
-export { ORDER_EVENT_TYPES, RECOMMENDED_REFUSAL_CODES } from "@coinslot/contracts";
+} from "@nuanu-ai/coinslot-contracts";
+export { ORDER_EVENT_TYPES, RECOMMENDED_REFUSAL_CODES } from "@nuanu-ai/coinslot-contracts";
 export type { CardCheck } from "./check-card.js";
 export { checkCard } from "./check-card.js";
 export type {
