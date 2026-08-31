@@ -831,13 +831,13 @@ describe("the route table", () => {
     ["disable_key", "POST", "/v0/keys/:key_id/disable", "merchant_key", "-", "-", "disabled_key"],
     ["issue_cabinet_key", "POST", "/v0/keys/cabinet", "merchant_key", "-", "-", "cabinet_key"],
     [
-      "forget_cabinet_keys",
+      "forget_cabinet_key",
       "DELETE",
       "/v0/keys/cabinet",
       "merchant_key",
       "-",
       "-",
-      "forgotten_cabinet_keys",
+      "forgotten_cabinet_key",
     ],
     ["get_order", "GET", "/v0/orders/:order_id", "merchant_key", "-", "-", "order_with_status"],
     ["list_orders", "GET", "/v0/orders", "merchant_key", "order_list_query", "-", "order_list"],
@@ -1137,9 +1137,18 @@ describe("the route table", () => {
     // The refusal is not hygiene and a reader has to know which key to make
     // these with: a sweep made with a key of the merchant's own code would take
     // away the credential a cabinet is signed in on and lock its owner out.
-    for (const route of [API_ROUTES.issue_cabinet_key, API_ROUTES.forget_cabinet_keys]) {
+    for (const route of [API_ROUTES.issue_cabinet_key, API_ROUTES.forget_cabinet_key]) {
       expect(route.description).toContain("not_a_cabinet_key");
     }
+  });
+
+  it("says the forgetting reaches only the key the call was made with", () => {
+    // The fact a cabinet author builds on and the fact that makes the call
+    // safe: there are no parameters and the only key it can remove is the one
+    // in the caller's hand, so no call of anybody's can take away a key written
+    // after it was sent. A reader who took this for the older rule — every key
+    // but this one — would build the sweep that locks people out.
+    expect(API_ROUTES.forget_cabinet_key.description).toContain("no other");
   });
 
   it("says how far the refusal that protects a merchant from themselves reaches", () => {

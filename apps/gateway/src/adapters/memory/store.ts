@@ -307,23 +307,22 @@ export class MemoryStore implements Store {
     return (await this.keysOf(merchantId)).filter((key) => key.purpose === "merchant_code");
   }
 
-  async forgetCabinetKeysOf(merchantId: string, keptKeyId: string): Promise<number> {
-    const going = [...this.#keys.values()].filter(
-      (key) => key.merchantId === merchantId && key.purpose === "cabinet" && key.id !== keptKeyId,
-    );
-    for (const key of going) {
-      this.#keys.delete(key.id);
-      // The digest goes with it. Left behind, it would be an entry pointing at
-      // a key that is not there — which reads as nothing at the door, but is a
-      // digest nothing can ever write again, since writing one refuses a digest
-      // already taken.
-      for (const [digest, id] of this.#keysByDigest) {
-        if (id === key.id) {
-          this.#keysByDigest.delete(digest);
-        }
+  async forgetCabinetKey(keyId: string): Promise<boolean> {
+    const going = this.#keys.get(keyId);
+    if (going === undefined || going.purpose !== "cabinet") {
+      return false;
+    }
+    this.#keys.delete(going.id);
+    // The digest goes with it. Left behind, it would be an entry pointing at a
+    // key that is not there — which reads as nothing at the door, but is a
+    // digest nothing can ever write again, since writing one refuses a digest
+    // already taken.
+    for (const [digest, id] of this.#keysByDigest) {
+      if (id === going.id) {
+        this.#keysByDigest.delete(digest);
       }
     }
-    return going.length;
+    return true;
   }
 
   async disableKey(id: string, at: number): Promise<StoredKey | null> {

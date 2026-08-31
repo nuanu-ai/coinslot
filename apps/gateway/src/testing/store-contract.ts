@@ -909,17 +909,17 @@ export function describeStore(name: string, open: () => Promise<Store>): void {
         expect((await store.workingKey("digest-b"))?.id).toBe("mk_theirs");
       });
 
-      it("is swept away with the other cabinet keys, all but the one named", async () => {
-        // What a cabinet does after it has signed somebody in and holds a new
-        // key: everything it left behind on earlier visits goes, and the key it
-        // is holding stays. Removed rather than revoked, because a merchant
-        // never issued one, never saw one and will never read one back — a row
-        // kept for the history would be history for nobody.
+      it("is forgotten one key at a time, and reaches nothing else", async () => {
+        // What a cabinet does once it has moved an account row onto a fresh
+        // key: it forgets the key it has just stopped using, and that one key
+        // only. Removed rather than revoked, because a merchant never issued
+        // one, never saw one and will never read one back — a row kept for the
+        // history would be history for nobody.
         //
-        // "All but the one named" is the whole of the rule and it is why there
-        // is no parameter: it is the one shape that cannot take away the key
-        // its own caller is holding, and it leaves nothing behind that nobody
-        // could ever remove.
+        // One row and no rule about which others to keep, because any such rule
+        // is decided when the call is made and can be wrong by the time it
+        // lands: a key written in between would be removed by a caller that had
+        // never heard of it. Here the caller must be holding what it removes.
         const store = await twoMerchants();
         await store.addKey(
           {
@@ -950,19 +950,57 @@ export function describeStore(name: string, open: () => Promise<Store>): void {
           4_000,
         );
 
-        expect(await store.forgetCabinetKeysOf(A, "mk_now")).toBe(1);
+        expect(await store.forgetCabinetKey("mk_old")).toBe(true);
 
-        // The old one is gone rather than off: nothing answers for its digest
+        // The named one is gone rather than off: nothing answers for its digest
         // in either of the two reads, which is what tells a removal from a
         // revocation.
         expect(await store.keyByDigest("d1")).toBeNull();
         expect((await store.keysOf(A)).map((key) => key.id)).toStrictEqual(["mk_now", "mk_code"]);
-        // The key that made the call still opens the door, which is the whole
-        // point of naming it, and the merchant's own key is untouched.
+        // Every other key is where it was, including the merchant's own and the
+        // one another merchant's cabinet is signed in on.
         expect((await store.workingKey("d2"))?.id).toBe("mk_now");
         expect((await store.workingKey("d3"))?.id).toBe("mk_code");
-        // And another merchant's cabinet is not signed out by this.
         expect((await store.workingKey("d4"))?.id).toBe("mk_b");
+      });
+
+      it("will not forget a key the merchant made for their own code", async () => {
+        // The two kinds are kept apart down here as well as at the door. A
+        // merchant's own key is revoked, at an instant they can read back on
+        // the one screen those keys appear on; removing the row would take that
+        // history away, and nothing in this port should be able to do it by
+        // being handed the wrong identifier.
+        const store = await twoMerchants();
+        await store.addKey(
+          {
+            id: "mk_code",
+            merchantId: A,
+            label: "a worker",
+            digest: "d1",
+            purpose: "merchant_code",
+          },
+          1_000,
+        );
+
+        expect(await store.forgetCabinetKey("mk_code")).toBe(false);
+        expect((await store.workingKey("d1"))?.id).toBe("mk_code");
+      });
+
+      it("is forgotten a second time as a key that is not there", async () => {
+        // A retry after a dropped connection is safe: the row is already gone,
+        // nothing else is touched, and false says which of the two happened
+        // rather than reading as a failure. An identifier naming nothing at all
+        // is answered the same way, because by then the two are the same fact.
+        const store = await twoMerchants();
+        await store.addKey(
+          { id: "mk_now", merchantId: A, label: "this sign-in", digest: "d1", purpose: "cabinet" },
+          1_000,
+        );
+
+        expect(await store.forgetCabinetKey("mk_now")).toBe(true);
+        expect(await store.forgetCabinetKey("mk_now")).toBe(false);
+        expect(await store.forgetCabinetKey("mk_never_existed")).toBe(false);
+        expect(await store.keyByDigest("d1")).toBeNull();
       });
 
       it("leaves its digest free once it is gone, which revoking one does not", async () => {
@@ -1000,7 +1038,7 @@ export function describeStore(name: string, open: () => Promise<Store>): void {
         );
         await store.disableKey("mk_off", 4_000);
 
-        await store.forgetCabinetKeysOf(A, "mk_now");
+        await store.forgetCabinetKey("mk_gone");
 
         // The swept key's digest is nobody's, so the same secret can be written
         // again and it opens the door as the new key it now is.
@@ -1029,21 +1067,6 @@ export function describeStore(name: string, open: () => Promise<Store>): void {
             6_000,
           ),
         ).rejects.toThrow(/a key with that digest is already written down/);
-      });
-
-      it("is swept a second time with nothing left to sweep", async () => {
-        // A retry after a dropped connection is safe and says so: nought is an
-        // answer rather than a failure, and it is also what the first sign-in a
-        // merchant ever makes is answered with.
-        const store = await twoMerchants();
-        await store.addKey(
-          { id: "mk_now", merchantId: A, label: "this sign-in", digest: "d1", purpose: "cabinet" },
-          1_000,
-        );
-
-        expect(await store.forgetCabinetKeysOf(A, "mk_now")).toBe(0);
-        expect(await store.forgetCabinetKeysOf(A, "mk_now")).toBe(0);
-        expect((await store.workingKey("d1"))?.id).toBe("mk_now");
       });
 
       it("is found by its digest whatever state it is in, which the door is not", async () => {

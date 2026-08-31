@@ -27,7 +27,7 @@ nothing to name until the merchant does.
 **2. An account names its merchant and holds a key made for the cabinet.** The
 cabinet builds its gateway client per request from the signed-in account's
 row; `MERCHANT_API_KEY` leaves the configuration. The key is stored as issued,
-and it is made afresh at every sign-in and the older ones swept away — so a
+and it is made afresh at every sign-in and the one it replaces forgotten — so a
 copy of the database is a set of keys that stops working at the next sign-in
 rather than one that works for good. It is still not a secret store; the
 database is a boundary against the network, not against a host, and the day
@@ -48,15 +48,23 @@ seller reaches an agent inside a payment challenge that names nobody.
 
 **5. Keys are made and disabled from the cabinet, and a key says what it is
 for.** Three merchant-scoped routes over the keys a merchant made for their own
-code — list, issue, disable — and two at `/v0/keys/cabinet` that make and
-sweep up the key the cabinet calls with, refused to any other key. That one is
-in no merchant's list and is refused by the disabling, since a merchant
-switches off what they issued; the sweep removes rather than revokes. A
-merchant cannot disable the key their own call was made with — a rule in the
-route, because that click leaves whoever made it calling with something the
-gateway no longer takes. It sees the key on the call, so two keys disabling
-each other in one moment still leave a merchant with none of their own, which
-nobody has decided to refuse; the way back in is a key of the other kind.
+code — list, issue, disable — and two at `/v0/keys/cabinet` that make a key for
+a cabinet and forget one, refused to any other key. That kind is in no
+merchant's list and is refused by the disabling, since a merchant switches off
+what they issued; forgetting removes rather than revokes. The forgetting takes
+the key the call was made with and no other: a rule of the form "every key but
+this one" is decided when the call is sent and stale when it lands, so a key
+written in between is removed by a caller that never heard of it, and two
+overlapping sign-ins leave an account naming a key that is gone. Reaching only
+the key in the caller's hand, nobody can take away a credential anybody else
+holds. What that costs is that nothing sweeps up after an interrupted sign-in;
+clearing those by age is counted from the cabinet, which knows the keys still in
+use, and is not built. A merchant cannot disable the key their own call was
+made with — a rule in the route, because that click leaves whoever made it
+calling with something the gateway no longer takes. It sees the key on the
+call, so two keys disabling each other in one moment still leave a merchant
+with none of their own, which nobody has decided to refuse; the way back in is
+a key of the other kind.
 
 ## Consequences
 

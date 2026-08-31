@@ -632,35 +632,61 @@ describe("the key a cabinet calls with", () => {
   });
 });
 
-describe("sweeping up the cabinet keys", () => {
-  it("removes the keys of earlier sign-ins and keeps the one calling", async () => {
-    // A cabinet asks for a key, starts using it, and sweeps. What is left is
-    // the one it is holding — and the one it arrived with is gone rather than
-    // revoked, because a merchant never issued it and will never read it back.
+describe("forgetting the key a call was made with", () => {
+  it("takes away the key that made the call, and nothing else of this merchant's", async () => {
+    // The whole of what this does. A cabinet that has just moved its account
+    // row onto a fresh key calls this with the old one, and the old one stops
+    // opening the door — gone rather than revoked, because a merchant never
+    // issued it and will never read it back.
     const { served } = await started();
     const made = await registered(served);
     const fresh = await cabinetKey(served, made.secret);
 
-    const swept = await served.call("DELETE", "/v0/keys/cabinet", { headers: bearer(fresh) });
+    const gone = await served.call("DELETE", "/v0/keys/cabinet", { headers: bearer(made.secret) });
 
-    expect(swept.status, JSON.stringify(swept.body)).toBe(200);
-    expect(swept.body).toStrictEqual({ removed: 1 });
-    expect(await opensTheDoor(served, fresh)).toBe(true);
+    expect(gone.status, JSON.stringify(gone.body)).toBe(200);
+    expect(gone.body).toStrictEqual({ forgotten: true });
     expect(await opensTheDoor(served, made.secret)).toBe(false);
+    // And the key the cabinet is actually holding is untouched, because this
+    // call never had it and could not have named it.
+    expect(await opensTheDoor(served, fresh)).toBe(true);
+  });
+
+  it("cannot reach a key its caller is not holding, whoever made either", async () => {
+    // The reason this shape exists. A call that removed "every key but mine"
+    // decided which keys to keep at the moment it was sent, and a key written
+    // after that moment was one it removed without ever having heard of it — so
+    // two sign-ins racing could leave an account naming a key the gateway had
+    // forgotten. Here the only key a call can remove is the one it is being
+    // made with, so there is nothing to race for: every other key of this
+    // merchant's, of either kind, is still working afterwards.
+    const { served } = await started();
+    const made = await registered(served);
+    const worker = await issued(served, made.secret, "the worker on the small box");
+    const older = await cabinetKey(served, made.secret);
+    const newer = await cabinetKey(served, made.secret);
+
+    const gone = await served.call("DELETE", "/v0/keys/cabinet", { headers: bearer(older) });
+
+    expect(gone.status).toBe(200);
+    expect(await opensTheDoor(served, older)).toBe(false);
+    expect(await opensTheDoor(served, newer)).toBe(true);
+    expect(await opensTheDoor(served, made.secret)).toBe(true);
+    expect(await opensTheDoor(served, worker.secret)).toBe(true);
   });
 
   it("leaves the keys the merchant made for their own code alone", async () => {
-    // The sweep is about one cabinet's leftovers. A worker on a small box that
-    // stopped opening the door because somebody signed in from a phone would be
-    // this call reaching a merchant's own things.
+    // Not because it looks at them and decides: it cannot be made with one and
+    // cannot name one. What is held here is the merchant's own list coming back
+    // unchanged, which is the fact somebody drawing a keys screen relies on.
     const { served } = await started();
     const made = await registered(served);
     const worker = await issued(served, made.secret, "the worker on the small box");
     const fresh = await cabinetKey(served, made.secret);
 
-    const swept = await served.call("DELETE", "/v0/keys/cabinet", { headers: bearer(fresh) });
+    const gone = await served.call("DELETE", "/v0/keys/cabinet", { headers: bearer(made.secret) });
 
-    expect(swept.status).toBe(200);
+    expect(gone.status).toBe(200);
     expect(await opensTheDoor(served, worker.secret)).toBe(true);
     expect((await keysWith(served, fresh)).keys.map((key) => key.id)).toStrictEqual([
       worker.key.id,
@@ -668,24 +694,27 @@ describe("sweeping up the cabinet keys", () => {
   });
 
   it("signs nobody else's cabinet out", async () => {
-    // Seeded with two merchants, because a sweep scoped to nobody passes every
-    // assertion one merchant can make about their own keys.
+    // Seeded with two merchants, because a call scoped to nobody passes every
+    // assertion one merchant can make about their own keys. Another merchant's
+    // key is not reachable here for the same reason this merchant's other keys
+    // are not: there are no parameters, and the only key named is the one in
+    // the caller's hand.
     const { served } = await started();
     const first = await registered(served);
     const second = await registered(served);
     const fresh = await cabinetKey(served, first.secret);
 
-    const swept = await served.call("DELETE", "/v0/keys/cabinet", { headers: bearer(fresh) });
+    await served.call("DELETE", "/v0/keys/cabinet", { headers: bearer(fresh) });
 
-    expect((swept.body as { removed: number }).removed).toBe(1);
     expect(await opensTheDoor(served, second.secret)).toBe(true);
+    expect(await opensTheDoor(served, first.secret)).toBe(true);
   });
 
   it("is refused to a key the merchant made for their own code, and removes nothing", async () => {
-    // The refusal that the whole shape of this call rests on: made with a key
-    // of the merchant's own, the sweep would find every cabinet key of theirs
-    // except the caller's — which is all of them — and the person signed into a
-    // cabinet would be looking at a page that no longer opens.
+    // A merchant's own key is not a thing this call forgets: those are revoked
+    // from the list they appear on, at an instant somebody can read back, and
+    // this removes a row outright. The two kinds are kept apart at the door
+    // rather than by whoever happens to call.
     const { served } = await started();
     const made = await registered(served);
     const worker = await issued(served, made.secret, "the worker on the small box");
@@ -696,24 +725,29 @@ describe("sweeping up the cabinet keys", () => {
 
     expect(refused.status).toBe(403);
     expect((refused.body as { error: { code: string } }).error.code).toBe("not_a_cabinet_key");
+    expect(await opensTheDoor(served, worker.secret)).toBe(true);
     expect(await opensTheDoor(served, made.secret)).toBe(true);
   });
 
-  it("answers a second sweep with nothing removed", async () => {
-    // A retry after a dropped connection is safe: nothing is left to remove and
-    // nought is an answer rather than a failure. It is also what a cabinet gets
-    // the first time a merchant ever signs in.
-    const { served } = await started();
+  it("answers a second call with the same key as a key it does not know", async () => {
+    // What a retry after a dropped connection meets, and it is safe: the key it
+    // would be made with is the key the first call removed, so there is nothing
+    // left for it to authenticate as and nothing further for it to remove. The
+    // refusal is the confirmation that the first one landed — and either way
+    // the end state is the one the caller wanted.
+    const { served, harnessed } = await started();
     const made = await registered(served);
     const fresh = await cabinetKey(served, made.secret);
+    const before = await keysInAll(harnessed, made.merchant_id);
 
-    const first = await served.call("DELETE", "/v0/keys/cabinet", { headers: bearer(fresh) });
-    const again = await served.call("DELETE", "/v0/keys/cabinet", { headers: bearer(fresh) });
+    const first = await served.call("DELETE", "/v0/keys/cabinet", { headers: bearer(made.secret) });
+    const again = await served.call("DELETE", "/v0/keys/cabinet", { headers: bearer(made.secret) });
 
-    expect(first.body).toStrictEqual({ removed: 1 });
-    expect(again.status).toBe(200);
-    expect(again.body).toStrictEqual({ removed: 0 });
+    expect(first.body).toStrictEqual({ forgotten: true });
+    expect(again.status).toBe(401);
     expect(await opensTheDoor(served, fresh)).toBe(true);
+    // One row went and no more, however many times it was asked for.
+    expect(await keysInAll(harnessed, made.merchant_id)).toBe(before - 1);
   });
 });
 

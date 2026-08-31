@@ -350,21 +350,17 @@ export class PostgresStore implements Store {
     return rows.map(storedKeyOf);
   }
 
-  async forgetCabinetKeysOf(merchantId: string, keptKeyId: string): Promise<number> {
-    // The three conditions are three rows this must not touch, and every one of
-    // them is somebody's way in: another merchant's cabinet, this merchant's
-    // own workers, and the key this very call is being made with.
+  async forgetCabinetKey(keyId: string): Promise<boolean> {
+    // One row by its own identifier, and the kind carried in the predicate
+    // rather than read first and checked here: a merchant's own key is revoked
+    // and never removed, and a read followed by a delete is a gap where the row
+    // could change kind — which it cannot today, and which nothing about this
+    // statement invites anybody to rely on.
     const gone = await this.#db
       .delete(merchantKeys)
-      .where(
-        and(
-          eq(merchantKeys.merchantId, merchantId),
-          eq(merchantKeys.purpose, "cabinet"),
-          not(eq(merchantKeys.id, keptKeyId)),
-        ),
-      )
+      .where(and(eq(merchantKeys.id, keyId), eq(merchantKeys.purpose, "cabinet")))
       .returning({ id: merchantKeys.id });
-    return gone.length;
+    return gone.length > 0;
   }
 
   async disableKey(id: string, at: number): Promise<StoredKey | null> {

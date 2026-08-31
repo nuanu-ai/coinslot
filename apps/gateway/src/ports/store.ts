@@ -637,8 +637,7 @@ export interface Store {
   ): Promise<StoredKey | "made_for_a_cabinet" | null>;
 
   /**
-   * Removes every key this merchant has for a cabinet except the one named, and
-   * says how many rows went.
+   * Removes one key made for a cabinet, and answers whether a row went.
    *
    * The only place in this port where something is deleted rather than marked,
    * and the reason is who would read it. A revoked key stays because a merchant
@@ -646,20 +645,23 @@ export interface Store {
    * never saw, and could not have found in any list while it existed. Kept, it
    * would be history for nobody, growing by a row per sign-in.
    *
-   * "All but the one named" is the whole rule, and the shape is what makes it
-   * safe. It cannot remove the key its own caller is holding, and it strands
-   * nothing: "the one before mine" would leave whichever of two simultaneous
-   * sign-ins lost the race alive for good, with nobody left who could remove
-   * it. What comes out of a sweep is one live key rather than two, which is the
-   * right answer because a key hangs on an account rather than on a session
-   * (ADR-0014 §2) — every page of that account reads the one that is left.
+   * One key by name and no rule about which others to keep. Any such rule is
+   * decided when the call is made and can be stale by the time it lands: "every
+   * cabinet key but this one" removes a key written in between by a caller that
+   * had never heard of it, and two sign-ins overlapping then leave an account
+   * naming a key that is gone. What is above this passes the identifier of the
+   * key its own call was made with, so the only key anybody can remove is one
+   * they are holding.
    *
-   * Keys the merchant made for their own code are not touched, whatever is
-   * named: this sweeps up after a cabinet and reaches nothing a merchant owns.
-   * The caller is expected to have established that the key it names is a
-   * cabinet's, which is a fact about the call rather than about the store.
+   * A key the merchant made for their own code is not removed and answers
+   * false, whoever names it: those are revoked, at an instant their owner reads
+   * back on the one screen they appear on, and taking the row away would take
+   * that history with it. False is also a key that is not there — already
+   * removed, or never written — because by then the two are the same fact and
+   * a caller retrying after a dropped connection needs neither of them to be a
+   * failure.
    */
-  forgetCabinetKeysOf(merchantId: string, keptKeyId: string): Promise<number>;
+  forgetCabinetKey(keyId: string): Promise<boolean>;
 
   // --- the catalog ----------------------------------------------------------
 

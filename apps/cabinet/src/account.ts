@@ -11,11 +11,13 @@
  *   docker compose exec -T cabinet \
  *     pnpm --filter @coinslot/cabinet account add you@example.com mer_x
  *
- * Outside Docker it needs the same DATABASE_URL the cabinet itself is given and
- * nothing else — the key comes in on standard input, and nothing here talks to
- * the gateway:
+ * Outside Docker it needs the same configuration the cabinet itself is given —
+ * the key comes in on standard input, and `add` asks the gateway whether that
+ * key is one a cabinet may sign in with, so the address of the gateway has to
+ * be there too:
  *
  *   DATABASE_URL=postgres://coinslot:coinslot@localhost:5432/coinslot \
+ *   GATEWAY_URL=http://localhost:8080 \
  *     pnpm --filter @coinslot/cabinet account list
  *
  * What the file itself does is only the wiring. The commands are in
@@ -25,6 +27,7 @@
 import { runAccount } from "./account-command.js";
 import { loadConfig } from "./config.js";
 import { connect } from "./database.js";
+import { gatewayFor } from "./gateway.js";
 import { identityFor } from "./identity.js";
 
 // The whole configuration, not the database address alone. What this command
@@ -64,12 +67,23 @@ const readStandardInput = async (): Promise<string> => {
 const identity = identityFor(config, { pool: connect(config.databaseUrl) });
 let code = 1;
 try {
-  code = await runAccount(process.argv.slice(2), identity, {
-    say: (line) => {
-      console.log(line);
+  code = await runAccount(
+    process.argv.slice(2),
+    identity,
+    {
+      say: (line) => {
+        console.log(line);
+      },
+      readKey: readStandardInput,
     },
-    readKey: readStandardInput,
-  });
+    // The same call the sign-in makes, made here for its refusal rather than
+    // for its answer: only a key of the kind a cabinet holds is allowed to make
+    // another, so the gateway saying yes is the whole of what this asks. The
+    // key that comes back is held by nobody and nothing comes back for it:
+    // one row of litter per account made here, which is the same price every
+    // interrupted sign-in pays.
+    async (key) => await gatewayFor(config.gatewayUrl, key).issueCabinetKey(),
+  );
 } catch (thrown) {
   // Whatever the command did not have a better sentence for. The one failure
   // that has a better sentence — a database the migrations have never been run

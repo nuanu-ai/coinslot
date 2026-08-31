@@ -196,12 +196,19 @@ if (databaseUrl === null) {
       expect((await identity.signIn("dmitry@example.com", PASSWORD)).ok).toBe(false);
 
       const lines: string[] = [];
-      const code = await runAccount(["password", "dmitry@example.com"], identity, {
-        say: (line) => lines.push(line),
-        readKey: async () => {
-          throw new Error("the password command has no key to read");
+      const code = await runAccount(
+        ["password", "dmitry@example.com"],
+        identity,
+        {
+          say: (line) => lines.push(line),
+          readKey: async () => {
+            throw new Error("the password command has no key to read");
+          },
         },
-      });
+        async () => {
+          throw new Error("the password command has no key to ask the gateway about");
+        },
+      );
 
       expect(code).toBe(0);
       const printed = /^ {4}(\S+)$/m.exec(lines.join("\n"))?.[1] ?? "";
@@ -272,6 +279,77 @@ if (databaseUrl === null) {
         ["dmitry@example.com"],
       );
       expect(rows[0]?.merchant_key).toBe(MERCHANT.key);
+    });
+
+    it("replaces the key on a row, and says so from what the write answered", async () => {
+      // Every sign-in does this, and what it turns on is a claim about drizzle
+      // rather than about the memory store the rest of the suite runs on: that
+      // an update answers with the row it wrote, carrying the columns this
+      // cabinet added to the component's model. If it did not, the write would
+      // land and be reported as though it had not, the key would never be
+      // replaced on a deployed server, and the only sign of it would be a line
+      // in the log at every sign-in. So the answer is checked against the
+      // column, and both halves are read here.
+      const identity = identityOn();
+      await identity.register("dmitry@example.com", PASSWORD, MERCHANT);
+      const who = await identity.byEmail("dmitry@example.com");
+
+      const written = await identity.replaceMerchantKey(
+        who?.id ?? "",
+        MERCHANT.key,
+        "the-next-key-long-enough",
+      );
+
+      expect(written).toBe(true);
+      const { rows } = await pool.query<{ merchant_key: string; merchant_id: string }>(
+        "select merchant_key, merchant_id from cabinet_accounts where email = $1",
+        ["dmitry@example.com"],
+      );
+      expect(rows[0]?.merchant_key).toBe("the-next-key-long-enough");
+      // And the merchant beside it is untouched: this is the same merchant,
+      // reached with another of their keys.
+      expect(rows[0]?.merchant_id).toBe(MERCHANT.id);
+    });
+
+    it("does not report a key written onto a row the database does not have", async () => {
+      // What forgetting a key is allowed to happen after. An update that
+      // matched nothing must not read as a key written down: the caller would
+      // then take the key the row still names to be the one it had finished
+      // with, and put the only working key beyond use.
+      const identity = identityOn();
+
+      expect(
+        await identity.replaceMerchantKey(
+          "no-such-account",
+          MERCHANT.key,
+          "the-next-key-long-enough",
+        ),
+      ).toBe(false);
+    });
+
+    it("writes only while the row still holds the key that was read off it", async () => {
+      // The compare and the set are one statement in the database rather than a
+      // read this code makes and a write it makes afterwards. A read followed
+      // by a write is the same gap in a smaller costume: two sign-ins can both
+      // read, both find what they expected, and both write. Held here as well
+      // as against the memory store, because the condition has to be the
+      // database's own — an `update ... where merchant_key = $expected` — and
+      // whether drizzle carries a second where clause through is a claim about
+      // drizzle.
+      const identity = identityOn();
+      await identity.register("dmitry@example.com", PASSWORD, MERCHANT);
+      const who = await identity.byEmail("dmitry@example.com");
+
+      const won = await identity.replaceMerchantKey(who?.id ?? "", MERCHANT.key, "the-first-fresh");
+      const lost = await identity.replaceMerchantKey(who?.id ?? "", MERCHANT.key, "the-second");
+
+      expect(won).toBe(true);
+      expect(lost).toBe(false);
+      const { rows } = await pool.query<{ merchant_key: string }>(
+        "select merchant_key from cabinet_accounts where email = $1",
+        ["dmitry@example.com"],
+      );
+      expect(rows[0]?.merchant_key).toBe("the-first-fresh");
     });
 
     it("refuses a second account at one address, because the database says so", async () => {

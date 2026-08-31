@@ -147,6 +147,31 @@ export interface Identity {
    */
   register(email: string, password: string, merchant: AccountMerchant): Promise<Registration>;
   /**
+   * Moves an account's row from the key that was read off it to a fresh one.
+   *
+   * ADR-0014 §2: the key is made afresh at every sign-in, so that a copy of
+   * this database is a set of keys that stops working rather than one that
+   * works for good. The merchant is not touched — it is the same merchant,
+   * reached with another of their keys.
+   *
+   * `expected` is what the caller read off the row before it asked the gateway
+   * for `fresh`, and the write happens only while the row still holds it. That
+   * condition is the whole point and it is the database's own, one statement:
+   * a read followed by a write is the same gap in a smaller costume, and the
+   * gap is what two sign-ins fall through. Two callers holding the same read
+   * cannot both win.
+   *
+   * True is this row moved, and it is also what tells the caller which key it
+   * has finished with — the write and that answer are one act, because a caller
+   * that acted on a write it had not made would be putting the key the row
+   * actually names beyond use. False is every other outcome, whatever the reason: another
+   * sign-in got there first, somebody put a different key on the row from a
+   * terminal, or the row is not there at all. It is answered rather than
+   * thrown because the caller has to carry on — the row names a key that
+   * works, and signing somebody in matters more than replacing it.
+   */
+  replaceMerchantKey(personId: string, expected: string, fresh: string): Promise<boolean>;
+  /**
    * Whose session this cookie header carries, having asked the component.
    *
    * Null covers every way of not being signed in and does not distinguish them.
@@ -545,6 +570,36 @@ export function identityFor(config: CabinetConfig, parts: IdentityParts = {}): I
           cookies: made.headers.getSetCookie(),
         },
       };
+    },
+
+    async replaceMerchantKey(personId, expected, fresh) {
+      try {
+        // The component's own `updateUser` takes an identifier and nothing
+        // else, so this goes to the adapter under it, where a write carries as
+        // many conditions as it is given. Both of them matter: the row is this
+        // person's, and it still holds what the caller read. Over Postgres that
+        // is one `update ... where id = $1 and merchant_key = $2`; over the
+        // store the tests run on it is the same filter. What is skipped by
+        // going around `updateUser` is a refresh of sessions held in secondary
+        // storage, which this cabinet does not have — there is no second store
+        // configured, and a session here is a row like any other.
+        const written = await (await contextOf()).adapter.update<{ merchantKey?: unknown }>({
+          model: "user",
+          where: [
+            { field: "id", value: personId },
+            { field: "merchantKey", value: expected },
+          ],
+          update: { merchantKey: fresh },
+        });
+        // Read back from what the write answered rather than assumed from the
+        // absence of a throw. A conditional write that matched nothing is a
+        // write that did not happen, and it says so by answering with no row
+        // rather than by failing.
+        return written?.merchantKey === fresh;
+      } catch (thrown) {
+        console.error("[cabinet] a fresh gateway key could not be written onto a row", thrown);
+        return false;
+      }
     },
 
     async whoIs(cookieHeader) {

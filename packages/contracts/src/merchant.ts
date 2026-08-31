@@ -225,24 +225,23 @@ export const CabinetKeySchema = z
   });
 
 /**
- * What sweeping up a merchant's other cabinet keys came to.
+ * That the key a call was made with is gone.
  *
- * A count rather than a list of identifiers, because those identifiers name
- * rows that no longer exist and never appeared in any list while they did.
- * One is the ordinary answer, since the sign-in before this one left a key
- * behind; zero is what a repeat of the call gets, and what the first sign-in a
- * merchant ever makes gets. It is a number rather than a silence for the
- * reason every nullable answer here is one: a reader cannot tell an absent
- * field from a client that dropped it.
+ * A constant, and deliberately: the call has one outcome. It removes the key it
+ * was made with and no other, so there is nothing to count — a number here
+ * could only be about rows this call cannot reach — and nothing to name, since
+ * the caller is holding the only key it names. What is left to say is that it
+ * is done, and it is said in a field rather than left to a status code so that
+ * a client reads one document and not two kinds of evidence.
  */
-export const ForgottenCabinetKeysSchema = z
+export const ForgottenCabinetKeySchema = z
   .strictObject({
-    /** How many keys stopped existing, which is nought or more. */
-    removed: z.int().min(0),
+    /** The key this call was made with no longer exists. */
+    forgotten: z.literal(true),
   })
   .meta({
     description:
-      "How many of this merchant's cabinet keys were removed: every one of them except the key this call was made with. Zero is an ordinary answer and means there was nothing else to remove. The keys themselves are not named, because they were in no list while they existed and are gone now.",
+      "That the key this call was made with has been removed, which is the only thing this call does. There is nothing to count and nothing to name: it reaches one key, the one in the caller's hand, and the caller already knows which that is.",
   });
 
 /**
@@ -463,6 +462,6 @@ export type IssueKeyRequest = z.infer<typeof IssueKeyRequestSchema>;
 export type IssuedKey = z.infer<typeof IssuedKeySchema>;
 export type DisabledKey = z.infer<typeof DisabledKeySchema>;
 export type CabinetKey = z.infer<typeof CabinetKeySchema>;
-export type ForgottenCabinetKeys = z.infer<typeof ForgottenCabinetKeysSchema>;
+export type ForgottenCabinetKey = z.infer<typeof ForgottenCabinetKeySchema>;
 export type RegistrationRequest = z.infer<typeof RegistrationRequestSchema>;
 export type RegisteredMerchant = z.infer<typeof RegisteredMerchantSchema>;
