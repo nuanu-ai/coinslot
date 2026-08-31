@@ -3943,6 +3943,91 @@ describe("the key the cabinet signs in with", () => {
     expect(written).not.toContain(KEY);
   });
 
+  /**
+   * One sign-in, stopped at a step until the test lets it go.
+   *
+   * Two of these are what makes a race a test rather than a hope: the two
+   * sign-ins below are made to interleave at exactly the moment that decides
+   * whether anybody is locked out, instead of being started together and
+   * watched.
+   */
+  interface Step {
+    readonly reached: Promise<void>;
+    readonly arrive: () => void;
+    readonly go: Promise<void>;
+    readonly release: () => void;
+  }
+
+  const aStep = (): Step => {
+    let arrive: () => void = () => undefined;
+    let release: () => void = () => undefined;
+    const reached = new Promise<void>((resolve) => {
+      arrive = resolve;
+    });
+    const go = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return { reached, arrive: () => arrive(), go, release: () => release() };
+  };
+
+  it("leaves a working key on the row when two sign-ins race for it", async () => {
+    // The one interleaving that can lock somebody out of their own cabinet, and
+    // it is not exotic: two devices, or a form posted twice. Both sign-ins read
+    // the same key off the row, so both believe they are replacing it. The
+    // first to write then sweeps with what it wrote, which takes away the key
+    // the second is holding — and the second, writing afterwards, would put
+    // that dead key on the row. Nothing after that helps: every screen answers
+    // 502, and signing in again asks for a fresh key with the one being
+    // refused, so the way back in is a terminal.
+    //
+    // What is asserted is not who won. It is the only thing anybody is locked
+    // out by: the key the row names opens the gateway's door.
+    const first = aStep();
+    const second = aStep();
+    let stopped = 0;
+    const stopHere = async (): Promise<void> => {
+      const mine = stopped === 0 ? first : second;
+      stopped += 1;
+      mine.arrive();
+      await mine.go;
+    };
+
+    const { another } = await aRegisteredMerchant({
+      identity: (real) => ({
+        ...real,
+        replaceMerchantKey: async (...asked: Parameters<Identity["replaceMerchantKey"]>) => {
+          await stopHere();
+          return await real.replaceMerchantKey(...asked);
+        },
+      }),
+    });
+
+    const a = await another();
+    const b = await another();
+
+    // The first device signs in, asks the gateway for a key of its own, and
+    // stops in front of the row.
+    const signingInA = a.signIn(FRESH.email, FRESH.password);
+    await first.reached;
+
+    // The second signs in while the row still says what the first read. It gets
+    // a key of its own too, and stops in the same place.
+    const signingInB = b.signIn(FRESH.email, FRESH.password);
+    await second.reached;
+
+    // The first goes through: it writes its key down and sweeps with it, which
+    // removes every other cabinet key this merchant has — including the one the
+    // second device is holding and has not written down.
+    first.release();
+    await signingInA;
+
+    // And now the second writes.
+    second.release();
+    await signingInB;
+
+    expect(await theGatewayTakes(keyOnTheRowOf(FRESH.email))).toBe(true);
+  }, 30_000);
+
   it("does not call a key written when there was no account to write it onto", async () => {
     // What the sweep is allowed to happen after. The store takes a write for a
     // row it does not have and changes nothing — no throw, nothing to notice —
@@ -3951,7 +4036,28 @@ describe("the key the cabinet signs in with", () => {
     // read back from what the write returned rather than from its silence.
     const { identity } = await started();
 
-    expect(await identity.replaceMerchantKey("no-such-account", "a-key-long-enough")).toBe(false);
+    expect(await identity.replaceMerchantKey("no-such-account", KEY, "a-key-long-enough")).toBe(
+      false,
+    );
+  });
+
+  it("refuses the write when the row stopped holding the key that was read off it", async () => {
+    // The write and the right to sweep are one act, and this is where they are
+    // joined: the row moves from the key that was read to the fresh one, or it
+    // does not move at all. Two sign-ins holding the same read cannot both
+    // win, so the one that loses knows it has nothing to sweep with — which is
+    // the whole of what keeps it from taking away the winner's key.
+    const { identity } = await started();
+    const person = await identity.byEmail(PERSON);
+
+    const won = await identity.replaceMerchantKey(person?.id ?? "", KEY, "the-first-fresh-key");
+    const lost = await identity.replaceMerchantKey(person?.id ?? "", KEY, "the-second-fresh-key");
+
+    expect(won).toBe(true);
+    expect(lost).toBe(false);
+    // And the loser really did not write: the row still holds the winner's key
+    // rather than the last one that was tried.
+    expect(keyOnTheRowOf(PERSON)).toBe("the-first-fresh-key");
   });
 
   it("lets a person in when the gateway answers something the contract refuses", async () => {

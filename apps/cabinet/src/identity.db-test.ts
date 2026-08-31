@@ -287,7 +287,11 @@ if (databaseUrl === null) {
       await identity.register("dmitry@example.com", PASSWORD, MERCHANT);
       const who = await identity.byEmail("dmitry@example.com");
 
-      const written = await identity.replaceMerchantKey(who?.id ?? "", "the-next-key-long-enough");
+      const written = await identity.replaceMerchantKey(
+        who?.id ?? "",
+        MERCHANT.key,
+        "the-next-key-long-enough",
+      );
 
       expect(written).toBe(true);
       const { rows } = await pool.query<{ merchant_key: string; merchant_id: string }>(
@@ -307,9 +311,38 @@ if (databaseUrl === null) {
       // and that one is not on any row.
       const identity = identityOn();
 
-      expect(await identity.replaceMerchantKey("no-such-account", "the-next-key-long-enough")).toBe(
-        false,
+      expect(
+        await identity.replaceMerchantKey(
+          "no-such-account",
+          MERCHANT.key,
+          "the-next-key-long-enough",
+        ),
+      ).toBe(false);
+    });
+
+    it("writes only while the row still holds the key that was read off it", async () => {
+      // The compare and the set are one statement in the database rather than a
+      // read this code makes and a write it makes afterwards. A read followed
+      // by a write is the same gap in a smaller costume: two sign-ins can both
+      // read, both find what they expected, and both write. Held here as well
+      // as against the memory store, because the condition has to be the
+      // database's own — an `update ... where merchant_key = $expected` — and
+      // whether drizzle carries a second where clause through is a claim about
+      // drizzle.
+      const identity = identityOn();
+      await identity.register("dmitry@example.com", PASSWORD, MERCHANT);
+      const who = await identity.byEmail("dmitry@example.com");
+
+      const won = await identity.replaceMerchantKey(who?.id ?? "", MERCHANT.key, "the-first-fresh");
+      const lost = await identity.replaceMerchantKey(who?.id ?? "", MERCHANT.key, "the-second");
+
+      expect(won).toBe(true);
+      expect(lost).toBe(false);
+      const { rows } = await pool.query<{ merchant_key: string }>(
+        "select merchant_key from cabinet_accounts where email = $1",
+        ["dmitry@example.com"],
       );
+      expect(rows[0]?.merchant_key).toBe("the-first-fresh");
     });
 
     it("refuses a second account at one address, because the database says so", async () => {
