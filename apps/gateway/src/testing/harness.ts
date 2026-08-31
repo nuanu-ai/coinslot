@@ -251,7 +251,15 @@ async function addKnownKey(
   at: number,
 ): Promise<{ key: { id: string }; secret: string }> {
   const key = await store.addKey(
-    { id: ids("mk"), merchantId, label: "the harness's known key", digest: keyDigest(secret) },
+    {
+      id: ids("mk"),
+      merchantId,
+      label: "the harness's known key",
+      digest: keyDigest(secret),
+      // A key of the merchant's own: it stands in for the one a merchant puts
+      // in their worker, which is what almost every test here is calling as.
+      purpose: "merchant_code",
+    },
     at,
   );
   return { key, secret };

@@ -60,7 +60,7 @@ const USAGE = [
   "  list                      the accounts there are, their merchant, and how",
   "                            many sessions are open",
   "",
-  "A merchant can register for themselves and get their first key that way",
+  "A merchant can register for themselves, and ask for a key once they are in",
   "(ADR-0014). This command is for the other case: a merchant that already",
   "exists at the gateway and needs somebody who can sign in as them.",
   "",

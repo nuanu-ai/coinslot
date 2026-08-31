@@ -13,7 +13,7 @@
 
 import { describe, expect, it } from "vitest";
 import { MemoryStore } from "./adapters/memory/store.js";
-import { keyDigest } from "./app/merchants.js";
+import { issueCabinetKey, keyDigest } from "./app/merchants.js";
 import { runMerchant } from "./merchant-command.js";
 import { countedIds } from "./testing/harness.js";
 
@@ -33,7 +33,7 @@ function aTerminal() {
       () => at,
       (line) => said.push(line),
     );
-  return { store, said, at, run, text: () => said.join("\n") };
+  return { store, said, at, ids, run, text: () => said.join("\n") };
 }
 
 describe("making a merchant", () => {
@@ -177,6 +177,28 @@ describe("issuing a key", () => {
 
     expect(terminal.text()).not.toContain(secret ?? "csk_nothing-was-issued");
     expect(terminal.text()).toContain("the worker's");
+  });
+
+  it("shows the keys a cabinet holds beside the merchant's own, and says which", async () => {
+    // This list is the operator's and it is the only place either kind is
+    // printed. Two things ride on it. A cabinet's key opens the door, so a
+    // listing that left it out would let somebody revoke the merchant's last
+    // worker believing they had another; and which key is which is what stands
+    // between revoking a worker and locking a person out of their cabinet, so
+    // it is said in a column rather than left to a label anybody can type.
+    const terminal = aTerminal();
+    await terminal.run("add", "Someone's shop");
+    const merchantId = (await terminal.store.merchants())[0]?.id ?? "";
+    await terminal.run("key", merchantId, "the worker's");
+    // Through the terminal's own generator, because two of them would issue two
+    // keys under one identifier, exactly as two processes would.
+    await issueCabinetKey(terminal.store, terminal.ids, merchantId, terminal.at);
+    terminal.said.length = 0;
+
+    expect(await terminal.run("keys", merchantId)).toBe(0);
+
+    expect(terminal.text()).toContain("own code");
+    expect(terminal.text()).toContain("cabinet");
   });
 });
 

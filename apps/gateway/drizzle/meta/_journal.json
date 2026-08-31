@@ -50,6 +50,13 @@
       "when": 1787922499634,
       "tag": "0006_order_pay_to_backfill",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1788160400148,
+      "tag": "0007_cabinet_keys",
+      "breakpoints": true
     }
   ]
 }

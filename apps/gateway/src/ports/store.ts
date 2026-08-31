@@ -29,6 +29,11 @@
  * presses in their cabinet; `disableKey` names a key alone and serves the
  * command somebody types, where one identifier is the whole of what they have.
  *
+ * Reading a merchant's keys comes in two forms for a related reason. `keysOf`
+ * is every key they have and answers a person at a terminal, who is owed the
+ * truth about what still opens the door; `codeKeysOf` is the keys they made for
+ * their own code and answers the merchant, whose list is a place they act.
+ *
  * One method is not an accessor and is the reason this is an interface rather
  * than three maps. `withOrder` holds an order still while a decision is made
  * about it. Two events about the same order arrive from different places all
@@ -330,6 +335,22 @@ export interface StoredMerchant {
 }
 
 /**
+ * What a key was made for, which decides whose it is to look after.
+ *
+ * `merchant_code` is a key the merchant asked for and holds: it goes into their
+ * own worker, it is on the one screen they revoke keys from, and everything
+ * about it is theirs. `cabinet` is the credential a cabinet calls the gateway
+ * with on their behalf — made when somebody signs in, never shown to anybody,
+ * and in no list the merchant reads.
+ *
+ * The two are told apart by a value on the row rather than by the words in the
+ * label, because what hangs off the difference is which list a key appears in
+ * and which calls can reach it. A list assembled by reading text a person can
+ * type is a list a person can type their way into.
+ */
+export type KeyPurpose = "merchant_code" | "cabinet";
+
+/**
  * One key a merchant opens the door with.
  *
  * The secret itself is not here and never comes back out of the store: what is
@@ -344,8 +365,16 @@ export interface StoredMerchant {
 export interface StoredKey {
   readonly id: string;
   readonly merchantId: string;
-  /** What its owner called it, so one of several can be told from the others. */
+  /**
+   * What it is called, so one of several can be told from the others.
+   *
+   * Its owner chose it where the key is one of the merchant's own. A key made
+   * for a cabinet is labelled by whoever made it, because nobody typed
+   * anything: the merchant never sees it, and what reads the text is a person
+   * at a terminal looking at every key a merchant has.
+   */
   readonly label: string;
+  readonly purpose: KeyPurpose;
   readonly createdAt: number;
   /** When it was revoked, or null while it still opens the door. */
   readonly disabledAt: number | null;
@@ -398,7 +427,7 @@ export interface Store {
   ): Promise<StoredMerchant | null>;
 
   /**
-   * Writes down a merchant and their first key, together or not at all. Null
+   * Writes down a merchant and their cabinet's key, together or not at all. Null
    * where that identifier is taken, and then nothing was written.
    *
    * The two in one write is ADR-0014 §1, and what it buys is worth stating
@@ -408,6 +437,14 @@ export interface Store {
    * it. That is litter rather than damage, and it is litter with a foreign key
    * on it — cards, orders and receipts all reference merchants, so the row
    * cannot simply be swept.
+   *
+   * The key is made for a cabinet, and that is fixed here rather than asked of
+   * the caller. Whoever registers is a cabinet — the route takes no key, and
+   * what it walks away with is the credential it will call as this merchant
+   * with — so a caller who could ask for the other kind could only ever be
+   * asking by mistake, and the mistake is a row in the merchant's own list of
+   * keys on their first visit: one they never asked for, cannot recognise, and
+   * cannot revoke, since revoking it is their cabinet going dark.
    *
    * No listing name goes down with them, because registering does not ask for
    * one: the name buyers read is chosen afterwards, through `setServiceName`.
@@ -459,13 +496,22 @@ export interface Store {
    */
   setPayoutWallet(id: string, payoutWallet: string, at: number): Promise<StoredMerchant | null>;
 
-  /** Writes down one key of one merchant. The digest is what is kept, not the key. */
+  /**
+   * Writes down one key of one merchant. The digest is what is kept, not the
+   * key.
+   *
+   * What the key is for is said rather than defaulted. A default would be a
+   * caller who forgot, and what forgetting produces is a key made for a cabinet
+   * standing in a merchant's own list — the one row on that screen they cannot
+   * be allowed to press the button beside.
+   */
   addKey(
     key: {
       readonly id: string;
       readonly merchantId: string;
       readonly label: string;
       readonly digest: string;
+      readonly purpose: KeyPurpose;
     },
     at: number,
   ): Promise<StoredKey>;
@@ -502,16 +548,37 @@ export interface Store {
   keyByDigest(digest: string): Promise<StoredKey | null>;
 
   /**
-   * Every key of one merchant, disabled ones included, never their secrets.
+   * Every key of one merchant, whatever it was made for, disabled ones
+   * included, never their secrets.
    *
    * Oldest first, with the identifier settling a tie. The order is part of what
    * this promises rather than whatever each adapter's storage happens to give,
-   * because a merchant reads this list on a screen: left to the database, two
-   * keys made in the same millisecond would swap places between two visits with
-   * nothing having changed, and a test about the list would mean one thing in
-   * memory and another against Postgres.
+   * because a merchant reads a list built on this on a screen: left to the
+   * database, two keys made in the same millisecond would swap places between
+   * two visits with nothing having changed, and a test about the list would
+   * mean one thing in memory and another against Postgres.
+   *
+   * This is the wide read and its caller is the terminal, where the person
+   * looking is the operator and hiding a working key from them would make the
+   * count beside a merchant a lie — "no working key left" while a cabinet's own
+   * still opens the door. What a merchant reads is {@link codeKeysOf}.
    */
   keysOf(merchantId: string): Promise<readonly StoredKey[]>;
+
+  /**
+   * The keys one merchant made for their own code, disabled ones included.
+   *
+   * The same promise about order, and one thing left out: the keys a cabinet
+   * calls with. This is the read behind the list a merchant is shown, and a
+   * list is a place somebody acts — so a row they did not make, cannot
+   * recognise and cannot revoke has no business on it.
+   *
+   * The narrowing is here rather than in whoever calls, because a filter every
+   * caller has to remember is a filter one of them will not. What that costs
+   * the day it is forgotten is not a wrong number on a screen: it is a merchant
+   * pressing the button beside a row and taking their own cabinet down.
+   */
+  codeKeysOf(merchantId: string): Promise<readonly StoredKey[]>;
 
   /**
    * Stops one key working and hands back where it now stands. Null where there
@@ -531,22 +598,68 @@ export interface Store {
 
   /**
    * Stops one of this merchant's keys working and hands back where it now
-   * stands. Null where this merchant has no such key — which is the same answer
-   * as no such key anywhere, on purpose.
+   * stands. Three answers, and the two that are not a key are two different
+   * facts.
    *
-   * The sameness is the point rather than a simplification. Told apart, this
-   * call would count somebody else's keys: a merchant walking identifiers would
-   * learn which of them are real, and the identifiers of a merchant's keys are
-   * not secrets — they are printed in their own list and in ours.
+   * Null is this merchant having no such key — which is the same answer as no
+   * such key anywhere, on purpose. The sameness is the point rather than a
+   * simplification. Told apart, this call would count somebody else's keys: a
+   * merchant walking identifiers would learn which of them are real, and the
+   * identifiers of a merchant's keys are not secrets.
    *
-   * The merchant is in the predicate rather than checked after the read, so a
-   * key of somebody else's is never selected and there is no window between
-   * finding out whose it is and writing to it.
+   * `"made_for_a_cabinet"` is a key of this merchant's that they did not issue.
+   * A merchant switches off what they made; the credential their cabinet calls
+   * with is not that, and revoking it signs somebody out of the cabinet they
+   * are standing in. It is told apart from the null because it is a fact about
+   * the caller's own row rather than about a stranger's, so saying it counts
+   * nothing that was hidden — and because the caller is owed the reason, which
+   * "there is no such key" would not be.
+   *
+   * The rule holds however the identifier was come by. Nothing on the surface
+   * hands one out, and that is deliberately not what this rests on: an
+   * invariant that depends on nobody ever printing a value is an invariant that
+   * ends the first time somebody does.
+   *
+   * Both the merchant and the kind are in the predicate rather than checked
+   * after the read, so a key this call may not touch is never selected and
+   * there is no window between finding out what it is and writing to it. What a
+   * kind that is not the merchant's own costs is a second read on the refusal
+   * path alone, after nothing has been written; a key's kind never changes, so
+   * the two cannot disagree.
    *
    * Disabling a key that is already disabled keeps the instant it was first
    * revoked at, exactly as {@link disableKey} does.
    */
-  disableKeyOf(merchantId: string, id: string, at: number): Promise<StoredKey | null>;
+  disableKeyOf(
+    merchantId: string,
+    id: string,
+    at: number,
+  ): Promise<StoredKey | "made_for_a_cabinet" | null>;
+
+  /**
+   * Removes every key this merchant has for a cabinet except the one named, and
+   * says how many rows went.
+   *
+   * The only place in this port where something is deleted rather than marked,
+   * and the reason is who would read it. A revoked key stays because a merchant
+   * asks when it stopped; nobody ever asks that about a key they did not issue,
+   * never saw, and could not have found in any list while it existed. Kept, it
+   * would be history for nobody, growing by a row per sign-in.
+   *
+   * "All but the one named" is the whole rule, and the shape is what makes it
+   * safe. It cannot remove the key its own caller is holding, and it strands
+   * nothing: "the one before mine" would leave whichever of two simultaneous
+   * sign-ins lost the race alive for good, with nobody left who could remove
+   * it. What comes out of a sweep is one live key rather than two, which is the
+   * right answer because a key hangs on an account rather than on a session
+   * (ADR-0014 §2) — every page of that account reads the one that is left.
+   *
+   * Keys the merchant made for their own code are not touched, whatever is
+   * named: this sweeps up after a cabinet and reaches nothing a merchant owns.
+   * The caller is expected to have established that the key it names is a
+   * cabinet's, which is a fact about the call rather than about the store.
+   */
+  forgetCabinetKeysOf(merchantId: string, keptKeyId: string): Promise<number>;
 
   // --- the catalog ----------------------------------------------------------
 

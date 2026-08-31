@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  CabinetKeySchema,
   DisabledKeySchema,
+  ForgottenCabinetKeysSchema,
   IssuedKeySchema,
   IssueKeyRequestSchema,
   MerchantKeyListSchema,
@@ -217,6 +219,60 @@ describe("a key that has been disabled", () => {
   });
 });
 
+describe("the key a cabinet holds", () => {
+  const held = { secret };
+
+  it("is the secret and nothing else", () => {
+    // A cabinet takes this key and puts it on the row of whoever signed in.
+    // There is no row document beside it, unlike every other answer that makes
+    // a key, and the absence is the decision: a key made for a cabinet is in no
+    // merchant's list, so an identifier here would name a row nobody can find,
+    // list or revoke, and the first screen built on it would offer all three.
+    expect(CabinetKeySchema.parse(held)).toStrictEqual(held);
+  });
+
+  it("refuses an answer with no secret in it and names it", () => {
+    expectMissingFieldRejected(CabinetKeySchema, held, "secret");
+  });
+
+  it("refuses a secret that could not travel as a key", () => {
+    expect(CabinetKeySchema.safeParse({ secret: "" }).success).toBe(false);
+    expect(CabinetKeySchema.safeParse({ secret: "csk_ two halves" }).success).toBe(false);
+  });
+
+  it("carries no row for a key that is in no list", () => {
+    expect(errorOf(CabinetKeySchema, { ...held, key: working })).toContain("key");
+  });
+});
+
+describe("the cabinet keys that were swept up", () => {
+  const swept = { removed: 2 };
+
+  it("says how many keys stopped existing", () => {
+    expect(ForgottenCabinetKeysSchema.parse(swept)).toStrictEqual(swept);
+  });
+
+  it("says nothing was there rather than leaving the field out", () => {
+    // Zero is what a repeat of the call answers, and what the first sign-in a
+    // merchant ever makes answers. It is a number rather than an absent field
+    // for the reason every other nullable answer here is: a reader cannot tell
+    // a silence from a client that dropped it.
+    expect(ForgottenCabinetKeysSchema.parse({ removed: 0 }).removed).toBe(0);
+    expectMissingFieldRejected(ForgottenCabinetKeysSchema, swept, "removed");
+  });
+
+  it("refuses a count that is not a count of rows", () => {
+    expect(ForgottenCabinetKeysSchema.safeParse({ removed: -1 }).success).toBe(false);
+    expect(ForgottenCabinetKeysSchema.safeParse({ removed: 1.5 }).success).toBe(false);
+  });
+
+  it("names no key it removed", () => {
+    // The identifiers of keys nobody could ever list are not an answer to
+    // anything: what the caller needs to know is that the sweep happened.
+    expect(errorOf(ForgottenCabinetKeysSchema, { ...swept, keys: [working.id] })).toContain("keys");
+  });
+});
+
 describe("registering a merchant", () => {
   const asked = { invitation: "the-code-from-the-invitation" };
 
@@ -261,22 +317,30 @@ describe("registering a merchant", () => {
 describe("what registering answers with", () => {
   const registered = {
     merchant_id: "mch_4d21bb",
-    key: working,
     secret,
   };
 
-  it("carries the merchant, their first key, and the secret once", () => {
-    // All three are needed by the one caller: it writes the merchant and the
-    // secret onto the account it is creating, and shows the key's own row so
-    // the person can see what they now hold.
+  it("carries the merchant and the secret once, and nothing else", () => {
+    // Both are needed by the one caller: it writes the merchant and the secret
+    // onto the account it is creating. Nothing else is, and this answer used to
+    // carry a third thing — the key's own row.
     expect(RegisteredMerchantSchema.parse(registered)).toStrictEqual(registered);
   });
 
-  for (const field of ["merchant_id", "key", "secret"]) {
+  for (const field of ["merchant_id", "secret"]) {
     it(`refuses a registration answer without ${field} and names it`, () => {
       expectMissingFieldRejected(RegisteredMerchantSchema, registered, field);
     });
   }
+
+  it("carries no row for the key it just handed over", () => {
+    // The key made here is a cabinet's: the merchant has no screen it sits on,
+    // and the call that revokes a key refuses its kind by name. An identifier
+    // for it is therefore a value with nothing to do, so this answer does not
+    // carry one, and a client that put one back is refused rather than quietly
+    // trimmed.
+    expect(errorOf(RegisteredMerchantSchema, { ...registered, key: working })).toContain("key");
+  });
 
   it("names no seller, because registering chooses none", () => {
     // A merchant who has just registered is listed under nothing at all, so
@@ -293,12 +357,6 @@ describe("what registering answers with", () => {
     // account that names no merchant is the single-tenant cabinet again.
     expect(RegisteredMerchantSchema.parse(registered).merchant_id).toBe("mch_4d21bb");
     expect(RegisteredMerchantSchema.safeParse({ ...registered, merchant_id: "" }).success).toBe(
-      false,
-    );
-  });
-
-  it("holds the key to the key document", () => {
-    expect(RegisteredMerchantSchema.safeParse({ ...registered, key: { id: "mk_1" } }).success).toBe(
       false,
     );
   });

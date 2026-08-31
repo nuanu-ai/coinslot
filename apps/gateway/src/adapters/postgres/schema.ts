@@ -99,8 +99,19 @@ export const merchantKeys = pgTable(
     merchantId: text("merchant_id")
       .notNull()
       .references(() => merchants.id, { onDelete: "cascade" }),
-    /** What its owner called it, so one of several can be told from the others. */
+    /** What it is called, so one of several can be told from the others. */
     label: text("label").notNull(),
+    /**
+     * What the key was made for: the merchant's own code, or a cabinet calling
+     * as them.
+     *
+     * It decides which list the row appears in, so it is a column rather than
+     * something read out of the label: a list assembled from text a person can
+     * type is a list a person can type their way into. The value is one of two
+     * words and is held to them by the code above rather than by an enum type
+     * here, the way the selling word beside it is.
+     */
+    purpose: text("purpose").notNull(),
     /** The SHA-256 of the key, in lower-case hex. Never the key. */
     digest: text("digest").notNull().unique(),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull(),

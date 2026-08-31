@@ -1,0 +1,38 @@
+-- A key says what it was made for, and the keys a cabinet holds say so.
+--
+-- Until now every key was the same kind of thing, and the key a cabinet calls
+-- the gateway with sat in the merchant's own list of keys with no button beside
+-- it: a row they never made, cannot revoke and have no reason to know about.
+-- The column is what tells the two apart, and everything that follows from it —
+-- which list a key appears in, which calls can reach it — reads this and not a
+-- label.
+--
+-- Hand-written rather than left as drizzle-kit generated it, for the reason
+-- 0003 was: the generated form adds a NOT NULL column with no default, and
+-- Postgres refuses that on a table with rows in it. The default is given for
+-- the length of the backfill and then taken away again, so that the column
+-- matches the schema the code declares — and so that an insert which forgets to
+-- say what a key is for is refused rather than quietly making one more key of
+-- the merchant's own.
+--
+-- Every key that already exists is one of the merchant's own except the ones
+-- registration made, and those are found by their label. That is not a rule
+-- anybody should reach for twice, and both halves of why are worth reading.
+--
+-- It is admissible here because of what is actually in the databases this runs
+-- against. One line of code has ever written that sentence — the label
+-- registration gave a merchant's first key — and it is not a label anybody was
+-- offered or shown. A merchant could nonetheless have typed those exact words
+-- when naming a key of their own, and this migration would then take that key
+-- out of their list and hand it to their cabinet; nothing here can tell the two
+-- apart. What makes that acceptable is that there are two merchants in the
+-- database this is applied to and their rows are read by hand before it runs.
+-- On a database where that is not true, check the labels first.
+--
+-- And it is one-time because from this change on the fact lives in the column.
+-- Nothing after this reads a label to decide anything: keys are written with
+-- their purpose, and the label goes back to being what it always claimed to be,
+-- a word for a person to read.
+ALTER TABLE "merchant_keys" ADD COLUMN "purpose" text DEFAULT 'merchant_code' NOT NULL;--> statement-breakpoint
+UPDATE "merchant_keys" SET "purpose" = 'cabinet' WHERE "label" = 'the key this merchant registered with';--> statement-breakpoint
+ALTER TABLE "merchant_keys" ALTER COLUMN "purpose" DROP DEFAULT;
