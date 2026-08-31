@@ -607,9 +607,29 @@ const environmentSchema = z.object({
    * truncated paste would invite them to pay nobody.
    */
   PAY_TO_ADDRESS: z.string().min(1).optional(),
-  CDP_API_KEY_ID: z.string().min(1).optional(),
-  CDP_API_KEY_SECRET: z.string().min(1).optional(),
+  // The cabinet applies this same rule to its mail key: Compose hands every
+  // service a fixed list of names, so an unset credential arrives as its name
+  // with nothing after it. A zero-length credential is no credential, not a
+  // malformed one that stops a stack whose facilitator asks for neither.
+  CDP_API_KEY_ID: emptyIsAbsent(z.string().min(1)),
+  CDP_API_KEY_SECRET: emptyIsAbsent(z.string().min(1)),
 });
+
+/**
+ * A credential set to nothing, read the way a credential nobody set is read.
+ *
+ * This is not leniency for a malformed secret. Compose has one fixed
+ * environment shape for a service, so its spelling of "not for this stack" is
+ * an empty value. The rule below then distinguishes that absence from a real,
+ * non-empty credential before the facilitator checks make their decision.
+ */
+function emptyIsAbsent(rule: z.ZodType<string, string>) {
+  return z
+    .string()
+    .optional()
+    .transform((given) => (given === undefined || given === "" ? undefined : given))
+    .pipe(z.union([z.undefined(), rule]));
+}
 
 /** Every waiting the order machine is given, in milliseconds. */
 export interface DeadlineConfig {

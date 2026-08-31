@@ -177,6 +177,38 @@ describe("loadConfig", () => {
     ).not.toThrow();
   });
 
+  describe("a credential set to nothing", () => {
+    it("reads the same as a credential nobody set", () => {
+      // A compose file hands a service a fixed list of names, so "not this one"
+      // is written as the name with nothing after it. Read as a credential of
+      // length zero it would refuse the value and stop every laptop.
+      const started = loadConfig({ ...required, CDP_API_KEY_ID: "", CDP_API_KEY_SECRET: "" });
+
+      expect(started.payment.cdpApiKeyId).toBeNull();
+      expect(started.payment.cdpApiKeySecret).toBeNull();
+    });
+
+    it("still refuses a real credential beside a facilitator that settles nothing", () => {
+      // The door ADR-0008 put here does not move: what changed is the reading of
+      // nothing, not the reading of something.
+      expect(() =>
+        loadConfig({ ...required, FACILITATOR_URL: SANDBOX_FACILITATOR, CDP_API_KEY_ID: "key-id" }),
+      ).toThrowError(/left over from somewhere else/);
+    });
+
+    it("still refuses Coinbase's facilitator with a credential set to nothing", () => {
+      expect(() =>
+        loadConfig({
+          ...required,
+          PAYMENT_NETWORK: "eip155:8453",
+          FACILITATOR_URL: "https://api.cdp.coinbase.com/platform/v2/x402",
+          CDP_API_KEY_ID: "key-id",
+          CDP_API_KEY_SECRET: "",
+        }),
+      ).toThrowError(/CDP_API_KEY_SECRET/);
+    });
+  });
+
   it("refuses the CDP facilitator without the credentials it takes no request without", () => {
     // The mirror of the door above, and the one that costs money rather than
     // tidiness. The CDP facilitator answers nothing unsigned, so a deployment

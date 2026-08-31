@@ -74,6 +74,8 @@
 #   COINSLOT_COOKIE_SECURE  Secure on the session cookie     false
 #   COINSLOT_FACILITATOR_URL  how payments are facilitated   sandbox:scripted
 #   COINSLOT_PAYMENT_NETWORK  the chain payments use         eip155:84532
+#   CDP_API_KEY_ID             Coinbase facilitator key ID   absent
+#   CDP_API_KEY_SECRET         Coinbase facilitator secret   absent
 #   COINSLOT_SURFACE_MODE     what the static pages say       sandbox
 #   COINSLOT_MERCHANT_KEY   the key the mock merchant        csk_test_local-sandbox-merchant-key
 #                           sells with
@@ -264,6 +266,15 @@ services:
       # this check for itself.
       FACILITATOR_URL: "${COINSLOT_FACILITATOR_URL:-sandbox:scripted}"
       PAYMENT_NETWORK: "${COINSLOT_PAYMENT_NETWORK:-eip155:84532}"
+      # Absent on a laptop and on the test site, which settle through
+      # facilitators that ask for nothing, and required on a live chain, where
+      # the gateway refuses to start without both (ADR-0008). The dash carries
+      # no colon for the reason SANDBOX_MERCHANT_KEY gives above, and the name
+      # with nothing after it reads as no credential at all — which the schema
+      # above teaches it to do, and which is what every stack but the live one
+      # hands this service.
+      CDP_API_KEY_ID: "${CDP_API_KEY_ID-}"
+      CDP_API_KEY_SECRET: "${CDP_API_KEY_SECRET-}"
       # A challenge has to name somewhere for the money to go or it cannot be
       # built at all, so this is here to give the document a shape where the
       # merchant selling has set no address of their own — which is what a stack
