@@ -23,6 +23,7 @@
  * a startup failure goes to a log and a log goes places the environment does not.
  */
 
+import { type SurfaceMode, surfaceModeOf } from "@coinslot/core";
 import { z } from "zod";
 import { isSandboxMail, SANDBOX_MAIL } from "./mail.js";
 
@@ -70,6 +71,15 @@ const SHORTEST_SECRET = 32;
 const NOWHERE_ELSE = new Set(["localhost", "127.0.0.1", "[::1]", "::1", "0.0.0.0"]);
 
 const environmentSchema = z.object({
+  /**
+   * The chain and facilitator its gateway was given. Neither has a default
+   * here: this process describes money but does not move it, so falling back
+   * to play money could put a false sentence over real receipts.
+   */
+  PAYMENT_NETWORK: z.string({
+    error: absentOrWrong("must be a CAIP-2 chain such as eip155:84532"),
+  }),
+  FACILITATOR_URL: z.string({ error: absentOrWrong("must be a string") }),
   /**
    * Where the cabinet's own accounts and sessions live.
    *
@@ -233,6 +243,7 @@ function emptyIsAbsent(rule: z.ZodType<string, string>) {
 }
 
 export interface CabinetConfig {
+  readonly surfaceMode: SurfaceMode;
   readonly port: number;
   readonly gatewayUrl: string;
   readonly basePath: string;
@@ -270,6 +281,8 @@ export function loadConfig(environment: Record<string, string | undefined>): Cab
   }
 
   const values = parsed.data;
+  // A chain on neither written list leaves no honest mode to render.
+  const surfaceMode = surfaceModeOf(values.PAYMENT_NETWORK, values.FACILITATOR_URL);
   const sandboxMail = isSandboxMail(values.MAIL_URL);
   const problems: string[] = [];
 
@@ -320,6 +333,7 @@ export function loadConfig(environment: Record<string, string | undefined>): Cab
   }
 
   return {
+    surfaceMode,
     port: values.PORT,
     // A trailing slash on the gateway address and the leading slash on every
     // contract path would make every call a double slash, which some proxies

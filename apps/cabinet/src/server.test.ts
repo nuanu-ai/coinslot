@@ -396,6 +396,8 @@ async function visiting(
     GATEWAY_URL: gatewayUrl,
     DATABASE_URL: "postgres://nobody@nowhere:5432/unused",
     AUTH_SECRET: "a-secret-that-is-at-least-32-characters-long",
+    PAYMENT_NETWORK: "eip155:84532",
+    FACILITATOR_URL: "sandbox:scripted",
     ...(basePath === "" ? {} : { BASE_PATH: basePath }),
     ...(options.cabinet ?? {}),
   });
@@ -2853,6 +2855,8 @@ describe("when something goes wrong that the merchant has to get out of", () => 
       GATEWAY_URL: "http://127.0.0.1:1",
       DATABASE_URL: "postgres://nobody@nowhere:5432/unused",
       AUTH_SECRET: "a-secret-that-is-at-least-32-characters-long",
+      PAYMENT_NETWORK: "eip155:84532",
+      FACILITATOR_URL: "sandbox:scripted",
     });
     const { identity } = await withIdentity(config, async () => undefined);
     const app = buildApp(config, {

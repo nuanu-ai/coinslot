@@ -17,9 +17,10 @@
  * already holds and which the page has nothing else to identify them by.
  */
 
+import type { SurfaceMode } from "@coinslot/core";
 import { bare, escaped } from "./html.js";
 
-export const signInScreen = (base: string, problem?: string): string =>
+export const signInScreen = (base: string, mode: SurfaceMode, problem?: string): string =>
   bare(
     base,
     "Sign in",
@@ -37,6 +38,7 @@ export const signInScreen = (base: string, problem?: string): string =>
   <p class="quiet">Selling here for the first time? <a href="${escaped(base)}/register">Register</a>, which takes the invitation you were given along with the address of this site.</p>
 </form>
 </div>`,
+    mode,
   );
 
 /**
@@ -60,7 +62,12 @@ export const signInScreen = (base: string, problem?: string): string =>
  * Saying so here rather than only in a decision is the difference between a
  * merchant knowing that and finding it out on the day it matters.
  */
-export const registerScreen = (base: string, minimum: number, problem?: string): string =>
+export const registerScreen = (
+  base: string,
+  minimum: number,
+  mode: SurfaceMode,
+  problem?: string,
+): string =>
   bare(
     base,
     "Register",
@@ -81,6 +88,7 @@ export const registerScreen = (base: string, minimum: number, problem?: string):
   <p class="quiet">Already have an account? <a href="${escaped(base)}/sign-in">Sign in</a>.</p>
 </form>
 </div>`,
+    mode,
   );
 
 /**
@@ -95,6 +103,7 @@ export const passwordScreen = (
   base: string,
   who: string,
   minimum: number,
+  mode: SurfaceMode,
   problem?: string,
 ): string =>
   bare(
@@ -114,6 +123,7 @@ export const passwordScreen = (
   <p class="quiet"><a href="${escaped(base)}/settings">Back to your settings</a></p>
 </form>
 </div>`,
+    mode,
   );
 
 /**
@@ -124,7 +134,7 @@ export const passwordScreen = (
  * same page — because a form that answered them would be a way of asking who
  * sells here, put in front of anybody who finds the hostname.
  */
-export const forgotScreen = (base: string, problem?: string): string =>
+export const forgotScreen = (base: string, mode: SurfaceMode, problem?: string): string =>
   bare(
     base,
     "Lost your password",
@@ -140,6 +150,7 @@ export const forgotScreen = (base: string, problem?: string): string =>
   <p class="quiet"><a href="${escaped(base)}/sign-in">Back to signing in</a></p>
 </form>
 </div>`,
+    mode,
   );
 
 /**
@@ -154,7 +165,7 @@ export const forgotScreen = (base: string, problem?: string): string =>
  * says what happens if there is an account and the address was confirmed, which
  * is the true statement that covers every case.
  */
-export const linkSentScreen = (base: string): string =>
+export const linkSentScreen = (base: string, mode: SurfaceMode): string =>
   bare(
     base,
     "Check your mail",
@@ -166,6 +177,7 @@ export const linkSentScreen = (base: string): string =>
   <button type="submit">Back to signing in</button>
 </form>
 </div>`,
+    mode,
   );
 
 /**
@@ -180,6 +192,7 @@ export const newPasswordScreen = (
   base: string,
   token: string,
   minimum: number,
+  mode: SurfaceMode,
   problem?: string,
 ): string =>
   bare(
@@ -197,6 +210,7 @@ export const newPasswordScreen = (
   <p class="quiet"><a href="${escaped(base)}/sign-in">Back to signing in</a></p>
 </form>
 </div>`,
+    mode,
   );
 
 /**
@@ -213,7 +227,7 @@ export const newPasswordScreen = (
  * refused the second click would be telling somebody their address is not
  * confirmed when it is.
  */
-export const confirmedScreen = (base: string, worked: boolean): string =>
+export const confirmedScreen = (base: string, worked: boolean, mode: SurfaceMode): string =>
   bare(
     base,
     worked ? "Address confirmed" : "That link does not work",
@@ -228,4 +242,5 @@ export const confirmedScreen = (base: string, worked: boolean): string =>
   <button type="submit">Go to your cards</button>
 </form>
 </div>`,
+    mode,
   );

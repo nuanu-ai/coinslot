@@ -72,6 +72,8 @@
 #   COINSLOT_PUBLIC_ORIGIN  what a browser types             http://localhost:8080
 #   COINSLOT_WEB_PUBLISH    the published port of the door   8080:8080
 #   COINSLOT_COOKIE_SECURE  Secure on the session cookie     false
+#   COINSLOT_FACILITATOR_URL  how payments are facilitated   sandbox:scripted
+#   COINSLOT_PAYMENT_NETWORK  the chain payments use         eip155:84532
 #   COINSLOT_MERCHANT_KEY   the key the mock merchant        csk_test_local-sandbox-merchant-key
 #                           sells with
 #   COINSLOT_SEED_KEY       the key the gateway writes at    csk_test_local-sandbox-merchant-key
@@ -252,11 +254,15 @@ services:
       # whatever it publishes — which is why a deployment names the origin
       # itself rather than a number this line does arithmetic on.
       PUBLIC_BASE_URL: "${COINSLOT_PUBLIC_ORIGIN:-http://localhost:${COINSLOT_HOST_PORT:-8080}}"
-      # No chain behind this stack (ADR-0008). Payments are verified and settled
-      # against nothing, so a purchase completes here with no network, no wallet
-      # and no faucet — which is what makes the cabinet worth opening. The
-      # gateway says so in one line at startup.
-      FACILITATOR_URL: sandbox:scripted
+      # The laptop's values are the defaults, and they are the reason this is a
+      # variable at all: no chain behind this stack (ADR-0008), so a purchase
+      # completes here with no network, no wallet and no faucet. A public
+      # deployment names its own pair in its `.env`, and the release preflight
+      # holds each channel to the pair it declared — because a test chain must
+      # keep accepting the scripted facilitator, so the runtime cannot make
+      # this check for itself.
+      FACILITATOR_URL: "${COINSLOT_FACILITATOR_URL:-sandbox:scripted}"
+      PAYMENT_NETWORK: "${COINSLOT_PAYMENT_NETWORK:-eip155:84532}"
       # A challenge has to name somewhere for the money to go or it cannot be
       # built at all, so this is here to give the document a shape where the
       # merchant selling has set no address of their own — which is what a stack
@@ -327,6 +333,11 @@ services:
       MAIL_URL: "${MAIL_URL:-sandbox:log}"
       MAIL_API_KEY: "${MAIL_API_KEY:-}"
       MAIL_FROM: "${MAIL_FROM:-Coinslot <no-reply@localhost>}"
+      # The same two its gateway reads. The cabinet gives them no defaults of
+      # its own and refuses to start without them; these lines are what a
+      # compose deployment hands it.
+      FACILITATOR_URL: "${COINSLOT_FACILITATOR_URL:-sandbox:scripted}"
+      PAYMENT_NETWORK: "${COINSLOT_PAYMENT_NETWORK:-eip155:84532}"
       # There is no merchant key here, and its absence is the point rather than
       # an omission. The cabinet used to be given one and use it for the life of
       # the process, so every screen showed that merchant's money whoever was

@@ -104,7 +104,7 @@ const WHAT_IT_IS_FOR = `<p>Buyers see this name beside your products, and it is 
  * is a link and not a hidden field: whoever skips goes to their cards, which is
  * where the same fact is waiting for them with the page that fixes it.
  */
-export const chooseNameScreen = (base: string, problem?: string): string =>
+export const chooseNameScreen = (base: string, mode: Viewer["mode"], problem?: string): string =>
   bare(
     base,
     "The name your products are sold under",
@@ -122,6 +122,7 @@ export const chooseNameScreen = (base: string, problem?: string): string =>
   <p class="quiet">Not decided yet? <a href="${escaped(base)}/cards">Leave it for now</a> — it is set under <a href="${escaped(base)}/settings">Settings</a> whenever you are ready.</p>
 </form>
 </div>`,
+    mode,
   );
 
 /**
@@ -188,6 +189,7 @@ export const settingsScreen = (viewer: Viewer, problem?: string): string => {
 ${payoutWalletBlock(viewer)}${accountSettings(viewer)}`;
 
   return page({
+    mode: viewer.mode,
     base,
     who: viewer.who,
     confirmed: viewer.confirmed,

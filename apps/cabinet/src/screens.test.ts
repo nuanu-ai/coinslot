@@ -14,6 +14,7 @@
  * can carry. Nothing is stubbed — there is nothing here to stub.
  */
 
+import { SURFACE_MARKER_ATTRIBUTE, SURFACE_WORDS } from "@coinslot/core";
 import type { OrderList, ReceiptList } from "@nuanu-ai/coinslot-contracts";
 import {
   MerchantCardListSchema,
@@ -21,11 +22,62 @@ import {
   ReceiptListSchema,
 } from "@nuanu-ai/coinslot-contracts";
 import { describe, expect, it } from "vitest";
+import { page } from "./html.js";
 import { ordersScreen, receiptsScreen, type Viewer } from "./screens.js";
+import { signInScreen } from "./sign-in.js";
 import { readable } from "./testing/html.js";
 
 /** A page is drawn for somebody now, and every screen says who (ADR-0009). */
-const SEEN_BY: Viewer = { base: "", who: "dmitry@example.com", confirmed: true };
+const SEEN_BY: Viewer = { base: "", mode: "sandbox", who: "dmitry@example.com", confirmed: true };
+
+describe("what a page says about the stack it belongs to", () => {
+  it("says nothing settles here on the laptop", () => {
+    // Production break: the sandbox sign-in page could omit the statement that
+    // no payment settles here, misleading a person who reads it as a receipt.
+    const html = signInScreen("", "sandbox");
+
+    expect(html).toContain(`${SURFACE_MARKER_ATTRIBUTE}="sandbox"`);
+    expect(readable(html)).toContain(SURFACE_WORDS.sandbox);
+  });
+
+  it("says payments settle with test funds on the test site", () => {
+    // Production break: the test-site page could omit its test-funds warning.
+    const html = signInScreen("", "test");
+
+    expect(html).toContain(`${SURFACE_MARKER_ATTRIBUTE}="test"`);
+    expect(readable(html)).toContain(SURFACE_WORDS.test);
+  });
+
+  it("says nothing at all on the live one, and still names itself", () => {
+    // The marker names the mode rather than merely existing. An absence cannot
+    // tell a correct live page from a layout that forgot to render — on the
+    // one site where the money is real.
+    const html = signInScreen("", "live");
+
+    expect(html).toContain(`${SURFACE_MARKER_ATTRIBUTE}="live"`);
+    expect(readable(html)).not.toContain(SURFACE_WORDS.test);
+    expect(readable(html)).not.toContain(SURFACE_WORDS.sandbox);
+    // Not merely wordless: no banner element either. The styled one carries
+    // padding and a rule, so an empty one is a band across a live page.
+    expect(html).not.toContain('class="surface"');
+  });
+
+  it("carries the same marker on a signed-in page", () => {
+    // Production break: authenticated pages could silently lose the stack label.
+    const html = page({
+      base: "",
+      who: "dmitry@example.com",
+      confirmed: true,
+      tab: "cards",
+      title: "Cards",
+      mode: "test",
+      body: "<p>x</p>",
+    });
+
+    expect(html).toContain(`${SURFACE_MARKER_ATTRIBUTE}="test"`);
+    expect(readable(html)).toContain(SURFACE_WORDS.test);
+  });
+});
 
 const cards = MerchantCardListSchema.parse({
   selling: "open",

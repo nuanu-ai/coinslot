@@ -54,6 +54,8 @@ const store = (): {
     loadConfig({
       DATABASE_URL: "postgres://nobody@nowhere:5432/unused",
       AUTH_SECRET: "a-secret-that-is-at-least-32-characters-long",
+      PAYMENT_NETWORK: "eip155:84532",
+      FACILITATOR_URL: "sandbox:scripted",
     }),
     { rows },
   );
