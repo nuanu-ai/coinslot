@@ -19,7 +19,7 @@
  * to know. This screen is not one of those and does not read it. The third is
  * the last call each key was seen on, which is the thing a merchant is here to
  * find out and the one place this screen can mislead them; `lastCall` below is
- * where the two ways of having nothing to show are kept apart.
+ * where an empty column is kept from turning into a claim about the key.
  *
  * An empty list follows from the same fact and is the ordinary state of a
  * merchant who has just registered: they have a cabinet because they signed
@@ -54,38 +54,34 @@ const keyRow = (base: string, entry: MerchantKey): string => {
  * This is the column the screen is worth opening for — a merchant with three
  * keys is asking which of them is safe to turn off, and nothing else on the row
  * answers that. So it is also the column where being wrong costs the most, and
- * two of the three answers below are the same blank on the wire.
+ * the whole of the danger is in the empty one.
  *
- * A key made since the gateway started writing this down and never called is
- * idle: nobody is using it, and that is a fact to revoke on. A key made before
- * then carries the same blank for a completely different reason — nothing was
- * being recorded — and the honest word for that is not "never". Printed as one,
- * the screen would be handing over a confident sentence nobody checked, and the
- * key revoked on the strength of it may be the one in the merchant's worker.
- * They fill in on their own as the old keys are used again, and until then this
- * says which kind of blank it is looking at.
+ * The gateway did not check whether anybody has called with a key; it wrote
+ * down the calls it saw. Those are different claims, and a key made before it
+ * started writing carries the same blank as a key nobody has ever used. So the
+ * words here say what is true of both — there is no record — and stop. "Never
+ * used" would be the confident version of a sentence nobody checked, on the
+ * page where acting on it turns off a key that may be in the merchant's own
+ * worker. Which of the two blanks a row is showing is not on the wire, and the
+ * note under the table says so rather than the row pretending to know.
  *
  * The instant goes through `moment` like every other instant on these screens.
  * A second way of writing a time would put two formats on one page and a
  * merchant comparing them.
  */
-const lastCall = (entry: MerchantKey): string => {
-  if (entry.last_used_at !== null) {
-    return moment(entry.last_used_at);
-  }
-  return entry.use_recorded_since_made ? NO_CALLS_YET : NOT_RECORDED;
-};
+const lastCall = (entry: MerchantKey): string =>
+  entry.last_used_at === null ? NO_CALLS_RECORDED : moment(entry.last_used_at);
 
 /**
- * The two blanks, named once because the note under the table quotes them.
+ * The empty answer, named once because the note under the table quotes it.
  *
- * Written out in both places they would drift, and the drift is not cosmetic:
- * the note is what tells a merchant that one of these is a fact about their key
- * and the other is a fact about us. A word in the table that the explanation
- * below no longer mentions is a word with nothing explaining it.
+ * Written out in both places it would drift, and the drift is not cosmetic: the
+ * note is the only thing that tells a merchant this blank covers two situations
+ * and which one they are looking at cannot be known. A word in the table that
+ * the explanation below no longer mentions is a word with nothing explaining
+ * it.
  */
-const NO_CALLS_YET = "No calls yet";
-const NOT_RECORDED = "Not recorded";
+const NO_CALLS_RECORDED = "No calls recorded";
 
 /**
  * What a merchant can do to one key from this list, which is sometimes nothing.
@@ -157,11 +153,11 @@ ${
   )}</span></div>
   <div class="note"><span class="mark">&#8627;</span><span>${escaped(
     "The last call is written down every few minutes rather than on every one, so a key" +
-      ` something is using right now shows a time that far behind. "${NO_CALLS_YET}" means` +
-      ` nothing has called with that key since it was made. "${NOT_RECORDED}" is a different` +
-      " answer and it is not about the key: that key was made before we started writing this" +
-      " down, so we do not know whether anything has been using it. Those rows show a time as" +
-      " soon as the key is used again.",
+      ` something is using right now shows a time that far behind. "${NO_CALLS_RECORDED}" is` +
+      ' what it says rather than "never used", and the difference matters for the keys you' +
+      " have had the longest: we began recording this recently, so a key older than that shows" +
+      " the same thing whether or not anything has been calling with it, and this page cannot" +
+      " tell you which. Any key shows a time as soon as it is used again.",
   )}</span></div>`
 }
   <div class="lede">

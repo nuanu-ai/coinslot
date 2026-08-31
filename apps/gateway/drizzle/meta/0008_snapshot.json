@@ -1,5 +1,5 @@
 {
-  "id": "9732a2db-95e5-4f86-af4e-043e17e26bfd",
+  "id": "145e1e5d-dbc6-41e3-814d-631733788b0a",
   "prevId": "1b7d93b7-303c-44fd-aaa6-51e79147e052",
   "version": "7",
   "dialect": "postgresql",
@@ -144,12 +144,6 @@
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
-        },
-        "use_recorded_since_made": {
-          "name": "use_recorded_since_made",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true
         }
       },
       "indexes": {

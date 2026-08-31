@@ -278,12 +278,6 @@ export class PostgresStore implements Store {
           purpose: key.purpose,
           digest: key.digest,
           createdAt: new Date(key.at),
-          // Said here rather than asked of the caller, because it is a fact
-          // about when this row was written and not a choice anybody makes: a
-          // key written by this code is one whose use has been recorded since
-          // it existed. The rows that answer otherwise are the ones the column
-          // found already there, and nothing writes one of those again.
-          useRecordedSinceMade: true,
         })
         .returning();
     } catch (thrown) {
@@ -1061,7 +1055,6 @@ function storedKeyOf(row: {
   createdAt: Date;
   disabledAt: Date | null;
   lastUsedAt: Date | null;
-  useRecordedSinceMade: boolean;
 }): StoredKey {
   return {
     id: row.id,
@@ -1071,7 +1064,6 @@ function storedKeyOf(row: {
     createdAt: row.createdAt.getTime(),
     disabledAt: row.disabledAt === null ? null : row.disabledAt.getTime(),
     lastUsedAt: row.lastUsedAt === null ? null : row.lastUsedAt.getTime(),
-    useRecordedSinceMade: row.useRecordedSinceMade,
   };
 }
 

@@ -1221,14 +1221,11 @@ export function describeStore(name: string, open: () => Promise<Store>): void {
         expect(asLogged(forTheDigest)).not.toContain("digest-1");
       });
 
-      it("is made with no call against it and with its use recorded from then on", async () => {
-        // The two facts a blank on a merchant's screen has to be told apart by.
-        // A key made now has never been called, because nothing has had the
-        // chance; and the row says the record covers the whole of its life, so
-        // the blank beside it means "nobody has called" rather than "we were
-        // not writing this down yet". A key older than the record says the
-        // second thing, and a screen that read the two as one would tell a
-        // merchant a key is idle on the strength of never having looked.
+      it("is made with no call recorded against it", async () => {
+        // A key that was written a moment ago and a key older than this column
+        // come back with the same empty answer, and that is the whole of what
+        // the row claims: no call has been recorded. It does not claim nobody
+        // has called, because for one of those two rows nobody looked.
         const store = await twoMerchants();
 
         const made = await store.addKey(
@@ -1237,7 +1234,6 @@ export function describeStore(name: string, open: () => Promise<Store>): void {
         );
 
         expect(made.lastUsedAt).toBeNull();
-        expect(made.useRecordedSinceMade).toBe(true);
       });
 
       it("carries the instant of the last call made with it, and no other key's", async () => {

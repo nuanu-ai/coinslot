@@ -226,6 +226,14 @@ describe("issuing a key", () => {
       terminal.said.find((line) => line.includes(label)) ?? `no line for ${label}`;
     expect(lineFor("the worker's")).toContain("2026-08-29");
     expect(lineFor("the one nobody calls")).not.toContain("2026-08-29");
+    // And the blank claims a missing record rather than an absent call. The
+    // same word is wrong here for a worse reason than on a merchant's screen:
+    // the row somebody clears away on the strength of "never called" can be the
+    // key a person's cabinet signs in with, and the gateway checked no such
+    // thing — it wrote down the calls it saw, and a key older than the writing
+    // looks exactly like this one.
+    expect(lineFor("the one nobody calls")).not.toMatch(/never/i);
+    expect(lineFor("the one nobody calls")).toMatch(/record/i);
   });
 });
 

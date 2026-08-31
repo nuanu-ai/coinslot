@@ -592,9 +592,10 @@ if (databaseUrl === null) {
    * on a merchant's screen that nothing stands behind, and the merchant would
    * revoke a key on the strength of it.
    *
-   * What the migration does say about the rows it finds is the true thing: the
-   * record does not cover their lives, so a blank against one of them is not a
-   * claim that nobody has been calling with it.
+   * So the rows it finds keep their blank, which is the honest answer for them
+   * — nothing was recorded — and is the same blank a key written tomorrow and
+   * never called will carry. Nothing on the row separates the two, and nothing
+   * is meant to: what says so is the sentence under the column on the screen.
    */
   describe("the migration that starts recording when a key was last used", () => {
     const url = databaseUrl;
@@ -616,21 +617,16 @@ if (databaseUrl === null) {
       );
     };
 
-    const useOf = async (
-      id: string,
-    ): Promise<{ lastUsedAt: Date | null; useRecordedSinceMade: boolean }> => {
-      const { rows } = await pool.query<{
-        last_used_at: Date | null;
-        use_recorded_since_made: boolean;
-      }>("select last_used_at, use_recorded_since_made from merchant_keys where id = $1", [id]);
+    const lastUseOf = async (id: string): Promise<Date | null> => {
+      const { rows } = await pool.query<{ last_used_at: Date | null }>(
+        "select last_used_at from merchant_keys where id = $1",
+        [id],
+      );
       const found = rows[0];
       if (found === undefined) {
         throw new Error(`the key ${id} is not there`);
       }
-      return {
-        lastUsedAt: found.last_used_at,
-        useRecordedSinceMade: found.use_recorded_since_made,
-      };
+      return found.last_used_at;
     };
 
     beforeAll(async () => {
@@ -663,7 +659,7 @@ if (databaseUrl === null) {
       );
     });
 
-    it("guesses nothing about the keys it finds and says it is guessing nothing", async () => {
+    it("guesses nothing about the keys it finds", async () => {
       // The one thing that must not happen: a key that has been sitting in
       // somebody's worker for a month coming out of this with a date on it. The
       // date to hand is when the key was made, and the difference between that
@@ -673,19 +669,7 @@ if (databaseUrl === null) {
 
       await run("0008_key_last_use.sql");
 
-      expect((await useOf("mk_older_than_the_record")).lastUsedAt).toBeNull();
-      expect((await useOf("mk_older_than_the_record")).useRecordedSinceMade).toBe(false);
-    });
-
-    it("refuses a key written afterwards that does not say whether its use is recorded", async () => {
-      // The default is there for the length of the backfill and taken away
-      // again. Left in place, every key written from then on would inherit the
-      // answer that is only true of the old ones — and a merchant would be told
-      // "not recorded" about a key made yesterday, which is a shrug where there
-      // is an answer.
-      await run("0008_key_last_use.sql");
-
-      await expect(writeKey("mk_silent")).rejects.toThrow(/use_recorded_since_made/);
+      expect(await lastUseOf("mk_older_than_the_record")).toBeNull();
     });
   });
 }

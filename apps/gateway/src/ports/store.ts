@@ -388,20 +388,14 @@ export interface StoredKey {
    * around then", which is the question somebody deciding whether to revoke it
    * has, and not "this is the last request it opened".
    *
-   * Null is two facts and {@link useRecordedSinceMade} is which of them.
+   * Null is the absence of a record rather than the absence of calls. The keys
+   * that were already there when this column arrived carry it too, and nothing
+   * on the row tells them from a key nobody has called — a second column would
+   * separate them, and it would outlive by years the few weeks in which any row
+   * needs it. What carries that instead is the sentence beside the column
+   * wherever it is drawn.
    */
   readonly lastUsedAt: number | null;
-  /**
-   * Whether {@link lastUsedAt} covers the whole life of this key.
-   *
-   * True for every key written since the gateway started recording use, which
-   * makes a null `lastUsedAt` beside it mean no call has come in on this key.
-   * False for the keys that were already there, where a null means nothing was
-   * being written down and nobody knows — which is not the same answer and must
-   * not be shown as one. A merchant reads this to decide what to revoke, and a
-   * shrug dressed up as "never used" is how the wrong key goes.
-   */
-  readonly useRecordedSinceMade: boolean;
 }
 
 /** One card in the public catalog, with the word its own merchant sells under. */

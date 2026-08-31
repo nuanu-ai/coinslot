@@ -387,32 +387,26 @@ function madeFor(key: StoredKey): string {
 }
 
 /**
- * When anything last called with this key, in a phrase wide enough for all
- * three answers.
+ * When anything last called with this key, in a phrase wide enough for both
+ * answers.
  *
  * The operator asks this about the keys a merchant never sees. A merchant's own
  * screen leaves the key their cabinet signs in with off the list, so "has that
  * cabinet stopped signing in" — the thing worth knowing before a row is cleared
  * away — can be read nowhere but here.
  *
- * The two blanks are different answers and are printed as different sentences,
- * for the reason the screen does it: a key nothing has called since it was made
- * is idle, and a key made before any of this was recorded is one nobody looked
- * at. Only the first is something to act on. The second cannot arise from a key
- * this code wrote — every key it writes says its use is recorded — so it is
- * reachable only for rows the column found already there, and no test in this
- * repository can produce one. That is the honest state of it rather than a gap:
- * the day it stops being reachable at all is the day the last such row goes.
+ * The blank says there is no record and not that there were no calls, because
+ * those are not the same thing and only one of them was checked: a key older
+ * than the column carries this blank too, and nothing distinguishes it. Somebody
+ * clearing away a cabinet key on the strength of "never called" would be
+ * locking a person out on the strength of a word we did not earn.
  *
  * A day rather than an instant, like the two columns before it. The mark is
  * written every few minutes at best, so the seconds it carries would be a
  * precision this column does not have.
  */
 function lastCallOf(key: StoredKey): string {
-  if (key.lastUsedAt !== null) {
-    return `called ${dayOf(key.lastUsedAt)}`;
-  }
-  return key.useRecordedSinceMade ? "never called     " : "no record of use ";
+  return key.lastUsedAt === null ? "no calls recorded" : `called ${dayOf(key.lastUsedAt)}`;
 }
 
 const dayOf = (instant: number): string => new Date(instant).toISOString().slice(0, 10);

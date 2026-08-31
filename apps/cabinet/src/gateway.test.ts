@@ -98,7 +98,6 @@ const aKey = (over: Record<string, unknown> = {}) => ({
   label: "the first key",
   created_at: "2026-08-28T09:00:00.000Z",
   last_used_at: null,
-  use_recorded_since_made: true,
   disabled_at: null,
   ...over,
 });

@@ -2499,25 +2499,21 @@ describe("the keys screen", () => {
     label: "the nightly job",
     created_at: "2026-08-20T09:00:00.000Z",
     last_used_at: "2026-08-27T02:15:00.000Z",
-    use_recorded_since_made: true,
     disabled_at: null,
   };
-  /** A key nothing has ever called with, and the gateway can say so. */
+  /** A key with no call recorded against it, which is two situations at once. */
   const ANOTHER: MerchantKey = {
     id: "key_the_workers_use",
     label: "the worker on the small box",
     created_at: "2026-08-24T11:30:00.000Z",
     last_used_at: null,
-    use_recorded_since_made: true,
     disabled_at: null,
   };
-  /** A key older than the record, whose blank is a shrug rather than a fact. */
   const REVOKED: MerchantKey = {
     id: "key_the_laptop_had",
     label: "the laptop that went missing",
     created_at: "2026-07-01T08:00:00.000Z",
     last_used_at: null,
-    use_recorded_since_made: false,
     disabled_at: "2026-08-26T17:45:00.000Z",
   };
   const SECRET = "the-secret-shown-once-and-never-again";
@@ -2549,7 +2545,6 @@ describe("the keys screen", () => {
                 label,
                 created_at: NOW,
                 last_used_at: null,
-                use_recorded_since_made: true,
                 disabled_at: null,
               },
               secret: SECRET,
@@ -2632,46 +2627,49 @@ describe("the keys screen", () => {
     return readable([...row.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)][at]?.[1] ?? "");
   };
 
-  it("says when each key was last called, and when nobody wrote that down", async () => {
-    // The column the screen is worth opening for: three keys, and which of them
-    // is safe to revoke. The three answers it can give are all here, and the
-    // last two are the reason this is a case at all.
+  it("says when each key was last called, and stops there when it cannot", async () => {
+    // The column the screen is worth opening for: which of these keys is safe
+    // to revoke. A key something is calling with says when, in the format every
+    // other instant on these screens is written in.
     //
-    // A key nothing has called since it was made is idle, and that is a fact to
-    // act on. A key older than this record has the same blank for a completely
-    // different reason — nobody was writing it down — and revoking on the
-    // strength of that one is revoking a key that may be in a worker right now.
-    // Which words the screen uses for them is a person's choice; that they are
-    // not the same words is the promise, and the moment is written the way
-    // every other moment on these screens is.
+    // The empty one is where this screen can do harm. The gateway did not check
+    // whether anybody has called with that key — it wrote down the calls it
+    // saw — and a key older than the writing carries the same blank as a key
+    // nobody has ever used. Nothing on the wire tells the two apart, so the
+    // words must not either. Which words they are is a person's choice; that
+    // they claim only a missing record is the promise, and "never" is the word
+    // this cell reaches for when it forgets which of the two it may say.
     const { browser } = await started({ client: withKeys().client });
     await browser.signIn();
 
     const page = (await browser.get("/keys")).html;
     const called = inColumn(page, NIGHTLY.id, /last/i);
-    const never = inColumn(page, ANOTHER.id, /last/i);
-    const unrecorded = inColumn(page, REVOKED.id, /last/i);
+    const quiet = inColumn(page, ANOTHER.id, /last/i);
 
     expect(called).toBe("2026-08-27 02:15:00 UTC");
-    expect(never).not.toBe("");
-    expect(unrecorded).not.toBe("");
-    expect(never).not.toBe(unrecorded);
-    // And neither of them is the day the key was made wearing this column's
-    // hat. That is the one instant the screen has to hand when it has no call
-    // to show, and putting it here would be a date a merchant reads as a call —
-    // the exact lie the gateway refused to write into the row.
-    expect(never).not.toBe(inColumn(page, ANOTHER.id, /made/i));
-    expect(unrecorded).not.toBe(inColumn(page, REVOKED.id, /made/i));
-    // And neither of them says that nobody called. The gateway did not check
-    // that and cannot: what it knows is what it wrote down, and a key older
-    // than the writing has this same blank against it. So an empty cell is a
-    // sentence about our records — the one word below is load-bearing rather
-    // than a wording somebody liked, and "never" is the word the screen keeps
-    // reaching for when it forgets which of the two it is entitled to say.
-    for (const blank of [never, unrecorded]) {
-      expect(blank).toMatch(/record/i);
-      expect(blank).not.toMatch(/never/i);
-    }
+    expect(quiet).not.toBe("");
+    expect(quiet).toMatch(/record/i);
+    expect(quiet).not.toMatch(/never/i);
+    // And it is not the day the key was made wearing this column's hat. That is
+    // the one instant the screen has to hand when it has no call to show, and
+    // putting it here would be a date a merchant reads as a call — the exact
+    // lie the migration refused to write into the row.
+    expect(quiet).not.toBe(inColumn(page, ANOTHER.id, /made/i));
+  });
+
+  it("says under the table that an empty last call is two situations", async () => {
+    // The words the removed field was carrying. A merchant reading "No calls
+    // recorded" beside a key they issued in June has to be able to find out
+    // that we began recording this recently and that their oldest keys show
+    // the same thing either way — otherwise the honest phrase in the cell is
+    // read as the confident one, which is where it started.
+    const { browser } = await started({ client: withKeys().client });
+    await browser.signIn();
+
+    const text = readable((await browser.get("/keys")).html);
+
+    expect(text).toMatch(/began recording|started recording/i);
+    expect(text).toMatch(/cannot tell you which|which it is/i);
   });
 
   it("issues a key, shows its secret once, and says that is the only time", async () => {

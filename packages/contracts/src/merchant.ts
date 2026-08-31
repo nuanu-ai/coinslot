@@ -109,20 +109,14 @@ export const MerchantKeySchema = z
      * reads when they are deciding what to revoke. What it answers is "this key
      * was in use around then".
      *
-     * Null is two facts, and `use_recorded_since_made` is which of them.
+     * Null is the absence of a record and not the absence of calls, and nothing
+     * here tells a reader which. A key made before this gateway began writing
+     * the field carries the same null as a key nobody has ever called with, and
+     * there is no field beside this one that separates them — one would be a
+     * permanent question on a public surface for an ambiguity that lasts weeks,
+     * so what carries it is the sentence a screen puts under the column.
      */
     last_used_at: TimestampSchema.nullable(),
-
-    /**
-     * Whether `last_used_at` covers the whole life of this key.
-     *
-     * True and null together mean no call has come in on this key. False and
-     * null together mean the key is older than the record and nobody knows —
-     * which is a different answer and must not be shown as the first one. A
-     * merchant decides what to revoke on this, and a shrug dressed up as "never
-     * used" is how a key somebody's worker is calling with gets turned off.
-     */
-    use_recorded_since_made: z.boolean(),
 
     /**
      * When this key was revoked, and null while it still opens the door.
@@ -137,7 +131,7 @@ export const MerchantKeySchema = z
   })
   .meta({
     description:
-      "One key a merchant opens the door with, as they read it: what they called it, when it was made, when a call was last seen on it, and when it was revoked. A null disabled_at means the key still works; the field is always present, because an absent one is a silence a reader cannot tell from an oversight. The key itself is not in this document and never will be — what is kept is a digest of it, so nothing here or anywhere else can show a merchant their key a second time. last_used_at is not the instant of the last call and is not offered as one: it is refreshed at most once every few minutes per key, so a key under constant use carries a time that far behind, which is the price of not writing to the database on every call made with it. Null there is two different facts and use_recorded_since_made says which: true means no call has come in since the key was made, false means the key is older than this record and nothing is known about its use — not that there has been none. Neither field is a ledger of calls, and neither is exact: a mark that could not be written is swallowed rather than refusing the call it belonged to, so this is what was recorded and not everything that happened.",
+      "One key a merchant opens the door with, as they read it: what they called it, when it was made, when a call was last seen on it, and when it was revoked. A null disabled_at means the key still works; the field is always present, because an absent one is a silence a reader cannot tell from an oversight. The key itself is not in this document and never will be — what is kept is a digest of it, so nothing here or anywhere else can show a merchant their key a second time. last_used_at is not the instant of the last call and is not offered as one: it is refreshed at most once every few minutes per key, so a key under constant use carries a time that far behind, which is the price of not writing to the database on every call made with it. Null there means no call has been recorded against this key, which is not the same as no call having been made: a key made before this gateway began recording carries that same null, and nothing in this document tells such a key from one nobody has ever used. Nor is it a ledger of calls or an exact one: a mark that could not be written is swallowed rather than refusing the call it belonged to, so this is what was recorded and not everything that happened.",
   });
 
 /**

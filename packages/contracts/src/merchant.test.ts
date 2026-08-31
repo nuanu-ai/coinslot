@@ -21,7 +21,6 @@ const working = {
   label: "the shop's own worker",
   created_at: "2026-08-26T09:00:00Z",
   last_used_at: "2026-08-30T14:05:00Z",
-  use_recorded_since_made: true,
   disabled_at: null,
 };
 
@@ -45,34 +44,20 @@ describe("one of a merchant's keys", () => {
     expect(MerchantKeySchema.parse(revoked)).toStrictEqual(revoked);
   });
 
-  for (const field of [
-    "id",
-    "label",
-    "created_at",
-    "disabled_at",
-    "last_used_at",
-    "use_recorded_since_made",
-  ]) {
+  for (const field of ["id", "label", "created_at", "disabled_at", "last_used_at"]) {
     it(`refuses a key without ${field} and names it`, () => {
       expectMissingFieldRejected(MerchantKeySchema, working, field);
     });
   }
 
-  it("tells a key nobody has called from one nobody was watching", () => {
-    // The two blanks. A key made since the gateway started recording use and
-    // never called is idle, and that is a fact somebody can revoke on; a key
-    // older than the record has a blank because nobody was writing it down, and
-    // revoking on that is revoking a key that may be in a worker right now.
-    // They are the same null, so the second field is the only thing between a
-    // merchant and a confident answer nobody checked.
-    const idle = { ...working, last_used_at: null, use_recorded_since_made: true };
-    const unknown = { ...working, last_used_at: null, use_recorded_since_made: false };
+  it("accepts a key with no call recorded against it", () => {
+    // The blank, which is one field and not two. A key nothing has called and a
+    // key older than this record carry the same null here, and this document
+    // does not claim to tell them apart — the field is what was written down,
+    // and the words that admit the ambiguity live on the screen that draws it.
+    const quiet = { ...working, last_used_at: null };
 
-    expect(MerchantKeySchema.parse(idle)).toStrictEqual(idle);
-    expect(MerchantKeySchema.parse(unknown)).toStrictEqual(unknown);
-    expect(MerchantKeySchema.parse(idle).use_recorded_since_made).not.toBe(
-      MerchantKeySchema.parse(unknown).use_recorded_since_made,
-    );
+    expect(MerchantKeySchema.parse(quiet)).toStrictEqual(quiet);
   });
 
   it("says when a key was last used rather than leaving the field out", () => {

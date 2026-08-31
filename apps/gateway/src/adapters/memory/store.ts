@@ -272,12 +272,6 @@ export class MemoryStore implements Store {
       createdAt: at,
       disabledAt: null,
       lastUsedAt: null,
-      // Said here rather than asked of the caller, because it is a fact about
-      // when this row was written and not a choice anybody makes: a key written
-      // by this code is one whose use has been recorded since it existed. The
-      // rows that answer otherwise are the ones that were already there when
-      // the column arrived, and no code writes one of those again.
-      useRecordedSinceMade: true,
     });
     this.#keys.set(stored.id, stored);
     this.#keysByDigest.set(key.digest, stored.id);
