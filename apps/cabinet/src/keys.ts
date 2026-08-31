@@ -10,14 +10,19 @@
  * Two things about the list are decisions rather than layout. The revoked keys
  * are on it, because "which key did I turn off, and when" is a question
  * somebody has on exactly this screen and a list of only the working ones
- * answers it with silence. And the key this cabinet's own calls are made with —
- * which the list itself names, as `this_call` — has no control beside it. That
- * is the one click the gateway refuses (ADR-0014 §5), and the refusal is worth
- * reading precisely: it is about the key in front of it and not about whichever
- * key some cabinet happens to hold, which the gateway has no way of knowing. So
- * this screen keeps a merchant from closing the door of the cabinet they are
- * standing in, and it cannot keep them from closing the door of another one
- * they are signed into elsewhere.
+ * answers it with silence. And every row on it is a key the merchant asked for:
+ * the key this cabinet signs in with is of the other kind (ADR-0014 §5), the
+ * gateway lists it nowhere and refuses to revoke it, so there is no row here
+ * that could take a merchant's cabinet away from them. What the gateway does
+ * say beside the list, as `this_call`, is the identifier of that key — for a
+ * caller reaching the API with a key of the merchant's own, which is what needs
+ * to know. This screen is not one of those and does not read it.
+ *
+ * An empty list follows from the same fact and is the ordinary state of a
+ * merchant who has just registered: they have a cabinet because they signed
+ * into one, and no keys because they have not put Coinslot into any code of
+ * their own yet. So it is the first thing most merchants see here, and it says
+ * what it is rather than reporting an impossibility.
  *
  * Neither screen fetches anything or decides anything. Each is a function from
  * what the gateway answered to a page, which is what lets a test read the page
@@ -29,30 +34,28 @@ import { escaped, page } from "./html.js";
 import type { Viewer } from "./screens.js";
 import { moment } from "./words.js";
 
-const keyRow = (base: string, entry: MerchantKey, thisCall: string): string => {
+const keyRow = (base: string, entry: MerchantKey): string => {
   const revoked = entry.disabled_at !== null;
   return `<tr class="${revoked ? "off" : ""}">
 <td><div class="title">${escaped(entry.label)}</div><div class="under mono">${escaped(entry.id)}</div></td>
 <td class="quiet">${escaped(moment(entry.created_at))}</td>
 <td class="quiet">${revoked ? escaped(`Revoked ${moment(entry.disabled_at ?? "")}`) : "Works"}</td>
-<td class="control">${keyControl(base, entry, thisCall)}</td>
+<td class="control">${keyControl(base, entry)}</td>
 </tr>`;
 };
 
 /**
  * What a merchant can do to one key from this list, which is sometimes nothing.
  *
- * The key this cabinet signed in with says so in words rather than showing a
- * control that would be refused. A key that is already revoked shows nothing at
- * all: there is no undo — a revoked key never works again — and a control that
- * looked like one would be a promise the gateway does not make.
+ * A key that is already revoked shows nothing at all: there is no undo — a
+ * revoked key never works again — and a control that looked like one would be a
+ * promise the gateway does not make. Every other row gets the control, because
+ * every other row is a working key the merchant issued and the gateway takes
+ * this call for any of them.
  */
-const keyControl = (base: string, entry: MerchantKey, thisCall: string): string => {
+const keyControl = (base: string, entry: MerchantKey): string => {
   if (entry.disabled_at !== null) {
     return "";
-  }
-  if (entry.id === thisCall) {
-    return '<span class="quiet">This is the key this cabinet is using</span>';
   }
   // Named "Revoke" rather than "Disable", because it does not come back and the
   // word people already use for a credential that does not come back is this
@@ -62,29 +65,47 @@ const keyControl = (base: string, entry: MerchantKey, thisCall: string): string 
 <button type="submit">Revoke</button></form>`;
 };
 
+/**
+ * What this list is of, which is the sentence the empty one turns on.
+ *
+ * Said on the screen whether or not there is anything below it, because the
+ * question a merchant has in front of no rows — "where is the key I am signed
+ * in with, and should I be worried" — is answered by what the list is rather
+ * than by what is missing from it.
+ */
+const WHAT_A_KEY_IS =
+  "A key is what your own code opens the door with, and this list is the keys you have asked" +
+  " for. The cabinet is not one of them: it signs in with a key of its own that you never see" +
+  " and never have to look after.";
+
 export const keysScreen = (viewer: Viewer, keys: MerchantKeyList, problem?: string): string => {
   const { base } = viewer;
   const working = keys.keys.filter((entry) => entry.disabled_at === null).length;
+  const none = keys.keys.length === 0;
 
   const body = `
   <div class="lede">
     <div>
       <h1>Keys</h1>
       <p>${escaped(
-        `${working} of the ${keys.keys.length} ${keys.keys.length === 1 ? "key" : "keys"} below` +
-          `${working === 1 ? " works" : " work"}. A key is what your code opens the door with.` +
-          " Revoking one stops that key from that moment and does not stop anything else: your" +
-          " other keys go on working, and nobody is signed out of this cabinet. It is not undone" +
-          " — a revoked key never opens the door again, and what replaces it is a new one.",
+        none
+          ? `You have issued no keys yet, which is where every merchant starts. ${WHAT_A_KEY_IS}` +
+              " The first one you ask for below becomes the first row here."
+          : `${working} of the ${keys.keys.length} ${keys.keys.length === 1 ? "key" : "keys"} below` +
+              `${working === 1 ? " works" : " work"}. ${WHAT_A_KEY_IS}` +
+              " Revoking one stops that key from that moment and does not stop anything else:" +
+              " your other keys go on working, and nobody is signed out of this cabinet. It is" +
+              " not undone — a revoked key never opens the door again, and what replaces it is a" +
+              " new one.",
       )}</p>
     </div>
   </div>
 ${
-  keys.keys.length === 0
-    ? '<div class="scroller"><p class="empty">There are no keys here at all, which cannot happen while you are reading this page — the cabinet reached the gateway with one.</p></div>'
+  none
+    ? '<div class="scroller"><p class="empty">No keys yet.</p></div>'
     : `<div class="scroller"><table>
 <thead><tr><th>Name</th><th>Made</th><th>State</th><th></th></tr></thead>
-<tbody>${keys.keys.map((entry) => keyRow(base, entry, keys.this_call)).join("")}</tbody>
+<tbody>${keys.keys.map((entry) => keyRow(base, entry)).join("")}</tbody>
 </table></div>
   <div class="note"><span class="mark">&#8627;</span><span>${escaped(
     "This is what the gateway answered with, and its answer does not say whether it is all of" +
