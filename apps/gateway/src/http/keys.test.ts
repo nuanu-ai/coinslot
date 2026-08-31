@@ -822,6 +822,11 @@ describe("a key from the other site", () => {
       harnessed.now(),
     );
 
+    // The premise, asserted rather than assumed. This is the lookup the door
+    // makes, and it finds the row — so what turns the key away below is the
+    // prefix and not a write that never landed. Left out, a change that made
+    // this `addKey` do nothing would leave the test green and testing nothing.
+    expect(await harnessed.store.workingKey(keyDigest(legacy))).not.toBeNull();
     expect(await opensTheDoor(served, legacy)).toBe(false);
   });
 
