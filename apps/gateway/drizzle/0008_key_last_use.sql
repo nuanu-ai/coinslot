@@ -1,0 +1,33 @@
+-- When a key was last called, and whether that answer covers its whole life.
+--
+-- A merchant looking at three keys has one question — which of these can I
+-- revoke — and until now the row said only when the key was made and whether it
+-- still works. Neither answers it. The instant of the last call does, and the
+-- door is already reading this row on every request behind it, so what is added
+-- is the writing rather than the reading.
+--
+-- Nothing is backfilled into `last_used_at`, and that is the decision this file
+-- exists to record. The only instant to hand is `created_at`, and a key made in
+-- June that has been in a worker ever since is not a key last used in June.
+-- Written there it would be a date on a screen with nothing behind it, and the
+-- merchant would revoke a live key on the strength of it. So the column arrives
+-- empty and fills as calls come in.
+--
+-- Which leaves the blank meaning two things at once — nobody has called with
+-- this key, and nobody was writing it down — and those are different answers to
+-- the question being asked. `use_recorded_since_made` is which. It arrives
+-- false, because false is the true thing about every row this migration finds:
+-- they were made before anything was recording, so their blanks are silence
+-- rather than evidence. A key written after this says true, and its blank means
+-- no call has come in.
+--
+-- Hand-written rather than left as drizzle-kit generated it, for the reason
+-- 0003 and 0007 were: the generated form adds a NOT NULL column with no
+-- default, and Postgres refuses that on a table with rows in it. The default is
+-- given for the length of the backfill and then taken away, so that the column
+-- matches the schema the code declares — and so that a key written later
+-- without an answer is refused rather than quietly inheriting the one that is
+-- only true of the rows that were already here.
+ALTER TABLE "merchant_keys" ADD COLUMN "last_used_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "merchant_keys" ADD COLUMN "use_recorded_since_made" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "merchant_keys" ALTER COLUMN "use_recorded_since_made" DROP DEFAULT;

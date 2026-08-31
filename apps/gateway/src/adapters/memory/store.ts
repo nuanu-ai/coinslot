@@ -271,10 +271,32 @@ export class MemoryStore implements Store {
       purpose: key.purpose,
       createdAt: at,
       disabledAt: null,
+      lastUsedAt: null,
+      // Said here rather than asked of the caller, because it is a fact about
+      // when this row was written and not a choice anybody makes: a key written
+      // by this code is one whose use has been recorded since it existed. The
+      // rows that answer otherwise are the ones that were already there when
+      // the column arrived, and no code writes one of those again.
+      useRecordedSinceMade: true,
     });
     this.#keys.set(stored.id, stored);
     this.#keysByDigest.set(key.digest, stored.id);
     return stored;
+  }
+
+  async noteKeyUse(id: string, at: number): Promise<void> {
+    const found = this.#keys.get(id);
+    if (found === undefined) {
+      // Revoked or forgotten between the door reading it and this being
+      // written. Nothing is owed to a row that is not there.
+      return;
+    }
+    if (found.lastUsedAt !== null && found.lastUsedAt >= at) {
+      // An older call arriving after a newer one, which two gateways on two
+      // clocks produce. The mark goes forwards or it stays.
+      return;
+    }
+    this.#keys.set(found.id, Object.freeze({ ...found, lastUsedAt: at }));
   }
 
   async workingKey(digest: string): Promise<StoredKey | null> {

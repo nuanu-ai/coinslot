@@ -117,6 +117,23 @@ export const merchantKeys = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull(),
     /** When it was revoked, or null while it still opens the door. */
     disabledAt: timestamp("disabled_at", { withTimezone: true, mode: "date" }),
+    /**
+     * The last call this key was seen on, thinned to one write per key per
+     * window, and null where none has been written.
+     *
+     * Not indexed and not read by anything on the way to a purchase: it is
+     * written by the door and read on one screen, beside the row it belongs to.
+     */
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true, mode: "date" }),
+    /**
+     * Whether `last_used_at` covers this key's whole life.
+     *
+     * False on the rows that were already there when the column arrived, where
+     * a null instant means nothing was being written down rather than nothing
+     * happened. The two are different answers to a merchant deciding what to
+     * revoke, so they are two values here rather than one blank.
+     */
+    useRecordedSinceMade: boolean("use_recorded_since_made").notNull(),
   },
   // Listing one merchant's keys reads by this; the door reads by the unique
   // index on the digest above.

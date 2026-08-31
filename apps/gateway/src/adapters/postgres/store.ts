@@ -21,7 +21,7 @@
 
 import { isOpen, MERCHANT_SELLING, type MerchantSelling } from "@coinslot/core";
 import type { Card, Receipt, WorkerEnvelope } from "@nuanu-ai/coinslot-contracts";
-import { and, eq, exists, isNull, lt, not, sql } from "drizzle-orm";
+import { and, eq, exists, isNull, lt, not, or, sql } from "drizzle-orm";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool, type PoolConfig } from "pg";
 import type { DrizzleTransactionLike } from "pg-boss";
@@ -278,6 +278,12 @@ export class PostgresStore implements Store {
           purpose: key.purpose,
           digest: key.digest,
           createdAt: new Date(key.at),
+          // Said here rather than asked of the caller, because it is a fact
+          // about when this row was written and not a choice anybody makes: a
+          // key written by this code is one whose use has been recorded since
+          // it existed. The rows that answer otherwise are the ones the column
+          // found already there, and nothing writes one of those again.
+          useRecordedSinceMade: true,
         })
         .returning();
     } catch (thrown) {
@@ -298,6 +304,26 @@ export class PostgresStore implements Store {
       throw new Error(`writing a key for ${key.merchantId} wrote no row`);
     }
     return row;
+  }
+
+  async noteKeyUse(id: string, at: number): Promise<void> {
+    // One statement, and the rule about going backwards is in its predicate
+    // rather than in a read followed by a write. Two gateways write this from
+    // two clocks and neither waits for the other, so a read here would be a
+    // window in which the newer instant lands and is then written over by the
+    // older one — which is the failure this is for, arrived at more slowly.
+    //
+    // A key that is not there matches nothing and that is the answer: the row
+    // was revoked or forgotten between the door reading it and this being sent.
+    await this.#db
+      .update(merchantKeys)
+      .set({ lastUsedAt: new Date(at) })
+      .where(
+        and(
+          eq(merchantKeys.id, id),
+          or(isNull(merchantKeys.lastUsedAt), lt(merchantKeys.lastUsedAt, new Date(at))),
+        ),
+      );
   }
 
   async workingKey(digest: string): Promise<StoredKey | null> {
@@ -1034,6 +1060,8 @@ function storedKeyOf(row: {
   purpose: string;
   createdAt: Date;
   disabledAt: Date | null;
+  lastUsedAt: Date | null;
+  useRecordedSinceMade: boolean;
 }): StoredKey {
   return {
     id: row.id,
@@ -1042,6 +1070,8 @@ function storedKeyOf(row: {
     purpose: keyPurposeOf(row.purpose),
     createdAt: row.createdAt.getTime(),
     disabledAt: row.disabledAt === null ? null : row.disabledAt.getTime(),
+    lastUsedAt: row.lastUsedAt === null ? null : row.lastUsedAt.getTime(),
+    useRecordedSinceMade: row.useRecordedSinceMade,
   };
 }
 
