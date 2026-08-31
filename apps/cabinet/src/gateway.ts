@@ -17,8 +17,10 @@
 
 import {
   API_ROUTES,
+  CabinetKeySchema,
   DisabledKeySchema,
   expandPath,
+  ForgottenCabinetKeysSchema,
   type IssuedKey,
   IssuedKeySchema,
   MERCHANT_KEY_HEADER,
@@ -59,6 +61,23 @@ export interface GatewayClient {
   keys(): Promise<Answer<MerchantKeyList>>;
   issueKey(label: string): Promise<Answer<IssuedKey>>;
   disableKey(keyId: string): Promise<Answer<MerchantKey>>;
+  /**
+   * Another key of the kind this cabinet signs in with, readable once.
+   *
+   * Made with the key already on the account row, because the gateway answers
+   * this to no other kind — and the pair of it below is what makes a stolen
+   * copy of this cabinet's database a set of keys that stops working.
+   */
+  issueCabinetKey(): Promise<Answer<string>>;
+  /**
+   * Removes every other cabinet key of this merchant's, and says how many.
+   *
+   * "Every other" is the route's own rule and it takes no parameters, so the
+   * key this call is made with is the one that survives. It follows the write
+   * of that key onto the row and never precedes it: swept first, the row would
+   * be left naming a key that no longer exists.
+   */
+  forgetCabinetKeys(): Promise<Answer<number>>;
   /** The name buyers read beside this merchant's products, or null for none. */
   sellerName(): Promise<Answer<string | null>>;
   setSellerName(name: string): Promise<Answer<string | null>>;
@@ -193,6 +212,17 @@ export const gatewayFor = (
         values: { key_id: keyId },
       });
       return answered.ok ? { ok: true, document: answered.document.key } : answered;
+    },
+    // Unwrapped like the key above, and for a second reason as well: what the
+    // caller does with this is write it onto a row, and a row written from
+    // `document.secret` is a row to edit the day the answer grows a field.
+    issueCabinetKey: async () => {
+      const answered = await call(API_ROUTES.issue_cabinet_key, CabinetKeySchema);
+      return answered.ok ? { ok: true, document: answered.document.secret } : answered;
+    },
+    forgetCabinetKeys: async () => {
+      const answered = await call(API_ROUTES.forget_cabinet_keys, ForgottenCabinetKeysSchema);
+      return answered.ok ? { ok: true, document: answered.document.removed } : answered;
     },
     // Unwrapped here for the same reason the key above is: the contract carries
     // the name inside an object so the answer can grow a field beside it, and a
