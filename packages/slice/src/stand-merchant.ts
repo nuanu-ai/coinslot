@@ -70,6 +70,7 @@ export const makeStandMerchant = (feed: Feed): StandMerchant => {
   const moods = defaultMoods();
   const taken = new Map<string, LiveOrder>();
   const results = new Map<string, ParamSpec>();
+  const delayedDeliveries = new Set<ReturnType<typeof setTimeout>>();
   let client: CoinslotClient | undefined;
   let address: string | null = null;
 
@@ -89,28 +90,31 @@ export const makeStandMerchant = (feed: Feed): StandMerchant => {
   };
 
   const deliverLater = (order: LiveOrder): void => {
-    void (async () => {
-      await wait(moods.deliverAfterMs);
-      if (taken.get(order.id) !== order) {
-        return;
-      }
-      const delivery = deliveryFor(order.merchant_item_id);
-      feed.write("merchant", "Delivering an accepted order.", {
-        order_id: order.id,
-        merchant_item_id: order.merchant_item_id,
-        delivery,
+    const timer = setTimeout(() => {
+      delayedDeliveries.delete(timer);
+      void (async () => {
+        if (taken.get(order.id) !== order) {
+          return;
+        }
+        const delivery = deliveryFor(order.merchant_item_id);
+        feed.write("merchant", "Delivering an accepted order.", {
+          order_id: order.id,
+          merchant_item_id: order.merchant_item_id,
+          delivery,
+        });
+        const result = await order.deliver(delivery);
+        feed.write("merchant", "The accepted-order delivery answered.", {
+          order_id: order.id,
+          result,
+        });
+      })().catch((error: unknown) => {
+        feed.write("merchant", "The later delivery could not be completed.", {
+          order_id: order.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
       });
-      const result = await order.deliver(delivery);
-      feed.write("merchant", "The accepted-order delivery answered.", {
-        order_id: order.id,
-        result,
-      });
-    })().catch((error: unknown) => {
-      feed.write("merchant", "The later delivery could not be completed.", {
-        order_id: order.id,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    });
+    }, moods.deliverAfterMs);
+    delayedDeliveries.add(timer);
   };
 
   const register = (fresh: CoinslotClient): void => {
@@ -213,6 +217,8 @@ export const makeStandMerchant = (feed: Feed): StandMerchant => {
       address = null;
       taken.clear();
       results.clear();
+      for (const timer of delayedDeliveries) clearTimeout(timer);
+      delayedDeliveries.clear();
       if (stopping !== undefined) {
         await stopping.stop();
         feed.write("stand", "Disconnected the merchant.");
