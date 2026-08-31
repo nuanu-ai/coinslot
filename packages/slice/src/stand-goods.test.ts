@@ -41,7 +41,10 @@ describe("filling a card's declarations", () => {
   });
 
   it("answers every declared field, not only the required ones", () => {
-    const params: ParamSpec = { email: { type: "string", required: true }, note: { type: "string" } };
+    const params: ParamSpec = {
+      email: { type: "string", required: true },
+      note: { type: "string" },
+    };
 
     expect(Object.keys(filledFrom(params))).toEqual(["email", "note"]);
   });
