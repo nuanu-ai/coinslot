@@ -14,24 +14,24 @@ wait for perfection: the road's order is ADR-0010's.
 
 ## Decision
 
-**1. Registering makes a merchant, its first key and an account — or none of
-them.** The form asks what a person can answer on arrival: address, password,
-invitation. They are signed in where they stand. Each side of the boundary
-writes in one transaction and the boundary is crossed once: the gateway makes
-the merchant and the key, the cabinet writes the account. A cabinet that fails
-after the gateway answered leaves a merchant nobody can sign in as — litter,
-not damage; the address is free and the next attempt makes a new one. The
-reverse order cannot exist: the account has nothing to name until the merchant
-does.
+**1. Registering makes a merchant, the key its cabinet calls with and an
+account — or none of them.** The form asks what a person can answer on
+arrival: address, password, invitation. They are signed in where they stand.
+Each side of the boundary writes in one transaction and the boundary is
+crossed once: the gateway makes the merchant and the key, the cabinet writes
+the account. A cabinet that fails after the gateway answered leaves a merchant
+nobody can sign in as — litter, not damage; the address is free and the next
+attempt makes a new one. The reverse order cannot exist: the account has
+nothing to name until the merchant does.
 
-**2. An account names its merchant and holds that merchant's key.** The
+**2. An account names its merchant and holds a key made for the cabinet.** The
 cabinet builds its gateway client per request from the signed-in account's
-row; `MERCHANT_API_KEY` leaves the configuration. The key is stored as issued:
-the same secret that sat in an environment variable, moved into a row — the
-exposure is not new, and the row buys revocation one merchant at a time. It
-does not protect against a copy of the database; the database is a boundary
-against the network, not against a host, and the day that stops being enough
-the fix is a secret store, not a cleverer column.
+row; `MERCHANT_API_KEY` leaves the configuration. The key is stored as issued,
+and it is made afresh at every sign-in and the older ones swept away — so a
+copy of the database is a set of keys that stops working at the next sign-in
+rather than one that works for good. It is still not a secret store; the
+database is a boundary against the network, not against a host, and the day
+that stops being enough the fix is one, not a cleverer column.
 
 **3. The registration route is public, behind an invitation code.** The route
 takes no key — nobody registering has one. A wrong code and a closed
@@ -46,21 +46,23 @@ lives on its own screen and in settings, changeable. Publishing a card while
 it is unset is refused with a sentence naming where to set it: a card with no
 seller reaches an agent inside a payment challenge that names nobody.
 
-**5. Keys are made and disabled from the cabinet.** Three merchant-scoped
-routes: list, issue, disable. The secret is shown once, like the command's
-promise. A merchant cannot disable the key their own call was made with — a
-rule in the route, not a warning, because that click leaves them a cabinet no
-page of which works and no terminal to fix it. The rule sees the key on the
-call, not the key the cabinet holds: two keys disabling each other in one
-moment leave a merchant with none, and refusing that would be "may not disable
-the last working key" — a rule nobody has decided, and this one does not.
+**5. Keys are made and disabled from the cabinet, and a key says what it is
+for.** Three merchant-scoped routes over the keys a merchant made for their own
+code — list, issue, disable — and two at `/v0/keys/cabinet` that make and sweep
+up the key the cabinet itself calls with, refused to any other key. That one is
+in no merchant's list, since they neither issued it nor may revoke it, and the
+sweep removes rather than revokes: nobody will ever read one back. A merchant
+cannot disable the key their own call was made with — a rule in the route,
+because that click leaves them a cabinet no page of which works and no terminal
+to fix it. It sees the key on the call, so two keys disabling each other in one
+moment still leave a merchant with none, which nobody has decided to refuse.
 
 ## Consequences
 
 The cabinet is multi-tenant; the process-wide client and its variable are
-gone. An account and a merchant are one-to-one. Not built and not pretended:
-a second person at a merchant, roles, deleting a merchant, rotating the key
-the cabinet itself holds.
+gone. An account and a merchant are one-to-one, and a merchant who has only
+ever signed in has no keys of their own. Not built and not pretended: a second
+person at a merchant, roles, deleting a merchant.
 
 ## Alternatives rejected
 
