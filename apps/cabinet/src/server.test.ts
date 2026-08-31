@@ -2656,6 +2656,12 @@ describe("the keys screen", () => {
     expect(never).not.toBe("");
     expect(unrecorded).not.toBe("");
     expect(never).not.toBe(unrecorded);
+    // And neither of them is the day the key was made wearing this column's
+    // hat. That is the one instant the screen has to hand when it has no call
+    // to show, and putting it here would be a date a merchant reads as a call —
+    // the exact lie the gateway refused to write into the row.
+    expect(never).not.toBe(inColumn(page, ANOTHER.id, /made/i));
+    expect(unrecorded).not.toBe(inColumn(page, REVOKED.id, /made/i));
   });
 
   it("issues a key, shows its secret once, and says that is the only time", async () => {
