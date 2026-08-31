@@ -60,6 +60,7 @@ let connectionAbort = new AbortController();
 let shuttingDown = false;
 let actionTail: Promise<void> = Promise.resolve();
 const feedResponses = new Map<ServerResponse, () => void>();
+const postResponses = new Set<ServerResponse>();
 
 const port = Number.parseInt(process.env.STAND_PORT ?? "8787", 10);
 if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
@@ -471,18 +472,26 @@ const recordActionError = (error: unknown): void => {
   feed.write("stand", "Action could not be completed.", { error: detail });
 };
 
-const queueAction = (form: URLSearchParams): Promise<void> => {
+const queueAction = (form: URLSearchParams): Promise<boolean> => {
   const queued = actionTail.then(async () => {
-    if (shuttingDown) return;
+    if (shuttingDown) return false;
     try {
       await doAction(form);
     } catch (error) {
-      if (shuttingDown) return;
+      if (shuttingDown) return false;
       recordActionError(error);
     }
+    return !shuttingDown;
   });
-  actionTail = queued;
+  actionTail = queued.then(() => undefined);
   return queued;
+};
+
+const sayUnavailable = (response: ServerResponse): void => {
+  if (!response.writableEnded && !response.destroyed)
+    response
+      .writeHead(503, { "content-type": "text/plain; charset=utf-8" })
+      .end("The stand is shutting down; this action was not run.");
 };
 
 const server = createServer(async (request, response) => {
@@ -507,6 +516,8 @@ const server = createServer(async (request, response) => {
     return;
   }
   if (request.method === "POST") {
+    postResponses.add(response);
+    response.once("close", () => postResponses.delete(response));
     const origin = request.headers.origin;
     const allowed = new Set([
       `http://127.0.0.1:${port}`,
@@ -531,7 +542,15 @@ const server = createServer(async (request, response) => {
       }
       return;
     }
-    await queueAction(form);
+    if (shuttingDown) {
+      sayUnavailable(response);
+      return;
+    }
+    const ran = await queueAction(form);
+    if (!ran || shuttingDown) {
+      sayUnavailable(response);
+      return;
+    }
     if (!response.writableEnded && !response.destroyed)
       response.writeHead(303, { location: "/" }).end();
     return;
@@ -567,16 +586,18 @@ const shutdown = async (): Promise<void> => {
   if (shuttingDown) return;
   shuttingDown = true;
   stopWatchingThisConnection();
+  const serverClosed = new Promise<void>((resolve) => server.close(() => resolve()));
   for (const [response, closeFeed] of [...feedResponses]) {
     closeFeed();
     if (!response.writableEnded && !response.destroyed) response.end();
   }
+  for (const response of postResponses) response.destroy();
   apiKey = null;
   cards = [];
   selling = null;
   await actionTail;
   await merchant.disconnect();
-  server.close();
+  await serverClosed;
 };
 process.once("SIGINT", () => void shutdown());
 process.once("SIGTERM", () => void shutdown());
