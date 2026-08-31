@@ -284,6 +284,12 @@ async function main(): Promise<void> {
 // COINSLOT_SMOKE, refuse, and take the importing process down with it through
 // the exit below. `bootstrap.ts` buys the same separation by being a different
 // file from the command it runs; here one line does it.
+//
+// That line is why the repository's `engines.node` names 24.2 rather than 24:
+// `import.meta.main` arrived in 24.2, and on anything earlier it reads
+// `undefined`, so this command would print nothing, exit 0, and look like a
+// run that went fine. A spending command that silently does nothing is worse
+// than one that will not start.
 if (import.meta.main) {
   main().catch((error: unknown) => {
     // The message only, never the whole error object: a payment client's error

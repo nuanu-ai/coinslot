@@ -5,7 +5,7 @@
   "type": "module",
   "packageManager": "pnpm@10.33.3",
   "engines": {
-    "node": ">=24"
+    "node": ">=24.2"
   },
   "scripts": {
     "prepare": "git rev-parse --git-dir >/dev/null 2>&1 && git config core.hooksPath .githooks || true",
