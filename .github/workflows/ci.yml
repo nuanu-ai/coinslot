@@ -117,11 +117,11 @@ jobs:
           set -euo pipefail
           key="${RUNNER_TEMP}/coinslot-preview-key"
           known_hosts="${RUNNER_TEMP}/coinslot-known-hosts"
+          trap 'rm -f "${key}" "${known_hosts}"' EXIT
           install -m 600 /dev/null "${key}"
           printf '%s\n' "${DEPLOY_KEY}" > "${key}"
           unset DEPLOY_KEY
           printf '%s\n' '10.20.10.20 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEQIT814RTQJApGFR91u2TyN5o9WMePvqREYgOjNWSsO' > "${known_hosts}"
-          trap 'rm -f "${key}" "${known_hosts}"' EXIT
           ssh_options=(-i "${key}" -o BatchMode=yes -o ConnectTimeout=10 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=${known_hosts}")
 
           test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
@@ -155,14 +155,18 @@ jobs:
           set -euo pipefail
           key="${RUNNER_TEMP}/coinslot-live-key"
           known_hosts="${RUNNER_TEMP}/coinslot-known-hosts"
+          trap 'rm -f "${key}" "${known_hosts}"' EXIT
           install -m 600 /dev/null "${key}"
           printf '%s\n' "${DEPLOY_KEY}" > "${key}"
           unset DEPLOY_KEY
           printf '%s\n' '10.20.10.20 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEQIT814RTQJApGFR91u2TyN5o9WMePvqREYgOjNWSsO' > "${known_hosts}"
-          trap 'rm -f "${key}" "${known_hosts}"' EXIT
           ssh_options=(-i "${key}" -o BatchMode=yes -o ConnectTimeout=10 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=${known_hosts}")
 
           tag="${GITHUB_REF#refs/tags/}"
+          if [[ ! "${tag}" =~ ^v[0-9A-Za-z.+-]{1,64}$ ]]; then
+            printf '%s\n' 'coinslot release refused: live tag must match ^v[0-9A-Za-z.+-]{1,64}$' >&2
+            exit 64
+          fi
           test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
           # The tag and the green SHA intentionally expand here; the server
           # receives only the resulting `release-live <tag> <sha>` forced
