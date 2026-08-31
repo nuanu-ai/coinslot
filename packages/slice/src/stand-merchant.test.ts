@@ -226,28 +226,44 @@ describe("connecting the stand somewhere else", () => {
     await merchant.connect(oldGateway.url, KEY);
     await waitUntil(oldGateway.deliveryBegan);
 
-    let replacementFinished = false;
-    const replacing = merchant.connect(nextGateway.url, KEY).then(() => {
-      replacementFinished = true;
-    });
-    await new Promise((resolve) => setTimeout(resolve, 30));
-
-    expect(replacementFinished).toBe(false);
-    oldGateway.releaseDelivery();
-    await replacing;
-    await waitUntil(() => nextGateway.polls() > 0);
-
-    const oldAnswer = feed
-      .entries()
-      .findIndex((entry) => entry.title === "The accepted-order delivery answered.");
-    const newConnection = feed
-      .entries()
-      .findIndex(
-        (entry) =>
-          entry.title === "Connected the merchant." &&
-          (entry.detail as { base_url?: string }).base_url === nextGateway.url,
+    try {
+      let replacementFinished = false;
+      const replacing = merchant.connect(nextGateway.url, KEY).then(() => {
+        replacementFinished = true;
+      });
+      await waitUntil(
+        () =>
+          feed.entries().some(
+            (entry) => entry.title === "Waiting for in-flight delivery work before disconnect.",
+          ),
+        1_000,
       );
-    expect(oldAnswer).toBeGreaterThanOrEqual(0);
-    expect(oldAnswer).toBeLessThan(newConnection);
+
+      expect(replacementFinished).toBe(false);
+      oldGateway.releaseDelivery();
+      await replacing;
+      await waitUntil(() => nextGateway.polls() > 0);
+
+      const oldAnswer = feed
+        .entries()
+        .findIndex((entry) => entry.title === "The accepted-order delivery answered.");
+      const newConnection = feed
+        .entries()
+        .findIndex(
+          (entry) =>
+            entry.title === "Connected the merchant." &&
+            (entry.detail as { base_url?: string }).base_url === nextGateway.url,
+        );
+      expect(oldAnswer).toBeGreaterThanOrEqual(0);
+      expect(oldAnswer).toBeLessThan(newConnection);
+      expect(
+        feed
+          .entries()
+          .slice(newConnection + 1)
+          .some((entry) => entry.title === "The accepted-order delivery answered."),
+      ).toBe(false);
+    } finally {
+      oldGateway.releaseDelivery();
+    }
   });
 });
