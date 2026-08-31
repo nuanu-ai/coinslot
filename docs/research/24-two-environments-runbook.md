@@ -293,7 +293,10 @@ fail-closed. Before making an evidence directory or reading a card, arm an
 exit trap that pauses all selling through the authenticated API. The pause is
 idempotent. The trap keeps retry responsibility attached to every premature
 exit until a pause response has been positively checked; it never writes the
-key or puts it in an argument.
+key or puts it in an argument. `SEEDED_KEY` starts empty and all exit and
+signal handlers are armed before the secret prompt. If the prompt fails or no
+key is read, cleanup does not attempt authentication: it exits nonzero and
+says to keep terminal A running and subscribed.
 
 Every authenticated curl gets its header as configuration on standard input.
 `printf` is Bash's builtin, so the key does not become another process's
@@ -305,6 +308,7 @@ set -euo pipefail
 
 selling_pause_verified=0
 pause_document=''
+SEEDED_KEY=''
 
 pause_all_selling() {
   local response
@@ -336,6 +340,14 @@ emergency_pause_on_exit() {
     exit "$prior_status"
   fi
 
+  if [[ -z "$SEEDED_KEY" ]]; then
+    printf '%s\n' \
+      'EMERGENCY: the global selling pause could not be attempted because no seeded key was read.' \
+      'DO NOT stop Terminal A; keep the worker running and subscribed.' \
+      'Read the seeded key in a fresh Terminal B and confirm POST /v0/selling/pause before stopping it.' >&2
+    exit 1
+  fi
+
   for attempt in 1 2 3; do
     if pause_all_selling; then
       selling_pause_verified=1
@@ -355,12 +367,16 @@ emergency_pause_on_exit() {
   exit 1
 }
 
-IFS= read -r -s -p 'Live seeded merchant key: ' SEEDED_KEY
 trap emergency_pause_on_exit EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
+IFS= read -r -s -p 'Live seeded merchant key: ' SEEDED_KEY
 printf '\n'
+[[ -n "$SEEDED_KEY" ]] || {
+  printf '%s\n' 'STOP: no live seeded merchant key was read.' >&2
+  exit 1
+}
 
 evidence_dir="$(mktemp -d "$HOME/coinslot-first-live-sale.XXXXXX")"
 chmod 700 "$evidence_dir"
