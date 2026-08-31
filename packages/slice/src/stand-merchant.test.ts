@@ -155,9 +155,9 @@ describe("connecting the stand somewhere else", () => {
     shutting.push(first.close, second.close);
 
     merchant = makeStandMerchant(makeFeed());
-    merchant.learn("the-item-both-gateways-name", { old_gateway_field: { type: "string" } });
     await merchant.connect(first.url, KEY);
     await waitUntil(() => first.polls() > 0);
+    merchant.learn("the-item-both-gateways-name", { old_gateway_field: { type: "string" } });
 
     await merchant.connect(second.url, KEY);
     await waitUntil(() => second.delivered() !== undefined);
