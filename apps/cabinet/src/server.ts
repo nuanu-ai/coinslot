@@ -354,6 +354,16 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
    * the sweep had just removed, and the person it belongs to would be locked
    * out of their own cabinet by the act of signing into it.
    *
+   * The write is conditional on the row still holding what this sign-in read
+   * off it, and the sweep happens only for the sign-in whose write won. That
+   * is one rule rather than two: the right to remove every other key belongs
+   * to whoever put the surviving one on the row, and nobody else has it. Two
+   * sign-ins at one moment read the same key, ask for one each and both arrive
+   * at the row; one moves it, the other finds it moved and leaves — its fresh
+   * key unheld by anybody, which the next sign-in that wins sweeps up. Without
+   * that condition the loser would write a key the winner's sweep had already
+   * removed, and the account would name something the gateway has forgotten.
+   *
    * None of it may stand between a person and their cabinet. A gateway that is
    * down, one that refuses, one that answers something the contract does not
    * recognise — each costs a line in the log and nothing more, and they are
@@ -374,20 +384,22 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
    * leave the old key alive for a while — which is the thing this exists to
    * stop.
    *
-   * There is a second window and it is not that cheap, so it is named rather
-   * than left for somebody to find. Two sign-ins of the same account that
-   * overlap — two devices at the same moment, a doubled form post — can
-   * interleave so that the later one writes its key onto the row while the
-   * earlier one is still between its own write and its own sweep. The earlier
-   * sweep then removes every cabinet key but its own, and the key the row now
-   * names is one of those. The account is left holding a key the gateway has
-   * forgotten: every screen answers 502, and signing in again cannot mend it,
-   * because the fresh key is asked for with the one being refused. Nothing in
-   * the shape of these three steps closes it — what would is one sign-in at a
-   * time per account, or a sweep the gateway bounds by the key the account
-   * names rather than by the key on the call — and neither is built. Until one
-   * of them is, this is a rare road into a cabinet only somebody at a terminal
-   * can let its owner back into.
+   * What the condition on the write does not reach is one further interleaving,
+   * named here rather than left for somebody to find. A sign-in that wins its
+   * write is still holding the right to sweep for as long as the sweep takes to
+   * land, and a second sign-in starting inside that gap reads the winner's key,
+   * asks for one of its own and wins its own write against it — legitimately,
+   * because by then the row does hold what it read. The first sweep then
+   * removes every key but its own, including the one the second just wrote, and
+   * the account is left naming a key the gateway has forgotten: every screen
+   * answers 502, and signing in again cannot mend it, because a fresh key is
+   * asked for with the one being refused. It needs a whole sign-in — read, ask,
+   * write — to fit inside one round trip of somebody else's, and the second
+   * sweep to land after the first rather than before it, so it is far narrower
+   * than the window the condition closed. It is not nothing. Closing it needs
+   * something this stage does not have: one sign-in at a time per account, or a
+   * sweep the gateway bounds by the key the account names rather than by the
+   * key the call was made with.
    */
   const replaceTheKeyOf = async (person: Person): Promise<void> => {
     const holding = person.merchant?.key;
@@ -405,15 +417,20 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
         return;
       }
 
-      if (!(await identity.replaceMerchantKey(person.id, made.document))) {
-        // Nothing is swept, deliberately. The row still names the key they came
-        // in with, and a sweep made with the key that was not written down
-        // would remove exactly that one. The fresh key is left where it is:
-        // nobody holds it, nobody can reach it, and the next sign-in that gets
-        // as far as writing one down sweeps it up.
+      // Conditional on the row still holding what was read off it, which is
+      // what makes the write and the right to sweep one act rather than two
+      // moments with a gap between them.
+      if (!(await identity.replaceMerchantKey(person.id, holding, made.document))) {
+        // Nothing is swept, deliberately, and this is the branch the whole
+        // shape exists for. Whoever holds the row now holds a key this sign-in
+        // never had; a sweep made with the key that did not get written would
+        // remove exactly that one, and leave the row naming something the
+        // gateway has forgotten. The fresh key is left where it is: nobody
+        // holds it, nobody can reach it, and the next sign-in that does write
+        // one down sweeps it up.
         console.error(
-          `[cabinet] ${person.email} is signed in on the key their account already held:` +
-            " a fresh one was made and could not be written down",
+          `[cabinet] ${person.email} is signed in on the key their account holds:` +
+            " a fresh one was made and the row had already moved on from what this sign-in read",
         );
         return;
       }
