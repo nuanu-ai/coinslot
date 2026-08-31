@@ -146,6 +146,11 @@ export interface BuyerOptions {
   readonly privateKey: string;
   /** The hard ceiling on any single payment, in US dollars. */
   readonly maxUsd: number;
+  /**
+   * The fetch every request uses. It defaults to the global fetch and lets a
+   * caller show the exchange it just made.
+   */
+  readonly fetch?: typeof fetch;
 }
 
 export function makeBuyer(options: BuyerOptions): Buyer {
@@ -154,7 +159,8 @@ export function makeBuyer(options: BuyerOptions): Buyer {
   registerExactEvmScheme(client, { signer: account });
   client.setSpendControls({ maxAmountPerPayment: `$${options.maxUsd}` });
 
-  const payFetch = wrapFetchWithPayment((input, init) => fetch(input, init), client);
+  const request = options.fetch ?? fetch;
+  const payFetch = wrapFetchWithPayment((input, init) => request(input, init), client);
   const base = options.baseUrl.replace(/\/+$/, "");
 
   const statusUrl = (orderId: string): string =>
@@ -165,7 +171,7 @@ export function makeBuyer(options: BuyerOptions): Buyer {
     statusUrl,
 
     async catalog() {
-      const response = await fetch(`${base}/v0/catalog`, {
+      const response = await request(`${base}/v0/catalog`, {
         headers: { accept: "application/json" },
       });
       const page = CatalogPageSchema.parse(await response.json());
@@ -173,7 +179,7 @@ export function makeBuyer(options: BuyerOptions): Buyer {
     },
 
     async challenge(itemId) {
-      const response = await fetch(`${base}/v0/items/${encodeURIComponent(itemId)}/purchase`, {
+      const response = await request(`${base}/v0/items/${encodeURIComponent(itemId)}/purchase`, {
         headers: { accept: "application/json" },
       });
       const header = response.headers.get("payment-required");
@@ -205,7 +211,7 @@ export function makeBuyer(options: BuyerOptions): Buyer {
     },
 
     async status(orderId) {
-      const response = await fetch(statusUrl(orderId), {
+      const response = await request(statusUrl(orderId), {
         headers: { accept: "application/json" },
       });
 
