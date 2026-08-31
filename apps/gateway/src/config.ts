@@ -2,7 +2,9 @@ import {
   CDP_FACILITATOR_URL,
   type Environment,
   environmentOf,
+  environmentOfKeyPrefix,
   isSandboxFacilitator,
+  keyPrefixFor,
   SANDBOX_FACILITATOR,
   type SurfaceMode,
   surfaceModeOf,
@@ -345,9 +347,11 @@ const environmentSchema = z.object({
    * did exactly what the paragraph above asks would find the gateway will not
    * start. There is no reading in which nothing is a key.
    *
-   * The length floor is a floor on what a sandbox is allowed to hand out, not
-   * on what a real key looks like: a real one is generated with thirty-two
-   * bytes behind it and never chosen by anybody.
+   * The length floor is a floor on what a stack is allowed to hand out, not on
+   * what a real key looks like: a real one is generated with thirty-two bytes
+   * behind it and never chosen by anybody. Its prefix says which environment
+   * the key belongs to; `loadConfig` checks that separately after it derives
+   * the environment from the payment network.
    */
   SANDBOX_MERCHANT_KEY: z
     .string({ error: absentOrWrong("must be a string") })
@@ -647,7 +651,7 @@ export interface PaymentConfig {
 export interface GatewayConfig {
   readonly databaseUrl: string;
   readonly port: number;
-  /** A key the sandbox is seeded with at start-up, or nothing at all. */
+  /** A key this environment is seeded with at start-up, or nothing at all. */
   readonly sandboxMerchantKey: string | null;
   /** The code registration is behind, or nothing at all, which closes it. */
   readonly registrationInvitation: string | null;
@@ -821,6 +825,26 @@ export function loadConfig(environment: Record<string, string | undefined>): Gat
     chainEnvironment = environmentOf(network);
   } catch (thrown) {
     problems.push(thrown instanceof Error ? thrown.message : String(thrown));
+  }
+
+  // A key in an environment is a key that cannot be revoked without a
+  // deployment, which is the thing keys became rows in order to fix. The
+  // prefix rule is about which environment a key belongs to and is not a test
+  // of whether it is secret — on the public test stack the laptop's default
+  // would pass this, which is why the release checks separately that the
+  // seeded key is not the value written in this repository.
+  const seeded = environmentValues.SANDBOX_MERCHANT_KEY;
+  if (chainEnvironment !== null && seeded !== null) {
+    const theirs = environmentOfKeyPrefix(seeded);
+    if (theirs !== chainEnvironment) {
+      problems.push(
+        `SANDBOX_MERCHANT_KEY does not carry this environment's prefix — PAYMENT_NETWORK is ` +
+          `${JSON.stringify(network)}, which is a ${chainEnvironment} environment, so a key seeded here ` +
+          `must begin with ${JSON.stringify(keyPrefixFor(chainEnvironment))}. A key seeded under the ` +
+          "other environment's prefix opens nothing, because the door turns it away by its prefix " +
+          "before it is looked up",
+      );
+    }
   }
 
   // A live chain is allowed exactly one facilitator, and the rule is about the

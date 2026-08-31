@@ -26,7 +26,7 @@
  */
 
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { type Environment, keyPrefixFor } from "@coinslot/core";
+import { assertNever, type Environment, keyPrefixFor, type SurfaceMode } from "@coinslot/core";
 import {
   checksummedAddressOf,
   EvmAddressSchema,
@@ -342,13 +342,33 @@ export async function registerMerchant(
 export const SEEDED_MERCHANT = { id: "the_merchant", name: "The pilot merchant" } as const;
 
 /**
- * What the sandbox's merchant is listed as until somebody says otherwise.
+ * What a seeded merchant is listed as, which is different on each of the three
+ * stacks and is nothing at all on one of them.
  *
- * It says sandbox out loud on purpose: this name travels to a catalogue, and a
- * listing that reads like a real seller is the one thing a sandbox must not
- * look like.
+ * It says what it is out loud on purpose: this name travels to a catalog, and
+ * a listing that reads like a real seller is the one thing a sandbox must not
+ * look like. `Coinslot sandbox` is right for the laptop, wrong for the test
+ * site, and wrong in a way that reaches strangers on the live one.
+ *
+ * A live stack is seeded with no name. A merchant with no name is off sale, so
+ * a live stack nobody has named sells nothing, and the name it eventually
+ * trades under is typed by a person rather than inherited from a constant
+ * written for a sandbox.
  */
-export const SEEDED_SERVICE_NAME = "Coinslot sandbox";
+export function seededServiceNameFor(mode: SurfaceMode): string | null {
+  switch (mode) {
+    case "sandbox":
+      return "Coinslot sandbox";
+    case "test":
+      return "Coinslot test site";
+    case "live":
+      return null;
+    default: {
+      const unnamed: never = mode;
+      return assertNever(unnamed, "seededServiceNameFor");
+    }
+  }
+}
 
 /** What seeding the sandbox's key came to, in a word somebody can print. */
 export type SeedOutcome =
@@ -404,6 +424,7 @@ export async function seedSandboxKey(
   ids: Ids,
   secret: string,
   at: number,
+  mode: SurfaceMode,
 ): Promise<SeedOutcome> {
   const digest = keyDigest(secret);
   await store.addMerchant(SEEDED_MERCHANT, at);
@@ -459,7 +480,8 @@ export async function seedSandboxKey(
   // saying who listed it. A name that is already there is left alone for the
   // matching reason: it is somebody's, and this is only a default.
   const merchant = await store.merchantById(SEEDED_MERCHANT.id);
-  const listedAs = merchant !== null && merchant.serviceName === null ? SEEDED_SERVICE_NAME : null;
+  const wanted = seededServiceNameFor(mode);
+  const listedAs = merchant !== null && merchant.serviceName === null ? wanted : null;
   if (listedAs !== null) {
     await setServiceName(store, SEEDED_MERCHANT.id, listedAs, at);
   }

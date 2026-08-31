@@ -81,10 +81,6 @@ const queue = queueOn(config.databaseUrl, {
  */
 async function paymentLayer(): Promise<Facilitator> {
   if (isSandboxFacilitator(config.payment.facilitatorUrl)) {
-    console.warn(
-      "[gateway] SANDBOX: no chain behind this process — every payment it accepts is pretend, " +
-        "nothing arrives at the address in a challenge, and no receipt it writes points at a transfer",
-    );
     return new ScriptedFacilitator();
   }
 
@@ -92,6 +88,47 @@ async function paymentLayer(): Promise<Facilitator> {
   await refuseUnlessCredentialsSign(client);
   return new X402Facilitator(client, edge);
 }
+
+/**
+ * The first line of the log, and what an operator reads to know which of the
+ * three things this process is.
+ *
+ * It used to announce only the sandbox, because there was only one other
+ * thing to be. There are three now, and the difference between "settles with
+ * test funds" and "settles against nothing" is one somebody acts on.
+ */
+function announceTheEnvironment(): void {
+  const { network, facilitatorUrl } = config.payment;
+  const where = `${network} through ${facilitatorUrl}`;
+
+  switch (config.surfaceMode) {
+    case "sandbox":
+      console.warn(
+        `[gateway] SANDBOX on ${where}: no chain stands behind this process — every payment it ` +
+          "accepts is pretend, nothing arrives at the address in a challenge, and no receipt it " +
+          "writes points at a transfer",
+      );
+      return;
+    case "test":
+      console.warn(
+        `[gateway] TEST environment on ${where}: payments settle with test funds, every order and ` +
+          "receipt is marked as a test, and every key issued here begins with csk_test_",
+      );
+      return;
+    case "live":
+      console.log(
+        `[gateway] LIVE on ${where}: the money is real, nothing is marked as a test, and every key ` +
+          "issued here begins with csk_live_",
+      );
+      return;
+    default: {
+      const unannounced: never = config.surfaceMode;
+      throw new Error(`this gateway has no words for ${String(unannounced)}`);
+    }
+  }
+}
+
+announceTheEnvironment();
 
 const runtime: Runtime = {
   config,
@@ -146,7 +183,13 @@ async function seedTheSandbox(secret: string | null): Promise<void> {
     return;
   }
 
-  const seeded = await seedSandboxKey(runtime.store, runtime.ids, secret, runtime.clock());
+  const seeded = await seedSandboxKey(
+    runtime.store,
+    runtime.ids,
+    secret,
+    runtime.clock(),
+    config.surfaceMode,
+  );
   if (seeded.kind === "issued") {
     console.warn(
       `[gateway] SANDBOX: the key in SANDBOX_MERCHANT_KEY now opens ${seeded.merchantId} — ` +

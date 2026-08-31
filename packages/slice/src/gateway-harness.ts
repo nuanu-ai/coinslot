@@ -169,7 +169,7 @@ export async function bootGateway(
         "given seeds no key: SANDBOX_MERCHANT_KEY is empty, so there would be nothing to call as",
     );
   }
-  await seedSandboxKey(store, randomIds, merchantKey, systemClock());
+  await seedSandboxKey(store, randomIds, merchantKey, systemClock(), config.surfaceMode);
 
   // And where that merchant is paid, which is the address this slice was
   // configured with. The two are one thing here and only here: this harness

@@ -25,13 +25,47 @@ import {
   REGISTERED_MERCHANT_NAME,
   registerMerchant,
   SEEDED_MERCHANT,
-  SEEDED_SERVICE_NAME,
+  seededServiceNameFor,
   seedSandboxKey,
   setPayoutWallet,
   setServiceName,
 } from "./merchants.js";
 
 const aStore = () => new MemoryStore(countedIds());
+
+describe("the name a seeded merchant is listed under", () => {
+  it("says sandbox out loud where nothing settles", () => {
+    expect(seededServiceNameFor("sandbox")).toBe("Coinslot sandbox");
+  });
+
+  it("says test site where a test chain settles", () => {
+    expect(seededServiceNameFor("test")).toBe("Coinslot test site");
+  });
+
+  it("names a live stack nothing at all", () => {
+    // The negative case is the one that matters: nothing on a live stack is
+    // ever listed as a sandbox, because that string travels to a catalog
+    // strangers read. A merchant with no name is off sale, so a live stack
+    // nobody has named sells nothing, and the name it eventually trades under
+    // is typed by a person.
+    expect(seededServiceNameFor("live")).toBeNull();
+  });
+
+  it("lists a live seed under no name and leaves it off sale", async () => {
+    const store = new MemoryStore(countedIds());
+    const seeded = await seedSandboxKey(store, countedIds(), "csk_live_a-key", 0, "live");
+
+    expect(seeded).toEqual({ kind: "issued", merchantId: "the_merchant", listedAs: null });
+    expect((await store.merchantById("the_merchant"))?.serviceName).toBeNull();
+  });
+
+  it("lists a test seed as what it is", async () => {
+    const store = new MemoryStore(countedIds());
+    await seedSandboxKey(store, countedIds(), "csk_test_a-key", 0, "test");
+
+    expect((await store.merchantById("the_merchant"))?.serviceName).toBe("Coinslot test site");
+  });
+});
 
 describe("a key", () => {
   it("is generated rather than chosen, and no two are the same", () => {
@@ -181,12 +215,12 @@ describe("seeding the sandbox", () => {
   it("makes the merchant and the key on a database that has neither", async () => {
     const store = aStore();
 
-    const seeded = await seedSandboxKey(store, countedIds(), "the-sandbox-key", 1_000);
+    const seeded = await seedSandboxKey(store, countedIds(), "the-sandbox-key", 1_000, "sandbox");
 
     expect(seeded).toStrictEqual({
       kind: "issued",
       merchantId: SEEDED_MERCHANT.id,
-      listedAs: SEEDED_SERVICE_NAME,
+      listedAs: "Coinslot sandbox",
     });
     expect((await store.workingKey(keyDigest("the-sandbox-key")))?.merchantId).toBe(
       SEEDED_MERCHANT.id,
@@ -200,9 +234,9 @@ describe("seeding the sandbox", () => {
     // them has nothing to show — which is the one thing a sandbox exists to do.
     const store = aStore();
 
-    await seedSandboxKey(store, countedIds(), "the-sandbox-key", 1_000);
+    await seedSandboxKey(store, countedIds(), "the-sandbox-key", 1_000, "sandbox");
 
-    expect((await store.merchantById(SEEDED_MERCHANT.id))?.serviceName).toBe(SEEDED_SERVICE_NAME);
+    expect((await store.merchantById(SEEDED_MERCHANT.id))?.serviceName).toBe("Coinslot sandbox");
   });
 
   it("writes nothing the second time, so a restart is not a second key", async () => {
@@ -211,9 +245,9 @@ describe("seeding the sandbox", () => {
     // remembers making.
     const store = aStore();
     const ids = countedIds();
-    await seedSandboxKey(store, ids, "the-sandbox-key", 1_000);
+    await seedSandboxKey(store, ids, "the-sandbox-key", 1_000, "sandbox");
 
-    const again = await seedSandboxKey(store, ids, "the-sandbox-key", 2_000);
+    const again = await seedSandboxKey(store, ids, "the-sandbox-key", 2_000, "sandbox");
 
     expect(again).toStrictEqual({ kind: "already_there" });
     expect(await store.keysOf(SEEDED_MERCHANT.id)).toHaveLength(1);
@@ -225,10 +259,10 @@ describe("seeding the sandbox", () => {
     // has named, and this one is named, so the run says it listed nothing.
     const store = aStore();
     const ids = countedIds();
-    await seedSandboxKey(store, ids, "the-sandbox-key", 1_000);
+    await seedSandboxKey(store, ids, "the-sandbox-key", 1_000, "sandbox");
     await setServiceName(store, SEEDED_MERCHANT.id, "Someone's shop", 2_000);
 
-    const seeded = await seedSandboxKey(store, ids, "another-sandbox-key", 3_000);
+    const seeded = await seedSandboxKey(store, ids, "another-sandbox-key", 3_000, "sandbox");
 
     expect(seeded).toStrictEqual({
       kind: "issued",
@@ -246,10 +280,10 @@ describe("seeding the sandbox", () => {
     // a choice a restart undoes is not a choice.
     const store = aStore();
     const ids = countedIds();
-    await seedSandboxKey(store, ids, "the-sandbox-key", 1_000);
+    await seedSandboxKey(store, ids, "the-sandbox-key", 1_000, "sandbox");
     await setServiceName(store, SEEDED_MERCHANT.id, null, 2_000);
 
-    const again = await seedSandboxKey(store, ids, "the-sandbox-key", 3_000);
+    const again = await seedSandboxKey(store, ids, "the-sandbox-key", 3_000, "sandbox");
 
     expect(again).toStrictEqual({ kind: "already_there" });
     expect((await store.merchantById(SEEDED_MERCHANT.id))?.serviceName).toBeNull();
@@ -262,12 +296,12 @@ describe("seeding the sandbox", () => {
     // that, this would issue a second key with a digest already taken.
     const store = aStore();
     const ids = countedIds();
-    await seedSandboxKey(store, ids, "the-sandbox-key", 1_000);
+    await seedSandboxKey(store, ids, "the-sandbox-key", 1_000, "sandbox");
     const [key] = await store.keysOf(SEEDED_MERCHANT.id);
     if (key === undefined) throw new Error("the seed wrote no key");
     await store.disableKey(key.id, 2_000);
 
-    const again = await seedSandboxKey(store, ids, "the-sandbox-key", 3_000);
+    const again = await seedSandboxKey(store, ids, "the-sandbox-key", 3_000, "sandbox");
 
     expect(again).toStrictEqual({ kind: "disabled" });
     expect(await store.keysOf(SEEDED_MERCHANT.id)).toHaveLength(1);
@@ -280,13 +314,13 @@ describe("seeding the sandbox", () => {
     // second half on the path where the key is there and revoked.
     const store = aStore();
     const ids = countedIds();
-    await seedSandboxKey(store, ids, "the-sandbox-key", 1_000);
+    await seedSandboxKey(store, ids, "the-sandbox-key", 1_000, "sandbox");
     const [key] = await store.keysOf(SEEDED_MERCHANT.id);
     if (key === undefined) throw new Error("the seed wrote no key");
     await store.disableKey(key.id, 2_000);
     await setServiceName(store, SEEDED_MERCHANT.id, null, 2_000);
 
-    const again = await seedSandboxKey(store, ids, "the-sandbox-key", 3_000);
+    const again = await seedSandboxKey(store, ids, "the-sandbox-key", 3_000, "sandbox");
 
     expect(again).toStrictEqual({ kind: "disabled" });
     expect((await store.merchantById(SEEDED_MERCHANT.id))?.serviceName).toBeNull();
@@ -301,8 +335,8 @@ describe("seeding the sandbox", () => {
     const ids = countedIds();
 
     const [first, second] = await Promise.all([
-      seedSandboxKey(store, ids, "the-sandbox-key", 1_000),
-      seedSandboxKey(store, ids, "the-sandbox-key", 1_000),
+      seedSandboxKey(store, ids, "the-sandbox-key", 1_000, "sandbox"),
+      seedSandboxKey(store, ids, "the-sandbox-key", 1_000, "sandbox"),
     ]);
 
     expect([first.kind, second.kind].sort()).toStrictEqual(["already_there", "issued"]);
@@ -333,9 +367,9 @@ describe("seeding the sandbox", () => {
       },
     } as unknown as MemoryStore;
 
-    await expect(seedSandboxKey(broken, countedIds(), "the-sandbox-key", 1_000)).rejects.toThrow(
-      "the disk is full",
-    );
+    await expect(
+      seedSandboxKey(broken, countedIds(), "the-sandbox-key", 1_000, "sandbox"),
+    ).rejects.toThrow("the disk is full");
   });
 
   it("does not put a merchant who had paused back on sale", async () => {
@@ -344,10 +378,10 @@ describe("seeding the sandbox", () => {
     // else's behalf.
     const store = aStore();
     const ids = countedIds();
-    await seedSandboxKey(store, ids, "the-sandbox-key", 1_000);
+    await seedSandboxKey(store, ids, "the-sandbox-key", 1_000, "sandbox");
     await store.setSelling(SEEDED_MERCHANT.id, "paused");
 
-    await seedSandboxKey(store, ids, "the-sandbox-key", 2_000);
+    await seedSandboxKey(store, ids, "the-sandbox-key", 2_000, "sandbox");
 
     expect(await store.selling(SEEDED_MERCHANT.id)).toBe("paused");
   });
