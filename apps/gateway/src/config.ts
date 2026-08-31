@@ -317,8 +317,10 @@ const environmentSchema = z.object({
    * merchant everything in a database of this age belongs to, if it is not
    * there already, and after that the door reads it the way it reads every
    * other key. What it buys is the sandbox in `compose.yaml`, where the same
-   * string is also given to the cabinet and to the merchant process, next to
-   * the database password and for the same reason.
+   * string is also given to the merchant process, next to the database password
+   * and for the same reason. Not to the cabinet: it has no merchant key in its
+   * configuration at all, and holds one of its own instead, made at every
+   * sign-in and typed by nobody (ADR-0014 §2).
    *
    * A deployment sets it too, to a key generated for that host, kept in its own
    * file, and carrying that site's prefix, because the merchant process a stack
