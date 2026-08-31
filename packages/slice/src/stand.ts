@@ -13,6 +13,7 @@ import {
   expandPath,
   MerchantCardListSchema,
   type Money,
+  ORDER_STATUSES,
   type Refusal,
 } from "@nuanu-ai/coinslot-contracts";
 import { type Buyer, makeBuyer } from "./buyer.js";
@@ -33,6 +34,9 @@ import { renderPage } from "./stand-page.js";
 const TEST_BUYER_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 const WATCH_MS = 60_000;
 const ASK_EVERY_MS = 1_000;
+const TERMINAL_ORDER_STATUSES: ReadonlySet<string> = new Set(
+  ORDER_STATUSES.filter((status) => status !== "in_progress"),
+);
 
 const feed = makeFeed();
 const merchant = makeStandMerchant(feed);
@@ -164,7 +168,7 @@ const watchOrder = async (buyer: Buyer, orderId: string): Promise<void> => {
       state: status.state,
       body: status.body,
     });
-    if (status.state !== "in_progress") return;
+    if (status.state !== null && TERMINAL_ORDER_STATUSES.has(status.state)) return;
   }
   feed.write("buyer", "Watching an order reached its ceiling.", {
     order_id: orderId,
@@ -219,6 +223,10 @@ const doAction = async (form: URLSearchParams): Promise<void> => {
       const key = form.get("api_key") ?? "";
       if (address === "" || key === "")
         throw new Error("Gateway address and merchant key are both required.");
+      // A new gateway is a new catalogue. Until its document parses, the old
+      // gateway's cards must not remain actionable on this page.
+      cards = [];
+      selling = null;
       apiKey = key;
       await merchant.connect(address, key);
       await readCards();
