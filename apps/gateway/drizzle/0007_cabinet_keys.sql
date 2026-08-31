@@ -16,23 +16,28 @@
 -- the merchant's own.
 --
 -- Every key that already exists is one of the merchant's own except the ones
--- registration made, and those are found by their label. That is not a rule
--- anybody should reach for twice, and both halves of why are worth reading.
+-- registration made, and the backfill finds those by two facts at once.
 --
--- It is admissible here because of what is actually in the databases this runs
--- against. One line of code has ever written that sentence — the label
--- registration gave a merchant's first key — and it is not a label anybody was
--- offered or shown. A merchant could nonetheless have typed those exact words
--- when naming a key of their own, and this migration would then take that key
--- out of their list and hand it to their cabinet; nothing here can tell the two
--- apart. What makes that acceptable is that there are two merchants in the
--- database this is applied to and their rows are read by hand before it runs.
--- On a database where that is not true, check the labels first.
+-- The first is the label, which is the sentence one line of code has ever
+-- written and which was never offered to anybody or shown on a screen. The
+-- second is the instant: registering writes the merchant and its key in one
+-- transaction from one timestamp, so a registration key carries its merchant's
+-- own creation time to the microsecond, and a key the merchant issued later —
+-- by a different call, at a different moment — cannot. Either fact alone is a
+-- guess; a merchant would have to have typed our internal sentence verbatim
+-- *and* have done it in the instant their merchant row was written, which no
+-- call on this surface makes possible.
+--
+-- What it would get wrong is worth naming, because it is not the dangerous
+-- direction. On a deployment whose registration had stopped writing the two
+-- rows together, this marks nothing: cabinet keys would then stay in merchants'
+-- lists, which is the state this change exists to leave — visible and wrong,
+-- rather than a merchant's own key silently taken out of their hands.
 --
 -- And it is one-time because from this change on the fact lives in the column.
 -- Nothing after this reads a label to decide anything: keys are written with
 -- their purpose, and the label goes back to being what it always claimed to be,
 -- a word for a person to read.
 ALTER TABLE "merchant_keys" ADD COLUMN "purpose" text DEFAULT 'merchant_code' NOT NULL;--> statement-breakpoint
-UPDATE "merchant_keys" SET "purpose" = 'cabinet' WHERE "label" = 'the key this merchant registered with';--> statement-breakpoint
+UPDATE "merchant_keys" AS k SET "purpose" = 'cabinet' FROM "merchants" AS m WHERE k."merchant_id" = m."id" AND k."label" = 'the key this merchant registered with' AND k."created_at" = m."created_at";--> statement-breakpoint
 ALTER TABLE "merchant_keys" ALTER COLUMN "purpose" DROP DEFAULT;

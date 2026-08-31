@@ -471,10 +471,27 @@ if (databaseUrl === null) {
       }
     };
 
+    /**
+     * One key row, written at the instant a merchant issues one.
+     *
+     * Later than its merchant's own creation, which is the whole difference
+     * between a key somebody asked for and the one registration made: those two
+     * rows are written in one transaction from one timestamp, and this one
+     * cannot be.
+     */
     const writeKey = async (id: string, label: string): Promise<void> => {
       await pool.query(
         `insert into merchant_keys (id, merchant_id, label, digest, created_at)
          values ($1, $2, $3, $4, now())`,
+        [id, MERCHANT, label, `digest-of-${id}`],
+      );
+    };
+
+    /** The same, at the merchant's own creation, the way registering writes it. */
+    const writeKeyAsRegistrationDoes = async (id: string, label: string): Promise<void> => {
+      await pool.query(
+        `insert into merchant_keys (id, merchant_id, label, digest, created_at)
+         select $1, $2, $3, $4, m.created_at from merchants m where m.id = $2`,
         [id, MERCHANT, label, `digest-of-${id}`],
       );
     };
@@ -521,19 +538,37 @@ if (databaseUrl === null) {
     });
 
     it("hands the keys registration made to the cabinet and leaves the rest alone", async () => {
-      // The one row that changes hands and the two that must not. A key a
+      // The one row that changes hands and the three that must not. A key a
       // merchant asked for stays theirs — it is in their own worker and on the
       // list they revoke it from — and so does the sandbox's, which is handed
       // to a merchant process out of a configuration file.
-      await writeKey("mk_registered", AS_REGISTRATION_WROTE_IT);
+      //
+      // The last of the three is the case either half of the rule would get
+      // wrong on its own: a merchant who named a key our own internal sentence.
+      // They asked for it, so it is theirs, and what says so is that they asked
+      // for it later than their merchant row was written.
+      await writeKeyAsRegistrationDoes("mk_registered", AS_REGISTRATION_WROTE_IT);
       await writeKey("mk_worker", "the worker on the small box");
       await writeKey("mk_sandbox", "the sandbox key from the compose file");
+      await writeKey("mk_same_words", AS_REGISTRATION_WROTE_IT);
 
       await run("0007_cabinet_keys.sql");
 
       expect(await purposeOf("mk_registered")).toBe("cabinet");
       expect(await purposeOf("mk_worker")).toBe("merchant_code");
       expect(await purposeOf("mk_sandbox")).toBe("merchant_code");
+      expect(await purposeOf("mk_same_words")).toBe("merchant_code");
+    });
+
+    it("leaves a key alone that was written at its merchant's instant under another name", async () => {
+      // The other half, on its own. Sharing the instant is not enough either:
+      // whatever else a row written in that moment might be, the key
+      // registration made is the one carrying the sentence registration wrote.
+      await writeKeyAsRegistrationDoes("mk_same_instant", "the worker on the small box");
+
+      await run("0007_cabinet_keys.sql");
+
+      expect(await purposeOf("mk_same_instant")).toBe("merchant_code");
     });
 
     it("refuses a key written afterwards that does not say what it is for", async () => {
