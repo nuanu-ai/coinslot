@@ -3970,6 +3970,53 @@ describe("the key the cabinet signs in with", () => {
     return { reached, arrive: () => arrive(), go, release: () => release() };
   };
 
+  it("leaves a working key on the row when one sign-in runs inside another", async () => {
+    // The second interleaving, and the one a conditional write alone does not
+    // reach. The first sign-in wins the row and is then held between writing
+    // and putting its old key beyond use. The second signs in inside that gap:
+    // it reads the key the first just wrote, gets one of its own, and wins its
+    // own write honestly, because by then the row does hold what it read. If
+    // the first is able to reach anything but the key in its own hand, it takes
+    // away the key the second has just written — and the account is left naming
+    // something the gateway has forgotten, with no way back in but a terminal.
+    //
+    // Its own timeout, and shorter than the file's: the two sign-ins are held
+    // in front of each other on purpose, so an arrangement that never lets one
+    // of them go fails by waiting rather than by an assertion. The gateway is
+    // in this process, so ten seconds is not a slow machine — it is a deadlock.
+    const first = aStep();
+    let held = false;
+    const { another } = await aRegisteredMerchant({
+      client: (real) => ({
+        ...real,
+        forgetCabinetKey: async () => {
+          if (!held) {
+            held = true;
+            first.arrive();
+            await first.go;
+          }
+          return await real.forgetCabinetKey();
+        },
+      }),
+    });
+
+    const a = await another();
+    const b = await another();
+
+    // The first device signs in and stops with the row already moved onto its
+    // fresh key, holding the old one and not yet done with it.
+    const signingInA = a.signIn(FRESH.email, FRESH.password);
+    await first.reached;
+
+    // The second signs in from end to end inside that gap.
+    await b.signIn(FRESH.email, FRESH.password);
+
+    first.release();
+    await signingInA;
+
+    expect(await theGatewayTakes(keyOnTheRowOf(FRESH.email))).toBe(true);
+  }, 10_000);
+
   it("leaves a working key on the row when two sign-ins race for it", async () => {
     // The one interleaving that can lock somebody out of their own cabinet, and
     // it is not exotic: two devices, or a form posted twice. Both sign-ins read

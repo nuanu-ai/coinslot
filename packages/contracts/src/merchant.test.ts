@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   CabinetKeySchema,
   DisabledKeySchema,
-  ForgottenCabinetKeysSchema,
+  ForgottenCabinetKeySchema,
   IssuedKeySchema,
   IssueKeyRequestSchema,
   MerchantKeyListSchema,
@@ -249,31 +249,33 @@ describe("the key a cabinet holds", () => {
   });
 });
 
-describe("the cabinet keys that were swept up", () => {
-  const swept = { removed: 2 };
+describe("the cabinet key that was forgotten", () => {
+  const gone = { forgotten: true };
 
-  it("says how many keys stopped existing", () => {
-    expect(ForgottenCabinetKeysSchema.parse(swept)).toStrictEqual(swept);
+  it("says the key on the call is gone", () => {
+    expect(ForgottenCabinetKeySchema.parse(gone)).toStrictEqual(gone);
   });
 
-  it("says nothing was there rather than leaving the field out", () => {
-    // Zero is what a repeat of the call answers, and what the first sign-in a
-    // merchant ever makes answers. It is a number rather than an absent field
-    // for the reason every other nullable answer here is: a reader cannot tell
-    // a silence from a client that dropped it.
-    expect(ForgottenCabinetKeysSchema.parse({ removed: 0 }).removed).toBe(0);
-    expectMissingFieldRejected(ForgottenCabinetKeysSchema, swept, "removed");
+  it("says it in a field rather than leaving the caller to read a status", () => {
+    // The call has one outcome and the document is a constant, which is the
+    // point rather than an oversight: a client holding a parsed answer knows
+    // the key it called with is gone, instead of inferring it from a number
+    // that would have to be about keys it never named. The field is required,
+    // so a client that dropped it is not read as a call that did nothing.
+    expectMissingFieldRejected(ForgottenCabinetKeySchema, gone, "forgotten");
+    expect(ForgottenCabinetKeySchema.safeParse({ forgotten: false }).success).toBe(false);
   });
 
-  it("refuses a count that is not a count of rows", () => {
-    expect(ForgottenCabinetKeysSchema.safeParse({ removed: -1 }).success).toBe(false);
-    expect(ForgottenCabinetKeysSchema.safeParse({ removed: 1.5 }).success).toBe(false);
+  it("counts nothing, because there is nothing here to count", () => {
+    // What this used to answer was how many of a merchant's other cabinet keys
+    // it had removed — an answer only a call that reaches other people's keys
+    // can give. This one removes the key in the caller's hand and no other, so
+    // a count would be a claim about rows this call cannot touch.
+    expect(errorOf(ForgottenCabinetKeySchema, { ...gone, removed: 1 })).toContain("removed");
   });
 
-  it("names no key it removed", () => {
-    // The identifiers of keys nobody could ever list are not an answer to
-    // anything: what the caller needs to know is that the sweep happened.
-    expect(errorOf(ForgottenCabinetKeysSchema, { ...swept, keys: [working.id] })).toContain("keys");
+  it("names no key, because the caller is holding the only one it names", () => {
+    expect(errorOf(ForgottenCabinetKeySchema, { ...gone, key: working.id })).toContain("key");
   });
 });
 
