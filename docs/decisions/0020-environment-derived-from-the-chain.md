@@ -38,11 +38,13 @@ are deliberately absent, because they are chains we do not sell on.
 
 A live chain settles through Coinbase's facilitator at
 `https://api.cdp.coinbase.com/platform/v2/x402`, with `CDP_API_KEY_ID` and
-`CDP_API_KEY_SECRET` both set, and through nothing else. The scheme and the
-path are part of that address rather than decoration: the right host over plain
-text satisfies every other check and puts both credentials on the wire, and the
-gateway builds `/verify` and `/settle` under whatever base it was given, so a
-wrong path comes up healthy and fails at the first buyer.
+`CDP_API_KEY_SECRET` both set, and through nothing else. Every part of that
+address is the rule and not the host alone: `FACILITATOR_URL` takes `http:` as
+readily as `https:` and Coinbase is recognised by hostname, so the right host
+over plain text satisfies every other check and puts both credentials on the
+wire, and the gateway builds `/verify` and `/settle` under whatever base it was
+given, so a wrong path — or a port nothing answers on — comes up healthy and
+fails at the first buyer.
 
 Every key carries the environment it was issued in as its prefix — `csk_test_`
 on one site, `csk_live_` on the other — and the door reads that prefix before
@@ -73,7 +75,10 @@ Rejected: `COINSLOT_ENV=test|live` beside the chain — ADR-0008's reason, since
 the field that survives a copied environment file is the one still saying
 "test" where real money moves. Reading an unknown chain as live to be safe —
 safe for spending and wrong on the wire, which is the half that leaves the
-building. A machine-readable code of its own for the key from the other site —
-`ERROR_CODES` is closed and the SDK parses strictly against its own copy, so a
-value added there moves `CONTRACT_VERSION` and stops every installed worker
+building. Naming the live facilitator by host alone, the way ADR-0008's
+credentials door does — that door asks who may be handed a bearer token, and
+this one asks where money that is real may be settled, which the scheme and the
+path are part of. A machine-readable code of its own for the key from the other
+site — `ERROR_CODES` is closed and the SDK parses strictly against its own copy,
+so a value added there moves `CONTRACT_VERSION` and stops every installed worker
 until its merchant upgrades: an enormous price for a sentence.
