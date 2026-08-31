@@ -6,9 +6,13 @@
 .vscode/
 *.swp
 
-# Claude Code — local settings and agent working copies are not committed
+# Claude Code — local settings, agent working copies and the design notes a
+# session writes for itself are not committed. A spec under docs/superpowers is
+# scaffolding for one piece of work: what it decides belongs in docs/decisions,
+# and what it explores belongs in docs/research.
 .claude/settings.local.json
 .claude/worktrees/
+docs/superpowers/
 
 # Secrets and environment
 .env
