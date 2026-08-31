@@ -922,7 +922,7 @@ export async function runBootstrap(
 }
 
 /** The reason one product is not bought, or nothing where there is none. */
-function gateOneProduct(
+export function gateOneProduct(
   card: CatalogCard,
   challenge: Challenge,
   run: { readonly buyer: string; readonly settings: Settings; readonly spent: bigint },

@@ -1,4 +1,22 @@
+import {
+  CDP_FACILITATOR_URL,
+  type Environment,
+  environmentOf,
+  isSandboxFacilitator,
+  SANDBOX_FACILITATOR,
+  type SurfaceMode,
+  surfaceModeOf,
+} from "@coinslot/core";
 import { z } from "zod";
+
+/**
+ * The sandbox address and the question about it are the core's, and they are
+ * passed straight on from here so that nothing in this package has to know
+ * that they moved. The cabinet asks the same question of the same string, and
+ * two spellings of one distinguished value is the disagreement the core module
+ * exists to remove (ADR-0008, ADR-0020).
+ */
+export { isSandboxFacilitator, SANDBOX_FACILITATOR };
 
 /**
  * We tell "the variable is not set" apart from "it is set wrong": the engineer
@@ -9,21 +27,6 @@ function absentOrWrong(whenWrong: string) {
   return (issue: { input: unknown }): string =>
     issue.input === undefined ? "the variable is not set" : whenWrong;
 }
-
-/**
- * The address that selects the scripted facilitator: the gateway verifies and
- * settles against nothing, and every payment it accepts is pretend.
- *
- * It is a value of `FACILITATOR_URL` rather than a flag beside it, so a
- * configuration cannot hold a real facilitator and the sandbox at once
- * (ADR-0008). The scheme is one nobody can reach, which is what makes a typo a
- * refusal at startup instead of an address that quietly does not answer.
- */
-export const SANDBOX_FACILITATOR = "sandbox:scripted";
-
-/** Whether this gateway settles against nothing. */
-export const isSandboxFacilitator = (facilitatorUrl: string): boolean =>
-  facilitatorUrl === SANDBOX_FACILITATOR;
 
 /**
  * The domain Coinbase's facilitator answers on, and the reason it is a domain
@@ -113,6 +116,43 @@ const isOtherCoinbaseHost = (facilitatorUrl: string): boolean => {
   const host = hostOf(facilitatorUrl);
   return host !== null && isUnder(host, COINBASE_DOMAIN) && !isUnder(host, CDP_FACILITATOR_DOMAIN);
 };
+
+/**
+ * Whether this is the one address a live chain may settle through.
+ *
+ * Three components, and nothing hanging off them. The scheme, because
+ * `FACILITATOR_URL` accepts `http:` as readily as `https:` and Coinbase is
+ * recognised by hostname, so `http://api.cdp.coinbase.com/…` satisfies every
+ * other check and would put both credentials on the wire in the clear. The
+ * host, in the one spelling `hostOf` writes every host down to. And the path,
+ * with trailing slashes off, because the gateway builds `/verify` and
+ * `/settle` under whatever base it was given and the x402 facilitator client
+ * takes those slashes off before it joins them on: a wrong path under the
+ * right host starts healthy and fails at the first buyer, while a trailing
+ * slash is the same endpoint and must not be refused. A query or a fragment is
+ * neither of those and is carried into every request built under the base, so
+ * an address that has one is not this address.
+ *
+ * This is a narrower question than `isCdpFacilitator` and does not replace it.
+ * That one asks who may be handed credentials, which is a question about a host
+ * (ADR-0008); this one asks what a chain where the money is real may settle
+ * through, which is a question about one endpoint (ADR-0020).
+ */
+function isTheLiveFacilitator(facilitatorUrl: string): boolean {
+  const host = hostOf(facilitatorUrl);
+  if (host === null) {
+    return false;
+  }
+  const given = new URL(facilitatorUrl);
+  const wanted = new URL(CDP_FACILITATOR_URL);
+  return (
+    given.protocol === "https:" &&
+    host === wanted.hostname &&
+    given.pathname.replace(/\/+$/, "") === wanted.pathname.replace(/\/+$/, "") &&
+    given.search === "" &&
+    given.hash === ""
+  );
+}
 
 function isHttpUrl(value: string): boolean {
   if (!URL.canParse(value)) {
@@ -602,6 +642,17 @@ export interface GatewayConfig {
   readonly redelivery: RedeliveryConfig;
   readonly worker: WorkerConfig;
   readonly payment: PaymentConfig;
+  /**
+   * Whether this deployment's money is real, derived from the chain and from
+   * nothing else. It decides the prefix on every key it issues and the `test`
+   * mark on every order and receipt it writes.
+   */
+  readonly environment: Environment;
+  /**
+   * What this process is allowed to say it is — a third thing, because a
+   * sandbox settles against nothing on a chain whose name says otherwise.
+   */
+  readonly surfaceMode: SurfaceMode;
 }
 
 /**
@@ -736,6 +787,54 @@ export function loadConfig(environment: Record<string, string | undefined>): Gat
     );
   }
 
+  // The chain is read before anything is decided from it, and a chain on
+  // neither list ends the process here rather than being sorted into a side.
+  // It is pushed onto the same list as the rest so that an operator learns
+  // every problem in one restart rather than one variable per restart.
+  let chainEnvironment: Environment | null = null;
+  try {
+    chainEnvironment = environmentOf(network);
+  } catch (thrown) {
+    problems.push(thrown instanceof Error ? thrown.message : String(thrown));
+  }
+
+  // A live chain is allowed exactly one facilitator, and the rule is about the
+  // scheme and the path as much as the host.
+  //
+  // Two of the ways this can be wrong reach a buyer. `sandbox:scripted` on a
+  // live chain takes payments that never happened while pointing at a chain
+  // where money is real. The unset default is worse because it is silent:
+  // FACILITATOR_URL falls back to the public facilitator, so a `.env` copied
+  // from the test host with one line changed would start, issue csk_live_
+  // keys, show no banner, and settle somewhere the pilot does not settle.
+  // Going live must not be something that happens by forgetting a variable.
+  //
+  // The scheme is here because FACILITATOR_URL accepts http: as readily as
+  // https: and Coinbase is recognised by hostname, so
+  // `http://api.cdp.coinbase.com/…` satisfies every other check this gateway
+  // makes and would put both credentials on the wire in the clear. A bearer
+  // token is the whole of the account it was issued to.
+  //
+  // The path is here because the gateway builds /verify and /settle under
+  // whatever base it was given, so a wrong path under the right host starts
+  // healthy and fails at the first buyer.
+  //
+  // Compared by its parts and not as one string. The same deployment is
+  // written down several ways — the x402 client takes trailing slashes off the
+  // base before joining `/verify` onto it, so `…/x402/` reaches and signs for
+  // exactly the same endpoint — and refusing a spelling that works would be
+  // this door failing open in the other direction: an operator with a correct
+  // live configuration told it is wrong.
+  if (chainEnvironment === "live" && !isTheLiveFacilitator(environmentValues.FACILITATOR_URL)) {
+    problems.push(
+      `PAYMENT_NETWORK is ${JSON.stringify(network)}, where the money is real, and FACILITATOR_URL ` +
+        `is ${JSON.stringify(environmentValues.FACILITATOR_URL)} — a live chain settles through ` +
+        `${CDP_FACILITATOR_URL} and nothing else, with CDP_API_KEY_ID and CDP_API_KEY_SECRET both ` +
+        "set. Nothing else here can verify or settle, and every other value either takes payments " +
+        "that never happened or sends credentials somewhere they were not issued for",
+    );
+  }
+
   if (payTo !== null && network.startsWith("eip155:") && !/^0x[0-9a-fA-F]{40}$/.test(payTo)) {
     problems.push(
       `PAY_TO_ADDRESS is ${JSON.stringify(payTo)}, which is not an address on ${network}`,
@@ -747,6 +846,10 @@ export function loadConfig(environment: Record<string, string | undefined>): Gat
       `The gateway cannot start, these settings do not work together — ${problems.join("; ")}`,
     );
   }
+
+  // Past the throw above, the chain is one of the written ones, so it is asked
+  // again rather than carried down here as a null nobody may look at.
+  const derivedEnvironment = environmentOf(network);
 
   return {
     databaseUrl: environmentValues.DATABASE_URL,
@@ -779,5 +882,7 @@ export function loadConfig(environment: Record<string, string | undefined>): Gat
       cdpApiKeyId: environmentValues.CDP_API_KEY_ID ?? null,
       cdpApiKeySecret: environmentValues.CDP_API_KEY_SECRET ?? null,
     },
+    environment: derivedEnvironment,
+    surfaceMode: surfaceModeOf(network, environmentValues.FACILITATOR_URL),
   };
 }

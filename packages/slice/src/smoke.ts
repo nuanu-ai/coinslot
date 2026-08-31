@@ -31,7 +31,7 @@
  * testnet settlement.
  */
 
-import { isTestnetChain } from "@coinslot/core";
+import { CDP_FACILITATOR_URL, isTestnetChain, PUBLIC_X402_FACILITATOR_URL } from "@coinslot/core";
 import {
   type Facilitator,
   type GatewayConfig,
@@ -45,10 +45,6 @@ import { makeBuyer } from "./buyer.js";
 import { EUROPE_ESIM } from "./cards.js";
 import { bootGateway, SLICE_MERCHANT_KEY, sliceEnv } from "./gateway-harness.js";
 import { startMerchant } from "./merchant.js";
-
-/** The CDP x402 facilitator, and the public one that needs no credentials. */
-const CDP_FACILITATOR_URL = "https://api.cdp.coinbase.com/platform/v2/x402";
-const PUBLIC_FACILITATOR_URL = "https://x402.org/facilitator";
 
 /** Address tails that are burn holes rather than a merchant's wallet. */
 const BURN_TAILS = ["dead", "beef", "0000"];
@@ -76,6 +72,21 @@ const isBurnAddress = (address: string): boolean => {
   const body = hex.slice(2);
   return BURN_TAILS.some((tail) => body === "0".repeat(40 - tail.length) + tail);
 };
+
+/**
+ * Why this network is not one this command may spend on, or nothing.
+ *
+ * It is a function rather than a condition inside `main` so that the decision
+ * can be asked of it directly. What it guards is money, and the three places
+ * that classify a chain have to agree — `spending-gate.test.ts` is where that
+ * is proved, and it can only prove it by calling this.
+ */
+export function whyNotThisNetwork(network: string, allowMainnet: boolean): string | null {
+  if (isTestnetChain(network) || allowMainnet) {
+    return null;
+  }
+  return `${network} is not a known testnet; real money needs an explicit SMOKE_ALLOW_MAINNET=1, which this command is not meant for`;
+}
 
 /** The real facilitator, built from the loaded config exactly as production does. */
 function realFacilitator(config: GatewayConfig): Facilitator {
@@ -131,10 +142,9 @@ async function main(): Promise<void> {
   }
 
   const network = process.env.SMOKE_NETWORK ?? "eip155:84532";
-  if (!isTestnetChain(network) && process.env.SMOKE_ALLOW_MAINNET !== "1") {
-    die(
-      `${network} is not a known testnet; real money needs an explicit SMOKE_ALLOW_MAINNET=1, which this command is not meant for`,
-    );
+  const whyNot = whyNotThisNetwork(network, process.env.SMOKE_ALLOW_MAINNET === "1");
+  if (whyNot !== null) {
+    die(whyNot);
   }
 
   const maxUsd = Number(process.env.SMOKE_MAX_USD ?? "0.05");
@@ -159,7 +169,8 @@ async function main(): Promise<void> {
   }
 
   const facilitatorUrl =
-    process.env.SMOKE_FACILITATOR_URL ?? (haveCdp ? CDP_FACILITATOR_URL : PUBLIC_FACILITATOR_URL);
+    process.env.SMOKE_FACILITATOR_URL ??
+    (haveCdp ? CDP_FACILITATOR_URL : PUBLIC_X402_FACILITATOR_URL);
 
   // --- boot the real gateway and publish the card ---------------------------
 
@@ -267,12 +278,20 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((error: unknown) => {
-  // The message only, never the whole error object: a payment client's error can
-  // carry request details in tow, and the buyer's key is not something to risk
-  // printing even by accident.
-  console.error(
-    `[smoke] the smoke command failed: ${error instanceof Error ? error.message : String(error)}`,
-  );
-  process.exit(1);
-});
+// The run starts only where somebody typed the command. This file is now also
+// a module — `spending-gate.test.ts` asks `whyNotThisNetwork` what it thinks of
+// a chain — and a run that began on import would meet its own first gate,
+// COINSLOT_SMOKE, refuse, and take the importing process down with it through
+// the exit below. `bootstrap.ts` buys the same separation by being a different
+// file from the command it runs; here one line does it.
+if (import.meta.main) {
+  main().catch((error: unknown) => {
+    // The message only, never the whole error object: a payment client's error
+    // can carry request details in tow, and the buyer's key is not something to
+    // risk printing even by accident.
+    console.error(
+      `[smoke] the smoke command failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    process.exit(1);
+  });
+}
