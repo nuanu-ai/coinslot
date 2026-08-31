@@ -230,21 +230,23 @@ describe("connecting the stand somewhere else", () => {
     const replacing = merchant.connect(nextGateway.url, KEY).then(() => {
       replacementFinished = true;
     });
-    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 30));
 
     expect(replacementFinished).toBe(false);
     oldGateway.releaseDelivery();
     await replacing;
     await waitUntil(() => nextGateway.polls() > 0);
 
-    const oldAnswer = feed.entries().findIndex(
-      (entry) => entry.title === "The accepted-order delivery answered.",
-    );
-    const newConnection = feed.entries().findIndex(
-      (entry) =>
-        entry.title === "Connected the merchant." &&
-        (entry.detail as { base_url?: string }).base_url === nextGateway.url,
-    );
+    const oldAnswer = feed
+      .entries()
+      .findIndex((entry) => entry.title === "The accepted-order delivery answered.");
+    const newConnection = feed
+      .entries()
+      .findIndex(
+        (entry) =>
+          entry.title === "Connected the merchant." &&
+          (entry.detail as { base_url?: string }).base_url === nextGateway.url,
+      );
     expect(oldAnswer).toBeGreaterThanOrEqual(0);
     expect(oldAnswer).toBeLessThan(newConnection);
   });

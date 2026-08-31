@@ -65,12 +65,24 @@ const defaultMoods = (): Moods => ({
 const wait = (milliseconds: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, milliseconds));
 
+interface DeliverySession {
+  cancelling: boolean;
+  readonly timers: Set<ReturnType<typeof setTimeout>>;
+  readonly inFlight: Set<Promise<void>>;
+}
+
+const makeDeliverySession = (): DeliverySession => ({
+  cancelling: false,
+  timers: new Set(),
+  inFlight: new Set(),
+});
+
 /** Makes a merchant whose handler decisions are changed directly by the stand page. */
 export const makeStandMerchant = (feed: Feed): StandMerchant => {
   const moods = defaultMoods();
   const taken = new Map<string, LiveOrder>();
   const results = new Map<string, ParamSpec>();
-  const delayedDeliveries = new Set<ReturnType<typeof setTimeout>>();
+  let deliverySession = makeDeliverySession();
   let client: CoinslotClient | undefined;
   let address: string | null = null;
 
@@ -90,31 +102,44 @@ export const makeStandMerchant = (feed: Feed): StandMerchant => {
   };
 
   const deliverLater = (order: LiveOrder): void => {
+    const session = deliverySession;
     const timer = setTimeout(() => {
-      delayedDeliveries.delete(timer);
-      void (async () => {
-        if (taken.get(order.id) !== order) {
-          return;
+      session.timers.delete(timer);
+      if (session.cancelling || taken.get(order.id) !== order) {
+        return;
+      }
+      const inFlight = (async () => {
+        try {
+          const delivery = deliveryFor(order.merchant_item_id);
+          feed.write("merchant", "Delivering an accepted order.", {
+            order_id: order.id,
+            merchant_item_id: order.merchant_item_id,
+            delivery,
+          });
+          const result = await order.deliver(delivery);
+          feed.write("merchant", "The accepted-order delivery answered.", {
+            order_id: order.id,
+            result,
+          });
+        } catch (error: unknown) {
+          feed.write("merchant", "The later delivery could not be completed.", {
+            order_id: order.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
         }
-        const delivery = deliveryFor(order.merchant_item_id);
-        feed.write("merchant", "Delivering an accepted order.", {
-          order_id: order.id,
-          merchant_item_id: order.merchant_item_id,
-          delivery,
-        });
-        const result = await order.deliver(delivery);
-        feed.write("merchant", "The accepted-order delivery answered.", {
-          order_id: order.id,
-          result,
-        });
-      })().catch((error: unknown) => {
-        feed.write("merchant", "The later delivery could not be completed.", {
-          order_id: order.id,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
+      })();
+      session.inFlight.add(inFlight);
+      void inFlight.then(() => session.inFlight.delete(inFlight));
     }, moods.deliverAfterMs);
-    delayedDeliveries.add(timer);
+    session.timers.add(timer);
+  };
+
+  const stopDeliveries = async (): Promise<void> => {
+    const session = deliverySession;
+    session.cancelling = true;
+    for (const timer of session.timers) clearTimeout(timer);
+    session.timers.clear();
+    await Promise.all([...session.inFlight]);
   };
 
   const register = (fresh: CoinslotClient): void => {
@@ -204,6 +229,7 @@ export const makeStandMerchant = (feed: Feed): StandMerchant => {
     connected: () => address,
     async connect(baseUrl, apiKey) {
       await this.disconnect();
+      deliverySession = makeDeliverySession();
       const fresh = createClient({ baseUrl, apiKey });
       register(fresh);
       await fresh.start();
@@ -217,8 +243,7 @@ export const makeStandMerchant = (feed: Feed): StandMerchant => {
       address = null;
       taken.clear();
       results.clear();
-      for (const timer of delayedDeliveries) clearTimeout(timer);
-      delayedDeliveries.clear();
+      await stopDeliveries();
       if (stopping !== undefined) {
         await stopping.stop();
         feed.write("stand", "Disconnected the merchant.");
