@@ -61,7 +61,7 @@ import {
 import {
   CabinetKeySchema,
   DisabledKeySchema,
-  ForgottenCabinetKeysSchema,
+  ForgottenCabinetKeySchema,
   IssuedKeySchema,
   IssueKeyRequestSchema,
   MerchantKeyListSchema,
@@ -191,7 +191,7 @@ export {
 export type {
   CabinetKey,
   DisabledKey,
-  ForgottenCabinetKeys,
+  ForgottenCabinetKey,
   IssuedKey,
   IssueKeyRequest,
   MerchantKey,
@@ -206,7 +206,7 @@ export type {
 export {
   CabinetKeySchema,
   DisabledKeySchema,
-  ForgottenCabinetKeysSchema,
+  ForgottenCabinetKeySchema,
   IssuedKeySchema,
   IssueKeyRequestSchema,
   MerchantKeyListSchema,
@@ -308,7 +308,7 @@ export const schemas = Object.freeze({
   error_envelope: ErrorEnvelopeSchema,
   evm_address: EvmAddressSchema,
   field_spec: FieldSpecSchema,
-  forgotten_cabinet_keys: ForgottenCabinetKeysSchema,
+  forgotten_cabinet_key: ForgottenCabinetKeySchema,
   fulfillment: FulfillmentSchema,
   handler_answer: HandlerAnswerSchema,
   identifier: IdentifierSchema,

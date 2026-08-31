@@ -27,7 +27,7 @@ import {
   type Delivery,
   type DisabledKey,
   deliveryCheckFor,
-  type ForgottenCabinetKeys,
+  type ForgottenCabinetKey,
   type HandlerAnswer,
   type IssuedKey,
   type MerchantCard,
@@ -778,24 +778,39 @@ export class Gateway {
    * every one of them would go, and whoever is signed into a cabinet would be
    * holding a credential the gateway no longer knows.
    *
-   * There is no parameter and there is nothing to choose. "All but the key on
-   * this call" is the one shape that cannot take away the credential its own
-   * caller is holding, and it strands nothing: "the one before mine" would
-   * leave whichever of two simultaneous sign-ins lost the race alive for good,
-   * with nobody left who could remove it. What it does not do is keep two
-   * sign-ins alive at once — the second sweep removes the first sweeper's key —
-   * which is right because the key hangs on the account rather than on the
-   * session (ADR-0014 §2), so one live key serves every page of that account.
+   * There is no parameter and there is nothing to choose: the key removed is
+   * the key the call was made with. That is not a convenience — it is what
+   * makes the call safe to run beside another of itself. A rule of the form
+   * "every cabinet key but this one" is decided when the call is sent and can
+   * be stale by the time it lands, so a key written in between is removed by a
+   * caller that never heard of it, and two overlapping sign-ins leave an
+   * account naming a key the gateway has forgotten. Reaching only the key in
+   * the caller's hand, there is nothing left to race for.
+   *
+   * No merchant is named. The key resolves to one, so a caller cannot ask about
+   * anybody else's — including their own other keys.
+   *
+   * What this leaves behind is a key nobody swept up: a caller that stopped
+   * between asking for a fresh key and forgetting the old one leaves the old
+   * one alive for good. That is a leak of one row per interrupted sign-in and
+   * it is accepted here, because the alternative is a call that can take away a
+   * key somebody is holding. Anything that wants to clear those later counts
+   * them from the side that knows which keys are still in use, which is not
+   * this one.
    */
-  async forgetCabinetKeys(
-    merchantId: string,
+  async forgetCabinetKey(
     thisCall: string,
     madeWith: KeyPurpose,
-  ): Promise<ForgottenCabinetKeys | "not_a_cabinet_key"> {
+  ): Promise<ForgottenCabinetKey | "not_a_cabinet_key"> {
     if (madeWith !== "cabinet") {
       return "not_a_cabinet_key";
     }
-    return { removed: await this.runtime.store.forgetCabinetKeysOf(merchantId, thisCall) };
+    await this.runtime.store.forgetCabinetKey(thisCall);
+    // Whether a row went is not carried out. The call authenticated as this
+    // key, so it was there a moment ago; false means another call of the same
+    // shape got to it first, and the answer to "is that key gone" is yes either
+    // way.
+    return { forgotten: true };
   }
 
   /**

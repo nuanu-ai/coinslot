@@ -312,10 +312,10 @@ if (databaseUrl === null) {
     });
 
     it("does not report a key written onto a row the database does not have", async () => {
-      // What the sweep is allowed to happen after. An update that matched
-      // nothing must not read as a key written down, because the sweep that
-      // would follow removes every cabinet key but the one it was made with —
-      // and that one is not on any row.
+      // What forgetting a key is allowed to happen after. An update that
+      // matched nothing must not read as a key written down: the caller would
+      // then take the key the row still names to be the one it had finished
+      // with, and put the only working key beyond use.
       const identity = identityOn();
 
       expect(

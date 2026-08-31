@@ -20,7 +20,8 @@ import {
   CabinetKeySchema,
   DisabledKeySchema,
   expandPath,
-  ForgottenCabinetKeysSchema,
+  type ForgottenCabinetKey,
+  ForgottenCabinetKeySchema,
   type IssuedKey,
   IssuedKeySchema,
   MERCHANT_KEY_HEADER,
@@ -70,14 +71,16 @@ export interface GatewayClient {
    */
   issueCabinetKey(): Promise<Answer<string>>;
   /**
-   * Removes every other cabinet key of this merchant's, and says how many.
+   * Puts the key this client is holding beyond use, and nothing else.
    *
-   * "Every other" is the route's own rule and it takes no parameters, so the
-   * key this call is made with is the one that survives. It follows the write
-   * of that key onto the row and never precedes it: swept first, the row would
-   * be left naming a key that no longer exists.
+   * The route takes no parameters and reaches no other key, so which key goes
+   * is decided by which key the call is made with — and a client is built per
+   * key. What that buys is that this cannot take away a credential somebody
+   * else wrote down after this client was built. It is made once a key has
+   * stopped being the one an account signs in with, never before: a row left
+   * naming a key this removed is somebody locked out.
    */
-  forgetCabinetKeys(): Promise<Answer<number>>;
+  forgetCabinetKey(): Promise<Answer<ForgottenCabinetKey>>;
   /** The name buyers read beside this merchant's products, or null for none. */
   sellerName(): Promise<Answer<string | null>>;
   setSellerName(name: string): Promise<Answer<string | null>>;
@@ -220,10 +223,9 @@ export const gatewayFor = (
       const answered = await call(API_ROUTES.issue_cabinet_key, CabinetKeySchema);
       return answered.ok ? { ok: true, document: answered.document.secret } : answered;
     },
-    forgetCabinetKeys: async () => {
-      const answered = await call(API_ROUTES.forget_cabinet_keys, ForgottenCabinetKeysSchema);
-      return answered.ok ? { ok: true, document: answered.document.removed } : answered;
-    },
+    // Not unwrapped, unlike the answers above: the document says the one thing
+    // this call has to say, and there is no field under it a screen wants.
+    forgetCabinetKey: () => call(API_ROUTES.forget_cabinet_key, ForgottenCabinetKeySchema),
     // Unwrapped here for the same reason the key above is: the contract carries
     // the name inside an object so the answer can grow a field beside it, and a
     // screen that reaches through the wrapper is a screen to edit the day it

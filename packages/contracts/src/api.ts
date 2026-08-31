@@ -54,7 +54,7 @@ import { AcceptanceSchema, DeliverySchema, HandlerAnswerSchema, RefusalSchema } 
 import {
   CabinetKeySchema,
   DisabledKeySchema,
-  ForgottenCabinetKeysSchema,
+  ForgottenCabinetKeySchema,
   IssuedKeySchema,
   IssueKeyRequestSchema,
   MerchantKeyListSchema,
@@ -856,7 +856,7 @@ export const API_ROUTES = Object.freeze({
     path: "/v0/keys/:key_id/disable",
     auth: "merchant_key",
     description:
-      "Stops one of this merchant's keys working, from that instant, and touches no other key. Disabling a key that is already disabled changes nothing and answers the same way, keeping the instant it was first revoked at, so a retry after a dropped connection is safe. Three refusals are worth knowing before a screen is built on this. A key belonging to another merchant is answered exactly as a key that does not exist, so this call is not a way of counting somebody else's keys. A key made for a cabinet is refused under key_made_for_a_cabinet, whoever asks and however they came by its identifier: this call reaches the keys a merchant issued for their own code and nothing else, and replacing the one a cabinet holds is POST /v0/keys/cabinet and the sweep beside it. And the key this call was made with cannot be disabled by it — that one click and no more: the refusal is about the key in front of it, so a merchant holding two keys of their own can still disable either with the other, and two such calls at one moment can leave them with none of their own. That is not refused here or anywhere, and what it costs is their own code going quiet rather than the way back in, which is a key of the other kind.",
+      "Stops one of this merchant's keys working, from that instant, and touches no other key. Disabling a key that is already disabled changes nothing and answers the same way, keeping the instant it was first revoked at, so a retry after a dropped connection is safe. Three refusals are worth knowing before a screen is built on this. A key belonging to another merchant is answered exactly as a key that does not exist, so this call is not a way of counting somebody else's keys. A key made for a cabinet is refused under key_made_for_a_cabinet, whoever asks and however they came by its identifier: this call reaches the keys a merchant issued for their own code and nothing else, and replacing the one a cabinet holds is POST /v0/keys/cabinet and the forgetting beside it. And the key this call was made with cannot be disabled by it — that one click and no more: the refusal is about the key in front of it, so a merchant holding two keys of their own can still disable either with the other, and two such calls at one moment can leave them with none of their own. That is not refused here or anywhere, and what it costs is their own code going quiet rather than the way back in, which is a key of the other kind.",
     response: { document: DisabledKeySchema },
   },
 
@@ -865,17 +865,17 @@ export const API_ROUTES = Object.freeze({
     path: "/v0/keys/cabinet",
     auth: "merchant_key",
     description:
-      "Makes a key for a cabinet to call as this merchant with, and hands it back once. It is a key of a different kind from the ones at /v0/keys: the merchant did not ask for it, never sees it, and it appears in no list of theirs — so nothing comes back but the key itself. What this is for is a cabinet that replaces its own credential every time somebody signs in, which is what keeps a copy of a cabinet's database from being a set of working keys for long. The call is refused to a key made for the merchant's own code, under not_a_cabinet_key: these two calls are the cabinet's own, and the sweep beside this one would take a cabinet's credential away if anything else could make it.",
+      "Makes a key for a cabinet to call as this merchant with, and hands it back once. It is a key of a different kind from the ones at /v0/keys: the merchant did not ask for it, never sees it, and it appears in no list of theirs — so nothing comes back but the key itself. What this is for is a cabinet that replaces its own credential every time somebody signs in, which is what keeps a copy of a cabinet's database from being a set of working keys for long. The call is refused to a key made for the merchant's own code, under not_a_cabinet_key: these two calls are the cabinet's own, and a merchant asking for one would be asking for a credential to a cabinet they are not standing in.",
     response: { document: CabinetKeySchema },
   },
 
-  forget_cabinet_keys: {
+  forget_cabinet_key: {
     method: "DELETE",
     path: "/v0/keys/cabinet",
     auth: "merchant_key",
     description:
-      "Removes every key this merchant has for a cabinet except the one this call was made with, and says how many went. They are removed rather than revoked: a merchant never issued one, never sees one and would never read a revoked one back, so a row kept for the history would be history for nobody. There are no parameters and the rule is deliberately 'all but the key on this call'. It is the one shape of this call that cannot take away the credential its own caller is holding, and it strands nothing: 'remove the one before mine' would leave whichever of two simultaneous sign-ins lost the race alive for good, with nobody left who could remove it. What comes out of a sweep is one live key and not two, which is right for a caller holding one key per account and wrong for one holding a key per session — the second sweep removes the first sweeper's key. A caller that sweeps before it has written down the key it swept with can also be left naming a key this call removed, so the order is: ask for the key, write it down, then sweep. Calling it twice changes nothing the second time, so a retry after a dropped connection is safe. It is refused to a key made for the merchant's own code, under not_a_cabinet_key, and that refusal is the reason the call is safe at all: made with such a key it would sweep away the credential a cabinet is signed in on and lock its owner out.",
-    response: { document: ForgottenCabinetKeysSchema },
+      "Removes the key this call was made with, and no other. It is removed rather than revoked: a merchant never issued one, never sees one and would never read a revoked one back, so a row kept for the history would be history for nobody. There are no parameters, and that is not a convenience — a key belonging to anybody else, this merchant included, is unreachable here by construction, because the only way to name a key is to be holding it. What a caller does with this is put a key of its own beyond use once it has stopped signing in with it: ask for a fresh key, write it down where the account is kept, then forget the one that was there. A caller that forgets first can be left naming a key that no longer exists, which is the one order that locks somebody out. Made a second time with the same key it is refused as a key that does not exist, which is safe and is the confirmation the first one landed: either way that key is gone and nothing else has moved. It is refused to a key made for the merchant's own code, under not_a_cabinet_key: those are revoked from the list they appear on, at an instant their owner can read back, and removing the row outright would take that history away.",
+    response: { document: ForgottenCabinetKeySchema },
   },
 
   get_order: {

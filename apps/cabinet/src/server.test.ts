@@ -2858,7 +2858,7 @@ describe("when something goes wrong that the merchant has to get out of", () => 
           // are about is the page they land on afterwards — so the sign-in that
           // gets them there has to survive it.
           issueCabinetKey: answer,
-          forgetCabinetKeys: answer,
+          forgetCabinetKey: answer,
         }) as never,
     });
     const server = app.listen(0, "127.0.0.1");
@@ -3782,7 +3782,7 @@ describe("the key the cabinet signs in with", () => {
   /**
    * Whether the gateway still takes that key, asked of the gateway itself.
    *
-   * Not "is it on a row" and not "did the cabinet think it swept": a key is
+   * Not "is it on a row" and not "did the cabinet think it worked": a key is
    * alive or dead at the gateway, and that is the fact both halves of this turn
    * on — the one that got somebody in has to work, and the one before it has to
    * have stopped.
@@ -3830,10 +3830,10 @@ describe("the key the cabinet signs in with", () => {
   });
 
   it("takes the key that was on the row away, and spares the one that replaced it", async () => {
-    // The sweep is the half that makes the replacement worth anything: a key
-    // left behind at every sign-in is a pile of live credentials nobody is
-    // holding. What it must never take is the key it was made with, which is
-    // the one now on the row.
+    // Forgetting the old key is the half that makes the replacement worth
+    // anything: a key left behind at every sign-in is a pile of live
+    // credentials nobody is holding. What it must never take is the key that
+    // is now on the row.
     const { another } = await aRegisteredMerchant();
     const before = keyOnTheRowOf(FRESH.email);
 
@@ -3860,8 +3860,8 @@ describe("the key the cabinet signs in with", () => {
 
   it("lets a person in on the key they had when no fresh one could be made", async () => {
     // The first of the three steps, cut. Nothing was made, so nothing is
-    // written and nothing is swept: they sign in as they always did, and the
-    // gateway being unwell is not allowed to be a locked door.
+    // written and nothing is forgotten: they sign in as they always did, and
+    // the gateway being unwell is not allowed to be a locked door.
     const { another } = await aRegisteredMerchant({
       client: (real) => ({
         ...real,
@@ -3878,15 +3878,26 @@ describe("the key the cabinet signs in with", () => {
     expect(await theGatewayTakes(before)).toBe(true);
   });
 
-  it("sweeps nothing when the fresh key could not be written onto the row", async () => {
-    // The second step, cut, and the one arrangement that can lock somebody out
-    // of their own cabinet. The row still names the key they came in with; a
-    // sweep made with the new one would remove exactly that key, and the next
-    // request from any device would be refused with nothing to do about it.
-    // So the sweep does not happen at all, and the key nobody wrote down is
-    // left for the next sign-in that gets further than this one.
+  it("clears up after itself, and not after the sign-in that won, when the write is lost", async () => {
+    // The second step, lost rather than broken, which is what a sign-in beaten
+    // to the row by another one meets. The key on the row belongs to whoever
+    // won and must not be touched; the key this sign-in made is on no row and
+    // can never reach one, so it is exactly what this sign-in has to put beyond
+    // use. Getting this backwards is the whole locked-out failure: forget the
+    // key on the row and its owner has nothing left that works.
+    const madeHere: string[] = [];
     const { another } = await aRegisteredMerchant({
       identity: (real) => ({ ...real, replaceMerchantKey: async () => false }),
+      client: (real) => ({
+        ...real,
+        issueCabinetKey: async () => {
+          const made = await real.issueCabinetKey();
+          if (made.ok) {
+            madeHere.push(made.document);
+          }
+          return made;
+        },
+      }),
     });
     const before = keyOnTheRowOf(FRESH.email);
 
@@ -3896,19 +3907,24 @@ describe("the key the cabinet signs in with", () => {
     expect(inside.status).toBe(200);
     expect(keyOnTheRowOf(FRESH.email)).toBe(before);
     expect(await theGatewayTakes(before)).toBe(true);
-    // And the screens really are drawn, which is the same fact from the other
-    // side: the cabinet reaches the gateway with what is on the row.
+    // And the key it made and could not use is gone rather than left alive for
+    // nobody.
+    expect(madeHere).toHaveLength(1);
+    expect(await theGatewayTakes(madeHere[0] ?? "")).toBe(false);
+    // The screens really are drawn, which is the same fact from the other side:
+    // the cabinet reaches the gateway with what is on the row.
     expect((await device.get("/keys")).status).toBe(200);
   });
 
-  it("keeps the fresh key when the sweep is the step that failed", async () => {
+  it("keeps the fresh key when forgetting the old one is the step that failed", async () => {
     // The third step, cut. The row names the key that was just made and it
-    // works; the older ones are still alive, which is the state every sign-in
-    // before this one left behind anyway, and the next sweep clears them.
+    // works; the old one is still alive, which is one credential nobody holds
+    // and nothing will come back for — the price of a call that cannot reach
+    // anybody else's key, and cheaper than the lockout that price buys off.
     const { another } = await aRegisteredMerchant({
       client: (real) => ({
         ...real,
-        forgetCabinetKeys: async () => ({ ok: false, status: 0, why: "nothing answered" }),
+        forgetCabinetKey: async () => ({ ok: false, status: 0, why: "nothing answered" }),
       }),
     });
     const before = keyOnTheRowOf(FRESH.email);
@@ -4018,14 +4034,13 @@ describe("the key the cabinet signs in with", () => {
   }, 10_000);
 
   it("leaves a working key on the row when two sign-ins race for it", async () => {
-    // The one interleaving that can lock somebody out of their own cabinet, and
-    // it is not exotic: two devices, or a form posted twice. Both sign-ins read
-    // the same key off the row, so both believe they are replacing it. The
-    // first to write then sweeps with what it wrote, which takes away the key
-    // the second is holding — and the second, writing afterwards, would put
-    // that dead key on the row. Nothing after that helps: every screen answers
-    // 502, and signing in again asks for a fresh key with the one being
-    // refused, so the way back in is a terminal.
+    // Two devices, or a form posted twice. Both sign-ins read the same key off
+    // the row, so both believe they are replacing it. Only one can, and the
+    // other must not go on as though it had: a sign-in that wrote nothing and
+    // then put the row's key beyond use would leave the account holding
+    // something the gateway has forgotten. Nothing after that helps — every
+    // screen answers 502, and signing in again asks for a fresh key with the
+    // one being refused, so the way back in is a terminal.
     //
     // What is asserted is not who won. It is the only thing anybody is locked
     // out by: the key the row names opens the gateway's door.
@@ -4062,9 +4077,8 @@ describe("the key the cabinet signs in with", () => {
     const signingInB = b.signIn(FRESH.email, FRESH.password);
     await second.reached;
 
-    // The first goes through: it writes its key down and sweeps with it, which
-    // removes every other cabinet key this merchant has — including the one the
-    // second device is holding and has not written down.
+    // The first goes through: it moves the row onto its key and puts the key it
+    // arrived with beyond use.
     first.release();
     await signingInA;
 
@@ -4076,11 +4090,11 @@ describe("the key the cabinet signs in with", () => {
   }, 30_000);
 
   it("does not call a key written when there was no account to write it onto", async () => {
-    // What the sweep is allowed to happen after. The store takes a write for a
+    // What forgetting a key is allowed to happen after. The store takes a write for a
     // row it does not have and changes nothing — no throw, nothing to notice —
-    // and a caller that read that as "written" would sweep with a key no row
-    // names, taking away the one that is on the row instead. So the answer is
-    // read back from what the write returned rather than from its silence.
+    // and a caller that read that as "written" would go on to forget the key
+    // the row still names, taking away the only one that works. So the answer
+    // is read back from what the write returned rather than from its silence.
     const { identity } = await started();
 
     expect(await identity.replaceMerchantKey("no-such-account", KEY, "a-key-long-enough")).toBe(
@@ -4089,11 +4103,12 @@ describe("the key the cabinet signs in with", () => {
   });
 
   it("refuses the write when the row stopped holding the key that was read off it", async () => {
-    // The write and the right to sweep are one act, and this is where they are
-    // joined: the row moves from the key that was read to the fresh one, or it
-    // does not move at all. Two sign-ins holding the same read cannot both
-    // win, so the one that loses knows it has nothing to sweep with — which is
-    // the whole of what keeps it from taking away the winner's key.
+    // The write and the choice of which key this sign-in has finished with are
+    // one act, and this is where they are joined: the row moves from the key
+    // that was read to the fresh one, or it does not move at all. Two sign-ins
+    // holding the same read cannot both win, so the one that loses knows the
+    // key it is done with is its own — which is the whole of what keeps it from
+    // taking away the winner's.
     const { identity } = await started();
     const person = await identity.byEmail(PERSON);
 

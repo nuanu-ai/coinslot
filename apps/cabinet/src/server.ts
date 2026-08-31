@@ -341,71 +341,75 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
    *
    * ADR-0014 §2 asks for it: the key is stored as the gateway issued it, so a
    * copy of this cabinet's database is a set of working keys, and what decides
-   * how long they are worth stealing is this. After it, every key that copy
-   * holds is one the gateway has forgotten.
+   * how long they are worth stealing is this. After it, the key that copy holds
+   * is one the gateway has forgotten.
    *
-   * The order is the substance and it is not free to rearrange. Ask for a key
-   * with the one already on the row; write it down; then sweep the rest away,
-   * with the new one. Cut the power at any point and a working key is on the
-   * row: after the first step the old one, still live; after the second the new
-   * one, with the old one alive beside it; after the third the new one alone.
-   * The reverse — sweeping before the write — is the single arrangement that
-   * cannot be interrupted safely, because the row would be left naming a key
-   * the sweep had just removed, and the person it belongs to would be locked
-   * out of their own cabinet by the act of signing into it.
+   * Three steps, and the order is the substance. Ask for a key with the one
+   * already on the row; move the row from that key to the fresh one; then put
+   * the key that is now out of use beyond use. Cut the power at any point and a
+   * working key is on the row: after the first step the old one, still live;
+   * after the second the fresh one, with the old one alive beside it; after the
+   * third the fresh one alone. Forgetting before the write is the one
+   * arrangement that cannot be interrupted safely, because the row would be
+   * left naming a key that no longer exists, and its owner would be locked out
+   * of their own cabinet by the act of signing into it.
    *
    * The write is conditional on the row still holding what this sign-in read
-   * off it, and the sweep happens only for the sign-in whose write won. That
-   * is one rule rather than two: the right to remove every other key belongs
-   * to whoever put the surviving one on the row, and nobody else has it. Two
-   * sign-ins at one moment read the same key, ask for one each and both arrive
-   * at the row; one moves it, the other finds it moved and leaves — its fresh
-   * key unheld by anybody, which the next sign-in that wins sweeps up. Without
-   * that condition the loser would write a key the winner's sweep had already
-   * removed, and the account would name something the gateway has forgotten.
+   * off it, which is what decides which key this sign-in has finished with.
+   * Win, and the row has moved off the old key: no later write can put it back,
+   * because every sign-in still expecting it will now lose the same way, so the
+   * old key is this one's to forget. Lose, and the row never held the fresh key
+   * and never will — nothing but this sign-in could have written it, and this
+   * sign-in has lost — so the fresh key is the one to forget. Either way what
+   * goes is a key proved to be neither current nor able to become current, and
+   * the call that removes it is made with it. Interleave as many sign-ins as
+   * you like: no call can reach a key another sign-in wrote after it was sent,
+   * because reaching a key means holding it, so the row always names a key that
+   * works.
+   *
+   * What that gives up is the sweeping. Nobody clears anybody else's leavings
+   * any more, so a sign-in interrupted between the write and the forgetting
+   * leaves one key alive that nothing will ever come back for. That is a row
+   * per interrupted sign-in and it is the right trade: the alternative is a
+   * call able to take away a key somebody is holding. Clearing them by age, if
+   * it is ever worth doing, is counted from this side — the cabinet is the
+   * party that knows every key still on a row — and it is not built.
    *
    * None of it may stand between a person and their cabinet. A gateway that is
    * down, one that refuses, one that answers something the contract does not
    * recognise — each costs a line in the log and nothing more, and they are
-   * signed in on the key they had, which still works. The last of those three
-   * arrives as a throw rather than as an answer, which is why the whole of this
-   * is caught: the client holds what comes back to the contract's schema, and a
-   * document it refuses must not become a person who cannot sign in. Nothing
-   * about signing in belongs to the gateway anyway — the password, the session
-   * and the row are this cabinet's own.
+   * signed in on a key that works. The last of those three arrives as a throw
+   * rather than as an answer, which is why the whole of this is caught: the
+   * client holds what comes back to the contract's schema, and a document it
+   * refuses must not become a person who cannot sign in. Nothing about signing
+   * in belongs to the gateway anyway — the password, the session and the row
+   * are this cabinet's own.
    *
    * It runs before the cookies are handed over rather than after the answer,
    * and that is not tidiness. The key is read off the row on every request, so
-   * a first request racing a sweep that had not finished could read the old key
-   * and be refused with it. What is left is a narrower window: a request already
-   * in flight from another device, which read the row before the write, is made
-   * with a key the sweep is about to remove and is refused. It is milliseconds
-   * wide, it costs a page reload, and the only way to buy it off would be to
-   * leave the old key alive for a while — which is the thing this exists to
-   * stop.
-   *
-   * What the condition on the write does not reach is one further interleaving,
-   * named here rather than left for somebody to find. A sign-in that wins its
-   * write is still holding the right to sweep for as long as the sweep takes to
-   * land, and a second sign-in starting inside that gap reads the winner's key,
-   * asks for one of its own and wins its own write against it — legitimately,
-   * because by then the row does hold what it read. The first sweep then
-   * removes every key but its own, including the one the second just wrote, and
-   * the account is left naming a key the gateway has forgotten: every screen
-   * answers 502, and signing in again cannot mend it, because a fresh key is
-   * asked for with the one being refused. It needs a whole sign-in — read, ask,
-   * write — to fit inside one round trip of somebody else's, and the second
-   * sweep to land after the first rather than before it, so it is far narrower
-   * than the window the condition closed. It is not nothing. Closing it needs
-   * something this stage does not have: one sign-in at a time per account, or a
-   * sweep the gateway bounds by the key the account names rather than by the
-   * key the call was made with.
+   * a first request racing an unfinished replacement could read the old key and
+   * be refused with it. What is left is a narrower window: a request already in
+   * flight from another device, which read the row before the write, is made
+   * with the key this sign-in is about to forget and is refused. It is
+   * milliseconds wide, it costs a page reload, and the only way to buy it off
+   * would be to leave the old key alive for a while — which is the thing this
+   * exists to stop.
    */
   const replaceTheKeyOf = async (person: Person): Promise<void> => {
     const holding = person.merchant?.key;
     if (holding === undefined) {
       return;
     }
+
+    /** Puts one key beyond use, with itself, and never fails a sign-in. */
+    const forget = async (key: string, which: string): Promise<void> => {
+      const gone = await clientFor(key, KEY_AT_SIGN_IN_MS).forgetCabinetKey();
+      if (!gone.ok) {
+        console.error(
+          `[cabinet] ${person.email} signed in and ${which} is still working: ${gone.why}`,
+        );
+      }
+    };
 
     try {
       const made = await clientFor(holding, KEY_AT_SIGN_IN_MS).issueCabinetKey();
@@ -418,35 +422,30 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
       }
 
       // Conditional on the row still holding what was read off it, which is
-      // what makes the write and the right to sweep one act rather than two
-      // moments with a gap between them.
-      if (!(await identity.replaceMerchantKey(person.id, holding, made.document))) {
-        // Nothing is swept, deliberately, and this is the branch the whole
-        // shape exists for. Whoever holds the row now holds a key this sign-in
-        // never had; a sweep made with the key that did not get written would
-        // remove exactly that one, and leave the row naming something the
-        // gateway has forgotten. The fresh key is left where it is: nobody
-        // holds it, nobody can reach it, and the next sign-in that does write
-        // one down sweeps it up.
-        console.error(
-          `[cabinet] ${person.email} is signed in on the key their account holds:` +
-            " a fresh one was made and the row had already moved on from what this sign-in read",
-        );
+      // what makes the write and the choice of which key to forget one act
+      // rather than two moments with a gap between them.
+      if (await identity.replaceMerchantKey(person.id, holding, made.document)) {
+        // The row has moved off the key this sign-in arrived with, and no later
+        // write can put it back. It is this sign-in's to forget, and this is
+        // the only party holding it.
+        await forget(holding, "the key it replaced");
         return;
       }
 
-      const swept = await clientFor(made.document, KEY_AT_SIGN_IN_MS).forgetCabinetKeys();
-      if (!swept.ok) {
-        console.error(
-          `[cabinet] ${person.email} is signed in on a fresh key and the older ones are still` +
-            ` there: ${swept.why}`,
-        );
-      }
+      // Somebody else moved the row first. The fresh key was never on it and
+      // never will be — only this sign-in could have written it, and it has
+      // lost — so this is what this sign-in has to clear up, and the key on the
+      // row is left alone because it belongs to whoever won.
+      console.error(
+        `[cabinet] ${person.email} is signed in on the key their account holds:` +
+          " a fresh one was made and the row had already moved on from what this sign-in read",
+      );
+      await forget(made.document, "the key it made and did not use");
     } catch (thrown) {
       // Which step it was is in the exception and not worth unpacking into
       // three sentences: whichever it was, the row names a key the gateway
-      // takes, because the only write here happens after a key was made and
-      // the only sweep after that write went through.
+      // takes, because the only write here is conditional on the row and the
+      // only key ever removed is one this sign-in had finished with.
       console.error(
         `[cabinet] ${person.email} is signed in and the key on their account was not replaced`,
         thrown,
@@ -507,7 +506,7 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
 
     // Before the cookies rather than after the answer: the reasons are on the
     // function, and the short of it is that the first request this browser
-    // makes must not be able to read the row while the sweep is running.
+    // makes must not be able to read the row while the replacement is running.
     await replaceTheKeyOf(signed.opened.person);
 
     carryCookies(response, signed.opened.cookies);

@@ -510,37 +510,35 @@ describe("the two calls about the key the cabinet itself holds", () => {
     await expect(gatewayFor(url, KEY).issueCabinetKey()).rejects.toThrow();
   });
 
-  it("sweeps the rest away at the same address, and says how many went", async () => {
-    // The sweep takes no parameters: the rule is the route's own, "all but the
-    // key on this call", and a cabinet that named which ones to remove could
-    // name the one it is holding.
-    const { url, arrived } = await recordingServer(200, { removed: 2 });
+  it("forgets a key by making the call with it, and names no key at all", async () => {
+    // The key that goes is the key on the call, so the client is bound to
+    // whichever key is being put beyond use and the request carries nothing
+    // else. A body naming a key would be a client that could reach one it is
+    // not holding.
+    const { url, arrived } = await recordingServer(200, { forgotten: true });
 
-    const swept = await gatewayFor(url, KEY).forgetCabinetKeys();
+    const gone = await gatewayFor(url, KEY).forgetCabinetKey();
 
     expect(arrived[0]?.method).toBe("DELETE");
     expect(arrived[0]?.path).toBe("/v0/keys/cabinet");
     expect(arrived[0]?.key).toBe(`Bearer ${KEY}`);
     expect(arrived[0]?.body).toBe("");
-    if (!swept.ok) {
-      throw new Error(`nothing was swept: ${swept.why}`);
-    }
-    expect(swept.document).toBe(2);
+    expect(gone.ok).toBe(true);
   });
 
-  it("refuses an answer to the sweep that does not say how many went", async () => {
-    // Zero and "the field was dropped" are different news, and only one of them
-    // means there was nothing else to remove.
+  it("refuses an answer that does not say the key is gone", async () => {
+    // The one field the document has. Taken as done on a silence, a cabinet
+    // would believe it had put a key beyond use while the key went on working.
     const { url } = await recordingServer(200, {});
 
-    await expect(gatewayFor(url, KEY).forgetCabinetKeys()).rejects.toThrow();
+    await expect(gatewayFor(url, KEY).forgetCabinetKey()).rejects.toThrow();
   });
 
   it("carries through the gateway's refusal to make one of these for a merchant's own key", async () => {
     // The account row can hold a key of the merchant's own — somebody at a
     // terminal put one there — and the gateway refuses both of these calls to
     // it by name. The refusal has to arrive as a refusal, because the caller's
-    // next move turns on it: nothing was made, so nothing may be swept.
+    // next move turns on it: nothing was made, so nothing may be forgotten.
     const { url } = await recordingServer(403, {
       error: {
         code: "not_a_cabinet_key",

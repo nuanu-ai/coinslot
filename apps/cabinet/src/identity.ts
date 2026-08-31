@@ -161,10 +161,10 @@ export interface Identity {
    * gap is what two sign-ins fall through. Two callers holding the same read
    * cannot both win.
    *
-   * True is this row moved, and it is also the caller's right to sweep the
-   * older keys away — the write and that right are one act, because a caller
-   * that swept without having written would be taking away the key the row
-   * actually names. False is every other outcome, whatever the reason: another
+   * True is this row moved, and it is also what tells the caller which key it
+   * has finished with — the write and that answer are one act, because a caller
+   * that acted on a write it had not made would be putting the key the row
+   * actually names beyond use. False is every other outcome, whatever the reason: another
    * sign-in got there first, somebody put a different key on the row from a
    * terminal, or the row is not there at all. It is answered rather than
    * thrown because the caller has to carry on — the row names a key that

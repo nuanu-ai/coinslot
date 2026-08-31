@@ -107,7 +107,8 @@ const missingTables = (thrown: unknown): boolean =>
  * it: by making the call that only a cabinet's key is allowed to make, which is
  * the call every sign-in afterwards makes anyway. What comes back on a yes is
  * another key of that kind, which this command has no use for and throws away;
- * it is held by nobody, and the first sign-in on the account sweeps it up.
+ * it is held by nobody and nothing comes back for it, which is one row of
+ * litter per account made here.
  */
 export type CabinetKeyCheck = (key: string) => Promise<Answer<string>>;
 

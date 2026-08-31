@@ -1069,21 +1069,6 @@ export function describeStore(name: string, open: () => Promise<Store>): void {
         ).rejects.toThrow(/a key with that digest is already written down/);
       });
 
-      it("is swept a second time with nothing left to sweep", async () => {
-        // A retry after a dropped connection is safe and says so: nought is an
-        // answer rather than a failure, and it is also what the first sign-in a
-        // merchant ever makes is answered with.
-        const store = await twoMerchants();
-        await store.addKey(
-          { id: "mk_now", merchantId: A, label: "this sign-in", digest: "d1", purpose: "cabinet" },
-          1_000,
-        );
-
-        expect(await store.forgetCabinetKeysOf(A, "mk_now")).toBe(0);
-        expect(await store.forgetCabinetKeysOf(A, "mk_now")).toBe(0);
-        expect((await store.workingKey("d1"))?.id).toBe("mk_now");
-      });
-
       it("is found by its digest whatever state it is in, which the door is not", async () => {
         // The one caller is the seed, which would otherwise issue a second key
         // with a digest already taken every time it ran against a key somebody

@@ -260,16 +260,15 @@ export function handlersFor(gateway: Gateway): Partial<Record<RouteName, Mounted
       },
     },
 
-    forget_cabinet_keys: {
+    forget_cabinet_key: {
       serve: async (call) => {
-        const swept = await gateway.forgetCabinetKeys(
-          merchantOf(call),
-          callersKey(call),
-          callersPurpose(call),
-        );
-        return swept === "not_a_cabinet_key"
+        // No merchant is passed and none is needed: the only key this can
+        // remove is the one the call was made with, and that key already says
+        // whose it is.
+        const gone = await gateway.forgetCabinetKey(callersKey(call), callersPurpose(call));
+        return gone === "not_a_cabinet_key"
           ? notTheCabinets(call.response)
-          : { status: OK, document: swept };
+          : { status: OK, document: gone };
       },
     },
 

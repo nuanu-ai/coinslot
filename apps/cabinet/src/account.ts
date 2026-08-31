@@ -79,8 +79,9 @@ try {
     // The same call the sign-in makes, made here for its refusal rather than
     // for its answer: only a key of the kind a cabinet holds is allowed to make
     // another, so the gateway saying yes is the whole of what this asks. The
-    // key that comes back is held by nobody and is swept up by the first
-    // sign-in on the account that is about to be made.
+    // key that comes back is held by nobody and nothing comes back for it:
+    // one row of litter per account made here, which is the same price every
+    // interrupted sign-in pays.
     async (key) => await gatewayFor(config.gatewayUrl, key).issueCabinetKey(),
   );
 } catch (thrown) {
