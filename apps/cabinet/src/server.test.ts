@@ -3759,8 +3759,8 @@ describe("the key the cabinet signs in with", () => {
    */
   const aRegisteredMerchant = async (over: Starting = {}): Promise<Running> => {
     const running = await started({
-      gateway: { REGISTRATION_INVITATION: INVITATION, ...over.gateway },
       ...over,
+      gateway: { REGISTRATION_INVITATION: INVITATION, ...over.gateway },
     });
     const made = await running.browser.post("/register", { ...FRESH, invitation: INVITATION });
     if (made.status !== 303) {
@@ -3933,6 +3933,17 @@ describe("the key the cabinet signs in with", () => {
     expect(written).toMatch(/key/i);
     // And what it says about it is never the key itself.
     expect(written).not.toContain(KEY);
+  });
+
+  it("does not call a key written when there was no account to write it onto", async () => {
+    // What the sweep is allowed to happen after. The store takes a write for a
+    // row it does not have and changes nothing — no throw, nothing to notice —
+    // and a caller that read that as "written" would sweep with a key no row
+    // names, taking away the one that is on the row instead. So the answer is
+    // read back from what the write returned rather than from its silence.
+    const { identity } = await started();
+
+    expect(await identity.replaceMerchantKey("no-such-account", "a-key-long-enough")).toBe(false);
   });
 
   it("lets a person in when the gateway answers something the contract refuses", async () => {
