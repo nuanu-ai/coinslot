@@ -872,9 +872,9 @@ export function describeStore(name: string, open: () => Promise<Store>): void {
         // kept for the history would be history for nobody.
         //
         // "All but the one named" is the whole of the rule and it is why there
-        // is no parameter. Two devices signing in at the same moment make two
-        // keys, and each sweeping in these words leaves exactly the two their
-        // owners are holding.
+        // is no parameter: it is the one shape that cannot take away the key
+        // its own caller is holding, and it leaves nothing behind that nobody
+        // could ever remove.
         const store = await twoMerchants();
         await store.addKey(
           {

@@ -774,10 +774,14 @@ export class Gateway {
    * every one of them would go, and whoever is signed into a cabinet would be
    * holding a credential the gateway no longer knows.
    *
-   * There is no parameter and there is nothing to choose. Two devices signing
-   * in at the same moment make two keys, and each sweeping in these words
-   * leaves exactly the two their owners are holding; "the one before mine"
-   * would leave whichever lost the race alive for good.
+   * There is no parameter and there is nothing to choose. "All but the key on
+   * this call" is the one shape that cannot take away the credential its own
+   * caller is holding, and it strands nothing: "the one before mine" would
+   * leave whichever of two simultaneous sign-ins lost the race alive for good,
+   * with nobody left who could remove it. What it does not do is keep two
+   * sign-ins alive at once — the second sweep removes the first sweeper's key —
+   * which is right because the key hangs on the account rather than on the
+   * session (ADR-0014 §2), so one live key serves every page of that account.
    */
   async forgetCabinetKeys(
     merchantId: string,

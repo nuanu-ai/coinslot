@@ -626,11 +626,12 @@ export interface Store {
    * would be history for nobody, growing by a row per sign-in.
    *
    * "All but the one named" is the whole rule, and the shape is what makes it
-   * safe. Two devices signing in at the same moment make two keys, and each
-   * sweeping in these words leaves exactly the two their owners are holding —
-   * where "the one before mine" would leave whichever lost the race alive for
-   * good. It is also the one shape of this call that cannot remove the key its
-   * caller is holding.
+   * safe. It cannot remove the key its own caller is holding, and it strands
+   * nothing: "the one before mine" would leave whichever of two simultaneous
+   * sign-ins lost the race alive for good, with nobody left who could remove
+   * it. What comes out of a sweep is one live key rather than two, which is the
+   * right answer because a key hangs on an account rather than on a session
+   * (ADR-0014 §2) — every page of that account reads the one that is left.
    *
    * Keys the merchant made for their own code are not touched, whatever is
    * named: this sweeps up after a cabinet and reaches nothing a merchant owns.
