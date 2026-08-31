@@ -3813,12 +3813,20 @@ describe("the key the cabinet signs in with", () => {
     const before = keyOnTheRowOf(FRESH.email);
 
     const device = await another();
-    await device.signIn(FRESH.email, FRESH.password);
+    const written = await said(async () => {
+      await device.signIn(FRESH.email, FRESH.password);
+    });
 
     const now = keyOnTheRowOf(FRESH.email);
     expect(now).not.toBe(before);
     // And it is a key, not a string that looks like one: the gateway takes it.
     expect(await theGatewayTakes(now)).toBe(true);
+    // Neither of them is written down anywhere on the way. ADR-0014 §2 makes
+    // the row the one place this value lives, and a sign-in that put a working
+    // key into the log would be the credential loose in the one place a
+    // database is not — a log goes to a terminal, a file, whatever collects it.
+    expect(written).not.toContain(before);
+    expect(written).not.toContain(now);
   });
 
   it("takes the key that was on the row away, and spares the one that replaced it", async () => {
