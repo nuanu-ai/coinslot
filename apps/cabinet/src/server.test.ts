@@ -2493,22 +2493,31 @@ describe("the keys screen", () => {
    * here and not a row, which is what the screen is drawn against.
    */
   const CABINET_KEY = "key_the_cabinet_is_using";
+  /** A key something is calling with, which is the ordinary row. */
   const NIGHTLY: MerchantKey = {
     id: "key_the_nightly_job",
     label: "the nightly job",
     created_at: "2026-08-20T09:00:00.000Z",
+    last_used_at: "2026-08-27T02:15:00.000Z",
+    use_recorded_since_made: true,
     disabled_at: null,
   };
+  /** A key nothing has ever called with, and the gateway can say so. */
   const ANOTHER: MerchantKey = {
     id: "key_the_workers_use",
     label: "the worker on the small box",
     created_at: "2026-08-24T11:30:00.000Z",
+    last_used_at: null,
+    use_recorded_since_made: true,
     disabled_at: null,
   };
+  /** A key older than the record, whose blank is a shrug rather than a fact. */
   const REVOKED: MerchantKey = {
     id: "key_the_laptop_had",
     label: "the laptop that went missing",
     created_at: "2026-07-01T08:00:00.000Z",
+    last_used_at: null,
+    use_recorded_since_made: false,
     disabled_at: "2026-08-26T17:45:00.000Z",
   };
   const SECRET = "the-secret-shown-once-and-never-again";
@@ -2535,7 +2544,14 @@ describe("the keys screen", () => {
           return {
             ok: true,
             document: {
-              key: { id: "key_the_new_one", label, created_at: NOW, disabled_at: null },
+              key: {
+                id: "key_the_new_one",
+                label,
+                created_at: NOW,
+                last_used_at: null,
+                use_recorded_since_made: true,
+                disabled_at: null,
+              },
               secret: SECRET,
             },
           };

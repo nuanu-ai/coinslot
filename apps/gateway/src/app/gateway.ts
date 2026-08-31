@@ -1881,6 +1881,12 @@ function merchantKeyOf(stored: StoredKey): MerchantKey {
     id: stored.id,
     label: stored.label,
     created_at: asTimestamp(stored.createdAt),
+    last_used_at: stored.lastUsedAt === null ? null : asTimestamp(stored.lastUsedAt),
+    // Carried through rather than folded into the instant beside it. A row that
+    // answered only with the instant would hand a reader one null for two
+    // facts — a key nobody has called, and a key nobody was recording — and the
+    // reader would have to pick one to draw.
+    use_recorded_since_made: stored.useRecordedSinceMade,
     disabled_at: stored.disabledAt === null ? null : asTimestamp(stored.disabledAt),
   };
 }

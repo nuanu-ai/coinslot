@@ -321,9 +321,13 @@ describe("the keys a merchant holds", () => {
 
     expect(asTheFirst.this_call).toBe(await cabinetKeyOf(harnessed, made.merchant_id));
     expect(asTheSecond.this_call).toBe(second.key.id);
-    // And the list itself is the same both times: which key asked changes the
-    // one field and nothing else.
-    expect(asTheSecond.keys).toStrictEqual(asTheFirst.keys);
+    // And the same keys are listed both times: which key asked decides what
+    // this_call says and not who is on the list. The rows are not identical
+    // between the two reads and should not be — this call is itself a call, so
+    // the second read has marked the key it was made with as used.
+    expect(asTheSecond.keys.map((key) => key.id)).toStrictEqual(
+      asTheFirst.keys.map((key) => key.id),
+    );
   });
 
   it("lists no key of another merchant's", async () => {
