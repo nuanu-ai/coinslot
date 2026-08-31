@@ -464,12 +464,8 @@ describe("a purchase from the outside", () => {
         body: { invitation: INVITATION },
       });
       expect(registered.status).toBe(200);
-      const made = registered.body as {
-        merchant_id: string;
-        key: { id: string; label: string; disabled_at: string | null };
-        secret: string;
-      };
-      expect(made.key.disabled_at).toBeNull();
+      const made = registered.body as { merchant_id: string; secret: string };
+      expect(made.merchant_id).not.toBe("");
 
       const theirKey = made.secret;
       const card = {
@@ -562,55 +558,67 @@ describe("a purchase from the outside", () => {
       });
 
       // Their keys, as their own cabinet would read them: none at all. This
-      // merchant has written no code and asked for no key of their own, and the
-      // key registering handed over is the one their cabinet calls with — which
-      // this call names and the list does not carry.
+      // merchant has written no code and asked for no key of their own, and
+      // the key registering handed over is the one their cabinet calls with,
+      // which this list does not carry. `this_call` names it all the same, and
+      // that identifier reaches this walk through no answer at all — it is
+      // simply what the field says.
       const listed = await gateway.call("GET", "/v0/keys", {
         headers: { authorization: `Bearer ${theirKey}` },
       });
-      expect(listed.body).toStrictEqual({
-        keys: [],
-        this_call: made.key.id,
+      const theKeys = listed.body as { keys: unknown[]; this_call: string };
+      expect(theKeys.keys).toStrictEqual([]);
+      expect(theKeys.this_call).not.toBe("");
+
+      // Two keys for two workers, and the second retires the first — which is
+      // what a merchant does when a box is decommissioned, and the ordinary use
+      // of the call.
+      const first = await gateway.call("POST", "/v0/keys", {
+        body: { label: "the first worker" },
+        headers: { authorization: `Bearer ${theirKey}` },
       });
-
-      // Disabling the key the call is made with is refused, and the key still
-      // works afterwards — which is the half that matters, because a refusal
-      // that had already written the revocation would be worse than no rule.
-      const itself = await gateway.call(
-        "POST",
-        `/v0/keys/${encodeURIComponent(made.key.id)}/disable`,
-        { headers: { authorization: `Bearer ${theirKey}` } },
-      );
-      expect(itself.status).toBe(409);
-
-      // A second key for a second worker, disabled with the first — which is
-      // what a merchant does when a worker is retired, and the ordinary use of
-      // the call. It is deliberately this way round rather than the other.
-      //
-      // The other way round works too, and that is the gap worth naming here
-      // rather than demonstrating: the refusal above is about the key on the
-      // call and nothing else, so this second key could disable the first, and
-      // a merchant whose cabinet is signed in with the first would then meet
-      // "the gateway will not take this key" on every page. The gateway has no
-      // way to know which key a cabinet holds, so it cannot refuse that; the
-      // route's own description says so. A walk written the other way round
-      // would read as instructions for doing it.
       const second = await gateway.call("POST", "/v0/keys", {
         body: { label: "the second worker" },
         headers: { authorization: `Bearer ${theirKey}` },
       });
+      expect(first.status).toBe(200);
       expect(second.status).toBe(200);
+      const retiring = first.body as { key: { id: string }; secret: string };
       const other = second.body as { key: { id: string }; secret: string };
+
+      // A key cannot retire itself: that one click is the whole of what the
+      // rule covers, and the key still works after the refusal, because a
+      // refusal that had already written the revocation would be worse than no
+      // rule at all.
+      const itself = await gateway.call(
+        "POST",
+        `/v0/keys/${encodeURIComponent(other.key.id)}/disable`,
+        { headers: { authorization: `Bearer ${other.secret}` } },
+      );
+      expect(itself.status).toBe(409);
+
+      // And the key their cabinet is signed in with is not this call's to
+      // touch, whichever key asks. The identifier comes from the field above,
+      // which is the only place on this surface it appears at all.
+      const theCabinets = await gateway.call(
+        "POST",
+        `/v0/keys/${encodeURIComponent(theKeys.this_call)}/disable`,
+        { headers: { authorization: `Bearer ${other.secret}` } },
+      );
+      expect(theCabinets.status).toBe(409);
+      expect((theCabinets.body as { error: { code: string } }).error.code).toBe(
+        "key_made_for_a_cabinet",
+      );
 
       const revoked = await gateway.call(
         "POST",
-        `/v0/keys/${encodeURIComponent(other.key.id)}/disable`,
-        { headers: { authorization: `Bearer ${theirKey}` } },
+        `/v0/keys/${encodeURIComponent(retiring.key.id)}/disable`,
+        { headers: { authorization: `Bearer ${other.secret}` } },
       );
       expect(revoked.status).toBe(200);
 
       const withTheRetired = await gateway.call("GET", "/v0/cards", {
-        headers: { authorization: `Bearer ${other.secret}` },
+        headers: { authorization: `Bearer ${retiring.secret}` },
       });
       const withTheirOwn = await gateway.call("GET", "/v0/cards", {
         headers: { authorization: `Bearer ${theirKey}` },

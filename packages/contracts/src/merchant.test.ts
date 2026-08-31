@@ -317,22 +317,30 @@ describe("registering a merchant", () => {
 describe("what registering answers with", () => {
   const registered = {
     merchant_id: "mch_4d21bb",
-    key: working,
     secret,
   };
 
-  it("carries the merchant, their first key, and the secret once", () => {
-    // All three are needed by the one caller: it writes the merchant and the
-    // secret onto the account it is creating, and shows the key's own row so
-    // the person can see what they now hold.
+  it("carries the merchant and the secret once, and nothing else", () => {
+    // Both are needed by the one caller: it writes the merchant and the secret
+    // onto the account it is creating. Nothing else is, and this answer used to
+    // carry a third thing — the key's own row.
     expect(RegisteredMerchantSchema.parse(registered)).toStrictEqual(registered);
   });
 
-  for (const field of ["merchant_id", "key", "secret"]) {
+  for (const field of ["merchant_id", "secret"]) {
     it(`refuses a registration answer without ${field} and names it`, () => {
       expectMissingFieldRejected(RegisteredMerchantSchema, registered, field);
     });
   }
+
+  it("carries no row for the key it just handed over", () => {
+    // The key made here is a cabinet's, and the merchant has no screen it sits
+    // on and no call that reaches it. An identifier for it is therefore a thing
+    // with exactly one use, and it is not a good one — so this answer does not
+    // hand one out, and a client that put one back is refused rather than
+    // quietly trimmed.
+    expect(errorOf(RegisteredMerchantSchema, { ...registered, key: working })).toContain("key");
+  });
 
   it("names no seller, because registering chooses none", () => {
     // A merchant who has just registered is listed under nothing at all, so
@@ -349,12 +357,6 @@ describe("what registering answers with", () => {
     // account that names no merchant is the single-tenant cabinet again.
     expect(RegisteredMerchantSchema.parse(registered).merchant_id).toBe("mch_4d21bb");
     expect(RegisteredMerchantSchema.safeParse({ ...registered, merchant_id: "" }).success).toBe(
-      false,
-    );
-  });
-
-  it("holds the key to the key document", () => {
-    expect(RegisteredMerchantSchema.safeParse({ ...registered, key: { id: "mk_1" } }).success).toBe(
       false,
     );
   });

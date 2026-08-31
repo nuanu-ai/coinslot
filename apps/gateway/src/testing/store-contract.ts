@@ -864,6 +864,51 @@ export function describeStore(name: string, open: () => Promise<Store>): void {
         expect((await store.disableKeyOf(A, "mk_a", 9_000))?.disabledAt).toBe(2_000);
       });
 
+      it("is not disabled by the merchant when it was made for their cabinet", async () => {
+        // A merchant switches off what they issued. The key their cabinet calls
+        // with is not that, and this is the call behind the button on their own
+        // screen — so it refuses, and says which of the two silences this is
+        // rather than folding it into "no such key".
+        //
+        // Told apart from "not there" on purpose, and it costs nothing: this
+        // names a key of the caller's own merchant, so the answer is about
+        // their own row and not a way of counting anybody else's. What it
+        // replaces is not a silence at all — before this rule the key was
+        // simply revoked, and whoever was signed into that cabinet was out.
+        const store = await twoMerchants();
+        await store.addKey(
+          {
+            id: "mk_cab",
+            merchantId: A,
+            label: "a cabinet's",
+            digest: "digest-cab",
+            purpose: "cabinet",
+          },
+          1_000,
+        );
+        await store.addKey(
+          {
+            id: "mk_theirs",
+            merchantId: B,
+            label: "B's cabinet's",
+            digest: "digest-b",
+            purpose: "cabinet",
+          },
+          1_000,
+        );
+
+        expect(await store.disableKeyOf(A, "mk_cab", 2_000)).toBe("made_for_a_cabinet");
+        // Nothing was written, which is the half that matters: a refusal that
+        // had already revoked the key would be worse than no rule at all.
+        expect((await store.workingKey("digest-cab"))?.id).toBe("mk_cab");
+        expect((await store.keysOf(A))[0]?.disabledAt).toBeNull();
+
+        // Another merchant's cabinet key is still "not there" — the kind of a
+        // stranger's key is not a thing this call tells anybody.
+        expect(await store.disableKeyOf(A, "mk_theirs", 2_000)).toBeNull();
+        expect((await store.workingKey("digest-b"))?.id).toBe("mk_theirs");
+      });
+
       it("is swept away with the other cabinet keys, all but the one named", async () => {
         // What a cabinet does after it has signed somebody in and holds a new
         // key: everything it left behind on earlier visits goes, and the key it
