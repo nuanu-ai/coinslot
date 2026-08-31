@@ -13,7 +13,7 @@ import {
   harness,
   type Served,
   serve,
-  THE_MERCHANT_KEY,
+  theMerchantKey,
   workUntilStopped,
 } from "../testing/harness.js";
 import { buildApp, refusal } from "./server.js";
@@ -34,9 +34,11 @@ const serverSource = readFileSync(new URL("./server.ts", import.meta.url), "utf8
  *
  * It used to be a second copy of the same string, and the day the door began
  * reading a prefix off it the two came apart and every call in this file was
- * refused. The harness is where the seeded merchant's key is decided.
+ * refused. The harness is where the seeded merchant's key is decided, and the
+ * environment is named here because every harness in this file is a test one —
+ * a file that overrode the chain would have to say so, which is the point.
  */
-const KEY = THE_MERCHANT_KEY;
+const KEY = theMerchantKey("test");
 const PAY_TO = "0x0000000000000000000000000000000000000001";
 
 const syncCard: Card = {

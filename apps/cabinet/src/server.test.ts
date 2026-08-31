@@ -32,7 +32,7 @@ import {
   harness,
   type Served,
   serve,
-  THE_MERCHANT_KEY,
+  theMerchantKey,
 } from "@coinslot/gateway/testing";
 import {
   type Card,
@@ -52,9 +52,10 @@ import { buildApp } from "./server.js";
  * The key the gateway harness's own merchant holds, named rather than spelled
  * again. Every call in this file goes to a real gateway, whose door reads the
  * environment off the prefix, so a second copy of the string here would come
- * apart from the harness the first time that prefix changed.
+ * apart from the harness the first time that prefix changed. Every gateway this
+ * file boots is a test one, which is why the environment can be named here.
  */
-const KEY = THE_MERCHANT_KEY;
+const KEY = theMerchantKey("test");
 const asMerchant = { authorization: `Bearer ${KEY}` };
 const PAY_TO = "0x0000000000000000000000000000000000000001";
 

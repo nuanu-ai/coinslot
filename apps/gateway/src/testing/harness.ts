@@ -13,6 +13,7 @@
  */
 
 import type { AddressInfo } from "node:net";
+import { type Environment, keyPrefixFor } from "@coinslot/core";
 import type { HandlerAnswer, Order, QuoteResponse } from "@nuanu-ai/coinslot-contracts";
 import { decodePaymentRequiredHeader, encodePaymentSignatureHeader } from "@x402/core/http";
 import type { PaymentPayload } from "@x402/core/types";
@@ -110,14 +111,18 @@ export interface Harness {
 }
 
 /**
- * The key the merchant every ordinary test sells as opens the door with.
+ * The key the merchant every ordinary test sells as opens the door with, for
+ * the environment the harness was configured into.
  *
- * It carries a prefix because the door reads one: `testConfig()` defaults to
- * Base Sepolia, so this harness is a test environment and its key is a test
- * key. Without the prefix every HTTP test in this repository would meet the
- * refusal a key from the other site gets.
+ * It is a function of the environment rather than one string because the door
+ * reads the prefix before it looks anything up, and `harness()` takes a
+ * `PAYMENT_NETWORK` override — so a constant would hand a harness pointed at
+ * mainnet a key its own gateway refuses, and every call in that test would come
+ * back 401 naming the other site. Written this way there is no answer to give
+ * without saying which environment it is for, and the harness gives its own.
  */
-export const THE_MERCHANT_KEY = "csk_test_a-merchant-key-long-enough";
+export const theMerchantKey = (environment: Environment): string =>
+  `${keyPrefixFor(environment)}a-merchant-key-long-enough`;
 
 export async function harness(overrides: Record<string, string> = {}): Promise<Harness> {
   // A clock that starts at a readable instant and only moves when a test says
@@ -210,7 +215,7 @@ export async function harness(overrides: Record<string, string> = {}): Promise<H
   // of the file. The seeding below is where that can happen — the store can
   // refuse to make a merchant, and it says so by returning null.
   try {
-    const merchant = await seed("The merchant", THE_MERCHANT_KEY);
+    const merchant = await seed("The merchant", theMerchantKey(config.environment));
 
     return {
       gateway,

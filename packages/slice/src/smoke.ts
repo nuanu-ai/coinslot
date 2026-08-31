@@ -43,7 +43,7 @@ import { HTTPFacilitatorClient } from "@x402/core/server";
 import { getDefaultAsset } from "@x402/evm";
 import { makeBuyer } from "./buyer.js";
 import { EUROPE_ESIM } from "./cards.js";
-import { bootGateway, SLICE_MERCHANT_KEY, sliceEnv } from "./gateway-harness.js";
+import { bootGateway, sliceEnv } from "./gateway-harness.js";
 import { startMerchant } from "./merchant.js";
 
 /** Address tails that are burn holes rather than a merchant's wallet. */
@@ -182,11 +182,11 @@ async function main(): Promise<void> {
   });
 
   const booted = await bootGateway(realFacilitator, env);
-  // The key the harness seeded into the gateway, named rather than read back
-  // out of the environment: the variable that carries it is the gateway's
-  // own, and reading a name this file does not control is how the merchant
-  // ends up presenting an empty key and being turned away at the door.
-  const merchant = startMerchant(booted.baseUrl, SLICE_MERCHANT_KEY);
+  // The key this boot seeded, taken from the boot itself rather than spelled
+  // here: its prefix follows the chain the smoke was pointed at, so a string
+  // written into this file would be right on Base Sepolia and refused above the
+  // lookup the day somebody set SMOKE_NETWORK to mainnet.
+  const merchant = startMerchant(booted.baseUrl, booted.merchantKey);
   await merchant.start();
   const buyer = makeBuyer({ baseUrl: booted.baseUrl, privateKey: buyerKey, maxUsd });
 

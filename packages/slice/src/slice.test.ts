@@ -29,7 +29,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { makeBuyer } from "./buyer.js";
 import { EUROPE_ESIM, RENTED_NUMBER } from "./cards.js";
-import { type Booted, bootGateway, SLICE_MERCHANT_KEY, sliceEnv } from "./gateway-harness.js";
+import { type Booted, bootGateway, sliceEnv } from "./gateway-harness.js";
 import { type MockMerchant, startMerchant } from "./merchant.js";
 
 /**
@@ -71,7 +71,7 @@ describe("the stage-one gate: a sandbox purchase, green from catalog to receipt"
   beforeEach(async () => {
     facilitator = new ScriptedFacilitator();
     booted = await bootGateway(() => facilitator);
-    merchant = startMerchant(booted.baseUrl, SLICE_MERCHANT_KEY);
+    merchant = startMerchant(booted.baseUrl, booted.merchantKey);
     await merchant.start();
     await merchant.publishCatalog();
     buyer = makeBuyer({ baseUrl: booted.baseUrl, privateKey: TEST_BUYER_KEY, maxUsd: 50 });
@@ -518,7 +518,7 @@ describe("the same slice when the merchant's own code cannot fill the order", ()
         SYNC_BUDGET_MS: "1500",
       }),
     );
-    merchant = startMerchant(booted.baseUrl, SLICE_MERCHANT_KEY);
+    merchant = startMerchant(booted.baseUrl, booted.merchantKey);
     await merchant.start();
     await merchant.publishCatalog();
     buyer = makeBuyer({ baseUrl: booted.baseUrl, privateKey: TEST_BUYER_KEY, maxUsd: 50 });

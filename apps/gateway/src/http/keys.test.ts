@@ -756,17 +756,23 @@ describe("forgetting the key a call was made with", () => {
 const refusalIn = (answered: { readonly body: unknown }): { code: string; message: string } =>
   (answered.body as { error: { code: string; message: string } }).error;
 
+/**
+ * What makes a harness a live one: Base mainnet, and the one facilitator a live
+ * chain is allowed. The harness wires the scripted facilitator whatever the
+ * configuration says, so naming Coinbase's here buys the derivation and nothing
+ * else.
+ */
+const LIVE_CHAIN = {
+  PAYMENT_NETWORK: "eip155:8453",
+  FACILITATOR_URL: "https://api.cdp.coinbase.com/platform/v2/x402",
+  CDP_API_KEY_ID: "key-id",
+  CDP_API_KEY_SECRET: "secret",
+};
+
 describe("a key from the other site", () => {
   it("is told it is a test key and where test keys work", async () => {
-    // The gateway under test is live; the key presented is a test one. The
-    // harness wires the scripted facilitator whatever the configuration says,
-    // so naming Coinbase's here buys the derivation and nothing else.
-    const { served } = await started({
-      PAYMENT_NETWORK: "eip155:8453",
-      FACILITATOR_URL: "https://api.cdp.coinbase.com/platform/v2/x402",
-      CDP_API_KEY_ID: "key-id",
-      CDP_API_KEY_SECRET: "secret",
-    });
+    // The gateway under test is live; the key presented is a test one.
+    const { served } = await started(LIVE_CHAIN);
 
     const answered = await served.call("GET", "/v0/cards", {
       headers: bearer("csk_test_whatever-this-is"),
@@ -833,6 +839,21 @@ describe("a key from the other site", () => {
   it("lets this environment's own key through to the lookup", async () => {
     const { harnessed, served } = await started();
 
+    expect(await opensTheDoor(served, harnessed.merchant.key)).toBe(true);
+  });
+
+  it("lets a live gateway's own key through, which is the same rule the other way", async () => {
+    // The rule read in the other direction, and the fixture every HTTP test in
+    // this repository leans on. A harness whose key was a constant carrying
+    // `csk_test_` handed a live gateway a key its own door refuses, so a test
+    // that overrode the chain would fail at its first call for a reason that
+    // had nothing to do with what it was testing — and the smoke, which boots
+    // through the same shape one package over, would fail wholesale on the day
+    // it was first pointed at mainnet.
+    const { harnessed, served } = await started(LIVE_CHAIN);
+
+    // Asserted, so that a door which accepted everything could not pass this.
+    expect(harnessed.merchant.key.startsWith("csk_live_")).toBe(true);
     expect(await opensTheDoor(served, harnessed.merchant.key)).toBe(true);
   });
 });

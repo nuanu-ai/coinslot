@@ -18,6 +18,7 @@
 
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { type Environment, keyPrefixFor } from "@coinslot/core";
 import {
   buildApp,
   type Facilitator,
@@ -35,18 +36,26 @@ import {
 } from "@coinslot/gateway";
 
 /**
- * The key the merchant in this harness opens the door with.
+ * The key the merchant in this harness opens the door with, for the site the
+ * chain it was given makes it.
  *
  * It is seeded into the store as a row, the way the sandbox's key is seeded
  * from `compose.yaml` (ADR-0010) and through the same function — so what this
  * gate exercises is the door a deployment actually has, a digest looked up in a
  * table, and not a comparison written for tests.
  *
- * The prefix is part of that door: a key that does not carry this deployment's
- * own is turned away above the lookup, and this harness settles on Base Sepolia
- * unless the smoke points it somewhere else.
+ * The prefix is part of that door, and it is derived rather than written down
+ * because this harness is also how `pnpm smoke` boots a gateway, and the smoke
+ * takes the chain from `SMOKE_NETWORK`. A constant carrying one site's prefix
+ * would be a key the harness's own gateway refuses the moment somebody points
+ * it at the other site — the smoke failing wholesale at its first merchant
+ * call, for a reason that says nothing about what the smoke checks.
+ *
+ * Nothing outside reads this. What a caller wants is the key a particular boot
+ * seeded, which is {@link Booted.merchantKey}.
  */
-export const SLICE_MERCHANT_KEY = "csk_test_slice-merchant-key-please";
+const sliceMerchantKeyFor = (environment: Environment): string =>
+  `${keyPrefixFor(environment)}slice-merchant-key-please`;
 
 /**
  * The address the merchant in this harness is paid at. On the scripted
@@ -61,6 +70,14 @@ export interface Booted {
   readonly baseUrl: string;
   readonly gateway: Gateway;
   readonly config: GatewayConfig;
+  /**
+   * The key this boot seeded, which is the one its own door accepts.
+   *
+   * Carried out rather than left to be named by whoever needs it: the prefix
+   * follows the chain this boot was given, so a caller that wrote the string
+   * itself would be right on one site and turned away on the other.
+   */
+  readonly merchantKey: string;
   /** Lets go of the server and everything the gateway is holding open. */
   stop(): Promise<void>;
 }
@@ -72,9 +89,8 @@ export interface Booted {
  * needs.
  */
 export function sliceEnv(overrides: Record<string, string> = {}): Record<string, string> {
-  return {
+  const settings = {
     DATABASE_URL: "postgres://coinslot@localhost:5432/coinslot",
-    SANDBOX_MERCHANT_KEY: SLICE_MERCHANT_KEY,
     PAY_TO_ADDRESS: SLICE_PAY_TO,
     // Short enough that an idle poll parks briefly rather than for the
     // production window, so the merchant's loop picks up work promptly and the
@@ -87,6 +103,15 @@ export function sliceEnv(overrides: Record<string, string> = {}): Record<string,
     // snapshot intermittently and fail.
     WORKER_POLL_WAIT_MS: "500",
     ...overrides,
+  };
+
+  // The key is written last, out of what these settings actually derive. The
+  // chain may have arrived in the overrides or been left to the gateway's own
+  // default, and only the gateway's schema knows which — so it is asked, rather
+  // than the default being copied here where the two could drift.
+  return {
+    ...settings,
+    SANDBOX_MERCHANT_KEY: sliceMerchantKeyFor(loadConfig(settings).environment),
   };
 }
 
@@ -132,9 +157,19 @@ export async function bootGateway(
 
   // The merchant and its key, seeded exactly as `main.ts` seeds the sandbox's:
   // one function, so a key that works here is a key that works there.
-  if (config.sandboxMerchantKey !== null) {
-    await seedSandboxKey(store, randomIds, config.sandboxMerchantKey, systemClock());
+  //
+  // A boot with nothing to seed is refused rather than allowed to come up
+  // quiet. Everything this harness exists for — the end-to-end gate, the smoke
+  // — needs a merchant to sell as, and a gateway with no key at all would fail
+  // later, at the first merchant call, as a 401 that looks like a wrong key.
+  const merchantKey = config.sandboxMerchantKey;
+  if (merchantKey === null) {
+    throw new Error(
+      "this harness boots a gateway with a merchant to sell as, and the environment it was " +
+        "given seeds no key: SANDBOX_MERCHANT_KEY is empty, so there would be nothing to call as",
+    );
   }
+  await seedSandboxKey(store, randomIds, merchantKey, systemClock());
 
   // And where that merchant is paid, which is the address this slice was
   // configured with. The two are one thing here and only here: this harness
@@ -161,6 +196,7 @@ export async function bootGateway(
     baseUrl: `http://127.0.0.1:${port}`,
     gateway,
     config,
+    merchantKey,
     stop: async () => {
       await gateway.stop();
       await new Promise<void>((resolve, reject) => {
