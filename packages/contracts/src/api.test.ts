@@ -1101,10 +1101,10 @@ describe("the route table", () => {
     }
   });
 
-  // The doors and the shapes of the four calls about merchants and their keys
-  // are pinned by the surface table above, row for row, so nothing here repeats
-  // them. What the table cannot hold is the prose, and these three rules reach
-  // an SDK author only through it.
+  // The doors and the shapes of the calls about merchants and their keys are
+  // pinned by the surface table above, row for row, so nothing here repeats
+  // them. What the table cannot hold is the prose, and the rules below reach an
+  // SDK author only through it.
 
   it("warns whoever writes a cabinet that one key cannot be disabled from it", () => {
     // The rule lives in the route rather than on a screen, so the table is
@@ -1131,7 +1131,7 @@ describe("the route table", () => {
     // these with: a sweep made with a key of the merchant's own code would take
     // away the credential a cabinet is signed in on and lock its owner out.
     for (const route of [API_ROUTES.issue_cabinet_key, API_ROUTES.forget_cabinet_keys]) {
-      expect(route.description).toContain("refused");
+      expect(route.description).toContain("not_a_cabinet_key");
     }
   });
 

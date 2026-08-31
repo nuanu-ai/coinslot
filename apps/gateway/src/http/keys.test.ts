@@ -630,9 +630,9 @@ describe("sweeping up the cabinet keys", () => {
   });
 
   it("answers a second sweep with nothing removed", async () => {
-    // A retry after a dropped connection is safe, and a cabinet that signs one
-    // person in twice on one device sweeps up nothing every time after the
-    // first — which is an answer rather than a failure.
+    // A retry after a dropped connection is safe: nothing is left to remove and
+    // nought is an answer rather than a failure. It is also what a cabinet gets
+    // the first time a merchant ever signs in.
     const { served } = await started();
     const made = await registered(served);
     const fresh = await cabinetKey(served, made.secret);

@@ -253,10 +253,10 @@ describe("the cabinet keys that were swept up", () => {
   });
 
   it("says nothing was there rather than leaving the field out", () => {
-    // Zero is the ordinary answer — one device, signed in twice, sweeping up
-    // after itself — and it is a number rather than an absent field for the
-    // reason every other nullable answer here is: a reader cannot tell a
-    // silence from a client that dropped it.
+    // Zero is what a repeat of the call answers, and what the first sign-in a
+    // merchant ever makes answers. It is a number rather than an absent field
+    // for the reason every other nullable answer here is: a reader cannot tell
+    // a silence from a client that dropped it.
     expect(ForgottenCabinetKeysSchema.parse({ removed: 0 }).removed).toBe(0);
     expectMissingFieldRejected(ForgottenCabinetKeysSchema, swept, "removed");
   });

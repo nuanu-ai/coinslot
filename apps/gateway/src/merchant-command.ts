@@ -330,7 +330,9 @@ async function listKeys(
 
   const widest = Math.max(...keys.map((key) => key.id.length));
   for (const key of keys) {
-    say(`${key.id.padEnd(widest)}  ${dayOf(key.createdAt)}  ${standingOf(key)}  ${key.label}`);
+    say(
+      `${key.id.padEnd(widest)}  ${dayOf(key.createdAt)}  ${standingOf(key)}  ${madeFor(key)}  ${key.label}`,
+    );
   }
   return 0;
 }
@@ -367,6 +369,21 @@ async function disableKey(
 /** Where a key stands, in a word wide enough for both. */
 function standingOf(key: StoredKey): string {
   return key.disabledAt === null ? "works  " : `revoked ${dayOf(key.disabledAt)}`;
+}
+
+/**
+ * Who a key was made for, in a word wide enough for both.
+ *
+ * This list is the only place either kind is printed, and it is a column rather
+ * than something left to the label beside it. A label is a sentence somebody
+ * can type, and the keys that were written before a key said what it was for
+ * carry whatever sentence made them at the time — so the label is a hint and
+ * this is the answer. What the operator does with it is tell the keys a
+ * merchant put in their own code from the one their cabinet is signed in with,
+ * which is the difference between revoking a worker and locking somebody out.
+ */
+function madeFor(key: StoredKey): string {
+  return key.purpose === "cabinet" ? "cabinet " : "own code";
 }
 
 const dayOf = (instant: number): string => new Date(instant).toISOString().slice(0, 10);

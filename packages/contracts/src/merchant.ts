@@ -144,8 +144,8 @@ export const MerchantKeyListSchema = z
      * them.
      *
      * The keys a cabinet holds are not here and never will be: the merchant did
-     * not issue one, cannot revoke one and has nothing to do with one. A list
-     * is what somebody acts on, and a row nobody can act on is a row that only
+     * not issue one and has nothing to do with one. A list is what somebody
+     * acts on, and a row nobody has any business acting on is a row that only
      * raises the question of why it will not go away.
      */
     keys: z.array(MerchantKeySchema),
@@ -208,11 +208,12 @@ export const DisabledKeySchema = z
  *
  * Every other answer that makes a key carries the row beside it, and this one
  * cannot. A key made for a cabinet is in no merchant's list — they did not
- * issue it, cannot revoke it and have no reason to know it exists — so an
- * identifier here would name a row that answers no call: not the list it is
- * absent from, and not the revoking, which reaches only the keys a merchant
- * made for their own code. What the caller does with this is put it on the row
- * of whoever just signed in, and that is the whole of what it needs.
+ * issue it and have no reason to know it exists — so an identifier here would
+ * name a row that no screen of theirs draws and no button of theirs reaches.
+ * It would still be an identifier the revoking takes: that call names a key and
+ * asks nothing about what it was made for, so handing one out is handing out
+ * the way to switch a cabinet off. What the caller does with this is put it on
+ * the row of whoever just signed in, and that is the whole of what it needs.
  */
 export const CabinetKeySchema = z
   .strictObject({
@@ -221,7 +222,7 @@ export const CabinetKeySchema = z
   })
   .meta({
     description:
-      "A key made for a cabinet to call as one merchant, carried once and readable nowhere afterwards. There is no row beside it and there is nothing to put one: a key made this way is in no merchant's list of keys, because the merchant did not issue it and cannot revoke it. Whoever asked for this holds it until they ask for another.",
+      "A key made for a cabinet to call as one merchant, carried once and readable nowhere afterwards. There is no row beside it and there is nothing to put one: a key made this way is in no merchant's list of keys, because the merchant did not issue it and has no screen it belongs on. Its identifier is deliberately not here — the call that revokes a key asks nothing about what that key was made for, so an identifier for this one is the way to switch a cabinet off. Whoever asked for this holds it until they ask for another.",
   });
 
 /**
@@ -229,10 +230,11 @@ export const CabinetKeySchema = z
  *
  * A count rather than a list of identifiers, because those identifiers name
  * rows that no longer exist and never appeared in any list while they did.
- * Zero is the ordinary answer — one person signing in once more on the one
- * device they use — and it is a number rather than a silence for the reason
- * every nullable answer here is one: a reader cannot tell an absent field from
- * a client that dropped it.
+ * One is the ordinary answer, since the sign-in before this one left a key
+ * behind; zero is what a repeat of the call gets, and what the first sign-in a
+ * merchant ever makes gets. It is a number rather than a silence for the
+ * reason every nullable answer here is one: a reader cannot tell an absent
+ * field from a client that dropped it.
  */
 export const ForgottenCabinetKeysSchema = z
   .strictObject({
@@ -432,9 +434,11 @@ export const RegistrationRequestSchema = z
  * that is what the caller of this route is. So it is in no list: a merchant who
  * has just registered has no keys of their own at all, and the first one they
  * do have is one they ask for. The row travels here anyway, because it is the
- * one thing this answer can say about the credential it just handed over — but
- * a screen that drew it beside a merchant's own keys would be showing them a
- * row they did not make and cannot revoke.
+ * one thing this answer can say about the credential it just handed over — and
+ * it is the one place on this surface that hands out the identifier of such a
+ * key, which the call that revokes one will take as readily as any other. A
+ * screen that drew it beside a merchant's own keys would be offering them the
+ * button that switches their own cabinet off.
  *
  * No name comes back, because none was chosen. A merchant who has just
  * registered is listed under nothing at all, and a field here would either be a

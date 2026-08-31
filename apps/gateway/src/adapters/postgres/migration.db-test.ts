@@ -544,7 +544,7 @@ if (databaseUrl === null) {
       // appear in their list by accident.
       await run("0007_cabinet_keys.sql");
 
-      await expect(writeKey("mk_silent", "a key that says nothing")).rejects.toThrow();
+      await expect(writeKey("mk_silent", "a key that says nothing")).rejects.toThrow(/purpose/);
     });
   });
 }

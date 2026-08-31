@@ -988,8 +988,8 @@ export function describeStore(name: string, open: () => Promise<Store>): void {
 
       it("is swept a second time with nothing left to sweep", async () => {
         // A retry after a dropped connection is safe and says so: nought is an
-        // answer rather than a failure, and it is also the ordinary answer for
-        // somebody who signs in twice on the one device they use.
+        // answer rather than a failure, and it is also what the first sign-in a
+        // merchant ever makes is answered with.
         const store = await twoMerchants();
         await store.addKey(
           { id: "mk_now", merchantId: A, label: "this sign-in", digest: "d1", purpose: "cabinet" },

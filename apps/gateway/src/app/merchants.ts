@@ -198,7 +198,7 @@ export async function issueCabinetKey(
 }
 
 /**
- * What every key a cabinet holds is called.
+ * What a key made for a cabinet from here on is called.
  *
  * One sentence for all of them, and no attempt to tell one sign-in from
  * another: the row already carries the instant it was made, and a label that
@@ -206,9 +206,13 @@ export async function issueCabinetKey(
  *
  * It is not chosen by anybody and is shown to nobody — the merchant's own list
  * leaves these keys out entirely. The one reader is a person at a terminal
- * looking at every key one merchant has, and what they need from this column is
- * to be able to tell, without knowing anything about how the cabinet works,
- * which rows are the merchant's and which are a sign-in's.
+ * looking at every key one merchant has, and what this gives them is a sentence
+ * that says what the row is without their knowing how a cabinet works.
+ *
+ * What it is not is how anything tells the two kinds apart. The keys that
+ * existed before a key said what it was for keep the label they were given —
+ * registration's old one, which no code writes any more — so what the terminal
+ * prints beside a key is the column, and this is a hint for a person reading.
  */
 export const CABINET_KEY_LABEL = "the key a cabinet signs this merchant in with";
 

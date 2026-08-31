@@ -317,16 +317,25 @@ function mount(
       }
     };
 
-    // Every method the contract declares is mounted by name. Written as "GET
-    // or else POST", the day a third one arrived it would be mounted as a POST
-    // and answer nothing at the address it was declared at, with nothing here
-    // looking wrong.
-    if (method === "GET") {
-      app.get(route.path, serve);
-    } else if (method === "DELETE") {
-      app.delete(route.path, serve);
-    } else {
-      app.post(route.path, serve);
+    // Every method the contract declares is mounted by name, and the last arm
+    // is why this is a switch. Written as "GET, or DELETE, or else POST", the
+    // day a fourth method arrived it would be mounted as a POST and answer
+    // nothing at the address it was declared at, with nothing here looking
+    // wrong. Exhausted, the same addition stops the build naming the method.
+    switch (method) {
+      case "GET":
+        app.get(route.path, serve);
+        break;
+      case "POST":
+        app.post(route.path, serve);
+        break;
+      case "DELETE":
+        app.delete(route.path, serve);
+        break;
+      default: {
+        const unmounted: never = method;
+        throw new Error(`this gateway mounts no route on ${String(unmounted)}`);
+      }
     }
   }
 }
