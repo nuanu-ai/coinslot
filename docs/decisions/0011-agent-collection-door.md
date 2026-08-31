@@ -1,7 +1,7 @@
 # 0011. The order identifier is the agent's proof, for now
 
 Date: 2026-08-27
-Status: accepted (autonomous mandate; the trigger below is when it is revisited)
+Status: accepted for test payments; live payment blocked pending Dmitry's recorded choice
 
 ## Context
 
@@ -70,11 +70,12 @@ token leaks from. For a pilot whose orders are all marked as tests and whose
 money is testnet money, that is a proportionate trade. It stops being
 proportionate the moment real money moves.
 
-**The trigger to revisit is the first real payment.** Before mainnet, this door
-is either narrowed — the natural next form is proving control of the paying
-address, which the gateway already knows from the verified payment — or it is
-accepted again, deliberately, with that reasoning written down. It must not
-simply survive by not being looked at.
+**The gate before the first live payment is closed.** No live payment may be
+made until Dmitry records one of two choices here: narrow this door — the
+natural next form is proving control of the paying address, which the gateway
+already knows from the verified payment — or accept it again deliberately for
+real money, with that reasoning written down. The prepared first-sale ceremony
+stops at this gate; this decision chooses neither path yet.
 
 ## Alternatives rejected
 

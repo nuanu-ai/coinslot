@@ -69,8 +69,16 @@ const coinslot = createClient({
 
 The address in `baseUrl` comes with the key when you connect. The client
 supplies none by itself, because nothing in the contract says where we are.
-This step worked if the client was built. Whether the key is the right one is
-answered by the first call that reaches us, and that call is on the next step.
+There are two public sites. Keys for `test.coinslot.nuanu.ai` start with
+`csk_test_`; keys for `coinslot.nuanu.ai` start with `csk_live_`. A key opens
+only the site it was issued for. Presenting it to the other site is refused in
+words that name the site where it works.
+
+The order's `test` flag follows the site and its chain, not the key as a
+separate switch. An order taken by the test site is marked as a test; an order
+taken by the live site is not. This step worked if the client was built.
+Whether the key and address belong together is answered by the first call that
+reaches us, and that call is on the next step.
 
 ## 2. Describe the product with a card
 
@@ -382,31 +390,33 @@ carried ([Telling a repeat apart](/orders#telling-a-repeat-apart)).
 
 ## 5. Walk a test purchase
 
-The first purchase of your product is made by our sandbox buyer rather than by
-a live agent — a program that walks the whole path: it finds the card, asks the
-price, pays and takes delivery. It is a real purchase on test money, and
-afterwards the whole chain can be seen working.
+The first purchase of your product on the test site is made by our sandbox
+buyer rather than by a live agent — a program that walks the whole path: it
+finds the card, asks the price, pays and takes delivery. It is a real purchase
+on Base Sepolia test funds, and afterwards the whole test path can be seen
+working.
 
 During the pilot we start that purchase on your signal: say you are ready, and
 we run it with you watching, so that you see what happens at every step. The
-order from the sandbox buyer arrives with the `test` flag — and so does every
-other order during the pilot, because the sandbox is not separated from the
-live system yet. Read the flag; do not fork on it until it can tell one order
-from another.
+order arrives with `test: true` because it came through the test site. Orders
+through the live site carry `test: false`; the two sites, keys, databases and
+chains are separate.
 
 It all came together if the order reached your handler, the sandbox buyer
 received the goods, and the purchase left a receipt behind it.
 
 ## 6. Go into the catalogues
 
-The card goes into the catalogues once the test purchase has gone through.
-Before it is published we check the card for completeness on our side too: an
-agent has to be able to buy from it.
+The card goes into the test site's catalogue once the test purchase has gone
+through. Before it is published we check the card for completeness on our side
+too: an agent has to be able to buy from it. Publication on the live site is a
+separate act with the live site's key; passing the test-site purchase does not
+copy a card or its evidence into the live environment.
 
-Done when the card is visible in a catalogue. From that moment a live agent can
-buy it, and connecting new catalogues, moving to new exchange formats and
-editing cards as products and prices change are our work and do not touch your
-code.
+Done when the card is visible in the intended site's catalogue. An agent using
+that site can then buy it. Connecting new catalogues, moving to new exchange
+formats and editing cards as products and prices change are our work and do
+not touch your code.
 
 ## What is not settled yet
 
@@ -424,11 +434,9 @@ code.
   by the pilot; the ready-made tools are for Node only.
 - The surface of the other order transports: the request to an address of
   yours, and the cursor that pulls batches.
-- What separates the sandbox from the live system: a separate environment, a
-  separate access key, or only the `test` flag on the order.
 - The half of the check that would send one order twice and watch for a second
-  delivery. Nothing on our surface raises a test order to send, and behind that
-  sits the question of what separates the sandbox from the live system.
+  delivery. Nothing on our surface raises that order to send, so this check
+  still cannot exercise your delivery system's idempotency from outside.
 - Where to say that you are ready for a test purchase: we have no channel for
   that yet.
 - Starting the test purchase with a command of your own — after the pilot.
