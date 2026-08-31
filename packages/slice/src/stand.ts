@@ -8,7 +8,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import {
   API_ROUTES,
-  CardSchema,
+  type CardInput,
   type Delivery,
   expandPath,
   MerchantCardListSchema,
@@ -333,7 +333,10 @@ const doAction = async (form: URLSearchParams): Promise<void> => {
       const generation = connectionGeneration;
       const raw = form.get("card") ?? "";
       cardDraft = raw;
-      const card = CardSchema.parse(asJson(raw, "Card"));
+      const document = asJson(raw, "Card");
+      if (typeof document !== "object" || document === null || Array.isArray(document))
+        throw new Error("Card must be a JSON object.");
+      const card = document as CardInput;
       const outcome = await merchant.publish(card);
       if (!connectionIsCurrent(generation)) return;
       feed.write("merchant", "Publish call answered.", outcome);
