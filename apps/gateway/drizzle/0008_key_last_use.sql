@@ -1,0 +1,28 @@
+-- When a key was last called.
+--
+-- A merchant looking at three keys has one question — which of these can I
+-- revoke — and until now the row said only when the key was made and whether it
+-- still works. Neither answers it. The instant of the last call does, and the
+-- door is already reading this row on every request behind it, so what is added
+-- is the writing rather than the reading.
+--
+-- Nothing is backfilled, and that is the decision this file exists to record.
+-- The only instant to hand is `created_at`, and a key made in June that has been
+-- in a worker ever since is not a key last used in June. Written there it would
+-- be a date on a screen with nothing behind it, and the merchant would revoke a
+-- live key on the strength of it. So the column arrives empty and fills as calls
+-- come in.
+--
+-- Which leaves the rows this migration finds carrying a blank that means "no
+-- record" where a key made from here on carries one that means "no calls", and
+-- nothing on the row tells them apart. That is deliberate. A second column would
+-- separate them and would then stand on a public surface for as long as this
+-- product lives, answering a question that stops being askable within weeks —
+-- the keys older than this column are ours, they are few, and they are replaced
+-- in the ordinary course of things. What carries the ambiguity instead is a
+-- sentence under the column wherever it is drawn, which can be deleted the day
+-- the last such key goes.
+--
+-- Left as drizzle-kit generated it, unlike 0003 and 0007: one nullable column
+-- with no default is a statement Postgres takes on a table with rows in it.
+ALTER TABLE "merchant_keys" ADD COLUMN "last_used_at" timestamp with time zone;

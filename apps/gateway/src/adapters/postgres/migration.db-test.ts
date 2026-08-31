@@ -582,4 +582,94 @@ if (databaseUrl === null) {
       await expect(writeKey("mk_silent", "a key that says nothing")).rejects.toThrow(/purpose/);
     });
   });
+
+  /**
+   * The migration that starts writing down when a key was last called.
+   *
+   * There is nothing to backfill and that is the whole of what it has to get
+   * right. The instant a key was made is on the row already and it is not the
+   * instant it was last used; written into the new column it would put a date
+   * on a merchant's screen that nothing stands behind, and the merchant would
+   * revoke a key on the strength of it.
+   *
+   * So the rows it finds keep their blank, which is the honest answer for them
+   * — nothing was recorded — and is the same blank a key written tomorrow and
+   * never called will carry. Nothing on the row separates the two, and nothing
+   * is meant to: what says so is the sentence under the column on the screen.
+   */
+  describe("the migration that starts recording when a key was last used", () => {
+    const url = databaseUrl;
+    let pool: Pool;
+
+    const MERCHANT = "mch_a";
+
+    const run = async (file: string): Promise<void> => {
+      for (const statement of await statementsOf(file)) {
+        await pool.query(statement);
+      }
+    };
+
+    const writeKey = async (id: string): Promise<void> => {
+      await pool.query(
+        `insert into merchant_keys (id, merchant_id, label, digest, purpose, created_at)
+         values ($1, $2, $3, $4, 'merchant_code', now())`,
+        [id, MERCHANT, `the key ${id}`, `digest-of-${id}`],
+      );
+    };
+
+    const lastUseOf = async (id: string): Promise<Date | null> => {
+      const { rows } = await pool.query<{ last_used_at: Date | null }>(
+        "select last_used_at from merchant_keys where id = $1",
+        [id],
+      );
+      const found = rows[0];
+      if (found === undefined) {
+        throw new Error(`the key ${id} is not there`);
+      }
+      return found.last_used_at;
+    };
+
+    beforeAll(async () => {
+      pool = connect(url).pool;
+    }, 60_000);
+
+    afterAll(async () => {
+      await pool.end();
+    });
+
+    beforeEach(async () => {
+      await pool.query("drop schema public cascade");
+      await pool.query("create schema public");
+      for (const file of [
+        "0000_init.sql",
+        "0001_payment_claims.sql",
+        "0002_selling.sql",
+        "0003_merchant_tenancy.sql",
+        "0004_merchant_service_name.sql",
+        "0005_merchant_payout_wallet.sql",
+        "0006_order_pay_to_backfill.sql",
+        "0007_cabinet_keys.sql",
+      ]) {
+        await run(file);
+      }
+      await pool.query(
+        `insert into merchants (id, name, selling, created_at, updated_at)
+         values ($1, 'A merchant', 'open', now(), now())`,
+        [MERCHANT],
+      );
+    });
+
+    it("guesses nothing about the keys it finds", async () => {
+      // The one thing that must not happen: a key that has been sitting in
+      // somebody's worker for a month coming out of this with a date on it. The
+      // date to hand is when the key was made, and the difference between that
+      // and when it was last called is the difference between a key a merchant
+      // may revoke and one they may not.
+      await writeKey("mk_older_than_the_record");
+
+      await run("0008_key_last_use.sql");
+
+      expect(await lastUseOf("mk_older_than_the_record")).toBeNull();
+    });
+  });
 }

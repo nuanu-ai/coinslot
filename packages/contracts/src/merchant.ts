@@ -101,6 +101,24 @@ export const MerchantKeySchema = z
     created_at: TimestampSchema,
 
     /**
+     * The last call this key was seen on, and null where none is recorded.
+     *
+     * It is behind the truth by minutes and says so in the description: the
+     * instant is refreshed only once the one on the row has gone stale, because
+     * the alternative is a write in front of every purchase for a fact somebody
+     * reads when they are deciding what to revoke. What it answers is "this key
+     * was in use around then".
+     *
+     * Null is the absence of a record and not the absence of calls, and nothing
+     * here tells a reader which. A key made before this gateway began writing
+     * the field carries the same null as a key nobody has ever called with, and
+     * there is no field beside this one that separates them — one would be a
+     * permanent question on a public surface for an ambiguity that lasts weeks,
+     * so what carries it is the sentence a screen puts under the column.
+     */
+    last_used_at: TimestampSchema.nullable(),
+
+    /**
      * When this key was revoked, and null while it still opens the door.
      *
      * Required and nullable rather than optional, because the two readings of
@@ -113,7 +131,7 @@ export const MerchantKeySchema = z
   })
   .meta({
     description:
-      "One key a merchant opens the door with, as they read it: what they called it, when it was made, and when it was revoked. A null disabled_at means the key still works; the field is always present, because an absent one is a silence a reader cannot tell from an oversight. The key itself is not in this document and never will be — what is kept is a digest of it, so nothing here or anywhere else can show a merchant their key a second time.",
+      "One key a merchant opens the door with, as they read it: what they called it, when it was made, when a call was last seen on it, and when it was revoked. A null disabled_at means the key still works; the field is always present, because an absent one is a silence a reader cannot tell from an oversight. The key itself is not in this document and never will be — what is kept is a digest of it, so nothing here or anywhere else can show a merchant their key a second time. last_used_at is not the instant of the last call and is not offered as one: it is refreshed at most once every few minutes per key, so a key under constant use carries a time that far behind, which is the price of not writing to the database on every call made with it. Null there means no call has been recorded against this key, which is not the same as no call having been made: a key made before this gateway began recording carries that same null, and nothing in this document tells such a key from one nobody has ever used. Nor is it a ledger of calls or an exact one: a mark that could not be written is swallowed rather than refusing the call it belonged to, so this is what was recorded and not everything that happened.",
   });
 
 /**

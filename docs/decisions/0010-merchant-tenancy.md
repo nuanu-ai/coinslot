@@ -33,10 +33,12 @@ constant becoming a real identifier.
 **A key is a row that names its merchant.** The secret is generated, shown
 once, and stored as a SHA-256 digest; a request is resolved by looking its
 digest up, which is constant-time by construction. A key carries a label, a
-creation time and a disabled flag. Disabling one key is instant and touches no
-other key and no session — which is the whole reason keys are rows: the single
-environment variable could never be created, named, or revoked one at a time,
-and self-service needs all three.
+creation time, a disabled flag and the last call recorded against it — that
+one thinned to minutes, and blank both for a key nothing has called and for
+one older than the recording, which nothing tells apart. Disabling one key is
+instant and touches no other key and no session — which is the whole reason
+keys are rows: the single environment variable could never be created, named,
+or revoked one at a time, and self-service needs all three.
 
 **Every merchant-key route scopes to the resolved merchant.** The card list,
 the receipts, the orders, the pause switches, the worker poll and both answer
