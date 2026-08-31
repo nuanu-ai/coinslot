@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
@@ -101,19 +102,17 @@ jobs:
       - uses: actions/checkout@v5
       - run: ./scripts/check-decisions.sh
 
-  deploy:
-    name: deploy coinslot.nuanu.ai
-    # The portal ships with this commit, so a portal whose examples went
-    # missing is not a commit fit to release.
+  deploy-test:
+    name: deliver test.coinslot.nuanu.ai
     needs: [gate, portal, decisions]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: [self-hosted, comino]
     steps:
       - uses: actions/checkout@v5
 
-      - name: Deliver the green commit
+      - name: Deliver the green commit to the test stack
         env:
-          DEPLOY_KEY: ${{ secrets.COINSLOT_PREVIEW_SSH_KEY }}
+          DEPLOY_KEY: ${{ secrets.COINSLOT_TEST_SSH_KEY }}
         run: |
           set -euo pipefail
           key="${RUNNER_TEMP}/coinslot-preview-key"
@@ -126,8 +125,48 @@ jobs:
           ssh_options=(-i "${key}" -o BatchMode=yes -o ConnectTimeout=10 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=${known_hosts}")
 
           test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
-          # The green SHA intentionally expands here; the server receives only
-          # the resulting `release <sha>` forced command.
           # shellcheck disable=SC2029
           git archive --format=tar HEAD | \
-            ssh "${ssh_options[@]}" dmitry@10.20.10.20 "release ${GITHUB_SHA}"
+            ssh "${ssh_options[@]}" dmitry@10.20.10.20 "release-test ${GITHUB_SHA}"
+
+  deploy-live:
+    name: deliver coinslot.nuanu.ai
+    # The same three jobs run on the tag's own commit. The portal ships with
+    # this commit, so a portal whose examples went missing is not a commit fit
+    # to release on either channel.
+    needs: [gate, portal, decisions]
+    # A `push` event runs the workflow file from the pushed ref, so a tag on an
+    # unmerged branch runs that branch's workflow with that branch's access to
+    # this secret. The decision is to keep the simple tag deploy: the actor
+    # that rule would guard against is somebody holding write access to this
+    # repository, of whom there is one, and who can already put a commit on
+    # `main`. When there are users, this is the paragraph to reopen.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: [self-hosted, comino]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Deliver the tagged commit to the live stack
+        env:
+          # A different secret and a different forced command. The key that can
+          # deploy the test site cannot deploy the live one.
+          DEPLOY_KEY: ${{ secrets.COINSLOT_LIVE_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          key="${RUNNER_TEMP}/coinslot-live-key"
+          known_hosts="${RUNNER_TEMP}/coinslot-known-hosts"
+          install -m 600 /dev/null "${key}"
+          printf '%s\n' "${DEPLOY_KEY}" > "${key}"
+          unset DEPLOY_KEY
+          printf '%s\n' '10.20.10.20 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEQIT814RTQJApGFR91u2TyN5o9WMePvqREYgOjNWSsO' > "${known_hosts}"
+          trap 'rm -f "${key}" "${known_hosts}"' EXIT
+          ssh_options=(-i "${key}" -o BatchMode=yes -o ConnectTimeout=10 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=${known_hosts}")
+
+          tag="${GITHUB_REF#refs/tags/}"
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          # The tag and the green SHA intentionally expand here; the server
+          # receives only the resulting `release-live <tag> <sha>` forced
+          # command.
+          # shellcheck disable=SC2029
+          git archive --format=tar HEAD | \
+            ssh "${ssh_options[@]}" dmitry@10.20.10.20 "release-live ${tag} ${GITHUB_SHA}"
