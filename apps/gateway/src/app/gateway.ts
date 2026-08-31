@@ -9,11 +9,6 @@
  * about it. A price question that went unanswered becomes the event "the
  * merchant was silent", and whether silence sells is decided elsewhere, by
  * mode, exactly as ADR-0002 §3 says.
- *
- * One thing in stage one is narrower than the model and is written here rather
- * than discovered later: every order is a test order, because the separation of
- * the sandbox from the real thing is stage two of the pilot plan and there is
- * nothing yet to tell them apart with.
  */
 
 import type { Environment, MerchantSelling, TransitionRejection } from "@coinslot/core";
@@ -77,12 +72,6 @@ import {
   sellingFor,
 } from "./runtime.js";
 import { purchaseOf, Waiting } from "./waiting.js";
-
-/**
- * Stage one sells nothing for real money: the separation of the sandbox from
- * the live network is stage two, so every order is marked as what it is.
- */
-const STAGE_ONE_ORDERS_ARE_TESTS = true;
 
 /** The queue's name for the daily sweep of claims on payments. */
 export const SWEEP_CLAIMS = "coinslot_forget_old_claims";
@@ -894,7 +883,11 @@ export class Gateway {
         currency: stored.card.price.currency,
         asOf: stored.asOf,
       },
-      test: STAGE_ONE_ORDERS_ARE_TESTS,
+      // Whether the money that pays for this is real, which is the chain's
+      // answer and not a stage of the plan. `order.test` and `receipt.test`
+      // are what those fields were always for; the receipt takes its own copy
+      // from the order in `runner.ts`, so this is the one place it is decided.
+      test: this.runtime.config.environment === "test",
       // One word out of the two switches a merchant has — the whole catalog and
       // this card — and out of whether that merchant could make a sale at all:
       // an address for the money, a name to sell under. Whichever of them it

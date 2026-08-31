@@ -1983,3 +1983,53 @@ describe("the merchant's list of orders", () => {
     ).toStrictEqual([second.order.order.id]);
   });
 });
+
+describe("the test mark on an order and its receipt", () => {
+  /** One whole synchronous sale on a gateway configured this way. */
+  const soldOn = async (overrides: Record<string, string>) => {
+    const harnessed = await started(overrides);
+    const itemId = await published(harnessed, syncCard);
+
+    const offered = await harnessed.gateway.beginPurchase(itemId, { nights: 1 });
+    if (offered.step !== "pay") throw new Error("no price was offered");
+
+    const worker = workUntilStopped(harnessed, {
+      onOrder: () => ({ delivered: { access_code: "SESAME" } }),
+    });
+    const bought = await harnessed.gateway.payPurchase(
+      offered.order.order.id,
+      "PAYMENT",
+      "PAYMENT",
+    );
+    await worker.stop();
+    if (bought.step !== "settled") throw new Error("the purchase did not settle");
+
+    return {
+      order: bought.order.order,
+      receipt: await harnessed.store.receiptForOrder(offered.order.order.id),
+    };
+  };
+
+  it("is true on a test environment", async () => {
+    const sold = await soldOn({ PAYMENT_NETWORK: "eip155:84532" });
+
+    expect(sold.order.test).toBe(true);
+    expect(sold.receipt?.test).toBe(true);
+  });
+
+  it("is false on a live one", async () => {
+    // The claim this test protects is the one we make to somebody else's agent
+    // about somebody else's money: `test: false` says the money moved. The
+    // harness wires the scripted facilitator whatever the configuration names,
+    // so this buys the derivation and settles nothing.
+    const sold = await soldOn({
+      PAYMENT_NETWORK: "eip155:8453",
+      FACILITATOR_URL: "https://api.cdp.coinbase.com/platform/v2/x402",
+      CDP_API_KEY_ID: "key-id",
+      CDP_API_KEY_SECRET: "secret",
+    });
+
+    expect(sold.order.test).toBe(false);
+    expect(sold.receipt?.test).toBe(false);
+  });
+});
