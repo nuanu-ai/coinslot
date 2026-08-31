@@ -212,6 +212,7 @@ export const makeStandMerchant = (feed: Feed): StandMerchant => {
       client = undefined;
       address = null;
       taken.clear();
+      results.clear();
       if (stopping !== undefined) {
         await stopping.stop();
         feed.write("stand", "Disconnected the merchant.");

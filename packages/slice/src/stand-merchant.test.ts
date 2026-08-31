@@ -11,7 +11,7 @@
 
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { CONTRACT_VERSION } from "@nuanu-ai/coinslot-contracts";
+import { CONTRACT_VERSION, type WorkerEnvelope } from "@nuanu-ai/coinslot-contracts";
 import { afterEach, describe, expect, it } from "vitest";
 import { makeFeed } from "./stand-log.js";
 import { makeStandMerchant } from "./stand-merchant.js";
@@ -64,6 +64,58 @@ const pollCounter = async (): Promise<{
   };
 };
 
+const orderAfterMove = (): WorkerEnvelope => ({
+  kind: "order",
+  id: "envelope-after-move",
+  sent_at: "2026-08-31T00:00:00Z",
+  payload: {
+    id: "order-after-move",
+    merchant_item_id: "the-item-both-gateways-name",
+    params: {},
+    price: {
+      amount: "1.00",
+      currency: "USD",
+      at: "2026-08-31T00:00:00Z",
+      as_of: "2026-08-31T00:00:00Z",
+    },
+    test: false,
+  },
+});
+
+const orderGateway = async (): Promise<{
+  url: string;
+  delivered: () => unknown;
+  close: () => Promise<void>;
+}> => {
+  let sent = false;
+  let answer: unknown;
+  const server: Server = createServer(async (request, response) => {
+    if (request.url?.endsWith("/worker/poll") === true) {
+      const envelopes = sent ? [] : [orderAfterMove()];
+      sent = true;
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify({ contract_version: CONTRACT_VERSION, envelopes }));
+      return;
+    }
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(chunk as Buffer);
+    answer = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify({ ok: true, result: "delivered" }));
+  });
+  server.listen(0, "127.0.0.1");
+  await new Promise<void>((resolve) => server.once("listening", resolve));
+  const { port } = server.address() as AddressInfo;
+  return {
+    url: `http://127.0.0.1:${port}`,
+    delivered: () => answer,
+    close: () =>
+      new Promise<void>((resolve, reject) => {
+        server.close((error) => (error === undefined ? resolve() : reject(error)));
+      }),
+  };
+};
+
 let merchant: ReturnType<typeof makeStandMerchant> | undefined;
 const shutting: Array<() => Promise<void>> = [];
 
@@ -95,5 +147,21 @@ describe("connecting the stand somewhere else", () => {
 
     expect(first.polls()).toBe(afterTheMove);
     expect(merchant.connected()).toBe(second.url);
+  });
+
+  it("forgets goods learned from the gateway it left", async () => {
+    const first = await pollCounter();
+    const second = await orderGateway();
+    shutting.push(first.close, second.close);
+
+    merchant = makeStandMerchant(makeFeed());
+    merchant.learn("the-item-both-gateways-name", { old_gateway_field: { type: "string" } });
+    await merchant.connect(first.url, KEY);
+    await waitUntil(() => first.polls() > 0);
+
+    await merchant.connect(second.url, KEY);
+    await waitUntil(() => second.delivered() !== undefined);
+
+    expect(second.delivered()).toEqual({ delivered: {} });
   });
 });
