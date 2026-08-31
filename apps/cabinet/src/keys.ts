@@ -86,7 +86,7 @@ export const keysScreen = (viewer: Viewer, keys: MerchantKeyList, problem?: stri
   const body = `
   <div class="lede">
     <div>
-      <h1>Keys</h1>
+      <h1>API Keys</h1>
       <p>${escaped(
         none
           ? `You have issued no keys yet, which is where every merchant starts. ${WHAT_A_KEY_IS}` +
@@ -134,7 +134,7 @@ ${
     who: viewer.who,
     confirmed: viewer.confirmed,
     tab: "keys",
-    title: "Keys",
+    title: "API Keys",
     body,
   });
 };
@@ -165,7 +165,7 @@ export const newKeyScreen = (viewer: Viewer, label: string, secret: string): str
       " asks your browser to send the form again, which issues another key rather than showing" +
       " you this one.",
   )}</span></div>
-  <p class="quiet"><a href="${escaped(base)}/keys">Back to your keys</a></p>
+  <p class="quiet"><a href="${escaped(base)}/keys">Back to your API keys</a></p>
 `;
 
   return page({
