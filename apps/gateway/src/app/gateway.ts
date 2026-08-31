@@ -84,6 +84,24 @@ import { purchaseOf, Waiting } from "./waiting.js";
  */
 const STAGE_ONE_ORDERS_ARE_TESTS = true;
 
+/**
+ * How stale the mark on a key is allowed to get before a call refreshes it.
+ *
+ * Five minutes, and the number is set by the two things it stands between. The
+ * question it answers is asked in days — "has anything called with this key
+ * since I handed it over in June" — so nothing about the screen needs better
+ * than this, and a merchant reading a time five minutes behind the last call
+ * reads the same answer they would have read from the exact one. What it buys
+ * is everything else: a key under constant load is written to twelve times an
+ * hour instead of once per request, and every other request behind the door
+ * pays a comparison and no statement at all.
+ *
+ * It is a constant rather than a setting. What a knob here could do is take a
+ * write on the money path and make it per-request, which is a way of putting a
+ * deployment under load with nothing about it looking wrong.
+ */
+const KEY_USE_WRITTEN_EVERY_MS = 5 * 60_000;
+
 /** The queue's name for the daily sweep of claims on payments. */
 export const SWEEP_CLAIMS = "coinslot_forget_old_claims";
 
@@ -1132,9 +1150,48 @@ export class Gateway {
    * The whole row and not the merchant alone, because the door is the only place
    * that knows which key opened a call, and one route needs that: a merchant
    * cannot disable the key they are holding.
+   *
+   * It is also the only place that sees a key being used, which is why the mark
+   * a merchant reads on their screen is written here and nowhere else.
    */
   async keyBehind(presented: string): Promise<StoredKey | null> {
-    return this.runtime.store.workingKey(keyDigest(presented));
+    const key = await this.runtime.store.workingKey(keyDigest(presented));
+    if (key !== null) {
+      await this.#noteKeyUse(key);
+    }
+    return key;
+  }
+
+  /**
+   * Writes down that this key was used, unless it was written down recently.
+   *
+   * The read that got here happens on every call behind the door; the write
+   * must not. A statement per request is a statement in front of every purchase
+   * for a column somebody looks at when they are deciding what to revoke, so
+   * the instant on the row already in hand is what decides: fresher than the
+   * window and this costs nothing at all beyond the comparison.
+   *
+   * It is awaited rather than left running. The write happens at most once per
+   * key per window, so what awaiting costs is one round trip on that one call
+   * and nothing on the thousands between; and a promise let go of is a promise
+   * whose rejection nothing is holding — which takes the process down — and one
+   * that can land after the request that started it, which is a write arriving
+   * against a pool that is being closed.
+   *
+   * A failure is swallowed on purpose and said out loud once. Nothing a buyer
+   * pays for depends on this having been written: refusing a purchase because a
+   * column could not be updated would be a screen taking down a sale.
+   */
+  async #noteKeyUse(key: StoredKey): Promise<void> {
+    const at = this.runtime.clock();
+    if (key.lastUsedAt !== null && at - key.lastUsedAt < KEY_USE_WRITTEN_EVERY_MS) {
+      return;
+    }
+    try {
+      await this.runtime.store.noteKeyUse(key.id, at);
+    } catch (thrown) {
+      console.error(`[gateway] the last use of the key ${key.id} was not written down`, thrown);
+    }
   }
 
   // --- the merchant's stream ------------------------------------------------
