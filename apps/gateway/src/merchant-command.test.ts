@@ -200,6 +200,33 @@ describe("issuing a key", () => {
     expect(terminal.text()).toContain("own code");
     expect(terminal.text()).toContain("cabinet");
   });
+
+  it("says which of a merchant's keys anything is still calling with", async () => {
+    // The operator's question about a key is the merchant's question about
+    // theirs — is anything still calling with this — and here it is asked about
+    // the one kind that is on no merchant's screen: the key a cabinet signs in
+    // with. A cabinet that stopped signing in weeks ago is a fact somebody
+    // wants before they clear anything away, and this list is the only place it
+    // can be read.
+    //
+    // The call is put on a different day from the one the keys were made on, so
+    // that a line printing the wrong instant in the right place cannot pass.
+    const terminal = aTerminal();
+    await terminal.run("add", "Someone's shop");
+    const merchantId = (await terminal.store.merchants())[0]?.id ?? "";
+    await terminal.run("key", merchantId, "the worker's");
+    await terminal.run("key", merchantId, "the one nobody calls");
+    const [called] = await terminal.store.keysOf(merchantId);
+    await terminal.store.noteKeyUse(called?.id ?? "", Date.parse("2026-08-29T09:30:00.000Z"));
+    terminal.said.length = 0;
+
+    expect(await terminal.run("keys", merchantId)).toBe(0);
+
+    const lineFor = (label: string) =>
+      terminal.said.find((line) => line.includes(label)) ?? `no line for ${label}`;
+    expect(lineFor("the worker's")).toContain("2026-08-29");
+    expect(lineFor("the one nobody calls")).not.toContain("2026-08-29");
+  });
 });
 
 describe("disabling a key", () => {
