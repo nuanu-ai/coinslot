@@ -38,7 +38,7 @@ The key is read from standard input rather than given as an argument, which
 would sit in the shell's history and in everybody's process list:
 
 ```
-printf %s csk_test_local-sandbox-merchant-key | docker compose exec -T cabinet \
+printf %s local-sandbox-merchant-key | docker compose exec -T cabinet \
   pnpm --filter @coinslot/cabinet account add you@example.com the_merchant
 ```
 
