@@ -73,9 +73,19 @@ const exampleFiles = () =>
     )
     .sort();
 
+/** Every built page, at whatever depth the router put it. */
+const builtPages = (directory, prefix = "") =>
+  readdirSync(directory, { withFileTypes: true }).flatMap((entry) =>
+    entry.isDirectory()
+      ? builtPages(join(directory, entry.name), `${prefix}${entry.name}/`)
+      : entry.name.endsWith(".html")
+        ? [`${prefix}${entry.name}`]
+        : [],
+  );
+
 let built;
 try {
-  built = readdirSync(DIST).filter((name) => name.endsWith(".html"));
+  built = builtPages(DIST);
 } catch {
   die(`no built portal at ${DIST}; run "pnpm run docs:build" in portal/ first`);
 }
@@ -143,6 +153,26 @@ if (complaints.length > 0) {
   // Deduplicated: when the syntax itself has gone, every example on the page
   // has the same thing wrong with it, and saying it once is saying it.
   die(`the built portal does not show its examples:\n  ${[...new Set(complaints)].join("\n  ")}`);
+}
+
+// The one place a hook that skipped nested pages would be caught. A reader
+// landing on a page with no marker is told nothing about which stack they are
+// reading, and the release's own probe only fetches three addresses.
+// Present, and above the page rather than after it. A marker appended at the
+// end satisfies a probe and reaches no reader, which is the failure that would
+// otherwise ship looking like a pass.
+const unmarked = builtPages(DIST).filter((page) => {
+  const html = readFileSync(join(DIST, page), "utf8");
+  const marker = html.indexOf('data-coinslot-surface="');
+  const app = html.indexOf('<div id="app"');
+  return marker === -1 || app === -1 || marker > app;
+});
+
+if (unmarked.length > 0) {
+  die(
+    "these built pages carry no surface marker above the page, so a reader is told nothing " +
+      `about which stack they are reading:\n  ${unmarked.join("\n  ")}`,
+  );
 }
 
 console.log(`\n${files.length} example(s) reached the pages that include them.`);

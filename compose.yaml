@@ -74,6 +74,7 @@
 #   COINSLOT_COOKIE_SECURE  Secure on the session cookie     false
 #   COINSLOT_FACILITATOR_URL  how payments are facilitated   sandbox:scripted
 #   COINSLOT_PAYMENT_NETWORK  the chain payments use         eip155:84532
+#   COINSLOT_SURFACE_MODE     what the static pages say       sandbox
 #   COINSLOT_MERCHANT_KEY   the key the mock merchant        csk_test_local-sandbox-merchant-key
 #                           sells with
 #   COINSLOT_SEED_KEY       the key the gateway writes at    csk_test_local-sandbox-merchant-key
@@ -512,6 +513,12 @@ services:
       # hostname on a server, which is what turns it on. deploy/Caddyfile says
       # why TLS-ALPN is the only challenge that can reach it here.
       COINSLOT_SITE_ADDRESS: "${COINSLOT_SITE_ADDRESS:-:8080}"
+      # What the landing and the portal say about this stack. It is a variable
+      # rather than a derivation because Caddy cannot read a CAIP-2 identifier
+      # and cannot hold the list of chains (deploy/Caddyfile). Two fields can
+      # disagree, so the release checks this one against the channel before
+      # anything starts and against the rendered pages afterwards.
+      COINSLOT_SURFACE_MODE: "${COINSLOT_SURFACE_MODE:-sandbox}"
     volumes:
       # The landing and the routing are mounted over the copies baked into the
       # image so that editing either shows up on reload. The documentation is
