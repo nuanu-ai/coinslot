@@ -233,9 +233,11 @@ describe("connecting the stand somewhere else", () => {
       });
       await waitUntil(
         () =>
-          feed.entries().some(
-            (entry) => entry.title === "Waiting for in-flight delivery work before disconnect.",
-          ),
+          feed
+            .entries()
+            .some(
+              (entry) => entry.title === "Waiting for in-flight delivery work before disconnect.",
+            ),
         1_000,
       );
 

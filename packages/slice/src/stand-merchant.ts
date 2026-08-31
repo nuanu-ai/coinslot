@@ -139,6 +139,11 @@ export const makeStandMerchant = (feed: Feed): StandMerchant => {
     session.cancelling = true;
     for (const timer of session.timers) clearTimeout(timer);
     session.timers.clear();
+    if (session.inFlight.size > 0) {
+      feed.write("stand", "Waiting for in-flight delivery work before disconnect.", {
+        deliveries: session.inFlight.size,
+      });
+    }
     await Promise.all([...session.inFlight]);
   };
 
