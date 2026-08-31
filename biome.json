@@ -14,6 +14,7 @@
       "!portal",
       "!spikes",
       "!apps/gateway/drizzle",
+      "!packages/core/src/deployment/fixtures",
       "!pnpm-lock.yaml"
     ]
   },
