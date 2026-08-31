@@ -13,7 +13,6 @@ import {
   expandPath,
   MerchantCardListSchema,
   type Money,
-  ORDER_STATUSES,
   type Refusal,
 } from "@nuanu-ai/coinslot-contracts";
 import { type Buyer, makeBuyer } from "./buyer.js";
@@ -34,9 +33,18 @@ import { renderPage } from "./stand-page.js";
 const TEST_BUYER_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 const WATCH_MS = 60_000;
 const ASK_EVERY_MS = 1_000;
-const TERMINAL_ORDER_STATUSES: ReadonlySet<string> = new Set(
-  ORDER_STATUSES.filter((status) => status !== "in_progress"),
-);
+// delivered_unpaid remains open: its goods exist, but a repeat purchase can
+// still execute payment and move it to delivered.
+const CLOSED_ORDER_STATUSES: ReadonlySet<string> = new Set([
+  "delivered",
+  "rejected",
+  "payment_unresolved",
+  "declined",
+  "expired",
+  "cancelled",
+  "refund_due",
+  "refunded",
+]);
 
 const feed = makeFeed();
 const merchant = makeStandMerchant(feed);
@@ -47,6 +55,8 @@ let cardDraft = JSON.stringify(CATALOG[0], null, 2);
 let goodsDraft = "";
 let paramsDraft = "{}";
 let message: string | null = null;
+let connectionGeneration = 0;
+let connectionAbort = new AbortController();
 
 const port = Number.parseInt(process.env.STAND_PORT ?? "8787", 10);
 if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
@@ -110,38 +120,76 @@ const readCards = async (): Promise<void> => {
   });
 };
 
-const traceFetch: typeof fetch = async (input, init) => {
-  const request = input instanceof Request ? input : new Request(input, init);
-  feed.write("buyer", "Request sent.", {
-    method: request.method,
-    url: request.url,
-    payment_signature_present: request.headers.has("payment-signature"),
-  });
-  try {
-    const response = await fetch(request);
-    const text = await response.clone().text();
-    let body: unknown = text === "" ? null : text;
-    try {
-      body = text === "" ? null : JSON.parse(text);
-    } catch {
-      // The response was still an answer.  Keep its text, as a proxy page says
-      // something about the proxy rather than disappearing as a parse error.
-    }
-    feed.write("buyer", "Response received.", { status: response.status, url: request.url, body });
-    return response;
-  } catch (error) {
-    feed.write("buyer", "Request did not complete.", {
-      method: request.method,
-      url: request.url,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    throw error;
-  }
+const connectionIsCurrent = (generation: number): boolean => generation === connectionGeneration;
+
+const stopWatchingThisConnection = (): void => {
+  connectionAbort.abort();
+  connectionGeneration += 1;
+  connectionAbort = new AbortController();
 };
+
+const waitForNextStatus = (signal: AbortSignal, milliseconds: number): Promise<boolean> =>
+  new Promise((resolve) => {
+    if (signal.aborted) {
+      resolve(false);
+      return;
+    }
+    const timeout = setTimeout(done, milliseconds, true);
+    const cancelled = (): void => done(false);
+    signal.addEventListener("abort", cancelled, { once: true });
+    function done(continueWatching: boolean): void {
+      clearTimeout(timeout);
+      signal.removeEventListener("abort", cancelled);
+      resolve(continueWatching);
+    }
+  });
+
+const traceFetchFor =
+  (generation: number): typeof fetch =>
+  async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    if (connectionIsCurrent(generation))
+      feed.write("buyer", "Request sent.", {
+        method: request.method,
+        url: request.url,
+        payment_signature_present: request.headers.has("payment-signature"),
+      });
+    try {
+      const response = await fetch(request);
+      const text = await response.clone().text();
+      let body: unknown = text === "" ? null : text;
+      try {
+        body = text === "" ? null : JSON.parse(text);
+      } catch {
+        // The response was still an answer.  Keep its text, as a proxy page says
+        // something about the proxy rather than disappearing as a parse error.
+      }
+      if (connectionIsCurrent(generation))
+        feed.write("buyer", "Response received.", {
+          status: response.status,
+          url: request.url,
+          body,
+        });
+      return response;
+    } catch (error) {
+      if (connectionIsCurrent(generation))
+        feed.write("buyer", "Request did not complete.", {
+          method: request.method,
+          url: request.url,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      throw error;
+    }
+  };
 
 const buyerFor = (): Buyer => {
   const { address } = requireConnection();
-  return makeBuyer({ baseUrl: address, privateKey: TEST_BUYER_KEY, maxUsd: 50, fetch: traceFetch });
+  return makeBuyer({
+    baseUrl: address,
+    privateKey: TEST_BUYER_KEY,
+    maxUsd: 50,
+    fetch: traceFetchFor(connectionGeneration),
+  });
 };
 
 const objectWithOrder = (
@@ -157,19 +205,37 @@ const objectWithOrder = (
     : null;
 };
 
-const watchOrder = async (buyer: Buyer, orderId: string): Promise<void> => {
+const watchOrder = async (
+  buyer: Buyer,
+  orderId: string,
+  generation: number,
+  signal: AbortSignal,
+): Promise<void> => {
   const until = Date.now() + WATCH_MS;
   while (Date.now() < until) {
-    await new Promise((resolve) => setTimeout(resolve, ASK_EVERY_MS));
-    const status = await buyer.status(orderId);
-    feed.write("buyer", "Order status read while watching.", {
-      order_id: orderId,
-      status: status.status,
-      state: status.state,
-      body: status.body,
-    });
-    if (status.state !== null && TERMINAL_ORDER_STATUSES.has(status.state)) return;
+    const wait = Math.min(ASK_EVERY_MS, until - Date.now());
+    if (!(await waitForNextStatus(signal, wait))) return;
+    if (!connectionIsCurrent(generation)) return;
+    if (Date.now() >= until) break;
+    try {
+      const status = await buyer.status(orderId);
+      if (!connectionIsCurrent(generation)) return;
+      feed.write("buyer", "Order status read while watching.", {
+        order_id: orderId,
+        status: status.status,
+        state: status.state,
+        body: status.body,
+      });
+      if (status.state !== null && CLOSED_ORDER_STATUSES.has(status.state)) return;
+    } catch (error) {
+      if (!connectionIsCurrent(generation)) return;
+      feed.write("buyer", "The order watcher could not read status and will continue.", {
+        order_id: orderId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
+  if (!connectionIsCurrent(generation)) return;
   feed.write("buyer", "Watching an order reached its ceiling.", {
     order_id: orderId,
     message: `The stand stopped watching ${orderId} after ${WATCH_MS / 1_000} seconds; that is not an ending and the merchant may still finish it.`,
@@ -223,6 +289,7 @@ const doAction = async (form: URLSearchParams): Promise<void> => {
       const key = form.get("api_key") ?? "";
       if (address === "" || key === "")
         throw new Error("Gateway address and merchant key are both required.");
+      stopWatchingThisConnection();
       // A new gateway is a new catalogue. Until its document parses, the old
       // gateway's cards must not remain actionable on this page.
       cards = [];
@@ -234,6 +301,7 @@ const doAction = async (form: URLSearchParams): Promise<void> => {
       return;
     }
     case "disconnect":
+      stopWatchingThisConnection();
       await merchant.disconnect();
       apiKey = null;
       cards = [];
@@ -302,6 +370,8 @@ const doAction = async (form: URLSearchParams): Promise<void> => {
       return;
     }
     case "buy": {
+      const generation = connectionGeneration;
+      const signal = connectionAbort.signal;
       const buyer = buyerFor();
       const itemId = form.get("item_id") ?? "";
       if (itemId === "") throw new Error("A public item id is required to buy.");
@@ -321,12 +391,13 @@ const doAction = async (form: URLSearchParams): Promise<void> => {
       feed.write("buyer", "Purchase answered.", bought);
       const order = objectWithOrder(bought.body);
       if (order !== null && !order.hasGoods)
-        void watchOrder(buyer, order.orderId).catch((error: unknown) =>
+        void watchOrder(buyer, order.orderId, generation, signal).catch((error: unknown) => {
+          if (!connectionIsCurrent(generation)) return;
           feed.write("buyer", "Order watcher failed.", {
             order_id: order.orderId,
             error: error instanceof Error ? error.message : String(error),
-          }),
-        );
+          });
+        });
       return;
     }
     case "invalid_payment": {
@@ -334,7 +405,7 @@ const doAction = async (form: URLSearchParams): Promise<void> => {
       const itemId = form.get("item_id") ?? "";
       const rawParams = form.get("params") ?? paramsDraft;
       paramsDraft = rawParams;
-      const response = await traceFetch(
+      const response = await traceFetchFor(connectionGeneration)(
         `${address.replace(/\/+$/, "")}${expandPath(API_ROUTES.purchase_item.path, { item_id: itemId })}`,
         {
           method: "POST",
@@ -431,6 +502,7 @@ const server = createServer(async (request, response) => {
 server.listen(port, "127.0.0.1", () => console.log(`Coinslot stand: http://127.0.0.1:${port}`));
 
 const shutdown = async (): Promise<void> => {
+  stopWatchingThisConnection();
   await merchant.disconnect();
   server.close();
 };
