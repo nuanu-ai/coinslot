@@ -1,0 +1,192 @@
+name: Publish Coinslot SDK
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: sdk-v* tag name to validate
+        required: true
+        default: sdk-v0.1.0
+        type: string
+      dry_run:
+        description: Check the candidate on main without npm publish
+        required: true
+        default: true
+        type: boolean
+  push:
+    tags:
+      - 'sdk-v*'
+
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+
+concurrency:
+  group: sdk-release-${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: [self-hosted, comino]
+    timeout-minutes: 45
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+
+    steps:
+      - name: Check out the release source
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Require the release source on main
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
+          if git fetch --no-tags origin "+refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}" 2>/dev/null; then
+            tag_commit="$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")"
+            test "$tag_commit" = "$GITHUB_SHA"
+          elif [ "$DRY_RUN" != 'true' ]; then
+            echo "release tag ${RELEASE_TAG} does not exist" >&2
+            exit 1
+          else
+            test "$GITHUB_REF" = 'refs/heads/main'
+            test "$GITHUB_SHA" = "$(git rev-parse origin/main)"
+          fi
+
+      - name: Require the tagged commit to be deployed
+        if: env.DRY_RUN != 'true'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const deadline = Date.now() + 25 * 60 * 1000;
+            while (Date.now() < deadline) {
+              const { data } = await github.rest.actions.listWorkflowRuns({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: "ci.yml",
+                branch: "main",
+                event: "push",
+                head_sha: context.sha,
+                per_page: 100,
+              });
+              const run = data.workflow_runs.find((candidate) => candidate.head_sha === context.sha);
+
+              if (run?.status === "completed") {
+                if (run.conclusion === "success") {
+                  core.info(`CI and deploy succeeded for ${context.sha} in run ${run.id}`);
+                  return;
+                }
+                core.setFailed(`CI run ${run.id} concluded ${run.conclusion} for ${context.sha}`);
+                return;
+              }
+
+              core.info(run ? `CI run ${run.id} is ${run.status}` : `Waiting for CI on ${context.sha}`);
+              await new Promise((resolve) => setTimeout(resolve, 15_000));
+            }
+
+            core.setFailed(`Timed out waiting for CI and deploy of ${context.sha}`);
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          package-manager-cache: false
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Enable the repository pnpm version
+        run: corepack enable
+
+      # This is the version proven by the adjacent Mercuryo Agent Pay release
+      # workflow on the same runner pool. Node's bundled npm is not the release
+      # authority and may be older than npm Trusted Publishing support.
+      - name: Install npm with Trusted Publishing support
+        run: npm install -g npm@11.6.2
+
+      - name: Install the exact workspace
+        run: pnpm install --frozen-lockfile
+
+      - name: Resolve the release named by the tag
+        id: release
+        run: ./scripts/check-sdk-release-tag.sh "$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Verify the release source
+        run: |
+          pnpm check
+          pnpm typecheck
+          pnpm test
+          pnpm build
+
+      - name: Verify the packed SDK outside the workspace
+        run: pnpm outside
+
+      - name: Require the npm package names to be bootstrapped
+        if: env.DRY_RUN != 'true'
+        run: |
+          set -euo pipefail
+          missing=0
+          for package in @coinslot/contracts @coinslot/sdk; do
+            if ! npm view "$package" name >/dev/null 2>&1; then
+              echo "::error::$package does not exist on npm; complete the one-time authenticated bootstrap before rerunning this workflow"
+              missing=1
+            fi
+          done
+          test "$missing" -eq 0
+
+      - name: Publish unpublished package versions
+        if: env.DRY_RUN != 'true'
+        env:
+          # The source repository is private, so npm cannot issue a public
+          # provenance statement for it. Authentication still uses GitHub OIDC.
+          NPM_CONFIG_PROVENANCE: 'false'
+        run: pnpm exec changeset publish --tag "${{ steps.release.outputs.dist_tag }}"
+
+      - name: Verify the registry accepted the exact release
+        if: env.DRY_RUN != 'true'
+        run: |
+          set -euo pipefail
+
+          expect_version() {
+            local selector="$1"
+            local expected="$2"
+            local actual=""
+
+            for attempt in {1..10}; do
+              if actual="$(npm view "$selector" version 2>/dev/null)" && [ "$actual" = "$expected" ]; then
+                return 0
+              fi
+              if [ "$attempt" -lt 10 ]; then
+                sleep 2
+              fi
+            done
+
+            echo "$selector resolved to ${actual:-(nothing)}, expected $expected" >&2
+            return 1
+          }
+
+          expect_version "@coinslot/contracts@${{ steps.release.outputs.contracts_version }}" "${{ steps.release.outputs.contracts_version }}"
+          expect_version "@coinslot/sdk@${{ steps.release.outputs.sdk_version }}" "${{ steps.release.outputs.sdk_version }}"
+          expect_version "@coinslot/contracts@${{ steps.release.outputs.dist_tag }}" "${{ steps.release.outputs.contracts_version }}"
+          expect_version "@coinslot/sdk@${{ steps.release.outputs.dist_tag }}" "${{ steps.release.outputs.sdk_version }}"
+
+          install_dir="$(mktemp -d)"
+          trap 'rm -rf "$install_dir"' EXIT
+          cd "$install_dir"
+          npm init --yes >/dev/null
+          npm install --ignore-scripts --no-audit --no-fund --save-exact \
+            "@coinslot/contracts@${{ steps.release.outputs.contracts_version }}" \
+            "@coinslot/sdk@${{ steps.release.outputs.sdk_version }}"
+          node --input-type=module -e '
+            const contracts = await import("@coinslot/contracts");
+            const sdk = await import("@coinslot/sdk");
+            if (sdk.contractVersion !== contracts.CONTRACT_VERSION) {
+              throw new Error("SDK contract " + sdk.contractVersion + " != contracts " + contracts.CONTRACT_VERSION);
+            }
+            if (typeof sdk.createClient !== "function" || typeof contracts.CardSchema?.safeParse !== "function") {
+              throw new Error("the registry packages do not expose the public SDK contract");
+            }
+          '

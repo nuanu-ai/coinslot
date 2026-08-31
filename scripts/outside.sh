@@ -92,7 +92,7 @@ echo "What the tarballs would ship"
 # exclusions in tsconfig.build.json.
 for tarball in "$scratch"/coinslot-*.tgz; do
   unexpected="$(tar -tzf "$tarball" |
-    grep -vE '^package/(package\.json|dist/)' || true)"
+    grep -vE '^package/(package\.json|README\.md|dist/)' || true)"
   compiled_tests="$(tar -tzf "$tarball" | grep -E '\.test\.|/testing/' || true)"
   check "$(basename "$tarball") ships its build and nothing else" "" \
     "${unexpected}${compiled_tests}"
@@ -119,6 +119,40 @@ cat > package.json <<'JSON'
 JSON
 
 npm install --no-audit --no-fund ./coinslot-contracts-*.tgz ./coinslot-sdk-*.tgz
+
+# The package is TypeScript even when the merchant's program is not. Its
+# declarations must stand on their own in a strict project rather than borrow
+# the workspace's root `@types/node` through a path the merchant does not have.
+# The SDK runs on Node 24's standard Web APIs — URL, fetch and AbortSignal — so
+# the consumer declares that library explicitly while still excluding every
+# ambient package through `types: []`.
+cat > consumer.ts <<'TS'
+import { createClient } from "@coinslot/sdk";
+
+const client = createClient({
+  apiKey: "merchant_key_for_typechecking_only",
+  baseUrl: "https://coinslot.example",
+});
+
+void client;
+TS
+
+cat > tsconfig.json <<'JSON'
+{
+  "compilerOptions": {
+    "lib": ["es2024", "dom"],
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "noEmit": true,
+    "skipLibCheck": false,
+    "strict": true,
+    "types": []
+  },
+  "include": ["consumer.ts"]
+}
+JSON
+
+"$repo/node_modules/.bin/tsc" -p tsconfig.json
 
 # The pilot's own eSIM card, the one the vertical slice publishes and sells.
 cat > card.json <<'JSON'

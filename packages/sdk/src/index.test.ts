@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { contractVersion, speaksContract } from "./index.js";
 
 const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
+  version?: string;
   private?: boolean;
   files?: readonly string[];
   license?: string;
@@ -13,6 +14,7 @@ const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.
   dependencies?: Record<string, string>;
   exports?: Record<string, unknown>;
   publishConfig?: {
+    access?: string;
     bin?: Record<string, string>;
     exports?: Record<string, { types?: string; default?: string }>;
   };
@@ -106,10 +108,13 @@ describe("@coinslot/sdk", () => {
     // warning — while `publishConfig` still names an entry point and a command
     // that are not in it. That package installs and dies on first use.
     expect(manifest.private).toBeUndefined();
+    expect(manifest.version).not.toBe("0.0.0");
     expect(manifest.files).toStrictEqual(["dist"]);
     expect(manifest.license).toBe("UNLICENSED");
     expect(manifest.repository).toBeDefined();
     expect(manifest.engines?.node).toBeDefined();
     expect(manifest.scripts?.prepack).toBeDefined();
+    expect(manifest.publishConfig?.access).toBe("public");
+    expect(existsSync(new URL("../README.md", import.meta.url))).toBe(true);
   });
 });

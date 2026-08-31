@@ -35,11 +35,10 @@ up and run the link to an online shop ourselves. Both are described on
   a link, a key, a set of fields. Its shape is declared in the card.
 
 ::: warning The tool surface is preliminary
-The package name, the function names and the field names in the examples below
-are working names. What is fixed is the integration model and not the
-signatures: of the machine names only `merchant_item_id`, `as_of` and our
-catalogue `id` are final. The rest can still change before the pilot, and we
-tell you in advance when it does.
+The package name is `@coinslot/sdk`. The function names and field names in the
+examples below remain preliminary: of the machine names only
+`merchant_item_id`, `as_of` and our catalogue `id` are final. Changes arrive in
+a new package and contract version before the gateway speaks them.
 :::
 
 ## 1. Install the tools
@@ -52,9 +51,9 @@ data. Nothing beyond those arrives in your project.
 npm install @coinslot/sdk
 ```
 
-The package is not published yet, so that line has nothing to fetch today; how
-it reaches you during the pilot is in the list at the end of this page, and the
-name above is a working one like the rest.
+Release tags publish this package to the public npm registry. A stable release
+is installed through npm's default `latest` channel. Stage 0 does not publish
+prerelease versions.
 
 You are given a key to our API when you connect, and you keep it wherever you
 keep the rest of your secrets.
@@ -430,8 +429,6 @@ code.
 - The half of the check that would send one order twice and watch for a second
   delivery. Nothing on our surface raises a test order to send, and behind that
   sits the question of what separates the sandbox from the live system.
-- How the package reaches you. It is not published anywhere, and the name it is
-  installed under is a working one.
 - Where to say that you are ready for a test purchase: we have no channel for
   that yet.
 - Starting the test purchase with a command of your own — after the pilot.

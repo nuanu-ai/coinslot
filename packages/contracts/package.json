@@ -1,6 +1,6 @@
 {
   "name": "@coinslot/contracts",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "description": "Coinslot public contract schemas — card, order, price hook, receipt",
   "license": "UNLICENSED",
@@ -19,6 +19,7 @@
     ".": "./src/index.ts"
   },
   "publishConfig": {
+    "access": "public",
     "exports": {
       ".": {
         "types": "./dist/index.d.ts",

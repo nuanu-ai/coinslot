@@ -22,9 +22,9 @@ in one table at the end.
 
 ::: warning The field names are preliminary
 What is fixed is the model and not the signatures. Of the machine names `id`,
-`merchant_item_id` and `as_of` are final; the package name, the function names
-and the rest of the names in this reference are working names and can still
-change before the pilot.
+`merchant_item_id` and `as_of` are final; the package is `@coinslot/sdk`, while
+the function names and the rest of the names in this reference can still change
+in a new package and contract version before the pilot.
 :::
 
 ## The smallest card that sells

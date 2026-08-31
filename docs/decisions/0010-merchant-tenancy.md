@@ -47,11 +47,11 @@ becomes true instead of aspirational.
 
 **The public buying surface does not change.** One catalog across all
 merchants — that is the product. A purchase routes to the owning merchant's
-worker by the card it was made against. `CONTRACT_VERSION` stays `"0"`:
-nothing is published, so no compatibility is owed (ADR-0006), and no public
-schema gains a field — a buyer has no more reason to see the merchant's
-identity than before, and giving them one is a separate decision about
-merchant-facing branding that nobody has taken.
+worker by the card it was made against. No public schema gains a field — a
+buyer has no more reason to see the merchant's identity than before, and giving
+them one is a separate decision about merchant-facing branding that nobody has
+taken. The first SDK release moves `CONTRACT_VERSION` to `"1"` for the release
+boundary itself (ADR-0006), not because tenancy changed this surface.
 
 **The sandbox still comes up selling from one command.** `docker compose up`
 seeds one merchant and one key deterministically, the merchant process and the

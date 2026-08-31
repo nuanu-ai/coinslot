@@ -3,8 +3,9 @@
 The gateway through which an ordinary online business sells its goods to AI
 agents, paid in stablecoins over the x402 protocol. The money goes from the
 buyer's wallet to the merchant's and never passes through us. There is no
-external merchant yet, and the contract version is `"0"`, which promises
-compatibility to nobody (ADR-0006).
+external merchant yet. The first installable SDK is `0.1.0` and speaks contract
+version `"1"`; from that registry release onward, unreadable wire changes move
+the contract version before the gateway sends them (ADR-0006).
 
 This file orients an engineer who has just opened the repository.
 

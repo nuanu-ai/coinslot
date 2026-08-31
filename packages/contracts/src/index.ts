@@ -274,7 +274,7 @@ export { SELLING_STATES, SellingStateSchema } from "./selling.js";
  * changes, not when a schema is added: a consumer uses it to decide whether it
  * understands the other side.
  */
-export const CONTRACT_VERSION = "0";
+export const CONTRACT_VERSION = "1";
 
 /**
  * Every schema of the public contract, under the name it is known by outside

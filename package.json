@@ -24,8 +24,7 @@
     "smoke:bootstrap": "pnpm --filter @coinslot/slice run bootstrap",
     "outside": "./scripts/outside.sh",
     "buy": "pnpm --filter @coinslot/slice run buy",
-    "changeset": "changeset",
-    "release": "pnpm build && changeset publish"
+    "changeset": "changeset"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.10",

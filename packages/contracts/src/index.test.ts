@@ -129,10 +129,10 @@ const refinedSchemasWithoutDescription = (): string[] =>
 describe("@coinslot/contracts", () => {
   it("declares the contract version and keeps zod its only runtime dependency", () => {
     // The version is what the merchant's SDK and the gateway use to tell that
-    // they are talking about the same thing. An empty string would mean "there
-    // is no version", and a version silently missing from the contract must
-    // not happen.
-    expect(CONTRACT_VERSION).not.toBe("");
+    // they are talking about the same thing. Version 0 meant that no external
+    // install existed; the first registry release starts the compatibility
+    // clock at 1 (ADR-0006).
+    expect(CONTRACT_VERSION).toBe("1");
 
     // Contracts is the only package the SDK drags along, so its dependency
     // tree is the SDK's dependency tree (ADR-0003 §8). A failing check means

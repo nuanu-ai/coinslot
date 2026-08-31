@@ -875,7 +875,7 @@ describe("the worker's calls over HTTP", () => {
       envelopes: { kind: string; payload: { id: string } }[];
       contract_version: string;
     };
-    expect(contract_version).toBe("0");
+    expect(contract_version).toBe("1");
     expect(envelopes.map((envelope) => envelope.kind)).toStrictEqual(["order"]);
 
     const answered = await served.call(`POST`, `/v0/orders/${orderId}/answer`, {
