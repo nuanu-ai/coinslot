@@ -57,6 +57,8 @@ let paramsDraft = "{}";
 let message: string | null = null;
 let connectionGeneration = 0;
 let connectionAbort = new AbortController();
+let shuttingDown = false;
+let actionTail: Promise<void> = Promise.resolve();
 
 const port = Number.parseInt(process.env.STAND_PORT ?? "8787", 10);
 if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
@@ -98,9 +100,10 @@ const say = (what: string): void => {
   feed.write("stand", what);
 };
 
-const readCards = async (): Promise<void> => {
+const readCards = async (generation: number): Promise<void> => {
   const { address, key } = requireConnection();
   const answer = await listCards(address, key);
+  if (!connectionIsCurrent(generation)) return;
   const parsed = MerchantCardListSchema.safeParse(answer.body);
   if (!parsed.success) {
     feed.write("gateway", "The merchant card list could not be parsed.", {
@@ -182,13 +185,13 @@ const traceFetchFor =
     }
   };
 
-const buyerFor = (): Buyer => {
+const buyerFor = (generation: number): Buyer => {
   const { address } = requireConnection();
   return makeBuyer({
     baseUrl: address,
     privateKey: TEST_BUYER_KEY,
     maxUsd: 50,
-    fetch: traceFetchFor(connectionGeneration),
+    fetch: traceFetchFor(generation),
   });
 };
 
@@ -290,24 +293,30 @@ const doAction = async (form: URLSearchParams): Promise<void> => {
       if (address === "" || key === "")
         throw new Error("Gateway address and merchant key are both required.");
       stopWatchingThisConnection();
+      const generation = connectionGeneration;
       // A new gateway is a new catalogue. Until its document parses, the old
       // gateway's cards must not remain actionable on this page.
       cards = [];
       selling = null;
       apiKey = key;
       await merchant.connect(address, key);
-      await readCards();
+      if (!connectionIsCurrent(generation)) return;
+      await readCards(generation);
+      if (!connectionIsCurrent(generation)) return;
       say(`Connected to ${address}.`);
       return;
     }
-    case "disconnect":
+    case "disconnect": {
       stopWatchingThisConnection();
+      const generation = connectionGeneration;
       await merchant.disconnect();
+      if (!connectionIsCurrent(generation)) return;
       apiKey = null;
       cards = [];
       selling = null;
       say("Disconnected the stand merchant.");
       return;
+    }
     case "template": {
       const index = Number(form.get("template"));
       const template = CATALOG[index];
@@ -319,40 +328,47 @@ const doAction = async (form: URLSearchParams): Promise<void> => {
       return;
     }
     case "publish": {
+      const generation = connectionGeneration;
       const raw = form.get("card") ?? "";
       cardDraft = raw;
       const card = CardSchema.parse(asJson(raw, "Card"));
       const outcome = await merchant.publish(card);
+      if (!connectionIsCurrent(generation)) return;
       feed.write("merchant", "Publish call answered.", outcome);
-      await readCards();
+      await readCards(generation);
+      if (!connectionIsCurrent(generation)) return;
       say("Sent the card draft to the merchant SDK.");
       return;
     }
     case "pause_card":
     case "resume_card": {
+      const generation = connectionGeneration;
       const { address, key } = requireConnection();
       const itemId = form.get("item_id") ?? "";
       const answer =
         action === "pause_card"
           ? await pauseCard(address, key, itemId)
           : await resumeCard(address, key, itemId);
+      if (!connectionIsCurrent(generation)) return;
       feed.write("gateway", `${action === "pause_card" ? "Paused" : "Resumed"} a card.`, answer);
-      await readCards();
+      await readCards(generation);
       return;
     }
     case "pause_selling":
     case "resume_selling": {
+      const generation = connectionGeneration;
       const { address, key } = requireConnection();
       const answer =
         action === "pause_selling"
           ? await pauseSelling(address, key)
           : await resumeSelling(address, key);
+      if (!connectionIsCurrent(generation)) return;
       feed.write(
         "gateway",
         `${action === "pause_selling" ? "Paused" : "Resumed"} all selling.`,
         answer,
       );
-      await readCards();
+      await readCards(generation);
       return;
     }
     case "moods":
@@ -372,7 +388,7 @@ const doAction = async (form: URLSearchParams): Promise<void> => {
     case "buy": {
       const generation = connectionGeneration;
       const signal = connectionAbort.signal;
-      const buyer = buyerFor();
+      const buyer = buyerFor(generation);
       const itemId = form.get("item_id") ?? "";
       if (itemId === "") throw new Error("A public item id is required to buy.");
       const { address } = requireConnection();
@@ -388,6 +404,7 @@ const doAction = async (form: URLSearchParams): Promise<void> => {
         itemId,
         asJson(rawParams, "Purchase parameters") as Record<string, unknown>,
       );
+      if (!connectionIsCurrent(generation)) return;
       feed.write("buyer", "Purchase answered.", bought);
       const order = objectWithOrder(bought.body);
       if (order !== null && !order.hasGoods)
@@ -401,11 +418,12 @@ const doAction = async (form: URLSearchParams): Promise<void> => {
       return;
     }
     case "invalid_payment": {
+      const generation = connectionGeneration;
       const { address } = requireConnection();
       const itemId = form.get("item_id") ?? "";
       const rawParams = form.get("params") ?? paramsDraft;
       paramsDraft = rawParams;
-      const response = await traceFetchFor(connectionGeneration)(
+      const response = await traceFetchFor(generation)(
         `${address.replace(/\/+$/, "")}${expandPath(API_ROUTES.purchase_item.path, { item_id: itemId })}`,
         {
           method: "POST",
@@ -416,27 +434,50 @@ const doAction = async (form: URLSearchParams): Promise<void> => {
           body: JSON.stringify({ params: asJson(rawParams, "Purchase parameters") }),
         },
       );
+      if (!connectionIsCurrent(generation)) return;
+      const body = await response.json().catch(() => null);
+      if (!connectionIsCurrent(generation)) return;
       feed.write("buyer", "Unreadable payment answered.", {
         status: response.status,
-        body: await response.json().catch(() => null),
+        body,
       });
       return;
     }
     case "status": {
+      const generation = connectionGeneration;
       const orderId = form.get("order_id") ?? "";
-      const status = await buyerFor().status(orderId);
+      const status = await buyerFor(generation).status(orderId);
+      if (!connectionIsCurrent(generation)) return;
       feed.write("buyer", "Order status read.", { order_id: orderId, ...status });
       return;
     }
     case "receipts": {
+      const generation = connectionGeneration;
       const { address, key } = requireConnection();
       const answer = await listReceipts(address, key);
+      if (!connectionIsCurrent(generation)) return;
       feed.write("gateway", "Merchant receipts read.", answer);
       return;
     }
     default:
       throw new Error("The submitted stand action is not known.");
   }
+};
+
+const queueAction = (form: Promise<URLSearchParams>): Promise<void> => {
+  const queued = actionTail.then(async () => {
+    if (shuttingDown) return;
+    try {
+      await doAction(await form);
+    } catch (error) {
+      if (shuttingDown) return;
+      const detail = error instanceof Error ? error.message : String(error);
+      message = detail;
+      feed.write("stand", "Action could not be completed.", { error: detail });
+    }
+  });
+  actionTail = queued;
+  return queued;
 };
 
 const server = createServer(async (request, response) => {
@@ -464,13 +505,7 @@ const server = createServer(async (request, response) => {
         .end("This form post did not come from this loopback stand.");
       return;
     }
-    try {
-      await doAction(await bodyOf(request));
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      message = detail;
-      feed.write("stand", "Action could not be completed.", { error: detail });
-    }
+    await queueAction(bodyOf(request));
     response.writeHead(303, { location: "/" }).end();
     return;
   }
@@ -502,7 +537,13 @@ const server = createServer(async (request, response) => {
 server.listen(port, "127.0.0.1", () => console.log(`Coinslot stand: http://127.0.0.1:${port}`));
 
 const shutdown = async (): Promise<void> => {
+  if (shuttingDown) return;
+  shuttingDown = true;
   stopWatchingThisConnection();
+  apiKey = null;
+  cards = [];
+  selling = null;
+  await actionTail;
   await merchant.disconnect();
   server.close();
 };
