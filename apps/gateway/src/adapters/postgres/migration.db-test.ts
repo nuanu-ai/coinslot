@@ -443,4 +443,108 @@ if (databaseUrl === null) {
       expect((await readBack("ord_sandbox")).payTo).toBeNull();
     });
   });
+
+  /**
+   * The migration that separates the keys a merchant made from the one their
+   * cabinet calls with.
+   *
+   * Every key already written was made before there was any such distinction,
+   * so the column arrives with a word for all of them and the rows registration
+   * made are moved across. Finding those rows by their label is the part worth
+   * exercising rather than trusting: the sentence it matches was written by one
+   * line of code and by nobody's hand, and a migration that matched nothing
+   * would leave a cabinet's key sitting in the list a merchant revokes keys
+   * from — which is the state this whole change exists to end, arrived at
+   * silently.
+   */
+  describe("the migration that says what each key was made for", () => {
+    const url = databaseUrl;
+    let pool: Pool;
+
+    const MERCHANT = "mch_a";
+    /** The label the version before this one gave a merchant's first key. */
+    const AS_REGISTRATION_WROTE_IT = "the key this merchant registered with";
+
+    const run = async (file: string): Promise<void> => {
+      for (const statement of await statementsOf(file)) {
+        await pool.query(statement);
+      }
+    };
+
+    const writeKey = async (id: string, label: string): Promise<void> => {
+      await pool.query(
+        `insert into merchant_keys (id, merchant_id, label, digest, created_at)
+         values ($1, $2, $3, $4, now())`,
+        [id, MERCHANT, label, `digest-of-${id}`],
+      );
+    };
+
+    const purposeOf = async (id: string): Promise<string> => {
+      const { rows } = await pool.query<{ purpose: string }>(
+        "select purpose from merchant_keys where id = $1",
+        [id],
+      );
+      const found = rows[0];
+      if (found === undefined) {
+        throw new Error(`the key ${id} is not there`);
+      }
+      return found.purpose;
+    };
+
+    beforeAll(async () => {
+      pool = connect(url).pool;
+    }, 60_000);
+
+    afterAll(async () => {
+      await pool.end();
+    });
+
+    beforeEach(async () => {
+      await pool.query("drop schema public cascade");
+      await pool.query("create schema public");
+      for (const file of [
+        "0000_init.sql",
+        "0001_payment_claims.sql",
+        "0002_selling.sql",
+        "0003_merchant_tenancy.sql",
+        "0004_merchant_service_name.sql",
+        "0005_merchant_payout_wallet.sql",
+        "0006_order_pay_to_backfill.sql",
+      ]) {
+        await run(file);
+      }
+      await pool.query(
+        `insert into merchants (id, name, selling, created_at, updated_at)
+         values ($1, 'A merchant', 'open', now(), now())`,
+        [MERCHANT],
+      );
+    });
+
+    it("hands the keys registration made to the cabinet and leaves the rest alone", async () => {
+      // The one row that changes hands and the two that must not. A key a
+      // merchant asked for stays theirs — it is in their own worker and on the
+      // list they revoke it from — and so does the sandbox's, which is handed
+      // to a merchant process out of a configuration file.
+      await writeKey("mk_registered", AS_REGISTRATION_WROTE_IT);
+      await writeKey("mk_worker", "the worker on the small box");
+      await writeKey("mk_sandbox", "the sandbox key from the compose file");
+
+      await run("0007_cabinet_keys.sql");
+
+      expect(await purposeOf("mk_registered")).toBe("cabinet");
+      expect(await purposeOf("mk_worker")).toBe("merchant_code");
+      expect(await purposeOf("mk_sandbox")).toBe("merchant_code");
+    });
+
+    it("refuses a key written afterwards that does not say what it is for", async () => {
+      // The default exists for the length of the backfill and is taken away
+      // again, so that this column cannot be quietly left out by anything
+      // written later. Left in place, a key inserted without it would become
+      // one more of the merchant's own — which is the one row that must never
+      // appear in their list by accident.
+      await run("0007_cabinet_keys.sql");
+
+      await expect(writeKey("mk_silent", "a key that says nothing")).rejects.toThrow();
+    });
+  });
 }

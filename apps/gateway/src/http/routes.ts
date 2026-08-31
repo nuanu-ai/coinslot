@@ -29,6 +29,7 @@ import type {
 import { outcomeFor } from "@coinslot/core";
 import type { Gateway, PurchaseAttempt } from "../app/gateway.js";
 import { agentOrderStatusOf, orderDocumentOf } from "../app/runner.js";
+import type { KeyPurpose } from "../ports/store.js";
 import type { MountedRoute, RouteAnswer, RouteCall } from "./server.js";
 import { refusal } from "./server.js";
 import {
@@ -80,8 +81,8 @@ function merchantOf({ merchantId }: RouteCall): string {
  * The key this call was made with, on a route behind the merchant's key.
  *
  * Null cannot arrive here for the reason it cannot arrive above — the door
- * resolves a key and a merchant together or refuses — and the three routes that
- * ask are the three about keys, where a wrong answer is the merchant locking
+ * resolves a key and a merchant together or refuses — and the routes that ask
+ * are the ones about keys, where a wrong answer is the merchant locking
  * themselves out rather than a page failing to draw.
  */
 function callersKey({ keyId }: RouteCall): string {
@@ -92,6 +93,41 @@ function callersKey({ keyId }: RouteCall): string {
   }
   return keyId;
 }
+
+/**
+ * What the key this call was made with was made for.
+ *
+ * Null cannot arrive here for the reason it cannot arrive above, and the two
+ * routes that ask are the cabinet's own, where the answer decides whether the
+ * call happens at all.
+ */
+function callersPurpose({ keyPurpose }: RouteCall): KeyPurpose {
+  if (keyPurpose === null) {
+    throw new Error(
+      "this call was served as one of the merchant's and reached its handler with no key behind it",
+    );
+  }
+  return keyPurpose;
+}
+
+/**
+ * What a call made with the wrong kind of key is answered with.
+ *
+ * The two cabinet calls share it, because they are refused for one reason: they
+ * are how a cabinet holds and replaces its own credential, and a key of the
+ * merchant's own code reaching either of them reaches the sweep — which would
+ * take that credential away and leave somebody looking at a cabinet that no
+ * longer opens.
+ */
+const notTheCabinets = (response: RouteCall["response"]): RouteAnswer =>
+  written(
+    response,
+    FORBIDDEN,
+    refusal(
+      "not_a_cabinet_key",
+      "this call is one a cabinet makes with a key of its own, and the key it was made with is one of the merchant's own code",
+    ),
+  );
 
 export function handlersFor(gateway: Gateway): Partial<Record<RouteName, MountedRoute>> {
   const { config } = gateway.runtime;
@@ -213,6 +249,28 @@ export function handlersFor(gateway: Gateway): Partial<Record<RouteName, Mounted
           (call.body as IssueKeyRequest).label,
         ),
       }),
+    },
+
+    issue_cabinet_key: {
+      serve: async (call) => {
+        const made = await gateway.issueCabinetKey(merchantOf(call), callersPurpose(call));
+        return made === "not_a_cabinet_key"
+          ? notTheCabinets(call.response)
+          : { status: OK, document: made };
+      },
+    },
+
+    forget_cabinet_keys: {
+      serve: async (call) => {
+        const swept = await gateway.forgetCabinetKeys(
+          merchantOf(call),
+          callersKey(call),
+          callersPurpose(call),
+        );
+        return swept === "not_a_cabinet_key"
+          ? notTheCabinets(call.response)
+          : { status: OK, document: swept };
+      },
     },
 
     disable_key: {

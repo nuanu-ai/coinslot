@@ -28,6 +28,7 @@ import type { DrizzleTransactionLike } from "pg-boss";
 import type { Ids } from "../../ports/clock.js";
 import type {
   CatalogEntry,
+  KeyPurpose,
   MerchantScope,
   OrderChange,
   OrderLookup,
@@ -169,7 +170,12 @@ export class PostgresStore implements Store {
       // issued on its own. It matters more here than there: this call is
       // reachable by a stranger registering, and the driver's own refusal
       // carries the digest.
-      const keyRow = await this.#writeKey(tx, { ...key, merchantId: merchant.id, at });
+      const keyRow = await this.#writeKey(tx, {
+        ...key,
+        merchantId: merchant.id,
+        purpose: "cabinet",
+        at,
+      });
       return { merchant: storedMerchantOf(merchantRow), key: storedKeyOf(keyRow) };
     });
   }
@@ -216,6 +222,7 @@ export class PostgresStore implements Store {
       readonly merchantId: string;
       readonly label: string;
       readonly digest: string;
+      readonly purpose: KeyPurpose;
     },
     at: number,
   ): Promise<StoredKey> {
@@ -256,6 +263,7 @@ export class PostgresStore implements Store {
       readonly merchantId: string;
       readonly label: string;
       readonly digest: string;
+      readonly purpose: KeyPurpose;
       readonly at: number;
     },
   ): Promise<typeof merchantKeys.$inferSelect> {
@@ -267,6 +275,7 @@ export class PostgresStore implements Store {
           id: key.id,
           merchantId: key.merchantId,
           label: key.label,
+          purpose: key.purpose,
           digest: key.digest,
           createdAt: new Date(key.at),
         })
@@ -325,6 +334,37 @@ export class PostgresStore implements Store {
       .where(eq(merchantKeys.merchantId, merchantId))
       .orderBy(merchantKeys.createdAt, merchantKeys.id);
     return rows.map(storedKeyOf);
+  }
+
+  async codeKeysOf(merchantId: string): Promise<readonly StoredKey[]> {
+    // The narrowing is a second column in the predicate rather than a filter
+    // over what the wide read answered, so a merchant with a cabinet signing in
+    // twice a day is not read out of the database to be thrown away here.
+    const rows = await this.#db
+      .select()
+      .from(merchantKeys)
+      .where(
+        and(eq(merchantKeys.merchantId, merchantId), eq(merchantKeys.purpose, "merchant_code")),
+      )
+      .orderBy(merchantKeys.createdAt, merchantKeys.id);
+    return rows.map(storedKeyOf);
+  }
+
+  async forgetCabinetKeysOf(merchantId: string, keptKeyId: string): Promise<number> {
+    // The three conditions are three rows this must not touch, and every one of
+    // them is somebody's way in: another merchant's cabinet, this merchant's
+    // own workers, and the key this very call is being made with.
+    const gone = await this.#db
+      .delete(merchantKeys)
+      .where(
+        and(
+          eq(merchantKeys.merchantId, merchantId),
+          eq(merchantKeys.purpose, "cabinet"),
+          not(eq(merchantKeys.id, keptKeyId)),
+        ),
+      )
+      .returning({ id: merchantKeys.id });
+    return gone.length;
   }
 
   async disableKey(id: string, at: number): Promise<StoredKey | null> {
@@ -971,6 +1011,7 @@ function storedKeyOf(row: {
   id: string;
   merchantId: string;
   label: string;
+  purpose: string;
   createdAt: Date;
   disabledAt: Date | null;
 }): StoredKey {
@@ -978,9 +1019,26 @@ function storedKeyOf(row: {
     id: row.id,
     merchantId: row.merchantId,
     label: row.label,
+    purpose: keyPurposeOf(row.purpose),
     createdAt: row.createdAt.getTime(),
     disabledAt: row.disabledAt === null ? null : row.disabledAt.getTime(),
   };
+}
+
+/**
+ * What a key was made for, out of a text column, or a refusal.
+ *
+ * A word the machine does not know reached the column — a hand-edited row, or a
+ * value from a version of this code that is not this one. Guessing here would
+ * be guessing whether this row belongs in the list a merchant revokes keys
+ * from, and both guesses are bad: one hides a key its owner needs to turn off,
+ * the other offers them the button that takes their own cabinet down.
+ */
+function keyPurposeOf(word: string): KeyPurpose {
+  if (word !== "merchant_code" && word !== "cabinet") {
+    throw new Error(`a key says it was made for ${word}, which is not a thing a key is made for`);
+  }
+  return word;
 }
 
 /**

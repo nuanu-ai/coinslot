@@ -759,7 +759,10 @@ if (databaseUrl === null) {
       // The update is written as a coalesce rather than an assignment, and only
       // a database runs it. A retry after a dropped connection must not rewrite
       // the one fact somebody reconstructing an incident works from.
-      await store.addKey({ id: "mk_twice", merchantId: A, label: "A's", digest: "twice" }, now);
+      await store.addKey(
+        { id: "mk_twice", merchantId: A, label: "A's", digest: "twice", purpose: "merchant_code" },
+        now,
+      );
 
       expect((await store.disableKey("mk_twice", now + 1_000))?.disabledAt).toBe(now + 1_000);
       expect((await store.disableKey("mk_twice", now + 9_000))?.disabledAt).toBe(now + 1_000);
@@ -770,7 +773,16 @@ if (databaseUrl === null) {
       // for. A key that opens a door onto nothing is worse than a command that
       // failed.
       await expect(
-        store.addKey({ id: "mk_x", merchantId: "mch_nobody", label: "x", digest: "d" }, now),
+        store.addKey(
+          {
+            id: "mk_x",
+            merchantId: "mch_nobody",
+            label: "x",
+            digest: "d",
+            purpose: "merchant_code",
+          },
+          now,
+        ),
       ).rejects.toThrow();
     });
 

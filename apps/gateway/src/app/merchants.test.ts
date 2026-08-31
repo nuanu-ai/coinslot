@@ -67,10 +67,11 @@ describe("a key", () => {
     // with, which the merchant never asked for and never sees. A caller reaching
     // for the wrong one is reaching for a different act.
     const store = aStore();
-    await makeMerchant(store, countedIds(), "A merchant", 1_000, "mch_1");
+    const ids = countedIds();
+    await makeMerchant(store, ids, "A merchant", 1_000, "mch_1");
 
-    const theirs = await issueKey(store, countedIds(), "mch_1", "the worker's", 1_000);
-    const cabinet = await issueCabinetKey(store, countedIds(), "mch_1", 2_000);
+    const theirs = await issueKey(store, ids, "mch_1", "the worker's", 1_000);
+    const cabinet = await issueCabinetKey(store, ids, "mch_1", 2_000);
 
     expect((await store.codeKeysOf("mch_1")).map((key) => key.id)).toStrictEqual([theirs.key.id]);
     expect(cabinet.key.purpose).toBe("cabinet");

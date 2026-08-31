@@ -1,6 +1,6 @@
 /**
- * Making a merchant, naming what their products are sold under, and issuing a
- * key to one.
+ * Making a merchant, naming what their products are sold under, and issuing the
+ * two kinds of key to one.
  *
  * It is one small module rather than a copy per caller because there are four
  * and they must not drift: the command somebody runs at a terminal, the seed the
@@ -140,13 +140,20 @@ export async function makeMerchant(
 }
 
 /**
- * Issues one key to one merchant and hands back the secret, once.
+ * Issues one key for a merchant's own code and hands back the secret, once.
  *
  * The caller is expected to have found the merchant first, so that "there is no
  * such merchant" is a sentence somebody reads rather than a foreign key
  * violation. This does not check again: two commands racing over a merchant
  * somebody is deleting is not a case worth a round trip, and the database
  * refuses it either way.
+ *
+ * It makes one kind of key and takes no word for which. The other kind is
+ * {@link issueCabinetKey}, and the two are two functions rather than one with a
+ * parameter because they are two acts: this one answers a merchant asking for
+ * something to put in their worker, and that one is a cabinet taking a
+ * credential of its own. A parameter would make them look like one act done
+ * twice, and the wrong value would put a row in a list its owner cannot touch.
  */
 export async function issueKey(
   store: Store,
@@ -157,21 +164,53 @@ export async function issueKey(
 ): Promise<IssuedKey> {
   const secret = newKeySecret();
   const key = await store.addKey(
-    { id: ids("mk"), merchantId, label, digest: keyDigest(secret) },
+    { id: ids("mk"), merchantId, label, digest: keyDigest(secret), purpose: "merchant_code" },
     at,
   );
   return { key, secret };
 }
 
 /**
- * What a merchant's first key is called until they name one of their own.
+ * Issues one key for a cabinet to call as this merchant with, once.
  *
- * Every key carries a label so that one of several can be told from the others,
- * and this one is made by a route rather than by a person, so the label has to
- * be written somewhere. It says where the key came from, because that is the
- * one thing its owner does not know about it: they never chose it.
+ * There is no label to pass, because there is nobody to type one: a cabinet
+ * asks for this every time somebody signs in, and the merchant never sees the
+ * key or hears that it exists.
  */
-export const FIRST_KEY_LABEL = "the key this merchant registered with";
+export async function issueCabinetKey(
+  store: Store,
+  ids: Ids,
+  merchantId: string,
+  at: number,
+): Promise<IssuedKey> {
+  const secret = newKeySecret();
+  const key = await store.addKey(
+    {
+      id: ids("mk"),
+      merchantId,
+      label: CABINET_KEY_LABEL,
+      digest: keyDigest(secret),
+      purpose: "cabinet",
+    },
+    at,
+  );
+  return { key, secret };
+}
+
+/**
+ * What every key a cabinet holds is called.
+ *
+ * One sentence for all of them, and no attempt to tell one sign-in from
+ * another: the row already carries the instant it was made, and a label that
+ * repeated it would be the same fact written twice in two formats.
+ *
+ * It is not chosen by anybody and is shown to nobody — the merchant's own list
+ * leaves these keys out entirely. The one reader is a person at a terminal
+ * looking at every key one merchant has, and what they need from this column is
+ * to be able to tell, without knowing anything about how the cabinet works,
+ * which rows are the merchant's and which are a sign-in's.
+ */
+export const CABINET_KEY_LABEL = "the key a cabinet signs this merchant in with";
 
 /**
  * A value nothing presented can ever equal, used where registration is closed.
@@ -215,7 +254,10 @@ export function invitationAccepted(expected: string | null, presented: string): 
   return same && expected !== null;
 }
 
-/** A merchant that has just been registered, with their first key, once. */
+/**
+ * A merchant that has just been registered, with the key their cabinet will
+ * call as them with, once.
+ */
 export interface Registration {
   readonly merchant: StoredMerchant;
   readonly key: StoredKey;
@@ -241,8 +283,16 @@ export interface Registration {
 export const REGISTERED_MERCHANT_NAME = "registered with an invitation";
 
 /**
- * Makes a merchant and issues their first key — both or neither (ADR-0014 §1).
- * Null where the identifier is taken, which a generated one never is.
+ * Makes a merchant and the key a cabinet calls as them with — both or neither
+ * (ADR-0014 §1). Null where the identifier is taken, which a generated one
+ * never is.
+ *
+ * The key is not the first of the merchant's own, and that is the whole of what
+ * registering hands over: whoever made this call is a cabinet, and what it
+ * needs is a credential to act as this merchant with. A merchant made this way
+ * has no keys of their own at all until they ask for one, and their own list of
+ * keys is empty on the first visit — which is the truth about a merchant who
+ * has written no code yet.
  *
  * No name for buyers is written, because registering does not ask for one. It
  * is chosen afterwards through `setServiceName`, and what stands between here
@@ -258,7 +308,7 @@ export async function registerMerchant(
   const secret = newKeySecret();
   const written = await store.registerMerchant(
     { id: ids("mch"), name: REGISTERED_MERCHANT_NAME },
-    { id: ids("mk"), label: FIRST_KEY_LABEL, digest: keyDigest(secret) },
+    { id: ids("mk"), label: CABINET_KEY_LABEL, digest: keyDigest(secret) },
     at,
   );
 
@@ -360,6 +410,10 @@ export async function seedSandboxKey(
         id: ids("mk"),
         merchantId: SEEDED_MERCHANT.id,
         label: "the sandbox key from the compose file",
+        // One of the merchant's own: it is handed to a merchant process out of
+        // a configuration file, which is exactly what a merchant does with a
+        // key of theirs, and it is on the list they would revoke it from.
+        purpose: "merchant_code",
         digest,
       },
       at,

@@ -18,12 +18,14 @@
 
 import {
   type Acceptance,
+  type CabinetKey,
   CardSchema,
   type CatalogPage,
   CONTRACT_VERSION,
   type Delivery,
   type DisabledKey,
   deliveryCheckFor,
+  type ForgottenCabinetKeys,
   type HandlerAnswer,
   type IssuedKey,
   type MerchantCard,
@@ -51,10 +53,11 @@ import type { MerchantSelling, TransitionRejection } from "@coinslot/core";
 import { createOrder, fulfillmentDeadline, isOpen, outcomeFor } from "@coinslot/core";
 import { asTimestamp } from "../ports/clock.js";
 import type { Reminder } from "../ports/queue.js";
-import type { StoredCard, StoredKey, StoredOrder } from "../ports/store.js";
+import type { KeyPurpose, StoredCard, StoredKey, StoredOrder } from "../ports/store.js";
 import { orderCallResponseOf } from "./answers.js";
 import {
   invitationAccepted,
+  issueCabinetKey,
   issueKey,
   keyDigest,
   registerMerchant,
@@ -698,18 +701,27 @@ export class Gateway {
   }
 
   /**
-   * Every key of this merchant, and the one the call was made with.
+   * The keys this merchant made for their own code, and the one the call was
+   * made with.
    *
-   * The caller's own key travels through rather than being looked up again: the
-   * door resolved it a moment ago, and a second lookup would be a second chance
-   * for the two to disagree about which key opened this call.
+   * The keys a cabinet holds are not in the list, and the read that leaves them
+   * out is the store's rather than a filter here: a merchant's list is a place
+   * they act, and a row they did not make and must not revoke does not belong
+   * on it.
+   *
+   * So `this_call` is not always one of the keys beside it — a cabinet calls
+   * with a key of its own — and it is answered all the same, because the field
+   * means the same thing on every call: which key opened this one. The caller's
+   * own key travels through rather than being looked up again: the door
+   * resolved it a moment ago, and a second lookup would be a second chance for
+   * the two to disagree about which key opened this call.
    */
   async merchantKeys(merchantId: string, thisCall: string): Promise<MerchantKeyList> {
-    const keys = await this.runtime.store.keysOf(merchantId);
+    const keys = await this.runtime.store.codeKeysOf(merchantId);
     return { keys: keys.map(merchantKeyOf), this_call: thisCall };
   }
 
-  /** Issues another key to this merchant, and hands the secret back once. */
+  /** Issues another key for this merchant's own code, and hands it back once. */
   async issueMerchantKey(merchantId: string, label: string): Promise<IssuedKey> {
     const issued = await issueKey(
       this.runtime.store,
@@ -719,6 +731,63 @@ export class Gateway {
       this.runtime.clock(),
     );
     return { key: merchantKeyOf(issued.key), secret: issued.secret };
+  }
+
+  /**
+   * Makes a key for a cabinet to go on calling as this merchant with, and hands
+   * it back once. Refused to anything but a cabinet's own key.
+   *
+   * The refusal is here rather than at the route because it is a judgement
+   * about who may make this call rather than a status code, and it is a word
+   * rather than a thrown error because the route has to answer it in the
+   * contract's own envelope.
+   *
+   * What it protects is not this call — a key one merchant made for their own
+   * code could ask for a cabinet key of their own merchant and gain nothing
+   * they did not already have. It is the pair: the sweep beside this one is
+   * reachable with whatever key reaches this one, and made with a key of the
+   * merchant's own it would take away the credential a cabinet is signed in on.
+   * One door for the two of them is a door somebody can reason about.
+   */
+  async issueCabinetKey(
+    merchantId: string,
+    madeWith: KeyPurpose,
+  ): Promise<CabinetKey | "not_a_cabinet_key"> {
+    if (madeWith !== "cabinet") {
+      return "not_a_cabinet_key";
+    }
+    const issued = await issueCabinetKey(
+      this.runtime.store,
+      this.runtime.ids,
+      merchantId,
+      this.runtime.clock(),
+    );
+    return { secret: issued.secret };
+  }
+
+  /**
+   * Removes every key this merchant has for a cabinet except the one this call
+   * was made with. Refused to anything but a cabinet's own key.
+   *
+   * The refusal is the reason the call is safe at all. Made with a key of the
+   * merchant's own code, "all but mine" would name no cabinet key at all — so
+   * every one of them would go, and whoever is signed into a cabinet would be
+   * holding a credential the gateway no longer knows.
+   *
+   * There is no parameter and there is nothing to choose. Two devices signing
+   * in at the same moment make two keys, and each sweeping in these words
+   * leaves exactly the two their owners are holding; "the one before mine"
+   * would leave whichever lost the race alive for good.
+   */
+  async forgetCabinetKeys(
+    merchantId: string,
+    thisCall: string,
+    madeWith: KeyPurpose,
+  ): Promise<ForgottenCabinetKeys | "not_a_cabinet_key"> {
+    if (madeWith !== "cabinet") {
+      return "not_a_cabinet_key";
+    }
+    return { removed: await this.runtime.store.forgetCabinetKeysOf(merchantId, thisCall) };
   }
 
   /**

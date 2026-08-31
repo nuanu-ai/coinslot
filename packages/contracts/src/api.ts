@@ -52,7 +52,9 @@ import { CardSchema, MerchantCardSchema, PublicCardSchema } from "./card.js";
 import { WorkerEnvelopeSchema } from "./envelope.js";
 import { AcceptanceSchema, DeliverySchema, HandlerAnswerSchema, RefusalSchema } from "./handler.js";
 import {
+  CabinetKeySchema,
   DisabledKeySchema,
+  ForgottenCabinetKeysSchema,
   IssuedKeySchema,
   IssueKeyRequestSchema,
   MerchantKeyListSchema,
@@ -455,8 +457,15 @@ export const CatalogPageSchema = z
       "Products offered for sale, as an agent reads them. This document does not say whether it is the whole catalog: paging is not designed, and when it is, this object grows the field that answers it. Until then the absence of such a field is not a promise that there is no more.",
   });
 
-/** The methods this surface uses. */
-export const HTTP_METHODS = Object.freeze(["GET", "POST"] as const);
+/**
+ * The methods this surface uses.
+ *
+ * `DELETE` is here for the one call that removes rows rather than marking them,
+ * and it earns the third verb rather than being folded into a POST: what it
+ * does to a key is not what disabling one does, and a surface that spelled both
+ * as a POST would be inviting a reader to think it was.
+ */
+export const HTTP_METHODS = Object.freeze(["GET", "POST", "DELETE"] as const);
 
 export type HttpMethod = (typeof HTTP_METHODS)[number];
 
@@ -650,6 +659,7 @@ export const ERROR_CODES = Object.freeze([
   "no_such_key",
   "no_such_order",
   "no_such_route",
+  "not_a_cabinet_key",
   "not_authorised",
   "not_invited",
   "not_selling",
@@ -826,7 +836,7 @@ export const API_ROUTES = Object.freeze({
     path: "/v0/keys",
     auth: "merchant_key",
     description:
-      "The keys belonging to the merchant this call's own key belongs to, the revoked ones among them, and never the keys themselves. Whether that is all of them is not something this document claims: paging is not designed, and the absence of a field about it is not a promise that there is no more. The answer also names the key the call was made with, as this_call, and that field is the reason this is not a bare list: a merchant cannot disable the key their own call was made with, so a screen drawn without knowing which key that is would offer a button the gateway refuses.",
+      "The keys the merchant this call's own key belongs to made for their own code, the revoked ones among them, and never the keys themselves. A merchant who has only ever signed into a cabinet has none of these, and an empty list is that answer rather than a fault: the key a cabinet calls with is made for the cabinet and is in no list here, because the merchant did not issue it and cannot revoke it. Whether the list is all of the rest is not something this document claims either: paging is not designed, and the absence of a field about it is not a promise that there is no more. The answer also names the key the call was made with, as this_call, and that field is the reason this is not a bare list: a merchant cannot disable the key their own call was made with, so a screen drawn without knowing which key that is would offer a button the gateway refuses. That identifier is not among the keys listed when the caller is a cabinet, and a client that looked it up among the rows has to be built for finding none.",
     response: { document: MerchantKeyListSchema },
   },
 
@@ -835,7 +845,7 @@ export const API_ROUTES = Object.freeze({
     path: "/v0/keys",
     auth: "merchant_key",
     description:
-      "Issues another key to the merchant this call's own key belongs to. The key is generated here and never taken from the caller, and it comes back exactly once — what is kept afterwards is a digest, so nothing can show it again. A merchant with several keys can hand one to each worker and revoke one without touching the others, which is the whole reason a key is a row.",
+      "Issues another key for the merchant's own code, to the merchant this call's own key belongs to. The key is generated here and never taken from the caller, and it comes back exactly once — what is kept afterwards is a digest, so nothing can show it again. A merchant with several keys can hand one to each worker and revoke one without touching the others, which is the whole reason a key is a row. This call cannot make the other kind of key: what a cabinet calls with is asked for at POST /v0/keys/cabinet, and a key made here is one the merchant sees, names and revokes.",
     request: IssueKeyRequestSchema,
     response: { document: IssuedKeySchema },
   },
@@ -845,8 +855,26 @@ export const API_ROUTES = Object.freeze({
     path: "/v0/keys/:key_id/disable",
     auth: "merchant_key",
     description:
-      "Stops one of this merchant's keys working, from that instant, and touches no other key. Disabling a key that is already disabled changes nothing and answers the same way, keeping the instant it was first revoked at, so a retry after a dropped connection is safe. Two refusals are worth knowing before a screen is built on this. A key belonging to another merchant is answered exactly as a key that does not exist, so this call is not a way of counting somebody else's keys. And the key this call was made with cannot be disabled by it — that one click, and no more than it: what the refusal is about is the key in front of it, so a merchant holding two keys can disable either one with the other, the one their cabinet is signed in with included. The gateway has no way of knowing which key that is, and nothing on this surface can tell it. So a merchant left with no working key, or with a live sign-in against a key that no longer opens the door, is reachable through this call and is not refused by it, and a cabinet built on the first sentence alone would be built on a protection that stops short of what it looks like. What the refusal does cover is the button a merchant presses in the cabinet the call came from, which is the one click that costs them the way back in. Rotating the key a cabinet itself holds is a separate act and is not built.",
+      "Stops one of this merchant's keys working, from that instant, and touches no other key. Disabling a key that is already disabled changes nothing and answers the same way, keeping the instant it was first revoked at, so a retry after a dropped connection is safe. Two refusals are worth knowing before a screen is built on this. A key belonging to another merchant is answered exactly as a key that does not exist, so this call is not a way of counting somebody else's keys. And the key this call was made with cannot be disabled by it — that one click, and no more than it: what the refusal is about is the key in front of it, so a merchant holding two keys can disable either one with the other, the one their cabinet is signed in with included. The gateway has no way of knowing which key that is, and nothing on this surface can tell it. So a merchant left with no working key, or with a live sign-in against a key that no longer opens the door, is reachable through this call and is not refused by it, and a cabinet built on the first sentence alone would be built on a protection that stops short of what it looks like. What the refusal does cover is the button a merchant presses in the cabinet the call came from, which is the one click that costs them the way back in. One more thing is worth knowing and is not a refusal either: a key made for a cabinet is in no list this surface answers with, so nothing here hands out its identifier — but this call takes an identifier and does not ask what the key it names was made for, so somebody who kept one from a registration can disable a cabinet's key with it and sign nobody in afterwards. Replacing the key a cabinet holds is not this call: it is POST /v0/keys/cabinet and the sweep beside it.",
     response: { document: DisabledKeySchema },
+  },
+
+  issue_cabinet_key: {
+    method: "POST",
+    path: "/v0/keys/cabinet",
+    auth: "merchant_key",
+    description:
+      "Makes a key for a cabinet to call as this merchant with, and hands it back once. It is a key of a different kind from the ones at /v0/keys: the merchant did not ask for it, never sees it, and it appears in no list of theirs — so nothing comes back but the key itself. What this is for is a cabinet that replaces its own credential every time somebody signs in, which is what keeps a copy of a cabinet's database from being a set of working keys for long. The call is refused to a key made for the merchant's own code, under not_a_cabinet_key: these two calls are the cabinet's own, and the sweep beside this one would take a cabinet's credential away if anything else could make it.",
+    response: { document: CabinetKeySchema },
+  },
+
+  forget_cabinet_keys: {
+    method: "DELETE",
+    path: "/v0/keys/cabinet",
+    auth: "merchant_key",
+    description:
+      "Removes every key this merchant has for a cabinet except the one this call was made with, and says how many went. They are removed rather than revoked: a merchant never issued one, never sees one and would never read a revoked one back, so a row kept for the history would be history for nobody. There are no parameters and the rule is deliberately 'all but mine': two devices signing in at the same moment make two keys, and each sweeping up after itself in these words leaves exactly the two live keys their owners are holding, where 'remove the one before mine' would leave whichever lost the race alive forever. It is also the one shape of this call that cannot remove the key its caller is holding. Calling it twice changes nothing the second time, so a retry after a dropped connection is safe. It is refused to a key made for the merchant's own code, under not_a_cabinet_key, and that refusal is the reason the call is safe at all: made with such a key it would sweep away the credential a cabinet is signed in on and lock its owner out.",
+    response: { document: ForgottenCabinetKeysSchema },
   },
 
   get_order: {

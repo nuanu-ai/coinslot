@@ -124,7 +124,16 @@ describe("MemoryStore, where it is not like the other one", () => {
     await store.addMerchant({ id: A, name: "Merchant A" }, 0);
 
     await expect(
-      store.addKey({ id: "mk_1", merchantId: "mch_nobody", label: "one", digest: "d" }, 1_000),
+      store.addKey(
+        {
+          id: "mk_1",
+          merchantId: "mch_nobody",
+          label: "one",
+          digest: "d",
+          purpose: "merchant_code",
+        },
+        1_000,
+      ),
     ).rejects.toThrow(/mch_nobody/);
   });
 });

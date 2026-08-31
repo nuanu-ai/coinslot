@@ -31,6 +31,7 @@ import { isOpen, type MerchantSelling } from "@coinslot/core";
 import type { Clock, Ids } from "../../ports/clock.js";
 import type {
   CatalogEntry,
+  KeyPurpose,
   MerchantScope,
   OrderChange,
   OrderLookup,
@@ -173,7 +174,7 @@ export class MemoryStore implements Store {
     // taken — because a merchant left behind by that has a generated identifier
     // nobody holds and no way in.
     try {
-      const stored = this.#writeKey({ ...key, merchantId: merchant.id }, at);
+      const stored = this.#writeKey({ ...key, merchantId: merchant.id, purpose: "cabinet" }, at);
       return { merchant: storedMerchantOf(row), key: stored };
     } catch (thrown) {
       this.#merchants.delete(merchant.id);
@@ -222,6 +223,7 @@ export class MemoryStore implements Store {
       readonly merchantId: string;
       readonly label: string;
       readonly digest: string;
+      readonly purpose: KeyPurpose;
     },
     at: number,
   ): Promise<StoredKey> {
@@ -241,6 +243,7 @@ export class MemoryStore implements Store {
       readonly merchantId: string;
       readonly label: string;
       readonly digest: string;
+      readonly purpose: KeyPurpose;
     },
     at: number,
   ): StoredKey {
@@ -265,6 +268,7 @@ export class MemoryStore implements Store {
       id: key.id,
       merchantId: key.merchantId,
       label: key.label,
+      purpose: key.purpose,
       createdAt: at,
       disabledAt: null,
     });
@@ -294,6 +298,32 @@ export class MemoryStore implements Store {
     return [...this.#keys.values()]
       .filter((key) => key.merchantId === merchantId)
       .sort((one, other) => one.createdAt - other.createdAt || (one.id < other.id ? -1 : 1));
+  }
+
+  async codeKeysOf(merchantId: string): Promise<readonly StoredKey[]> {
+    // Read through the wide list rather than filtering the map again, so the
+    // two answer in one order and a change to that order cannot reach one of
+    // them and not the other.
+    return (await this.keysOf(merchantId)).filter((key) => key.purpose === "merchant_code");
+  }
+
+  async forgetCabinetKeysOf(merchantId: string, keptKeyId: string): Promise<number> {
+    const going = [...this.#keys.values()].filter(
+      (key) => key.merchantId === merchantId && key.purpose === "cabinet" && key.id !== keptKeyId,
+    );
+    for (const key of going) {
+      this.#keys.delete(key.id);
+      // The digest goes with it. Left behind, it would be an entry pointing at
+      // a key that is not there — which reads as nothing at the door, but is a
+      // digest nothing can ever write again, since writing one refuses a digest
+      // already taken.
+      for (const [digest, id] of this.#keysByDigest) {
+        if (id === key.id) {
+          this.#keysByDigest.delete(digest);
+        }
+      }
+    }
+    return going.length;
   }
 
   async disableKey(id: string, at: number): Promise<StoredKey | null> {

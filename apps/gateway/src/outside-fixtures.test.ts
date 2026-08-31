@@ -77,6 +77,7 @@ async function aGatewayOnAPort() {
       merchantId: "mch_the_walk",
       label: "the key this walk carries",
       digest: keyDigest(MERCHANT_KEY),
+      purpose: "merchant_code",
     },
     Date.now(),
   );
@@ -560,13 +561,15 @@ describe("a purchase from the outside", () => {
         door_code: "8812",
       });
 
-      // Their keys, as their own cabinet would read them: one key, and it is
-      // the one this call was made with.
+      // Their keys, as their own cabinet would read them: none at all. This
+      // merchant has written no code and asked for no key of their own, and the
+      // key registering handed over is the one their cabinet calls with — which
+      // this call names and the list does not carry.
       const listed = await gateway.call("GET", "/v0/keys", {
         headers: { authorization: `Bearer ${theirKey}` },
       });
       expect(listed.body).toStrictEqual({
-        keys: [made.key],
+        keys: [],
         this_call: made.key.id,
       });
 

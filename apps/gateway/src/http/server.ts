@@ -43,6 +43,7 @@ import {
 import express, { type Express, type Request, type Response } from "express";
 import type { ZodType } from "zod";
 import type { Gateway } from "../app/gateway.js";
+import type { KeyPurpose } from "../ports/store.js";
 import { bearerIn } from "./auth.js";
 import { handlersFor } from "./routes.js";
 
@@ -79,6 +80,17 @@ export interface RouteCall {
    * Null on an open route, exactly as the merchant is, and for the same reason.
    */
   readonly keyId: string | null;
+  /**
+   * What the key that opened this call was made for, from the same lookup.
+   *
+   * Two routes need it and the reason is a rule rather than a convenience: the
+   * calls that make and sweep up the keys a cabinet holds are the cabinet's
+   * own, and made with a key of the merchant's own code the sweep would take
+   * away the credential a cabinet is signed in on.
+   *
+   * Null on an open route, exactly as the two above are.
+   */
+  readonly keyPurpose: KeyPurpose | null;
   readonly request: Request;
   readonly response: Response;
 }
@@ -305,8 +317,14 @@ function mount(
       }
     };
 
+    // Every method the contract declares is mounted by name. Written as "GET
+    // or else POST", the day a third one arrived it would be mounted as a POST
+    // and answer nothing at the address it was declared at, with nothing here
+    // looking wrong.
     if (method === "GET") {
       app.get(route.path, serve);
+    } else if (method === "DELETE") {
+      app.delete(route.path, serve);
     } else {
       app.post(route.path, serve);
     }
@@ -372,6 +390,7 @@ async function answer(
     query,
     merchantId: caller?.merchantId ?? null,
     keyId: caller?.keyId ?? null,
+    keyPurpose: caller?.keyPurpose ?? null,
     request,
     response,
   });
@@ -398,10 +417,14 @@ async function answer(
 /** The door said no. A value rather than null, which is what an open route has. */
 const REFUSED = Symbol("the key on this call opens nothing");
 
-/** Who made a call that came through a door: the merchant, and which key. */
+/**
+ * Who made a call that came through a door: the merchant, which key, and what
+ * that key was made for.
+ */
 interface Caller {
   readonly merchantId: string;
   readonly keyId: string;
+  readonly keyPurpose: KeyPurpose;
 }
 
 /**
@@ -440,7 +463,9 @@ async function callerBehind(
         return REFUSED;
       }
       const key = await gateway.keyBehind(presented);
-      return key === null ? REFUSED : { merchantId: key.merchantId, keyId: key.id };
+      return key === null
+        ? REFUSED
+        : { merchantId: key.merchantId, keyId: key.id, keyPurpose: key.purpose };
     }
 
     // Neither of these carries a key, and they are two different reasons for
