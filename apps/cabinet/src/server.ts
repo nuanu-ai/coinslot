@@ -367,12 +367,27 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
    * It runs before the cookies are handed over rather than after the answer,
    * and that is not tidiness. The key is read off the row on every request, so
    * a first request racing a sweep that had not finished could read the old key
-   * and be refused with it. What is left is a narrower window that cannot be
-   * closed from here: a request already in flight from another device, which
-   * read the row before the write, is made with a key the sweep is about to
-   * remove and is refused. It is milliseconds wide, it costs a page reload, and
-   * the only way to buy it off would be to leave the old key alive for a while
-   * — which is the thing this exists to stop.
+   * and be refused with it. What is left is a narrower window: a request already
+   * in flight from another device, which read the row before the write, is made
+   * with a key the sweep is about to remove and is refused. It is milliseconds
+   * wide, it costs a page reload, and the only way to buy it off would be to
+   * leave the old key alive for a while — which is the thing this exists to
+   * stop.
+   *
+   * There is a second window and it is not that cheap, so it is named rather
+   * than left for somebody to find. Two sign-ins of the same account that
+   * overlap — two devices at the same moment, a doubled form post — can
+   * interleave so that the later one writes its key onto the row while the
+   * earlier one is still between its own write and its own sweep. The earlier
+   * sweep then removes every cabinet key but its own, and the key the row now
+   * names is one of those. The account is left holding a key the gateway has
+   * forgotten: every screen answers 502, and signing in again cannot mend it,
+   * because the fresh key is asked for with the one being refused. Nothing in
+   * the shape of these three steps closes it — what would is one sign-in at a
+   * time per account, or a sweep the gateway bounds by the key the account
+   * names rather than by the key on the call — and neither is built. Until one
+   * of them is, this is a rare road into a cabinet only somebody at a terminal
+   * can let its owner back into.
    */
   const replaceTheKeyOf = async (person: Person): Promise<void> => {
     const holding = person.merchant?.key;
