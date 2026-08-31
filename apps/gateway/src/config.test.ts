@@ -685,6 +685,44 @@ describe("a live chain is allowed exactly one facilitator", () => {
     ).toThrowError(/https:\/\/api\.cdp\.coinbase\.com\/platform\/v2\/x402/);
   });
 
+  it("refuses a name and password written into Coinbase's address", () => {
+    // Two costs, and the first settles it on its own: a request whose address
+    // carries credentials is refused where it is built, so every verify and
+    // every settle throws, in front of a buyer, on a gateway that came up
+    // healthy. The second is that the refusal prints the address it was given,
+    // so a password written there also reaches the operator's log.
+    expect(() =>
+      loadConfig({
+        ...live,
+        FACILITATOR_URL: "https://someone:secret@api.cdp.coinbase.com/platform/v2/x402",
+      }),
+    ).toThrowError(/https:\/\/api\.cdp\.coinbase\.com\/platform\/v2\/x402/);
+  });
+
+  it("refuses a port the facilitator does not answer on", () => {
+    // The host is right, the path is right, and nothing is listening there.
+    // That is the wrong-path failure again under a different spelling: the
+    // gateway starts, issues keys, and finds out at the first buyer.
+    expect(() =>
+      loadConfig({
+        ...live,
+        FACILITATOR_URL: "https://api.cdp.coinbase.com:8443/platform/v2/x402",
+      }),
+    ).toThrowError(/https:\/\/api\.cdp\.coinbase\.com\/platform\/v2\/x402/);
+  });
+
+  it("takes the same endpoint with the port https already means written out", () => {
+    // `:443` is what `https:` means, and the address parser drops it, so this
+    // is the canonical endpoint spelled in full. Refusing it would be an
+    // operator with a correct live configuration told it is wrong.
+    expect(() =>
+      loadConfig({
+        ...live,
+        FACILITATOR_URL: "https://api.cdp.coinbase.com:443/platform/v2/x402",
+      }),
+    ).not.toThrow();
+  });
+
   it("leaves a test chain free to keep the scripted facilitator", () => {
     // The laptop requires exactly that pairing, and it is what makes
     // `docker compose up` sell with no network, no wallet and no faucet.

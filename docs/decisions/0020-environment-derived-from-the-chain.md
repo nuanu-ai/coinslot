@@ -38,20 +38,13 @@ are deliberately absent, because they are chains we do not sell on.
 
 A live chain settles through Coinbase's facilitator at
 `https://api.cdp.coinbase.com/platform/v2/x402`, with `CDP_API_KEY_ID` and
-`CDP_API_KEY_SECRET` both set, and through nothing else. The scheme and the
-path belong to that rule as much as the host does: `FACILITATOR_URL` takes
-`http:` as readily as `https:` and Coinbase is recognised by hostname, so the
-right host over plain text satisfies every other check and puts both
-credentials on the wire, and the gateway builds `/verify` and `/settle` under
-whatever base it was given, so a wrong path under the right host comes up
-healthy and fails at the first buyer.
-
-The value nobody types is what this is really for. `FACILITATOR_URL` falls back
-to the public x402 facilitator, which is right for the test site and asks for
-no credentials; on a live chain that same default would let an environment file
-copied from the test host, with one line changed, start and settle somewhere
-the pilot does not settle. Going live must not be something that happens by
-forgetting a variable.
+`CDP_API_KEY_SECRET` both set, and through nothing else. Every part of that
+address is the rule and not the host alone: `FACILITATOR_URL` takes `http:` as
+readily as `https:` and Coinbase is recognised by hostname, so the right host
+over plain text satisfies every other check and puts both credentials on the
+wire, and the gateway builds `/verify` and `/settle` under whatever base it was
+given, so a wrong path — or a port nothing answers on — comes up healthy and
+fails at the first buyer.
 
 ## Consequences
 

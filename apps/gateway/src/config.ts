@@ -120,18 +120,29 @@ const isOtherCoinbaseHost = (facilitatorUrl: string): boolean => {
 /**
  * Whether this is the one address a live chain may settle through.
  *
- * Three components, and nothing hanging off them. The scheme, because
- * `FACILITATOR_URL` accepts `http:` as readily as `https:` and Coinbase is
- * recognised by hostname, so `http://api.cdp.coinbase.com/…` satisfies every
- * other check and would put both credentials on the wire in the clear. The
- * host, in the one spelling `hostOf` writes every host down to. And the path,
- * with trailing slashes off, because the gateway builds `/verify` and
- * `/settle` under whatever base it was given and the x402 facilitator client
- * takes those slashes off before it joins them on: a wrong path under the
- * right host starts healthy and fails at the first buyer, while a trailing
- * slash is the same endpoint and must not be refused. A query or a fragment is
- * neither of those and is carried into every request built under the base, so
- * an address that has one is not this address.
+ * Every part of the address is compared, and the reason is that nothing here
+ * ever calls this string as it stands: the gateway builds `/verify` and
+ * `/settle` under it and hands the result to a client that signs for the host
+ * it names. Anything wrong anywhere in it comes up healthy and is discovered
+ * at the first buyer.
+ *
+ * The scheme, because `FACILITATOR_URL` takes `http:` as readily as `https:`
+ * and Coinbase is recognised by hostname, so `http://api.cdp.coinbase.com/…`
+ * satisfies every other check here and would put both credentials on the wire
+ * in the clear. The host, in the one spelling `hostOf` writes every host down
+ * to. The port, which has to be the one `https:` already means, because
+ * nothing of Coinbase's answers on another — `:443` written out is dropped by
+ * the address parser before it reaches this comparison, so the spelling that
+ * is merely explicit still passes. A user name and password, which must not be
+ * there at all: a request built from an address carrying credentials is
+ * refused where it is built, so every call would throw, and the refusal that
+ * sends an operator looking would print the password into their log on the way
+ * past. The path, with trailing slashes off, because the x402 facilitator
+ * client takes those off before it joins `/verify` on — a wrong path under the
+ * right host is the failure this whole rule is shaped around, while a trailing
+ * slash is the same endpoint and must not be refused. And a query or a
+ * fragment, which must be absent, because either would be carried into the
+ * middle of every request built under the base.
  *
  * This is a narrower question than `isCdpFacilitator` and does not replace it.
  * That one asks who may be handed credentials, which is a question about a host
@@ -148,6 +159,9 @@ function isTheLiveFacilitator(facilitatorUrl: string): boolean {
   return (
     given.protocol === "https:" &&
     host === wanted.hostname &&
+    given.port === "" &&
+    given.username === "" &&
+    given.password === "" &&
     given.pathname.replace(/\/+$/, "") === wanted.pathname.replace(/\/+$/, "") &&
     given.search === "" &&
     given.hash === ""
