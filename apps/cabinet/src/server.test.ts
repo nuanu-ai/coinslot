@@ -2662,6 +2662,16 @@ describe("the keys screen", () => {
     // the exact lie the gateway refused to write into the row.
     expect(never).not.toBe(inColumn(page, ANOTHER.id, /made/i));
     expect(unrecorded).not.toBe(inColumn(page, REVOKED.id, /made/i));
+    // And neither of them says that nobody called. The gateway did not check
+    // that and cannot: what it knows is what it wrote down, and a key older
+    // than the writing has this same blank against it. So an empty cell is a
+    // sentence about our records — the one word below is load-bearing rather
+    // than a wording somebody liked, and "never" is the word the screen keeps
+    // reaching for when it forgets which of the two it is entitled to say.
+    for (const blank of [never, unrecorded]) {
+      expect(blank).toMatch(/record/i);
+      expect(blank).not.toMatch(/never/i);
+    }
   });
 
   it("issues a key, shows its secret once, and says that is the only time", async () => {
