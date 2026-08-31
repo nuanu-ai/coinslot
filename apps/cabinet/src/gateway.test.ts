@@ -150,7 +150,6 @@ describe("the call that makes a merchant", () => {
     // route does not take.
     const { url, arrived } = await recordingServer(200, {
       merchant_id: "mer_the_merchant",
-      key: aKey(),
       secret: "the-secret-shown-once",
     });
 
@@ -166,7 +165,6 @@ describe("the call that makes a merchant", () => {
   it("hands back the merchant and the secret the account is written with", async () => {
     const { url } = await recordingServer(200, {
       merchant_id: "mer_the_merchant",
-      key: aKey(),
       secret: "the-secret-shown-once",
     });
 
@@ -185,10 +183,7 @@ describe("the call that makes a merchant", () => {
     // meets a 401 on every screen, with nothing on the page to say why. Held to
     // the contract's shape here, so it fails at the call rather than three
     // screens later.
-    const { url } = await recordingServer(200, {
-      merchant_id: "mer_the_merchant",
-      key: aKey(),
-    });
+    const { url } = await recordingServer(200, { merchant_id: "mer_the_merchant" });
 
     await expect(registrarFor(url).register("the-invitation")).rejects.toThrow();
   });

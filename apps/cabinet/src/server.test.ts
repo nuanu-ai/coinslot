@@ -1102,16 +1102,7 @@ describe("registering", () => {
 
   const madeAMerchant = (): Answer<RegisteredMerchant> => ({
     ok: true,
-    document: {
-      merchant_id: "mer_the_merchant",
-      key: {
-        id: "key_the_first_one",
-        label: "the first key",
-        created_at: "2026-08-28T09:00:00.000Z",
-        disabled_at: null,
-      },
-      secret: KEY,
-    },
+    document: { merchant_id: "mer_the_merchant", secret: KEY },
   });
 
   /** The gateway refusing, which is a wrong invitation and a closed door alike. */

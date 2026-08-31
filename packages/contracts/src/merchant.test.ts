@@ -334,11 +334,11 @@ describe("what registering answers with", () => {
   }
 
   it("carries no row for the key it just handed over", () => {
-    // The key made here is a cabinet's, and the merchant has no screen it sits
-    // on and no call that reaches it. An identifier for it is therefore a thing
-    // with exactly one use, and it is not a good one — so this answer does not
-    // hand one out, and a client that put one back is refused rather than
-    // quietly trimmed.
+    // The key made here is a cabinet's: the merchant has no screen it sits on,
+    // and the call that revokes a key refuses its kind by name. An identifier
+    // for it is therefore a value with nothing to do, so this answer does not
+    // carry one, and a client that put one back is refused rather than quietly
+    // trimmed.
     expect(errorOf(RegisteredMerchantSchema, { ...registered, key: working })).toContain("key");
   });
 

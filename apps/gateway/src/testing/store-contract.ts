@@ -511,8 +511,8 @@ export function describeStore(name: string, open: () => Promise<Store>): void {
         //
         // A key of the merchant's own written here instead would be a row in
         // that list on the first visit: one they never asked for, cannot
-        // recognise, and must not revoke, since revoking it is the cabinet
-        // going dark.
+        // recognise, and cannot revoke, since revoking it is the cabinet going
+        // dark.
         const store = await fresh();
 
         const made = await store.registerMerchant(
@@ -851,7 +851,7 @@ export function describeStore(name: string, open: () => Promise<Store>): void {
           1_000,
         );
 
-        expect((await store.disableKeyOf(A, "mk_a", 2_000))?.disabledAt).toBe(2_000);
+        expect(await store.disableKeyOf(A, "mk_a", 2_000)).toMatchObject({ disabledAt: 2_000 });
         expect(await store.disableKeyOf(A, "mk_b", 2_000)).toBeNull();
         expect(await store.disableKeyOf(A, "mk_nobody_was_issued", 2_000)).toBeNull();
 
@@ -861,7 +861,7 @@ export function describeStore(name: string, open: () => Promise<Store>): void {
         // The first revocation stays the true one here as well: a retry after a
         // dropped connection must not move the instant somebody reconstructing
         // an incident is working from.
-        expect((await store.disableKeyOf(A, "mk_a", 9_000))?.disabledAt).toBe(2_000);
+        expect(await store.disableKeyOf(A, "mk_a", 9_000)).toMatchObject({ disabledAt: 2_000 });
       });
 
       it("is not disabled by the merchant when it was made for their cabinet", async () => {

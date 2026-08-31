@@ -50,13 +50,13 @@ seller reaches an agent inside a payment challenge that names nobody.
 for.** Three merchant-scoped routes over the keys a merchant made for their own
 code — list, issue, disable — and two at `/v0/keys/cabinet` that make and
 sweep up the key the cabinet calls with, refused to any other key. That one is
-in no merchant's list, since they neither issued it nor have a screen it sits
-on, and the sweep removes rather than revokes: nobody reads one back. A
+in no merchant's list and is refused by the disabling, since a merchant
+switches off what they issued; the sweep removes rather than revokes. A
 merchant cannot disable the key their own call was made with — a rule in the
-route, because that click leaves them a cabinet no page of which works and no
-terminal to fix it. It sees the key on the call, so two keys disabling each
-other in one moment still leave a merchant with none, which nobody has decided
-to refuse.
+route, because that click leaves whoever made it calling with something the
+gateway no longer takes. It sees the key on the call, so two keys disabling
+each other in one moment still leave a merchant with none of their own, which
+nobody has decided to refuse; the way back in is a key of the other kind.
 
 ## Consequences
 

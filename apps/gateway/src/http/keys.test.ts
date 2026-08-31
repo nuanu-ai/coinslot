@@ -273,8 +273,8 @@ describe("the keys a merchant holds", () => {
   it("lists nothing at all for a merchant who has only ever signed in", async () => {
     // The first thing a keys screen ever draws. Registering makes the key a
     // cabinet calls with, and that is not one of the merchant's own: they did
-    // not ask for it, have no screen it sits on, and a row for it would be a
-    // row whose only effect is the question of why it will not go away.
+    // not ask for it, cannot disable it, and a row for it would be a row whose
+    // only effect is the question of why it will not go away.
     const { served, harnessed } = await started();
     const made = await registered(served);
 

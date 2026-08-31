@@ -444,7 +444,7 @@ export interface Store {
    * with — so a caller who could ask for the other kind could only ever be
    * asking by mistake, and the mistake is a row in the merchant's own list of
    * keys on their first visit: one they never asked for, cannot recognise, and
-   * must not revoke, since revoking it is their cabinet going dark.
+   * cannot revoke, since revoking it is their cabinet going dark.
    *
    * No listing name goes down with them, because registering does not ask for
    * one: the name buyers read is chosen afterwards, through `setServiceName`.
@@ -571,7 +571,7 @@ export interface Store {
    * The same promise about order, and one thing left out: the keys a cabinet
    * calls with. This is the read behind the list a merchant is shown, and a
    * list is a place somebody acts — so a row they did not make, cannot
-   * recognise and must not revoke has no business on it.
+   * recognise and cannot revoke has no business on it.
    *
    * The narrowing is here rather than in whoever calls, because a filter every
    * caller has to remember is a filter one of them will not. What that costs
@@ -598,22 +598,43 @@ export interface Store {
 
   /**
    * Stops one of this merchant's keys working and hands back where it now
-   * stands. Null where this merchant has no such key — which is the same answer
-   * as no such key anywhere, on purpose.
+   * stands. Three answers, and the two that are not a key are two different
+   * facts.
    *
-   * The sameness is the point rather than a simplification. Told apart, this
-   * call would count somebody else's keys: a merchant walking identifiers would
-   * learn which of them are real, and the identifiers of a merchant's keys are
-   * not secrets — they are printed in their own list and in ours.
+   * Null is this merchant having no such key — which is the same answer as no
+   * such key anywhere, on purpose. The sameness is the point rather than a
+   * simplification. Told apart, this call would count somebody else's keys: a
+   * merchant walking identifiers would learn which of them are real, and the
+   * identifiers of a merchant's keys are not secrets.
    *
-   * The merchant is in the predicate rather than checked after the read, so a
-   * key of somebody else's is never selected and there is no window between
-   * finding out whose it is and writing to it.
+   * `"made_for_a_cabinet"` is a key of this merchant's that they did not issue.
+   * A merchant switches off what they made; the credential their cabinet calls
+   * with is not that, and revoking it signs somebody out of the cabinet they
+   * are standing in. It is told apart from the null because it is a fact about
+   * the caller's own row rather than about a stranger's, so saying it counts
+   * nothing that was hidden — and because the caller is owed the reason, which
+   * "there is no such key" would not be.
+   *
+   * The rule holds however the identifier was come by. Nothing on the surface
+   * hands one out, and that is deliberately not what this rests on: an
+   * invariant that depends on nobody ever printing a value is an invariant that
+   * ends the first time somebody does.
+   *
+   * Both the merchant and the kind are in the predicate rather than checked
+   * after the read, so a key this call may not touch is never selected and
+   * there is no window between finding out what it is and writing to it. What a
+   * kind that is not the merchant's own costs is a second read on the refusal
+   * path alone, after nothing has been written; a key's kind never changes, so
+   * the two cannot disagree.
    *
    * Disabling a key that is already disabled keeps the instant it was first
    * revoked at, exactly as {@link disableKey} does.
    */
-  disableKeyOf(merchantId: string, id: string, at: number): Promise<StoredKey | null>;
+  disableKeyOf(
+    merchantId: string,
+    id: string,
+    at: number,
+  ): Promise<StoredKey | "made_for_a_cabinet" | null>;
 
   /**
    * Removes every key this merchant has for a cabinet except the one named, and

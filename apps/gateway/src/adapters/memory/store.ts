@@ -331,13 +331,23 @@ export class MemoryStore implements Store {
     return found === undefined ? null : this.#revoke(found, at);
   }
 
-  async disableKeyOf(merchantId: string, id: string, at: number): Promise<StoredKey | null> {
+  async disableKeyOf(
+    merchantId: string,
+    id: string,
+    at: number,
+  ): Promise<StoredKey | "made_for_a_cabinet" | null> {
     const found = this.#keys.get(id);
     // Another merchant's key is not found rather than refused, which is what
     // makes a refusal say nothing about whose keys exist. Postgres does the same
     // thing with a predicate; here it is this line.
     if (found === undefined || found.merchantId !== merchantId) {
       return null;
+    }
+    // Their own key, and not one they made. Told apart from the null above
+    // because this one is a fact about their own row, and because revoking it
+    // would sign somebody out of the cabinet they are standing in.
+    if (found.purpose !== "merchant_code") {
+      return "made_for_a_cabinet";
     }
     return this.#revoke(found, at);
   }

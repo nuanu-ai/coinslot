@@ -297,6 +297,22 @@ export function handlersFor(gateway: Gateway): Partial<Record<RouteName, Mounted
             ),
           );
         }
+        if (disabled === "made_for_a_cabinet") {
+          // Their own key, and not one they made. A merchant switches off what
+          // they issued; this one is how a cabinet reaches the gateway for
+          // them, and revoking it signs somebody out of the page they are
+          // standing on. Said in its own words rather than as "no such key",
+          // because the caller is owed the reason and because the key is
+          // theirs — there is nothing here a stranger learns.
+          return written(
+            call.response,
+            CONFLICT,
+            refusal(
+              "key_made_for_a_cabinet",
+              "this key was made for a cabinet to call as this merchant with, and only the keys the merchant issued for their own code are disabled here",
+            ),
+          );
+        }
         if (disabled === null) {
           // A key of another merchant's is refused in the words a key that is
           // not there gets. Disabling is not a way of counting somebody else's

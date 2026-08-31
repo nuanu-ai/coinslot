@@ -209,11 +209,11 @@ export const DisabledKeySchema = z
  * Every other answer that makes a key carries the row beside it, and this one
  * cannot. A key made for a cabinet is in no merchant's list — they did not
  * issue it and have no reason to know it exists — so an identifier here would
- * name a row that no screen of theirs draws and no button of theirs reaches.
- * It would still be an identifier the revoking takes: that call names a key and
- * asks nothing about what it was made for, so handing one out is handing out
- * the way to switch a cabinet off. What the caller does with this is put it on
- * the row of whoever just signed in, and that is the whole of what it needs.
+ * name a row that no screen of theirs draws and no call of theirs reaches: not
+ * the list it is absent from, and not the revoking, which takes the keys a
+ * merchant issued and refuses this kind by name. What the caller does with this
+ * is put it on the row of whoever just signed in, and that is the whole of what
+ * it needs.
  */
 export const CabinetKeySchema = z
   .strictObject({
@@ -222,7 +222,7 @@ export const CabinetKeySchema = z
   })
   .meta({
     description:
-      "A key made for a cabinet to call as one merchant, carried once and readable nowhere afterwards. There is no row beside it and there is nothing to put one: a key made this way is in no merchant's list of keys, because the merchant did not issue it and has no screen it belongs on. Its identifier is deliberately not here — the call that revokes a key asks nothing about what that key was made for, so an identifier for this one is the way to switch a cabinet off. Whoever asked for this holds it until they ask for another.",
+      "A key made for a cabinet to call as one merchant, carried once and readable nowhere afterwards. There is no row beside it and there is nothing to put one: a key made this way is in no merchant's list of keys, and the call that revokes a key refuses this kind by name — so an identifier for it would name something no answer shows and no call acts on. Whoever asked for this holds it until they ask for another.",
   });
 
 /**
@@ -427,20 +427,17 @@ export const RegistrationRequestSchema = z
   });
 
 /**
- * What registering answers with: a merchant, the key the cabinet will call as
- * them with, and the secret.
+ * What registering answers with: a merchant and the key their cabinet will call
+ * as them with.
  *
  * The key is made for a cabinet rather than for the merchant's own code, and
  * that is what the caller of this route is. So it is in no list: a merchant who
  * has just registered has no keys of their own at all, and the first one they
- * do have is one they ask for. The row travels here anyway, because it is the
- * one thing this answer can say about the credential it just handed over — and
- * it is the one place on this surface that hands out the identifier of such a
- * key, which the call that revokes one will take as readily as any other. A
- * screen that drew it beside a merchant's own keys would be offering them the
- * button that switches their own cabinet off.
+ * do have is one they ask for. No row travels beside the secret for the same
+ * reason no row appears in the list — the merchant did not issue it and cannot
+ * disable it, so an identifier for it would be a value with nothing to do.
  *
- * No name comes back, because none was chosen. A merchant who has just
+ * No name comes back either, because none was chosen. A merchant who has just
  * registered is listed under nothing at all, and a field here would either be a
  * name this call invented or a null that says the same thing at more length.
  */
@@ -449,14 +446,12 @@ export const RegisteredMerchantSchema = z
     /** The merchant that now exists, which every key and card of theirs names. */
     merchant_id: IdentifierSchema,
 
-    key: MerchantKeySchema,
-
     /** The key itself, shown once, exactly as issuing one shows it. */
     secret: KeySecretSchema,
   })
   .meta({
     description:
-      "What registering produced: the merchant, the key whoever registered them will call as them with, and that key itself. The key is readable here and nowhere afterwards, so whoever made this call is the only party that can keep it. It is a key made for a cabinet rather than one of the merchant's own: it appears in no list of their keys and cannot be revoked from there, and a merchant who has just registered has no keys of their own until they ask for one. The merchant is listed under no name yet and this answer carries none — the name their products are sold under is chosen afterwards, and until it is, publishing a card is refused. What this answer does not carry either is any notion of an account or a session: registering makes a merchant and a key, and whatever signs a person in is on the other side of this call.",
+      "What registering produced: the merchant, and the key whoever registered them will call as them with. The key is readable here and nowhere afterwards, so whoever made this call is the only party that can keep it. It is a key made for a cabinet rather than one of the merchant's own: it appears in no list of their keys and the call that revokes a key refuses its kind by name, so no row for it comes back here either. A merchant who has just registered has no keys of their own until they ask for one. The merchant is listed under no name yet and this answer carries none — the name their products are sold under is chosen afterwards, and until it is, publishing a card is refused. What this answer does not carry either is any notion of an account or a session: registering makes a merchant and a key, and whatever signs a person in is on the other side of this call.",
   });
 
 export type SellerName = z.infer<typeof SellerNameSchema>;

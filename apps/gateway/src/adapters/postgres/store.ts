@@ -379,17 +379,41 @@ export class PostgresStore implements Store {
     return row === undefined ? null : storedKeyOf(row);
   }
 
-  async disableKeyOf(merchantId: string, id: string, at: number): Promise<StoredKey | null> {
-    // The merchant is in the predicate, so another merchant's key is never
-    // selected rather than selected and then refused — which is what makes
-    // "not yours" and "not there" one answer from where the caller stands, and
-    // leaves no window between finding out whose the key is and writing to it.
+  async disableKeyOf(
+    merchantId: string,
+    id: string,
+    at: number,
+  ): Promise<StoredKey | "made_for_a_cabinet" | null> {
+    // The merchant and the kind are both in the predicate, so a key this call
+    // may not touch is never selected rather than selected and then refused —
+    // which is what makes "not yours" and "not there" one answer from where the
+    // caller stands, and leaves no window between finding out what the key is
+    // and writing to it.
     const [row] = await this.#db
       .update(merchantKeys)
       .set({ disabledAt: revokedAt(at) })
-      .where(and(eq(merchantKeys.id, id), eq(merchantKeys.merchantId, merchantId)))
+      .where(
+        and(
+          eq(merchantKeys.id, id),
+          eq(merchantKeys.merchantId, merchantId),
+          eq(merchantKeys.purpose, "merchant_code"),
+        ),
+      )
       .returning();
-    return row === undefined ? null : storedKeyOf(row);
+    if (row !== undefined) {
+      return storedKeyOf(row);
+    }
+
+    // Nothing was written, and the two reasons for that are two different
+    // answers. Asked only on this path, so an ordinary revocation is still one
+    // statement; and a key's kind never changes after it is written, so this
+    // cannot come back disagreeing with the predicate above.
+    const [theirs] = await this.#db
+      .select({ id: merchantKeys.id })
+      .from(merchantKeys)
+      .where(and(eq(merchantKeys.id, id), eq(merchantKeys.merchantId, merchantId)))
+      .limit(1);
+    return theirs === undefined ? null : "made_for_a_cabinet";
   }
 
   // --- the catalog ----------------------------------------------------------

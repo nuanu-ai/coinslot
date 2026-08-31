@@ -1126,6 +1126,13 @@ describe("the route table", () => {
     expect(API_ROUTES.list_keys.description).toContain("not among");
   });
 
+  it("says a key made for a cabinet is not disabled through the merchant's call", () => {
+    // The rule a cabinet author has to know before drawing a keys screen, and
+    // the one a merchant meets if they ever aim at such an identifier: this
+    // call reaches what they issued and refuses the rest by name.
+    expect(API_ROUTES.disable_key.description).toContain("key_made_for_a_cabinet");
+  });
+
   it("says the two cabinet calls are refused to a merchant's own key", () => {
     // The refusal is not hygiene and a reader has to know which key to make
     // these with: a sweep made with a key of the merchant's own code would take

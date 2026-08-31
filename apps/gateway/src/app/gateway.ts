@@ -584,8 +584,12 @@ export class Gateway {
       );
     }
 
-    const { merchant, key, secret } = registered;
-    return { merchant_id: merchant.id, key: merchantKeyOf(key), secret };
+    // The key's own row stays here. It is a cabinet's, which is in no list and
+    // is not disabled through the merchant's calls, so an identifier for it is
+    // a value with nothing to do — and the caller already holds the one thing
+    // it needs, which is the key.
+    const { merchant, secret } = registered;
+    return { merchant_id: merchant.id, secret };
   }
 
   /**
@@ -706,8 +710,8 @@ export class Gateway {
    *
    * The keys a cabinet holds are not in the list, and the read that leaves them
    * out is the store's rather than a filter here: a merchant's list is a place
-   * they act, and a row they did not make and must not revoke does not belong
-   * on it.
+   * they act, and a row they did not make and cannot revoke does not belong on
+   * it.
    *
    * So `this_call` is not always one of the keys beside it — a cabinet calls
    * with a key of its own — and it is answered all the same, because the field
@@ -797,38 +801,41 @@ export class Gateway {
   /**
    * Stops one of this merchant's keys working.
    *
-   * Three answers, and two of them are refusals with different shapes because
+   * Four answers, and three of them are refusals with different shapes because
    * they are different facts. `locked_out` is the key this very call was made
-   * with: a merchant who disabled it would be left with a cabinet the gateway
-   * will not take and a terminal they do not have (ADR-0014 §5), so it is
-   * refused before anything is read, which also means it can never half-happen.
+   * with: whoever holds it would be left calling with something the gateway no
+   * longer takes (ADR-0014 §5), so it is refused before anything is read, which
+   * also means it can never half-happen — and it is asked first for that reason
+   * rather than for any other, since every answer below it costs a write or a
+   * read. `made_for_a_cabinet` is a key of theirs they did not issue: a
+   * merchant switches off what they made, and this one is a cabinet's way in.
    * `null` is every other key that is not this merchant's to disable — one that
    * does not exist and one belonging to somebody else, told apart nowhere, so a
    * refusal is not a way of counting another merchant's keys.
    *
-   * How far the first refusal reaches is worth stating, because ADR-0014 §5 is
-   * written in the words "the key their cabinet is holding" and this is narrower
-   * than that. What the gateway knows is which key opened the call in front of
-   * it. Which key a cabinet signed in with is on a row on the other side of the
-   * boundary, and no call carries it — so a merchant with two keys can disable
-   * either with the other, the one their cabinet holds included, and two calls
-   * made at the same moment with two keys, each naming the other, both pass this
-   * line and leave the merchant with none. Neither is refused here and neither
-   * is refused anywhere else. Widening the rule would mean refusing a merchant
-   * their own last working key, which takes something away from them and is a
-   * decision rather than a fix; §5 of the decision says as much and says nobody
-   * has taken it.
+   * How far these refusals reach is worth stating. A merchant with two keys
+   * they issued can still disable either with the other, and two calls made at
+   * the same moment with two such keys, each naming the other, both pass the
+   * first line and leave the merchant with none of their own. That is not
+   * refused here and is not refused anywhere else: widening it would mean
+   * refusing a merchant their own last working key, which takes something away
+   * from them and is a decision rather than a fix; §5 of ADR-0014 says as much
+   * and says nobody has taken it. What it costs them is their own code going
+   * quiet, and not the way back in — their cabinet signs in on a key of a kind
+   * this call does not touch, and issuing another is a page away.
    */
   async disableMerchantKey(
     merchantId: string,
     keyId: string,
     thisCall: string,
-  ): Promise<DisabledKey | "locked_out" | null> {
+  ): Promise<DisabledKey | "locked_out" | "made_for_a_cabinet" | null> {
     if (keyId === thisCall) {
       return "locked_out";
     }
     const disabled = await this.runtime.store.disableKeyOf(merchantId, keyId, this.runtime.clock());
-    return disabled === null ? null : { key: merchantKeyOf(disabled) };
+    return typeof disabled === "string" || disabled === null
+      ? disabled
+      : { key: merchantKeyOf(disabled) };
   }
 
   // --- buying ---------------------------------------------------------------
