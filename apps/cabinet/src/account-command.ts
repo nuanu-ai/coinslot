@@ -23,9 +23,19 @@
  * same reason: it is a secret, the reasoning above does not care which kind,
  * and an argument is an argument. It is read from standard input instead, so
  * that whoever runs this can pipe it in from wherever they are holding it.
+ *
+ * What the key is checked against is the gateway, and that is the one thing
+ * here that reaches the network. There are two kinds of key and they are the
+ * same shape: one a merchant made for their own code, and one a cabinet signs
+ * in with. Only the second belongs on a row — the first makes a cabinet that
+ * works by halves, signing in but never replacing its key and offering a
+ * control the gateway then refuses. Nothing on this side can tell them apart,
+ * so this asks the party that can, with the call only the second kind is
+ * allowed to make.
  */
 
 import { newPassword } from "./credentials.js";
+import type { Answer } from "./gateway.js";
 import type { AccountMerchant, Identity } from "./identity.js";
 import { printable } from "./printable.js";
 
@@ -88,6 +98,19 @@ const missingTables = (thrown: unknown): boolean =>
   "code" in thrown &&
   String((thrown as { code: unknown }).code) === NO_SUCH_TABLE;
 
+/**
+ * Asking the gateway whether a key is one a cabinet can sign in with.
+ *
+ * There are two kinds of key and only one of them belongs on an account row.
+ * The kind cannot be read off the value — they are the same shape — and the
+ * gateway is the only party that knows, so this asks it the way anything asks
+ * it: by making the call that only a cabinet's key is allowed to make, which is
+ * the call every sign-in afterwards makes anyway. What comes back on a yes is
+ * another key of that kind, which this command has no use for and throws away;
+ * it is held by nobody, and the first sign-in on the account sweeps it up.
+ */
+export type CabinetKeyCheck = (key: string) => Promise<Answer<string>>;
+
 /** The terminal this command is run at, handed in rather than reached for. */
 export interface Terminal {
   /** One line to whoever is watching. */
@@ -125,6 +148,7 @@ export async function runAccount(
   argv: readonly string[],
   identity: Identity,
   terminal: Terminal,
+  askTheGateway: CabinetKeyCheck,
 ): Promise<number> {
   const print = terminal.say;
   const now = terminal.now ?? (() => new Date());
@@ -139,7 +163,7 @@ export async function runAccount(
   // cabinet", which is the only question it is for.
   const say = (line: string): void => print(printable(line));
   try {
-    return await dispatch(argv, identity, say, now, terminal.readKey);
+    return await dispatch(argv, identity, say, now, terminal.readKey, askTheGateway);
   } catch (thrown) {
     if (!missingTables(thrown)) {
       throw thrown;
@@ -156,6 +180,7 @@ async function dispatch(
   say: (line: string) => void,
   now: () => Date,
   readKey: () => Promise<string>,
+  askTheGateway: CabinetKeyCheck,
 ): Promise<number> {
   const [verb, address, merchant] = argv;
 
@@ -178,7 +203,7 @@ async function dispatch(
   }
 
   if (verb === "add") {
-    return await addAccount(identity, say, address, merchant, readKey);
+    return await addAccount(identity, say, address, merchant, readKey, askTheGateway);
   }
   if (verb === "password") {
     return await changePassword(identity, say, address);
@@ -192,6 +217,7 @@ async function addAccount(
   address: string,
   merchantId: string | undefined,
   readKey: () => Promise<string>,
+  askTheGateway: CabinetKeyCheck,
 ): Promise<number> {
   // Both halves of the merchant before anything is generated or written. An
   // account made without them is one somebody can sign into and then see
@@ -212,7 +238,7 @@ async function addAccount(
     return 2;
   }
 
-  const merchant = await merchantKey(say, merchantId.trim(), readKey);
+  const merchant = await merchantKey(say, merchantId.trim(), readKey, askTheGateway);
   if (merchant === null) {
     return 2;
   }
@@ -248,6 +274,7 @@ async function merchantKey(
   say: (line: string) => void,
   id: string,
   readKey: () => Promise<string>,
+  askTheGateway: CabinetKeyCheck,
 ): Promise<AccountMerchant | null> {
   const key = (await readKey()).trim();
   if (key === "") {
@@ -262,7 +289,42 @@ async function merchantKey(
     );
     return null;
   }
-  return { id, key };
+
+  // And now the one question this cannot answer for itself. Everything above is
+  // about the shape of what arrived; whether it is a key a cabinet may sign in
+  // with is a fact only the gateway holds, and a key of the wrong kind accepted
+  // here is a cabinet that works by halves — signing in but never replacing its
+  // key, and offering a control on the keys screen that the gateway refuses.
+  // Asked last, so that nothing reaches the network for a value this command
+  // can already see is wrong.
+  const answered = await askTheGateway(key);
+  if (answered.ok) {
+    return { id, key };
+  }
+  if (answered.status === 403) {
+    // The one refusal that is about the key rather than about the gateway, and
+    // the only one somebody can do something about. It is said in full, because
+    // "wrong kind of key" without the way to a right one is a person at a
+    // terminal guessing.
+    say("That is a key the merchant made for their own code, and an account signs in with the");
+    say("other kind — the one a cabinet holds, which nobody types and no list of theirs shows.");
+    say("Nothing turns one into the other. A key of that kind comes from registering, or from a");
+    say("cabinet that is already signed in as this merchant; a merchant with neither cannot have");
+    say("an account made for them here.");
+    return null;
+  }
+  if (answered.status === 0) {
+    // Not knowing is not the same as knowing it is fine. An account written on
+    // a guess is the same broken cabinet, found later and by somebody else.
+    say(`Nothing was written: the gateway did not answer, so there is no telling whether that`);
+    say(`key is one a cabinet can sign in with. ${answered.why}.`);
+    return null;
+  }
+  // Everything else is the gateway's own sentence under its own status: a key
+  // it has never issued or has stopped accepting reads the same here, and
+  // neither is ours to translate.
+  say(`Nothing was written: the gateway would not accept that key. ${answered.why}.`);
+  return null;
 }
 
 async function changePassword(

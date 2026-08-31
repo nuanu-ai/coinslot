@@ -196,12 +196,19 @@ if (databaseUrl === null) {
       expect((await identity.signIn("dmitry@example.com", PASSWORD)).ok).toBe(false);
 
       const lines: string[] = [];
-      const code = await runAccount(["password", "dmitry@example.com"], identity, {
-        say: (line) => lines.push(line),
-        readKey: async () => {
-          throw new Error("the password command has no key to read");
+      const code = await runAccount(
+        ["password", "dmitry@example.com"],
+        identity,
+        {
+          say: (line) => lines.push(line),
+          readKey: async () => {
+            throw new Error("the password command has no key to read");
+          },
         },
-      });
+        async () => {
+          throw new Error("the password command has no key to ask the gateway about");
+        },
+      );
 
       expect(code).toBe(0);
       const printed = /^ {4}(\S+)$/m.exec(lines.join("\n"))?.[1] ?? "";
