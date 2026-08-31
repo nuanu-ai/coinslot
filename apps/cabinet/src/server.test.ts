@@ -71,6 +71,21 @@ const BEFORE_MERCHANTS = "before-merchants@example.com";
 const PASSWORD = "a-password-nobody-guesses";
 
 /**
+ * The code the gateway is told to accept, for the tests that register for real.
+ *
+ * Almost every test here signs in as an account the harness seeded, whose key
+ * is one of the merchant's own — the shape a deployment only gets when somebody
+ * at a terminal made the account. The tests about the key a cabinet holds
+ * cannot use it: the two calls about that key are refused to any other kind. So
+ * they go through the registration form against the real gateway, which is
+ * where a real cabinet key comes from, and this is what stands in the door.
+ */
+const INVITATION = "the-invitation-the-gateway-accepts";
+
+/** Somebody registering for themselves, who has no account until they do. */
+const FRESH = { email: "fresh-merchant@example.com", password: "a-password-of-their-own" };
+
+/**
  * The merchant both of those accounts sign in as.
  *
  * One merchant with two people at it, which ADR-0009 §9 names as a shape the
@@ -2434,9 +2449,18 @@ describe("the receipts screen", () => {
 });
 
 describe("the keys screen", () => {
-  const THIS_CALL: MerchantKey = {
-    id: "key_the_cabinet_is_using",
-    label: "the cabinet",
+  /**
+   * The key the cabinet's own calls are made with, which is on no row here.
+   *
+   * The gateway answers a cabinet's `GET /v0/keys` with the keys the merchant
+   * issued for their own code and names this one as `this_call` beside them —
+   * an identifier that matches nothing in the list. So it is an identifier
+   * here and not a row, which is what the screen is drawn against.
+   */
+  const CABINET_KEY = "key_the_cabinet_is_using";
+  const NIGHTLY: MerchantKey = {
+    id: "key_the_nightly_job",
+    label: "the nightly job",
     created_at: "2026-08-20T09:00:00.000Z",
     disabled_at: null,
   };
@@ -2456,7 +2480,7 @@ describe("the keys screen", () => {
 
   /** The three key routes answered by the test, the rest by the real gateway. */
   const withKeys = (
-    listed: readonly MerchantKey[] = [THIS_CALL, ANOTHER, REVOKED],
+    listed: readonly MerchantKey[] = [NIGHTLY, ANOTHER, REVOKED],
   ): {
     readonly disabled: string[];
     readonly issued: string[];
@@ -2464,7 +2488,7 @@ describe("the keys screen", () => {
   } => {
     const disabled: string[] = [];
     const issued: string[] = [];
-    const keys: MerchantKeyList = { keys: [...listed], this_call: THIS_CALL.id };
+    const keys: MerchantKeyList = { keys: [...listed], this_call: CABINET_KEY };
     return {
       disabled,
       issued,
@@ -2500,27 +2524,30 @@ describe("the keys screen", () => {
 
     const text = readable((await browser.get("/keys")).html);
 
-    expect(text).toContain("the cabinet");
+    expect(text).toContain("the nightly job");
     expect(text).toContain("the worker on the small box");
     expect(text).toContain("the laptop that went missing");
     expect(text).toMatch(/revoked/i);
     expect(text).toContain("2026-08-26");
   });
 
-  it("does not offer to disable the key this cabinet is holding", async () => {
-    // ADR-0014 §5: the gateway refuses that call, and one click would otherwise
-    // stand between a merchant and a cabinet that answers every page with "the
-    // gateway will not take this key" — with the way back through a terminal
-    // they do not have. So the control is not there to press, and the row says
-    // why rather than leaving a blank.
+  it("offers the control against every key on the list that still works", async () => {
+    // Every row here is a key the merchant issued for their own code, and the
+    // key this cabinet calls with is not one of them — the gateway lists it
+    // nowhere and names it beside the list instead. So there is no row this
+    // screen has to leave a blank against: a control missing from one of them
+    // would be a key the merchant could not revoke from the only page that
+    // revokes keys.
     const { browser } = await started({ client: withKeys().client });
     await browser.signIn();
 
     const page = (await browser.get("/keys")).html;
 
-    expect(page).not.toContain(`/keys/${THIS_CALL.id}/disable`);
+    expect(page).toContain(`/keys/${NIGHTLY.id}/disable`);
     expect(page).toContain(`/keys/${ANOTHER.id}/disable`);
-    expect(readable(page)).toMatch(/this cabinet is using/i);
+    // And the identifier the gateway named beside the list is not treated as a
+    // row: nothing on the page is drawn from it.
+    expect(page).not.toContain(CABINET_KEY);
   });
 
   it("offers no control at all against a key that is already revoked", async () => {
@@ -2661,30 +2688,44 @@ describe("the keys screen", () => {
   });
 
   it("says what the gateway said when it refuses to disable a key", async () => {
-    // The route holds the rule about the cabinet's own key, and the screen not
-    // offering the control is a courtesy rather than the guard. A merchant who
-    // reaches the address anyway is told what the gateway answered rather than
-    // being shown a page that says nothing happened.
-    const { browser } = await started({
-      client: (real) => ({
-        ...real,
-        keys: async () => ({
-          ok: true,
-          document: { keys: [THIS_CALL], this_call: THIS_CALL.id },
-        }),
-        disableKey: async () => ({
-          ok: false,
-          status: 409,
-          why: "a merchant cannot disable the key their cabinet is holding",
-        }),
-      }),
-    });
+    // The rules about which keys can be switched off live in the route, and the
+    // screen drawing a control is a courtesy rather than the guard. A merchant
+    // who reaches the address by hand — for a key that is another merchant's,
+    // or one that never existed — is told what the gateway answered rather than
+    // being shown a page that says nothing happened. Against the real gateway,
+    // so the sentence on the page is the gateway's own and not a test's idea of
+    // it.
+    const { browser } = await started();
     await browser.signIn();
 
-    const refused = await browser.post(`/keys/${THIS_CALL.id}/disable`);
+    const refused = await browser.post("/keys/key_nobody_has/disable");
 
-    expect(refused.status).toBe(409);
-    expect(readable(refused.html)).toContain("cannot disable the key their cabinet is holding");
+    expect(refused.status).toBe(404);
+    expect(readable(refused.html)).toContain("there is no such key");
+  });
+
+  it("draws a working screen for a merchant who has issued no keys of their own", async () => {
+    // The first screen every merchant registered through the form sees. The
+    // cabinet does not sign in with a key from this list and never has one
+    // here, so an empty list is the ordinary state of somebody who has not put
+    // Coinslot into their own code yet — and a page telling them their own
+    // starting state cannot happen is a page that has lied to every new
+    // merchant. Against the real gateway, because "the list is empty" is the
+    // gateway's answer and not this test's.
+    const { browser } = await started({ gateway: { REGISTRATION_INVITATION: INVITATION } });
+    await browser.post("/register", { ...FRESH, invitation: INVITATION });
+
+    const seen = await browser.get("/keys");
+    const text = readable(seen.html);
+
+    expect(seen.status).toBe(200);
+    expect(text).not.toMatch(/cannot happen/i);
+    // A screen and not a dead end: the one control that gets a merchant out of
+    // this state is on it.
+    expect(seen.html).toContain('action="/keys"');
+    // And it does not count rows that are not there as though some of them
+    // worked.
+    expect(text).not.toMatch(/\b0 of the 0\b/);
   });
 });
 
