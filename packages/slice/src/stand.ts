@@ -5,7 +5,7 @@
  * the fact of a connection, never the credential that opened it.
  */
 
-import { createServer, type IncomingMessage } from "node:http";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import {
   API_ROUTES,
   CardSchema,
@@ -59,6 +59,7 @@ let connectionGeneration = 0;
 let connectionAbort = new AbortController();
 let shuttingDown = false;
 let actionTail: Promise<void> = Promise.resolve();
+const feedResponses = new Map<ServerResponse, () => void>();
 
 const port = Number.parseInt(process.env.STAND_PORT ?? "8787", 10);
 if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
@@ -464,16 +465,20 @@ const doAction = async (form: URLSearchParams): Promise<void> => {
   }
 };
 
-const queueAction = (form: Promise<URLSearchParams>): Promise<void> => {
+const recordActionError = (error: unknown): void => {
+  const detail = error instanceof Error ? error.message : String(error);
+  message = detail;
+  feed.write("stand", "Action could not be completed.", { error: detail });
+};
+
+const queueAction = (form: URLSearchParams): Promise<void> => {
   const queued = actionTail.then(async () => {
     if (shuttingDown) return;
     try {
-      await doAction(await form);
+      await doAction(form);
     } catch (error) {
       if (shuttingDown) return;
-      const detail = error instanceof Error ? error.message : String(error);
-      message = detail;
-      feed.write("stand", "Action could not be completed.", { error: detail });
+      recordActionError(error);
     }
   });
   actionTail = queued;
@@ -488,8 +493,17 @@ const server = createServer(async (request, response) => {
       "cache-control": "no-cache",
       connection: "keep-alive",
     });
-    const stop = feed.listen((one) => response.write(`data: ${JSON.stringify(one)}\n\n`));
-    request.once("close", stop);
+    const stop = feed.listen((one) => {
+      if (!response.writableEnded && !response.destroyed)
+        response.write(`data: ${JSON.stringify(one)}\n\n`);
+    });
+    const closeFeed = (): void => {
+      stop();
+      feedResponses.delete(response);
+    };
+    feedResponses.set(response, closeFeed);
+    request.once("close", closeFeed);
+    response.once("close", closeFeed);
     return;
   }
   if (request.method === "POST") {
@@ -505,8 +519,21 @@ const server = createServer(async (request, response) => {
         .end("This form post did not come from this loopback stand.");
       return;
     }
-    await queueAction(bodyOf(request));
-    response.writeHead(303, { location: "/" }).end();
+    let form: URLSearchParams;
+    try {
+      form = await bodyOf(request);
+    } catch (error) {
+      if (!response.writableEnded && !response.destroyed) {
+        recordActionError(error);
+        response
+          .writeHead(400, { "content-type": "text/plain; charset=utf-8" })
+          .end("This form body could not be read.");
+      }
+      return;
+    }
+    await queueAction(form);
+    if (!response.writableEnded && !response.destroyed)
+      response.writeHead(303, { location: "/" }).end();
     return;
   }
   if (request.method === "GET" && url.pathname === "/") {
@@ -540,6 +567,10 @@ const shutdown = async (): Promise<void> => {
   if (shuttingDown) return;
   shuttingDown = true;
   stopWatchingThisConnection();
+  for (const [response, closeFeed] of [...feedResponses]) {
+    closeFeed();
+    if (!response.writableEnded && !response.destroyed) response.end();
+  }
   apiKey = null;
   cards = [];
   selling = null;
