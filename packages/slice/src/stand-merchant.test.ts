@@ -116,6 +116,55 @@ const orderGateway = async (): Promise<{
   };
 };
 
+const blockingDeliveryGateway = async (): Promise<{
+  url: string;
+  deliveryBegan: () => boolean;
+  releaseDelivery: () => void;
+  close: () => Promise<void>;
+}> => {
+  let sent = false;
+  let began = false;
+  let release: (() => void) | undefined;
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const server: Server = createServer(async (request, response) => {
+    if (request.url?.endsWith("/worker/poll") === true) {
+      const envelopes = sent ? [] : [orderAfterMove()];
+      sent = true;
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify({ contract_version: CONTRACT_VERSION, envelopes }));
+      return;
+    }
+    for await (const _chunk of request) {
+      // Consume the body before responding so this test gateway mirrors HTTP
+      // connection reuse rather than leaving bytes behind for the next request.
+    }
+    response.setHeader("content-type", "application/json");
+    if (request.url?.endsWith("/deliver") === true) {
+      began = true;
+      await released;
+      response.end(JSON.stringify({ ok: true, result: "delivered" }));
+      return;
+    }
+    response.end(JSON.stringify({ ok: true, result: "accepted" }));
+  });
+  server.listen(0, "127.0.0.1");
+  await new Promise<void>((resolve) => server.once("listening", resolve));
+  const { port } = server.address() as AddressInfo;
+  return {
+    url: `http://127.0.0.1:${port}`,
+    deliveryBegan: () => began,
+    releaseDelivery: () => release?.(),
+    close: async () => {
+      release?.();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error === undefined ? resolve() : reject(error)));
+      });
+    },
+  };
+};
+
 let merchant: ReturnType<typeof makeStandMerchant> | undefined;
 const shutting: Array<() => Promise<void>> = [];
 
@@ -163,5 +212,40 @@ describe("connecting the stand somewhere else", () => {
     await waitUntil(() => second.delivered() !== undefined);
 
     expect(second.delivered()).toEqual({ delivered: {} });
+  });
+
+  it("waits for a delivery already in flight before replacing the gateway", async () => {
+    const oldGateway = await blockingDeliveryGateway();
+    const nextGateway = await pollCounter();
+    shutting.push(oldGateway.close, nextGateway.close);
+    const feed = makeFeed();
+
+    merchant = makeStandMerchant(feed);
+    merchant.moods.order = "accept_then_deliver";
+    merchant.moods.deliverAfterMs = 0;
+    await merchant.connect(oldGateway.url, KEY);
+    await waitUntil(oldGateway.deliveryBegan);
+
+    let replacementFinished = false;
+    const replacing = merchant.connect(nextGateway.url, KEY).then(() => {
+      replacementFinished = true;
+    });
+    await Promise.resolve();
+
+    expect(replacementFinished).toBe(false);
+    oldGateway.releaseDelivery();
+    await replacing;
+    await waitUntil(() => nextGateway.polls() > 0);
+
+    const oldAnswer = feed.entries().findIndex(
+      (entry) => entry.title === "The accepted-order delivery answered.",
+    );
+    const newConnection = feed.entries().findIndex(
+      (entry) =>
+        entry.title === "Connected the merchant." &&
+        (entry.detail as { base_url?: string }).base_url === nextGateway.url,
+    );
+    expect(oldAnswer).toBeGreaterThanOrEqual(0);
+    expect(oldAnswer).toBeLessThan(newConnection);
   });
 });
