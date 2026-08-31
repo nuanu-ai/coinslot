@@ -75,8 +75,8 @@ const keyControl = (base: string, entry: MerchantKey): string => {
  */
 const WHAT_A_KEY_IS =
   "A key is what your own code opens the door with, and this list is the keys you have asked" +
-  " for. The cabinet is not one of them: it signs in with a key of its own that you never see" +
-  " and never have to look after.";
+  " for. The cabinet does not use one of them: it signs in with a key of its own that you never" +
+  " see and never have to look after.";
 
 export const keysScreen = (viewer: Viewer, keys: MerchantKeyList, problem?: string): string => {
   const { base } = viewer;
