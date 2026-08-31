@@ -2610,6 +2610,54 @@ describe("the keys screen", () => {
     expect(page).not.toContain(`/keys/${REVOKED.id}/disable`);
   });
 
+  /**
+   * What one key's row says in the column whose header this matches.
+   *
+   * Read through the header rather than by counting cells, so a column added
+   * beside this one does not quietly move what is being read.
+   */
+  const inColumn = (html: string, keyId: string, header: RegExp): string => {
+    const heading = html.match(/<thead>[\s\S]*?<\/thead>/)?.[0] ?? "";
+    const headers = [...heading.matchAll(/<th[^>]*>([\s\S]*?)<\/th>/g)].map((cell) =>
+      readable(cell[1] ?? ""),
+    );
+    const at = headers.findIndex((word) => header.test(word));
+    if (at < 0) {
+      throw new Error(`no column of this table is headed ${header}: ${headers.join(", ")}`);
+    }
+    const row = (html.match(/<tr[\s\S]*?<\/tr>/g) ?? []).find((one) => one.includes(keyId));
+    if (row === undefined) {
+      throw new Error(`no row of this table is the key ${keyId}`);
+    }
+    return readable([...row.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)][at]?.[1] ?? "");
+  };
+
+  it("says when each key was last called, and when nobody wrote that down", async () => {
+    // The column the screen is worth opening for: three keys, and which of them
+    // is safe to revoke. The three answers it can give are all here, and the
+    // last two are the reason this is a case at all.
+    //
+    // A key nothing has called since it was made is idle, and that is a fact to
+    // act on. A key older than this record has the same blank for a completely
+    // different reason — nobody was writing it down — and revoking on the
+    // strength of that one is revoking a key that may be in a worker right now.
+    // Which words the screen uses for them is a person's choice; that they are
+    // not the same words is the promise, and the moment is written the way
+    // every other moment on these screens is.
+    const { browser } = await started({ client: withKeys().client });
+    await browser.signIn();
+
+    const page = (await browser.get("/keys")).html;
+    const called = inColumn(page, NIGHTLY.id, /last/i);
+    const never = inColumn(page, ANOTHER.id, /last/i);
+    const unrecorded = inColumn(page, REVOKED.id, /last/i);
+
+    expect(called).toBe("2026-08-27 02:15:00 UTC");
+    expect(never).not.toBe("");
+    expect(unrecorded).not.toBe("");
+    expect(never).not.toBe(unrecorded);
+  });
+
   it("issues a key, shows its secret once, and says that is the only time", async () => {
     // The same promise the command makes and for the same reason: nothing keeps
     // a readable copy, so a merchant who does not copy it has to issue another.
