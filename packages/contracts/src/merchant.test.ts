@@ -20,6 +20,8 @@ const working = {
   id: "mk_4d21bb",
   label: "the shop's own worker",
   created_at: "2026-08-26T09:00:00Z",
+  last_used_at: "2026-08-30T14:05:00Z",
+  use_recorded_since_made: true,
   disabled_at: null,
 };
 
@@ -43,11 +45,52 @@ describe("one of a merchant's keys", () => {
     expect(MerchantKeySchema.parse(revoked)).toStrictEqual(revoked);
   });
 
-  for (const field of ["id", "label", "created_at", "disabled_at"]) {
+  for (const field of [
+    "id",
+    "label",
+    "created_at",
+    "disabled_at",
+    "last_used_at",
+    "use_recorded_since_made",
+  ]) {
     it(`refuses a key without ${field} and names it`, () => {
       expectMissingFieldRejected(MerchantKeySchema, working, field);
     });
   }
+
+  it("tells a key nobody has called from one nobody was watching", () => {
+    // The two blanks. A key made since the gateway started recording use and
+    // never called is idle, and that is a fact somebody can revoke on; a key
+    // older than the record has a blank because nobody was writing it down, and
+    // revoking on that is revoking a key that may be in a worker right now.
+    // They are the same null, so the second field is the only thing between a
+    // merchant and a confident answer nobody checked.
+    const idle = { ...working, last_used_at: null, use_recorded_since_made: true };
+    const unknown = { ...working, last_used_at: null, use_recorded_since_made: false };
+
+    expect(MerchantKeySchema.parse(idle)).toStrictEqual(idle);
+    expect(MerchantKeySchema.parse(unknown)).toStrictEqual(unknown);
+    expect(MerchantKeySchema.parse(idle).use_recorded_since_made).not.toBe(
+      MerchantKeySchema.parse(unknown).use_recorded_since_made,
+    );
+  });
+
+  it("says when a key was last used rather than leaving the field out", () => {
+    // The same reason `disabled_at` is required: an absent field is a silence a
+    // reader cannot tell from an oversight, and this one would be read as the
+    // key having been used at some unstated time or never at all, either of
+    // which is a screen inventing an answer.
+    const { last_used_at, ...withoutIt } = working;
+
+    expect(last_used_at).not.toBeUndefined();
+    expect(MerchantKeySchema.safeParse(withoutIt).success).toBe(false);
+  });
+
+  it("refuses a last use that names no moment in time", () => {
+    expect(MerchantKeySchema.safeParse({ ...working, last_used_at: "2026-08-30" }).success).toBe(
+      false,
+    );
+  });
 
   it("says a key works rather than leaving the field out", () => {
     // Null is the fact "this key has not been revoked". An absent field is a
