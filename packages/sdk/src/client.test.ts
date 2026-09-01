@@ -524,6 +524,42 @@ describe("a refusal the gateway put into words", () => {
     expect(result.ok === false && result.error.message).toContain("no_such_order");
     expect(result.ok === false && result.error.message).toContain("there is no such order");
     expect(result.ok === false && result.error.message).not.toMatch(/could not be read/);
+    // The code is the half a program reads, and it was the half still saying
+    // the opposite of the sentence beside it: a refusal quoted word for word
+    // arriving under "we could not understand the answer". A merchant
+    // branching on the code and a person reading the message have to be told
+    // the same thing, and the gateway named it, so its name is what travels.
+    expect(result.ok === false && result.error.code).toBe("no_such_order");
+    expect(result.ok === false && result.error.code).not.toBe(ANSWER_NOT_UNDERSTOOD);
+  });
+
+  it("gives a thrown call and a returned one the same word for one refusal", async () => {
+    // The vocabulary is one vocabulary or it is two. `publish_card` throws and
+    // `deliver_order` returns, and a merchant who catches one and branches on
+    // the other should not find the same refusal under two different names —
+    // which is what happened while the returned half flattened every door
+    // refusal into the three codes this package makes up for silence.
+    const answer = {
+      status: 401,
+      text: JSON.stringify({
+        error: { code: "not_authorised", message: "this call is behind the merchant's key" },
+      }),
+    };
+    const coinslot = await gatewayServing({
+      deliver_order: () => answer,
+      publish_card: () => answer,
+    });
+
+    const returned = await coinslot.orders.forId("order-1").deliver({
+      access_url: "https://a.example",
+    });
+    const thrown = await coinslot.catalog.publish(card).then(
+      () => null,
+      (raised: unknown) => raised,
+    );
+
+    expect(returned.ok === false && returned.error.code).toBe("not_authorised");
+    expect(thrown instanceof CoinslotError && thrown.code).toBe("not_authorised");
   });
 
   it("still says what came back when the answer is not a refusal either", async () => {

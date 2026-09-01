@@ -81,7 +81,7 @@ describe("the catalog", () => {
     expect(result.error.problems.length).toBeGreaterThan(1);
     // The sentence is not the list said again: it names the first finding and
     // counts the rest, which is what a person reading one line of a log needs.
-    expect(result.error.message).not.toBe("");
+    // That it is not blank is the schema's business and is checked there.
     expect(result.error.message).toContain(String(result.error.problems.length));
   });
 

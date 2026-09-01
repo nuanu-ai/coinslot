@@ -439,8 +439,9 @@ const CODE_FOR: Readonly<Record<Reach, string>> = {
  * vocabulary for the half of them that throws. `code` is the gateway's own word
  * where the gateway refused in words we recognise, and otherwise one of the
  * three this package produces — `call_did_not_reach_us`, `answer_not_understood`,
- * `outcome_unknown` — which is the same choice `failedCall` above makes for the
- * order calls. `route` is the call it happened on, under the name the
+ * `outcome_unknown`. `failedCall` below makes that same choice for the order
+ * calls, so a refusal has one name on both roads. `route` is the call it
+ * happened on, under the name the
  * contract's own table gives it, so a `catch` can say which of three it was
  * without reading the sentence.
  *
@@ -466,10 +467,31 @@ export class CoinslotError extends Error {
 }
 
 /**
- * Whether calling again could change the outcome, which is what the contract's
- * flag actually asks. It could, in all three cases: none of them is a state of
- * the order, and none will still be true in a minute if a network settled or a
- * proxy went away.
+ * What an order call hands back when it produced no answer of its own.
+ *
+ * `code` is the gateway's own word where the gateway refused in words we
+ * recognise, and otherwise one of the three this package produces for a
+ * silence. The two halves of the answer have to say the same thing: a refusal
+ * quoted in the message and filed under `answer_not_understood` is the message
+ * arguing with the code, and the code is the half a program reads. It is the
+ * same choice `document` makes for the calls that throw, so one refusal has one
+ * name whether the merchant catches it or branches on it.
+ *
+ * `retryable` says whether calling again could change the outcome, and it is
+ * true here in every case. For the three silences it plainly could: none of
+ * them is a state of the order, and none will still be true in a minute if a
+ * network settled or a proxy went away. For a door refusal it is over-claimed
+ * and knowingly so — most of them (`no_such_order`, `not_authorised`, a body
+ * this gateway would not read) will answer the same way for ever, but
+ * `gateway_failed` is the same envelope around a defect and says in its own
+ * sentence that nothing was decided, so a blanket "do not call again" would
+ * tell a merchant their delivery is impossible when the gateway had merely
+ * fallen over. Nothing on the wire separates the two: the status is not
+ * consulted anywhere in this package, deliberately, and the codes are an open
+ * set this package does not own. Telling a merchant to try again where trying
+ * is futile costs them a wasted call; telling them to stop where the call would
+ * have worked costs them the sale. Until a refusal carries the answer itself —
+ * the envelope has room for it — this claims the cheaper of the two mistakes.
  *
  * The sentence about repeating safely is only added where the contract says
  * the call may be repeated: delivering is idempotent by the order's
@@ -477,7 +499,7 @@ export class CoinslotError extends Error {
  * Refusing is documented as neither, so nothing is claimed about it.
  */
 const failedCall = (repeatIsSafe: boolean, failure: TransportFailure): CallError => ({
-  code: CODE_FOR[failure.reach],
+  code: failure.refusal?.code ?? CODE_FOR[failure.reach],
   message: repeatIsSafe
     ? `${whatIsKnown(failure)}: ${failure.reason} — this call may be made again without doing its work twice`
     : `${whatIsKnown(failure)}: ${failure.reason}`,

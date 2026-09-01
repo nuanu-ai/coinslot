@@ -212,7 +212,7 @@ export const CallErrorSchema = z.strictObject({
     // Same reason as the refusal code: the dictionary travels with the field
     // or it does not reach the reader the export exists for.
     description:
-      'Why the call did not go through. The set is open, and five are promised to mean one thing. "card_rejected" (the card was not published, and every finding standing between it and the catalog is named in the error\'s problems — the fields at fault, and the merchant\'s own missing name or payout wallet where those are what is missing; it is never retryable, because the same card gets the same answer and what changes the outcome is fixing what the problems name). "refund_already_settled" (the debt was paid back, so there is nothing left to deliver against). "order_already_closed" (the order reached an ending that no call reopens). "not_applicable_in_mode" (the call does not exist for this card\'s mode — refusing separately does not, in the synchronous one, where the handler\'s own answer is the refusal). "delivery_does_not_match_card" (the goods are not the ones the card for this order declares it delivers — nothing was written down, the problems name the fields that did not fit, and the message says whether the order still stands or has already ended). The last of those is retryable in a different sense from a lost connection: the call arrived and was understood, so sending the same goods again gives the same refusal, and what clears it is delivering what the card declares. It is not retryable at all where the order has already ended, because there is nothing left to deliver against.',
+      'Why the call did not go through. The set is open, and five are promised to mean one thing each — but not on the same calls, and which call a code can arrive on is part of what is promised about it. Publishing a card is refused with one word and no other: "card_rejected" (the card was not published, and every finding standing between it and the catalog is named in the error\'s problems — the fields at fault, and the merchant\'s own missing name or payout wallet where those are what is missing; it is never retryable, because the same card gets the same answer and what changes the outcome is fixing what the problems name). The calls that close an order — delivering, refusing, taking one on — are refused with the other four, and never with the first: "refund_already_settled" (the debt was paid back, so there is nothing left to deliver against). "order_already_closed" (the order reached an ending that no call reopens). "not_applicable_in_mode" (the call does not exist for this card\'s mode — refusing separately does not, in the synchronous one, where the handler\'s own answer is the refusal). "delivery_does_not_match_card" (the goods are not the ones the card for this order declares it delivers — nothing was written down, the problems name the fields that did not fit, and the message says whether the order still stands or has already ended). The last of those is retryable in a different sense from a lost connection: the call arrived and was understood, so sending the same goods again gives the same refusal, and what clears it is delivering what the card declares. It is not retryable at all where the order has already ended, because there is nothing left to deliver against.',
   }),
   message: z.string().regex(/\S/, "an error carries an explanation a person can read"),
   retryable: z.boolean(),
@@ -223,8 +223,15 @@ export const CallErrorSchema = z.strictObject({
    * Never empty when it is there: a list with nothing in it says "these are the
    * things at fault" and names none of them, which is the one answer a merchant
    * cannot act on.
+   *
+   * Described for the export as well as here, for the reason the two codes are:
+   * a reader who has only the JSON Schema has only what travels in it, and this
+   * is the field the whole shape is named after.
    */
-  problems: z.array(ProblemSchema).min(1).optional(),
+  problems: z.array(ProblemSchema).min(1).optional().meta({
+    description:
+      'What was wrong with what was sent, one finding at a time: where it is, a code for the program that reads it, and the same finding in words. Present where the call is refusing what it was handed — a card that was not published, a delivery that is not what its card declares — and absent where the refusal is about a state of the world instead: a refund already settled is about the order, not about a field of the request. Never empty where it is present, and a refused publish always carries it. This field is the complete account of what stands in the way, and it is the one to read the findings from. The error\'s "message" is a single line written to be read in a log and does not carry the list: it says how many findings there are, quotes one or a few of them, and marks the place where a long one was cut — so a reader can always tell a short refusal from a shortened account of a long one.',
+  }),
 });
 
 /**

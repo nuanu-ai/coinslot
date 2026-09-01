@@ -86,7 +86,7 @@ export const IDEMPOTENCY_IS_NOT_BUILDABLE = [
   "  - a card carries no marker for published-but-not-yet-in-catalogs, which is",
   "    the state the documentation raises these orders against",
   "The test site is not what is missing: it exists, it settles against test",
-  "funds, and your csk_test_ key belongs to it. What is missing is a way to make",
+  "funds, and a csk_test_ key belongs to it. What is missing is a way to make",
   "an order happen there, and inventing a route or a field here would be",
   "designing one.",
 ].join("\n");

@@ -97,6 +97,10 @@ describe("what publishing a card returns", () => {
       { ok: "itm_9f2c4a" },
       { ok: { id: "itm_9f2c4a" } },
       { errors: [{ path: [], code: "x", message: "y" }] },
+      // "No" with nothing after it. A refusal is the half of this shape that
+      // has to carry a reason, and an envelope that says only that something
+      // failed is the answer this schema exists to make impossible to send.
+      { ok: false },
     ]) {
       expect(PublishResultSchema.safeParse(result).success, JSON.stringify(result)).toBe(false);
     }

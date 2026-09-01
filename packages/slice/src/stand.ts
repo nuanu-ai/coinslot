@@ -593,7 +593,12 @@ const doAction = async (form: URLSearchParams): Promise<void> => {
       // went up when the gateway had just refused it. The finding is what the
       // person at the stand has to act on, so it leads; the call's own code is
       // said beside it, because that is the word they will branch on in their
-      // own code later.
+      // own code later. The reasonless arm is not a case that happens: a
+      // refused publish carries at least one finding and the schema holds it
+      // to that. It is written because the type of an array cannot say so —
+      // reading the first element of one is `Problem | undefined` here, and the
+      // assertion that would deny it is banned — so the choice is this sentence
+      // or a worse way of not having it.
       if (!outcome.ok) {
         const { error } = outcome;
         const first = error.problems[0];

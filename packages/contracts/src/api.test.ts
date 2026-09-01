@@ -445,6 +445,13 @@ describe("what answering for an order comes back as", () => {
     expect(OrderCallResponseSchema.safeParse({}).success).toBe(false);
   });
 
+  it("refuses a failure with nothing said about why", () => {
+    // The other half of the shape, and the more expensive one to leave open: a
+    // merchant handed "no" and no reason has nothing to branch on, nothing to
+    // print and nothing to write down about an order somebody paid for.
+    expect(OrderCallResponseSchema.safeParse({ ok: false }).success).toBe(false);
+  });
+
   it("refuses a success with no word for which success it was", () => {
     // Unlike taking an order on, delivering and refusing have words, and the
     // merchant has to write down which one happened.
