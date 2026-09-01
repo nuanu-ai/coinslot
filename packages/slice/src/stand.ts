@@ -667,9 +667,26 @@ const doAction = async (form: URLSearchParams): Promise<void> => {
     case "ask_price": {
       const on = requireExchange();
       const buyer = buyerFor();
+      const asksTheHandler =
+        publicItems.find((one) => one.id === on.itemId)?.price_checked_at_purchase === true;
       beat(on, "agent", "Asked what this card costs, without opening anything.", "GET");
       agentCall(on, async () => {
         recordAnswer(on, await buyer.askPrice(on.itemId));
+        // Measured, because the answer does not say it: a challenge for a card
+        // alone carries the card's published price, and the merchant's price
+        // desk is not asked. On a card priced at the purchase the two are
+        // different numbers, and a console that showed the first without saying
+        // so would be quoting a price nobody will be charged.
+        if (asksTheHandler) {
+          beat(
+            on,
+            "gateway",
+            "That is the price the card was published at. This card's price is asked of the merchant when an order opens, so what a purchase actually costs is settled then and can differ.",
+            "",
+            undefined,
+            "now",
+          );
+        }
       });
       return;
     }

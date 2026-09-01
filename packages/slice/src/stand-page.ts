@@ -378,7 +378,8 @@ const agentTab = (state: PageState): string => {
         ${form("ask_price", "", "Ask the price")}
       </div>
     </form>
-    <p><b>Ask the price</b> is the GET a crawler makes: a challenge for the card alone, naming no order, so nothing is opened. <b>Start a purchase</b> is the unpaid POST — it opens an order, asks the price desk where the card says to, and comes back 402 with the requirements.</p>
+    <p><b>Ask the price</b> is the GET a crawler makes. It comes back 402 with a challenge for the card alone: no order is opened, nothing expires, and parameters are not checked, because a GET carries no body to check. What it quotes is the price the card was published at — on a card priced at the purchase the merchant is not asked here, so the number can differ from what a buyer pays.</p>
+    <p><b>Start a purchase</b> is the unpaid POST. It checks the parameters, opens an order, asks the price desk where the card says to, and comes back 402 with the requirements for that order. <b>Buy in one go</b> does that and signs the challenge without stopping.</p>
   </div>
 </section>`;
 
