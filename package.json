@@ -24,6 +24,7 @@
     "smoke:bootstrap": "pnpm --filter @coinslot/slice run bootstrap",
     "outside": "./scripts/outside.sh",
     "buy": "pnpm --filter @coinslot/slice run buy",
+    "stand": "pnpm --filter @coinslot/slice run stand",
     "changeset": "changeset"
   },
   "devDependencies": {
