@@ -636,15 +636,14 @@ const failed = (entry: Entry): boolean => {
   if (typeof detail.status === "number" && detail.status >= 400 && detail.status !== 402)
     return true;
   if (detail.error !== undefined) return true;
-  // The plural ones are the answers that arrived fine and said no: publishing a
-  // card comes back `{ ok }` or `{ errors }` at HTTP 200, and a document that
-  // did not fit its schema comes back as issues. An answer whose status is
-  // clean and whose body is a refusal is exactly the line this whole reading
-  // exists to catch.
-  for (const many of [detail.errors, detail.issues]) {
-    if (Array.isArray(many) && many.length > 0) return true;
-  }
-  return false;
+  // `ok: false` is the other half of the same reading: every merchant-facing
+  // call answers in that envelope, and a publish that was refused comes back in
+  // it at HTTP 200. An answer whose status is clean and whose body is a refusal
+  // is exactly the line this whole reading exists to catch.
+  if (detail.ok === false) return true;
+  // A document the stand itself could not read comes back as zod's issues,
+  // which is not an answer from anywhere and has no envelope around it.
+  return Array.isArray(detail.issues) && detail.issues.length > 0;
 };
 
 /**

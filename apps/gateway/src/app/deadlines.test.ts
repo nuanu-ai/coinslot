@@ -81,8 +81,8 @@ afterEach(async () => {
 
 const bought = async (harnessed: Harness, card: Card): Promise<string> => {
   const published = await harnessed.gateway.publishCard(harnessed.merchant.id, card);
-  if (!("ok" in published)) throw new Error("the card would not publish");
-  const offered = await harnessed.gateway.beginPurchase(published.ok.id, {});
+  if (!published.ok) throw new Error("the card would not publish");
+  const offered = await harnessed.gateway.beginPurchase(published.id, {});
   if (offered.step !== "pay") throw new Error("no price was offered");
   return offered.order.order.id;
 };
@@ -308,7 +308,7 @@ describe("a card that names no delivery deadline", () => {
     // a deadline that is not there.
     const harnessed = await started();
     const published = await harnessed.gateway.publishCard(harnessed.merchant.id, asyncCard);
-    if (!("ok" in published)) throw new Error("the card would not publish");
+    if (!published.ok) throw new Error("the card would not publish");
     expect(asyncCard.fulfill_deadline_seconds).toBeUndefined();
 
     const shown = (await harnessed.gateway.catalog()).items[0];
@@ -316,7 +316,7 @@ describe("a card that names no delivery deadline", () => {
     expect(shown.fulfillment).toBe("async");
     expect("fulfill_deadline_seconds" in shown).toBe(false);
 
-    const offered = await harnessed.gateway.beginPurchase(published.ok.id, {});
+    const offered = await harnessed.gateway.beginPurchase(published.id, {});
     if (offered.step !== "pay") throw new Error("no price was offered");
     const orderId = offered.order.order.id;
     await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");

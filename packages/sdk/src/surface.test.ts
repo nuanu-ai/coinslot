@@ -693,11 +693,11 @@ describe("what the surface still does without a stream", () => {
     };
 
     const coinslot = await clientOver({
-      publish_card: () => ({ body: { ok: { id: "cat-1" } } }),
+      publish_card: () => ({ body: { ok: true, id: "cat-1" } }),
       list_orders: () => ({ body: { orders: [] } }),
     });
 
-    expect(await coinslot.catalog.publish(card)).toStrictEqual({ ok: { id: "cat-1" } });
+    expect(await coinslot.catalog.publish(card)).toStrictEqual({ ok: true, id: "cat-1" });
     expect(await coinslot.orders.list()).toStrictEqual([]);
   });
 });

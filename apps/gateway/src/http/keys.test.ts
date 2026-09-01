@@ -137,7 +137,7 @@ const publish = async (served: Served, key: string, card: Card): Promise<string>
     headers: bearer(key),
   });
   expect(answered.status, JSON.stringify(answered.body)).toBe(200);
-  return (answered.body as { ok: { id: string } }).ok.id;
+  return (answered.body as { id: string }).id;
 };
 
 /** What a crawler asking the price of one product is told about its seller. */

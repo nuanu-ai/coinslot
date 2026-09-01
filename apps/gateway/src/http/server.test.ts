@@ -73,7 +73,7 @@ const publish = async (served: Served, card: Card): Promise<string> => {
     headers: asMerchant,
   });
   expect(answered.status).toBe(200);
-  return (answered.body as { ok: { id: string } }).ok.id;
+  return (answered.body as { id: string }).id;
 };
 
 describe("the surface is the table", () => {
@@ -386,9 +386,11 @@ describe("what a call may carry", () => {
     });
 
     expect(answered.status).toBe(422);
-    const { errors } = answered.body as { errors: { path: string[]; message: string }[] };
-    expect(errors.length).toBeGreaterThan(1);
-    expect(errors.map((finding) => finding.path.join("."))).toContain("merchant_item_id");
+    const { problems } = (
+      answered.body as { error: { problems: { path: string[]; message: string }[] } }
+    ).error;
+    expect(problems.length).toBeGreaterThan(1);
+    expect(problems.map((finding) => finding.path.join("."))).toContain("merchant_item_id");
   });
 
   it("refuses a query the table does not describe", async () => {
@@ -918,7 +920,7 @@ describe("the worker's calls over HTTP", () => {
       envelopes: { kind: string; payload: { id: string } }[];
       contract_version: string;
     };
-    expect(contract_version).toBe("1");
+    expect(contract_version).toBe("2");
     expect(envelopes.map((envelope) => envelope.kind)).toStrictEqual(["order"]);
 
     const answered = await served.call(`POST`, `/v0/orders/${orderId}/answer`, {

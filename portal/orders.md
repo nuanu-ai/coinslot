@@ -236,10 +236,9 @@ it arrives on time or late.
 The call is idempotent by the order's identifier. Call it a second time with
 the same `order.id` and it succeeds again, marked as already delivered: no
 second delivery happened and no second charge. There is nothing here for your
-code to treat as a failure: the flag for success is the same one in both cases,
-and you do not have to branch on the word inside it. The word is there when you
-do want it — a delivery that closed a refund debt rather than completing a sale
-says so. Repeating the call after a dropped connection is therefore safe. A
+code to treat as a failure: `ok` is true in both cases, and you do not have to
+branch on the word inside it. The word is there when you do want it — a delivery
+that closed a refund debt rather than completing a sale says so. Repeating the call after a dropped connection is therefore safe. A
 repeat is not weighed against the card at all, because there is nothing left
 for it to write: what it carries is neither checked nor kept. What it ought to
 carry is in [Telling a repeat apart](#telling-a-repeat-apart).
@@ -250,17 +249,41 @@ already marked as needing a refund and the refund has not yet gone out,
 late goods are better for the buyer than a refund. If the refund has gone out
 by then, the call returns an error — there is nothing left to deliver against.
 
-Errors from `deliver` and `refuse` are returned rather than thrown, and they
-carry a flag saying whether repeating is worth anything. The network let you
-down, or our side was slow to answer — repeat with the same call, which is
-idempotent by the order's identifier, and the error it hands back says so. One
-of them is worth repeating and not with the same call: goods that do not match
-the card are refused with the fields named, and the repeat that helps is the
-one carrying the goods the card declared.
-`refuse` carries no such promise, so a refusal that failed is worth checking on
-with `get` before it is sent again. Where the error is marked final — the
-refund already paid out, for one — repeating changes nothing, and the case is
-worth writing down on your side instead of looping.
+### When a closing call does not go through
+
+`deliver`, `refuse` and `accept` hand their failures back rather than throwing
+them, in the envelope every call on this surface answers in: `ok` is false, and
+one `error` beside it carries a code to branch on, a sentence a person can read,
+and `retryable`. Seven codes are promised to mean one thing each — four sent by
+us, and three the tools produce when no answer they could read came back. The
+set is open beyond those seven, so a case nobody anticipated reaches you in its
+own words instead of being flattened into the nearest of these.
+
+| Code | When it arrives | Repeating could change it |
+| --- | --- | --- |
+| `refund_already_settled` | the buyer has their money back for this order, so there is nothing left to deliver against | no |
+| `order_already_closed` | the order reached an ending that no call reopens | no |
+| `not_applicable_in_mode` | the call does not exist for this card's mode: in the synchronous one the handler's own answer is the delivery and the refusal | no |
+| `delivery_does_not_match_card` | the goods are not the ones the card declares, so nothing was written down | while the order still stands, yes — with different goods; once it has ended, no |
+| `call_did_not_reach_us` | the call never got to us, so it did nothing | yes |
+| `answer_not_understood` | it reached us and came back in words these tools cannot read, so it may well have done its work | yes |
+| `outcome_unknown` | it went out into silence — the connection broke, the process was stopped mid-call — and nothing on your side knows whether it landed | yes |
+
+The flag says that repeating the call could change the outcome. It does not say
+that repeating is safe, and those are two questions rather than one. `deliver`
+and `accept` are idempotent by the order's identifier, so for them the answer to
+both is yes: send the call again and nothing is delivered or charged twice.
+`refuse` carries no such promise, so a refusal that failed is worth reading back
+with `get` before it is sent a second time. And `delivery_does_not_match_card`
+means a third thing by the flag: that call arrived and was understood, so the
+same goods sent again get the same refusal, and the retry that helps is the one
+carrying what the card declares.
+
+Where the error is about the goods you sent, the fields that did not fit travel
+as findings in `error.problems` as well as in the sentence: one for each field,
+with the path to it, a code and words a person can act on. The sentence names a
+few of them and counts the rest, because it is written to be read in a log; the
+list leaves nothing out.
 
 ## Refusing after you have taken the order on
 
@@ -312,9 +335,11 @@ for (const waiting of open) {
 The first call returns one order, the second every order still open. They are
 for the case where your process restarted and no record of the order is left on
 your side: the list of open orders shows what is still owed something, so the
-picture does not have to be rebuilt from your database alone. Both throw when
-they cannot reach us, which is worth remembering about a loop that runs the
-moment a process comes back up.
+picture does not have to be rebuilt from your database alone. Neither has a
+failure branch to hand you — an order or a list is all they can answer with — so
+when they cannot reach us they throw, as a `CoinslotError` carrying a `code`
+from the same set the closing calls return and the `route` it happened on. That
+is worth remembering about a loop that runs the moment a process comes back up.
 
 Orders from here carry the same calls that orders from the handler do:
 `deliver` and `refuse` are made directly on them. They also carry one field a
@@ -552,19 +577,29 @@ for taking several at once is among the things [not settled](/quickstart).
 
 ## Test orders
 
-A test order is marked with the `test` flag, which is how a handler is meant to
-tell a check from a live sale: send such an order into your own test
-environment, answer with a stub, or serve it like any other.
+A test order is marked with the `test` flag, which is how a handler tells a
+rehearsal from a live sale: send such an order into your own test environment,
+answer with a stub, or serve it like any other.
 
-During the pilot the flag tells them apart for nobody, because every order
-carries it. The sandbox is not separated from the live system yet — there is no
-separate address and no separate key, and nothing to set the flag from — so
-read it if you like, and do not fork on it, or everything goes into your test
-environment. What will separate the two in the end is still being chosen; the
-item is in the list on [The first test sale](/quickstart).
+There are two environments, and the flag is the difference between them. The
+test one is at `https://test.coinslot.nuanu.ai`: its keys begin `csk_test_`, and
+the payments it settles go over a test chain with test funds. The live one is at
+`https://coinslot.nuanu.ai`, where the money is real. The flag follows the chain
+the payment settled on rather than the key you called with, so every order from
+the test environment reads `test: true` and every order from the live one reads
+`test: false` ([the addresses and the keys](/quickstart)).
 
-The price question that comes before an order carries no flag of its own, so a
-card with a price check cannot route the question the way it routes the order.
+So the flag says which of the two your process is connected to rather than
+sorting one stream into two: a process pointed at the test environment sees test
+orders and nothing else. That is what makes it worth reading in one code base that serves
+both. The same handler can stop short of the real provisioning where the flag is
+true, and it will not stop short of a live sale by accident, because a live
+order never carries the flag.
+
+The price question that comes before an order carries no flag of its own. It
+arrives down the same subscription, so it comes from whichever environment your
+client is pointed at; what you cannot do is read a field on the question and
+fork on that.
 
 ## You did not deliver in time
 

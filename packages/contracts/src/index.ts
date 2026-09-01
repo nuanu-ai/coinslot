@@ -92,9 +92,9 @@ import {
 import { QuotePurposeSchema, QuoteRequestSchema, QuoteResponseSchema } from "./quote.js";
 import { ReceiptOutcomeSchema, ReceiptSchema } from "./receipt.js";
 import {
-  OrderCallErrorSchema,
+  CallErrorSchema,
   OrderCallResultSchema,
-  PublishErrorSchema,
+  ProblemSchema,
   PublishResultSchema,
 } from "./results.js";
 import { SellingStateSchema } from "./selling.js";
@@ -258,18 +258,14 @@ export type { QuotePurpose, QuoteRequest, QuoteResponse } from "./quote.js";
 export { QuotePurposeSchema, QuoteRequestSchema, QuoteResponseSchema } from "./quote.js";
 export type { Receipt, ReceiptOutcome } from "./receipt.js";
 export { ReceiptOutcomeSchema, ReceiptSchema } from "./receipt.js";
-export type {
-  OrderCallError,
-  OrderCallResult,
-  PublishError,
-  PublishResult,
-} from "./results.js";
+export type { CallError, OrderCallResult, Problem, PublishResult } from "./results.js";
 export {
+  CARD_REJECTED,
+  CallErrorSchema,
   ORDER_CALL_ERROR_CODES,
   ORDER_CALL_RESULTS,
-  OrderCallErrorSchema,
   OrderCallResultSchema,
-  PublishErrorSchema,
+  ProblemSchema,
   PublishResultSchema,
 } from "./results.js";
 export type { SellingState } from "./selling.js";
@@ -280,7 +276,7 @@ export { SELLING_STATES, SellingStateSchema } from "./selling.js";
  * changes, not when a schema is added: a consumer uses it to decide whether it
  * understands the other side.
  */
-export const CONTRACT_VERSION = "1";
+export const CONTRACT_VERSION = "2";
 
 /**
  * Every schema of the public contract, under the name it is known by outside
@@ -300,6 +296,7 @@ export const schemas = Object.freeze({
   agent_order_status: AgentOrderStatusSchema,
   amount: AmountSchema,
   cabinet_key: CabinetKeySchema,
+  call_error: CallErrorSchema,
   card: CardSchema,
   catalog_page: CatalogPageSchema,
   currency_code: CurrencyCodeSchema,
@@ -321,7 +318,6 @@ export const schemas = Object.freeze({
   money: MoneySchema,
   order: OrderSchema,
   order_accept_response: OrderAcceptResponseSchema,
-  order_call_error: OrderCallErrorSchema,
   order_call_response: OrderCallResponseSchema,
   order_call_result: OrderCallResultSchema,
   order_event: OrderEventSchema,
@@ -335,8 +331,8 @@ export const schemas = Object.freeze({
   payout_wallet: PayoutWalletSchema,
   payout_wallet_request: PayoutWalletRequestSchema,
   price_check: PriceCheckSchema,
+  problem: ProblemSchema,
   public_card: PublicCardSchema,
-  publish_error: PublishErrorSchema,
   publish_result: PublishResultSchema,
   purchase_request: PurchaseRequestSchema,
   quote_answer_ack: QuoteAnswerAckSchema,

@@ -80,7 +80,7 @@ const publish = async (served: Served, merchant: SeededMerchant, card: Card): Pr
     headers: keyOf(merchant),
   });
   expect(answered.status, JSON.stringify(answered.body)).toBe(200);
-  return (answered.body as { ok: { id: string } }).ok.id;
+  return (answered.body as { id: string }).id;
 };
 
 /** Two merchants with a key each and one card each, which is the whole setup. */

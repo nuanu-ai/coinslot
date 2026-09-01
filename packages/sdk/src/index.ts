@@ -7,10 +7,18 @@
  * says what their process answers with `on`, opens one outgoing subscription
  * that carries paid orders, price questions and order events together, and
  * closes orders they took on earlier off the orders themselves. Beside it,
- * `checkCard` and `runVerify` are the check a merchant runs on their own cards
- * before publishing them — the same check the documentation calls
+ * `checkCard` is the check a merchant runs on their own cards before
+ * publishing them — the same check the documentation calls
  * `npx coinslot verify`, which the published package installs as a command of
- * that name.
+ * that name. The command's own insides are not exported: what a merchant calls
+ * from their code is `checkCard`, and what they run from a terminal is the
+ * command, and neither of those needs the other's exit codes.
+ *
+ * Every call that can fail answers in one envelope — `ok` says which, and a
+ * failure carries one `error` with a code, a sentence, whether repeating could
+ * help, and the findings under `problems` where the call is refusing what it
+ * was handed. What throws instead is a call with no such branch, as
+ * `CoinslotError`, under the same codes.
  *
  * The runtime dependency tree is minimal and listed in full: our own
  * `@nuanu-ai/coinslot-contracts`, and zod underneath it, and nothing else. A merchant
@@ -27,6 +35,7 @@
 
 export type {
   Acceptance,
+  CallError,
   Card,
   CardInput,
   Delivery,
@@ -34,14 +43,13 @@ export type {
   HandlerAnswer,
   Money,
   Order,
-  OrderCallError,
   OrderCallResponse,
   OrderCallResult,
   OrderEvent,
   OrderList,
   OrderStatus,
   OrderWithStatus,
-  PublishError,
+  Problem,
   PublishResult,
   QuotePurpose,
   QuoteRequest,
@@ -50,7 +58,11 @@ export type {
   RefusalCode,
   SalePrice,
 } from "@nuanu-ai/coinslot-contracts";
-export { ORDER_EVENT_TYPES, RECOMMENDED_REFUSAL_CODES } from "@nuanu-ai/coinslot-contracts";
+export {
+  CARD_REJECTED,
+  ORDER_EVENT_TYPES,
+  RECOMMENDED_REFUSAL_CODES,
+} from "@nuanu-ai/coinslot-contracts";
 export type { CardCheck } from "./check-card.js";
 export { checkCard } from "./check-card.js";
 export type {
@@ -72,12 +84,11 @@ export type {
 export {
   ANSWER_NOT_UNDERSTOOD,
   CALL_DID_NOT_REACH_US,
+  CoinslotError,
   createClient,
   OUTCOME_UNKNOWN,
 } from "./client.js";
 export { contractVersion, speaksContract } from "./contract.js";
-export type { Say } from "./verify.js";
-export { IDEMPOTENCY_IS_NOT_BUILDABLE, NOT_JSON, runVerify, VERIFY_EXIT } from "./verify.js";
 export type {
   Delivered,
   EventHandler,

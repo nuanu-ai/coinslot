@@ -581,7 +581,7 @@ const publish = async (gateway: Served, card: Card): Promise<string> => {
     headers: { authorization: `Bearer ${KEY}` },
   });
   expect(answered.status).toBe(200);
-  return (answered.body as { ok: { id: string } }).ok.id;
+  return (answered.body as { id: string }).id;
 };
 
 /** Whether an agent could buy this product right now. */
@@ -2009,7 +2009,8 @@ describe("a merchant who has chosen no name", () => {
       body: roomCard,
       headers: { authorization: `Bearer ${KEY}` },
     });
-    const finding = (refused.body as { errors: { code: string; message: string }[] }).errors[0];
+    const finding = (refused.body as { error: { problems: { code: string; message: string }[] } })
+      .error.problems[0];
     await running.browser.signIn();
 
     const cards = await running.browser.get("/cards");

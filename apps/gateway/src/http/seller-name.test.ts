@@ -268,12 +268,14 @@ describe("publishing before a name has been chosen", () => {
     const refused = await publishing(served, key, cardFor("a-room", "A room"));
 
     expect(refused.status).toBe(422);
-    const { errors } = refused.body as { errors: { code: string; message: string }[] };
+    const { problems } = (
+      refused.body as { error: { problems: { code: string; message: string }[] } }
+    ).error;
     // The words have to tell them what to do next. "Something is missing" would
     // send a merchant through the fields of a card looking for a field that is
     // not on the card at all — what is missing belongs to the merchant.
-    expect(errors.map((finding) => finding.code)).toContain("no_seller_name");
-    expect(errors.map((finding) => finding.message).join(" ")).toContain("/v0/seller-name");
+    expect(problems.map((finding) => finding.code)).toContain("no_seller_name");
+    expect(problems.map((finding) => finding.message).join(" ")).toContain("/v0/seller-name");
   });
 
   it("publishes for a merchant who has one, which is what makes the refusal a rule", async () => {
@@ -312,9 +314,11 @@ describe("publishing before a name has been chosen", () => {
     });
 
     expect(refused.status).toBe(422);
-    const { errors } = refused.body as { errors: { path: string[]; code: string }[] };
-    expect(errors.map((finding) => finding.code)).toContain("no_seller_name");
-    expect(errors.some((finding) => finding.path.includes("price"))).toBe(true);
+    const { problems } = (
+      refused.body as { error: { problems: { path: string[]; code: string }[] } }
+    ).error;
+    expect(problems.map((finding) => finding.code)).toContain("no_seller_name");
+    expect(problems.some((finding) => finding.path.includes("price"))).toBe(true);
   });
 
   it("lets a merchant publish as soon as they set one", async () => {
@@ -334,9 +338,9 @@ describe("publishing before a name has been chosen", () => {
 
     const published = await publishing(served, key, cardFor("a-room", "A room"));
     expect(published.status, JSON.stringify(published.body)).toBe(200);
-    expect(
-      await sellerInTheChallenge(served, (published.body as { ok: { id: string } }).ok.id),
-    ).toBe("Their own shop");
+    expect(await sellerInTheChallenge(served, (published.body as { id: string }).id)).toBe(
+      "Their own shop",
+    );
   });
 });
 
@@ -346,7 +350,7 @@ const publish = async (served: Served, key: string, card: Card): Promise<string>
     headers: bearer(key),
   });
   expect(answered.status, JSON.stringify(answered.body)).toBe(200);
-  return (answered.body as { ok: { id: string } }).ok.id;
+  return (answered.body as { id: string }).id;
 };
 
 /** What a crawler asking the price of one product is told about its seller. */

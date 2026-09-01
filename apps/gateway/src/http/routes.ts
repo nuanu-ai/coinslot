@@ -141,7 +141,7 @@ export function handlersFor(gateway: Gateway): Partial<Record<RouteName, Mounted
       checksItsOwnBody: true,
       serve: async (call) => {
         const published = await gateway.publishCard(merchantOf(call), call.body);
-        return { status: "ok" in published ? OK : UNPROCESSABLE, document: published };
+        return { status: published.ok ? OK : UNPROCESSABLE, document: published };
       },
     },
 

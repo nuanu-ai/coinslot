@@ -130,9 +130,12 @@ describe("@nuanu-ai/coinslot-contracts", () => {
   it("declares the contract version and keeps zod its only runtime dependency", () => {
     // The version is what the merchant's SDK and the gateway use to tell that
     // they are talking about the same thing. Version 0 meant that no external
-    // install existed; the first registry release starts the compatibility
-    // clock at 1 (ADR-0006).
-    expect(CONTRACT_VERSION).toBe("1");
+    // install existed; the first registry release started the compatibility
+    // clock at 1 (ADR-0006). It stands at 2 because the publish answer changed
+    // shape: a strict reader built against 1 cannot parse the envelope that
+    // replaced it, and it has to stop at the handshake rather than report a
+    // published card as an answer it could not read (ADR-0021).
+    expect(CONTRACT_VERSION).toBe("2");
 
     // Contracts is the only package the SDK drags along, so its dependency
     // tree is the SDK's dependency tree (ADR-0003 §8). A failing check means
@@ -430,8 +433,8 @@ describe("the contract as JSON Schema", () => {
     }
     expect(refusal).toContain("open");
 
-    const callError = nested(documents.order_call_error.properties?.code).description ?? "";
-    for (const code of contracts.ORDER_CALL_ERROR_CODES) {
+    const callError = nested(documents.call_error.properties?.code).description ?? "";
+    for (const code of [...contracts.ORDER_CALL_ERROR_CODES, contracts.CARD_REJECTED]) {
       expect(callError, code).toContain(code);
     }
   });

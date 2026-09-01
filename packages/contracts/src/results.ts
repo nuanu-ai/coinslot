@@ -11,18 +11,26 @@
  * The words below are wire names, not prose: a merchant's code branches on
  * them, so rewording one is changing the contract.
  *
- * The two calls are shaped differently and it is worth saying why rather than
- * leaving it to be noticed. Publishing answers with one value, `{ok} | {errors}`,
- * because a card is accepted or it is not. Answering for an order is a
- * vocabulary of successes and a vocabulary of failures held apart, and what
- * ties them into one answer lives with the call that returns it — a merchant
- * reads `OrderCallResponseSchema` in `api.ts`, which puts the success word
- * inside `ok` so that the marker of success is the same one whether a delivery
- * was the first or a repeat.
+ * Every one of those answers arrives in one envelope. `ok` is `true` or it is
+ * `false` and nothing else says which; a success carries its own fields beside
+ * it, and a failure carries `error`. That `ok` is a value and not a key that
+ * may or may not be present is the part worth arguing, because the two look
+ * alike from inside TypeScript and do not behave alike anywhere else. A key
+ * with an object under it reads as false in Python and in PHP — `{"ok": {}}`
+ * is falsy in both — so the one idiom an engineer would write says yes to one
+ * answer and no to another, and the JSON Schema export exists for exactly that
+ * engineer. As a literal it is also a discriminator: it crosses into the export
+ * as a `const` on each branch, which a generator can switch on, where
+ * "whichever key happens to be present" is something a reader has to work out.
  *
- * The plural in `errors` and the singular in the order call's `error` are not
- * an inconsistency: a card can be wrong in several places at once, while a
- * call either went through or did not go through for one reason.
+ * Two words carry what went wrong, and they are not two names for one thing.
+ * `error` is why a call did not go through: one object, always, with a code to
+ * branch on, a sentence to print, and a flag saying whether repeating the call
+ * could change the outcome. `problems` is the list of findings about what was
+ * sent — the fields at fault — and it rides inside `error` wherever there are
+ * any. A call fails for one reason; a document can be wrong in several places
+ * at once, and that is the whole of the difference between the singular and the
+ * plural here.
  */
 
 import { z } from "zod";
@@ -104,7 +112,8 @@ export const OrderCallResultSchema = z.enum(ORDER_CALL_RESULTS);
  * synchronous one, where the handler's own answer is the refusal.
  * `delivery_does_not_match_card` — the goods are not the ones the card for
  * this order declares it delivers, so nothing was written down; the message
- * says whether the order still stands or has already ended.
+ * says whether the order still stands or has already ended, and the fields
+ * that did not fit are named one by one in the error's `problems`.
  *
  * The fourth is the only one of them a merchant fixes rather than records, and
  * it is the reason it is promised rather than left to the open set. It is
@@ -137,13 +146,19 @@ export const ORDER_CALL_ERROR_CODES = Object.freeze([
 /**
  * One thing wrong with what was sent, in a place, in a code and in words.
  *
- * A card's findings are where it began and no longer the whole of its use: the
- * same shape is what a refusal carries in its `problems` when a body or a set
- * of purchase parameters did not fit. The empty path is the part two readers
- * were left to infer differently, so it is said in the exported description as
- * well as here.
+ * This is one finding and never a whole answer. Wherever a call refuses what it
+ * was handed, the findings travel as a list of these under `problems` inside
+ * the error: a card that could not be published names every field standing
+ * between it and the catalog, a delivery that is not what its card declares
+ * names the fields that did not fit, and the local check a merchant runs before
+ * publishing — `checkCard` in the SDK — answers in this same shape, so a
+ * finding read on their own machine and a finding read off the wire need no
+ * two readers.
+ *
+ * The empty path is the part two readers were left to infer differently, so it
+ * is said in the exported description as well as here.
  */
-export const PublishErrorSchema = z
+export const ProblemSchema = z
   .strictObject({
     /**
      * Which field the finding is about, as the path to it — `["params",
@@ -165,60 +180,104 @@ export const PublishErrorSchema = z
   })
   .meta({
     description:
-      'One thing wrong with what was sent: where it is, a code for the program that reads it, and the same finding in words for the person who has to fix it. The path names the field, innermost last — ["params", "email", "type"] — and an empty path is a statement rather than a missing value: the finding is about the whole of what was sent, or about the sender — a merchant with no name set for buyers, or no wallet set for their sales to be paid into, is refused with an empty path too — and not about any one field, which is also what a document that could not be read at all produces. The field is always present for that reason, because an absent path and an empty one would be indistinguishable. This is the shape of a card\'s findings when publishing is refused, and the same shape a refusal carries in its problems when a body, a query string or a set of purchase parameters did not fit.',
+      'One thing wrong with what was sent: where it is, a code for the program that reads it, and the same finding in words for the person who has to fix it. The path names the field, innermost last — ["params", "email", "type"] — and an empty path is a statement rather than a missing value: the finding is about the whole of what was sent, or about the sender — a merchant with no name set for buyers, or no wallet set for their sales to be paid into, is refused with an empty path too — and not about any one field, which is also what a document that could not be read at all produces. The field is always present for that reason, because an absent path and an empty one would be indistinguishable. Findings never travel alone: they arrive as the problems list inside the error of a call that refused what it was handed — a card that was not published, a delivery that is not what its card declares, a body or a set of purchase parameters that did not fit.',
   });
 
 /**
- * The answer to publishing a card: the catalog id, or what stands in its way.
+ * Why a call did not go through: a code to branch on, a sentence to print, and
+ * whether repeating it could change the outcome.
  *
- * The list of findings is never empty. "Refused, and here is nothing" is the
- * one answer a merchant cannot act on, and acceptance already has a shape of
- * its own — it does not need to be spelled as an absence of errors.
+ * One shape for every call on the merchant's surface. Publishing a card and
+ * delivering an order fail for entirely different reasons, and a merchant who
+ * had to learn two shapes for "this did not happen" would be learning the same
+ * lesson twice.
  *
- * Not every finding is about the card. A merchant who has set no name for
- * buyers to read is refused here too, and so is one who has set no wallet for
- * their sales to be paid into — both in the same list, so that one answer
- * carries everything standing between this card and the catalog rather than
- * handing it over one round trip at a time.
+ * The flag is the reason this shape exists at all. "The connection dropped,
+ * call again — the call is idempotent" and "nothing you do will change this,
+ * write the case down" need different code on the merchant's side, and a
+ * merchant left to guess turns one of them into a retry loop and the other into
+ * an order nobody comes back to. The refund that has already been paid out is
+ * the example of the second kind. It is required rather than defaulted for the
+ * same reason: both readings of a missing flag are expensive.
+ *
+ * `problems` is present where the call is refusing what it was handed rather
+ * than reporting a state of the world, and it is the field that turns "no" into
+ * an edit. It is optional because most failures have nothing to point at: a
+ * refund already settled is about the order and not about a field of the
+ * request. Where it is there it is never empty, and a call whose whole answer
+ * is "refused, and here is nothing" — a publish — requires it.
  */
-export const PublishResultSchema = z.union(
-  [
-    z.strictObject({
-      ok: z.strictObject({
-        /** Our catalog identifier, from now on in catalogs, orders and receipts. */
-        id: IdentifierSchema,
-      }),
-    }),
-    z.strictObject({ errors: z.array(PublishErrorSchema).min(1) }),
-  ],
-  { error: "publishing a card answers with either { ok } or { errors }, and never with both" },
-);
-
-/**
- * What comes back when delivering or refusing an order does not go through.
- *
- * The flag is the reason this shape exists. "The connection dropped, call
- * again — the call is idempotent" and "nothing you do will change this, write
- * the case down" need different code on the merchant's side, and a merchant
- * left to guess turns one of them into a retry loop and the other into an
- * order nobody comes back to. The refund that has already been paid out is the
- * example of the second kind.
- *
- * It is required rather than defaulted for the same reason: both readings of a
- * missing flag are expensive.
- */
-export const OrderCallErrorSchema = z.strictObject({
+export const CallErrorSchema = z.strictObject({
   code: z.string().regex(/\S/, "an error carries a code").meta({
     // Same reason as the refusal code: the dictionary travels with the field
     // or it does not reach the reader the export exists for.
     description:
-      'Why the call did not go through. The set is open, and four are promised to mean one thing: "refund_already_settled" (the debt was paid back, so there is nothing left to deliver against), "order_already_closed" (the order reached an ending that no call reopens), "not_applicable_in_mode" (the call does not exist for this card\'s mode — refusing separately does not, in the synchronous one, where the handler\'s own answer is the refusal), "delivery_does_not_match_card" (the goods are not the ones the card for this order declares it delivers — nothing was written down, the message names the fields that did not fit, and it says whether the order still stands or has already ended). The last of those is retryable in a different sense from a lost connection: the call arrived and was understood, so sending the same goods again gives the same refusal, and what clears it is delivering what the card declares. It is not retryable at all where the order has already ended, because there is nothing left to deliver against.',
+      'Why the call did not go through. The set is open, and five are promised to mean one thing. "card_rejected" (the card was not published, and every finding standing between it and the catalog is named in the error\'s problems — the fields at fault, and the merchant\'s own missing name or payout wallet where those are what is missing; it is never retryable, because the same card gets the same answer and what changes the outcome is fixing what the problems name). "refund_already_settled" (the debt was paid back, so there is nothing left to deliver against). "order_already_closed" (the order reached an ending that no call reopens). "not_applicable_in_mode" (the call does not exist for this card\'s mode — refusing separately does not, in the synchronous one, where the handler\'s own answer is the refusal). "delivery_does_not_match_card" (the goods are not the ones the card for this order declares it delivers — nothing was written down, the problems name the fields that did not fit, and the message says whether the order still stands or has already ended). The last of those is retryable in a different sense from a lost connection: the call arrived and was understood, so sending the same goods again gives the same refusal, and what clears it is delivering what the card declares. It is not retryable at all where the order has already ended, because there is nothing left to deliver against.',
   }),
   message: z.string().regex(/\S/, "an error carries an explanation a person can read"),
   retryable: z.boolean(),
+
+  /**
+   * The findings, where the call is refusing what it was handed.
+   *
+   * Never empty when it is there: a list with nothing in it says "these are the
+   * things at fault" and names none of them, which is the one answer a merchant
+   * cannot act on.
+   */
+  problems: z.array(ProblemSchema).min(1).optional(),
 });
 
-export type PublishError = z.infer<typeof PublishErrorSchema>;
+/**
+ * The code a refused publish comes back under.
+ *
+ * Promised rather than left to the open set, because it is the one refusal of
+ * this surface a merchant meets on their first afternoon, and every one of them
+ * writes the branch that reads it.
+ */
+export const CARD_REJECTED = "card_rejected";
+
+/**
+ * The error a refused publish carries: the shared shape, with the findings made
+ * required.
+ *
+ * "Refused, and here is nothing" is the one answer a merchant cannot act on,
+ * and publishing is the call where that would be easiest to send — a card is
+ * refused precisely because something about it is wrong, so there is always
+ * something to name. Not every finding is about the card. A merchant who has
+ * set no name for buyers to read is refused here too, and so is one who has set
+ * no wallet for their sales to be paid into; both ride in the same list, so one
+ * answer carries everything standing between this card and the catalog rather
+ * than handing it over one round trip at a time.
+ */
+const PublishRefusalSchema = CallErrorSchema.extend({
+  problems: z.array(ProblemSchema).min(1),
+});
+
+/**
+ * The answer to publishing a card: the catalog id, or what stands in its way.
+ *
+ * `ok` says which, as it does on every other call of this surface, and the
+ * catalog identifier sits at the top level of the success beside it rather than
+ * nested under a word. There is one fact in a successful publish and this is
+ * it.
+ *
+ * The refusal is `CARD_REJECTED` and it is not retryable: publishing the same
+ * card again gets the same answer, and what changes the outcome is fixing what
+ * the findings name. That is a different thing from the retry a dropped
+ * connection asks for, which is why the flag says no here rather than being
+ * left for the merchant to infer from the code.
+ */
+export const PublishResultSchema = z.discriminatedUnion("ok", [
+  z.strictObject({
+    ok: z.literal(true),
+
+    /** Our catalog identifier, from now on in catalogs, orders and receipts. */
+    id: IdentifierSchema,
+  }),
+  z.strictObject({ ok: z.literal(false), error: PublishRefusalSchema }),
+]);
+
+export type Problem = z.infer<typeof ProblemSchema>;
 export type PublishResult = z.infer<typeof PublishResultSchema>;
 export type OrderCallResult = z.infer<typeof OrderCallResultSchema>;
-export type OrderCallError = z.infer<typeof OrderCallErrorSchema>;
+export type CallError = z.infer<typeof CallErrorSchema>;

@@ -588,18 +588,22 @@ const doAction = async (form: URLSearchParams): Promise<void> => {
       await readCards(generation);
       if (!connectionIsCurrent(generation)) return;
       publicItemsRead = false;
-      // Publishing answers `{ ok }` or `{ errors }` under a clean status, so a
+      // Publishing answers `ok: true` or `ok: false` under a clean status, so a
       // console that reported the call rather than its answer would say a card
-      // went up when the gateway had just refused it.
-      if ("errors" in outcome) {
-        const first = outcome.errors[0];
+      // went up when the gateway had just refused it. The finding is what the
+      // person at the stand has to act on, so it leads; the call's own code is
+      // said beside it, because that is the word they will branch on in their
+      // own code later.
+      if (!outcome.ok) {
+        const { error } = outcome;
+        const first = error.problems[0];
         throw new Error(
           first === undefined
-            ? "The gateway refused this card and named no reason."
-            : `The gateway refused this card: ${first.code} — ${first.message}`,
+            ? `The gateway refused this card (${error.code}): ${error.message}`
+            : `The gateway refused this card (${error.code}): ${first.code} — ${first.message}`,
         );
       }
-      say(`Published ${(document as CardInput).merchant_item_id} as ${outcome.ok.id}.`);
+      say(`Published ${(document as CardInput).merchant_item_id} as ${outcome.id}.`);
       return;
     }
 

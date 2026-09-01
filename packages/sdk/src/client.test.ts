@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   ANSWER_NOT_UNDERSTOOD,
   CALL_DID_NOT_REACH_US,
+  CARD_REJECTED,
+  CoinslotError,
   createClient,
   OUTCOME_UNKNOWN,
   WORKER_PROBLEM_KINDS,
@@ -91,27 +93,41 @@ describe("creating a client", () => {
 describe("publishing a card", () => {
   it("hands back the catalog identifier", async () => {
     const coinslot = await gatewayServing({
-      publish_card: () => ({ body: { ok: { id: "cat-1" } } }),
+      publish_card: () => ({ body: { ok: true, id: "cat-1" } }),
     });
 
     const published = await coinslot.catalog.publish(card);
 
-    expect(published).toStrictEqual({ ok: { id: "cat-1" } });
+    expect(published).toStrictEqual({ ok: true, id: "cat-1" });
+    expect(published.ok === true && published.id).toBe("cat-1");
     expect(gateway?.callsTo("publish_card")[0]?.body).toStrictEqual(card);
     expect(gateway?.callsTo("publish_card")[0]?.apiKey).toBe(API_KEY);
   });
 
   it("returns what is wrong with the card instead of throwing", async () => {
     // The portal's promise about the edit cycle: an invalid card does not
-    // throw, it comes back as a list of findings the merchant can print.
-    const errors = [{ path: ["price", "currency"], code: "unsupported", message: "not settled" }];
+    // throw, it comes back as a list of findings the merchant can print. The
+    // findings sit under the same `problems` word every other refusal on this
+    // surface uses, so a merchant learns it once.
+    const problems = [{ path: ["price", "currency"], code: "unsupported", message: "not settled" }];
+    const error = {
+      code: CARD_REJECTED,
+      message: "this card was not published",
+      retryable: false,
+      problems,
+    };
     const coinslot = await gatewayServing({
-      publish_card: () => ({ status: 400, body: { errors } }),
+      publish_card: () => ({ status: 400, body: { ok: false, error } }),
     });
 
     const published = await coinslot.catalog.publish(card);
 
-    expect("errors" in published && published.errors).toStrictEqual(errors);
+    expect(published.ok).toBe(false);
+    expect(published.ok === false && published.error.problems).toStrictEqual(problems);
+    expect(published.ok === false && published.error.code).toBe("card_rejected");
+    // Never retryable: the same card gets the same answer, and a merchant told
+    // otherwise would loop on something only an edit changes.
+    expect(published.ok === false && published.error.retryable).toBe(false);
   });
 
   it("throws when the answer is not an answer at all", async () => {
@@ -544,6 +560,104 @@ describe("a refusal the gateway put into words", () => {
 
     expect(refused).toContain("is not the document it promises");
     expect(refused).toContain("no_message");
+  });
+});
+
+describe("what is thrown where a route has no failure branch", () => {
+  // Three of this client's calls answer with a document or with nothing —
+  // publishing, reading one order, listing them — so a call that produced no
+  // document has nowhere to be returned and is thrown. What is thrown carries
+  // the same two things the returned failures carry: a code to branch on and
+  // the route it happened on. A merchant who has written `catch` around these
+  // should not have to parse a sentence to find out which of them it was.
+
+  it("carries the gateway's own code when the gateway is the one refusing", async () => {
+    // The gateway said what it would not do and why, in the envelope every
+    // route refuses in. Filing that under a code of ours — "we could not read
+    // the answer" — would throw away the one word the merchant can act on.
+    const coinslot = await gatewayServing({
+      publish_card: () => ({
+        status: 401,
+        text: JSON.stringify({
+          error: { code: "not_authorised", message: "this key does not open this call" },
+        }),
+      }),
+    });
+
+    const thrown = await coinslot.catalog.publish(card).then(
+      () => null,
+      (failure: unknown) => failure,
+    );
+
+    expect(thrown).toBeInstanceOf(CoinslotError);
+    expect(thrown instanceof CoinslotError && thrown.code).toBe("not_authorised");
+    expect(thrown instanceof CoinslotError && thrown.route).toBe("publish_card");
+    expect(thrown instanceof Error && thrown.message).toContain("this key does not open this call");
+  });
+
+  it("carries the code for a call that never arrived", async () => {
+    // The same vocabulary the order calls return, so a merchant who learned
+    // one taxonomy has learned both. This one is the claim that nothing was
+    // handed over at all: an address that was listening a moment ago and is
+    // not any more.
+    const closed = await startFakeGateway({ apiKey: API_KEY, routes: {} });
+    await closed.close();
+
+    const coinslot = createClient({ apiKey: API_KEY, baseUrl: closed.url });
+
+    const thrown = await coinslot.orders.get("order-1").then(
+      () => null,
+      (failure: unknown) => failure,
+    );
+
+    expect(thrown).toBeInstanceOf(CoinslotError);
+    expect(thrown instanceof CoinslotError && thrown.code).toBe(CALL_DID_NOT_REACH_US);
+    expect(thrown instanceof CoinslotError && thrown.route).toBe("get_order");
+  });
+
+  it("carries the code for an answer that reached us and could not be read", async () => {
+    // The other side of the same fact, and the one that must not wear the
+    // first one's word: this call did reach the gateway, so telling a merchant
+    // it never arrived would invent the one thing nobody here knows.
+    const coinslot = await gatewayServing({
+      list_orders: () => ({ status: 502, text: "<html>gateway timeout</html>" }),
+    });
+
+    const thrown = await coinslot.orders.list().then(
+      () => null,
+      (failure: unknown) => failure,
+    );
+
+    expect(thrown instanceof CoinslotError && thrown.code).toBe(ANSWER_NOT_UNDERSTOOD);
+    expect(thrown instanceof CoinslotError && thrown.route).toBe("list_orders");
+  });
+
+  it("leaves a client built wrong as a TypeError, which is a different thing", async () => {
+    // The negative control, and the line the class must not cross. A missing
+    // address is a mistake in the merchant's own code, made before any call
+    // left the process; giving it a code out of the wire's vocabulary would
+    // put it in the same catch as a gateway that answered.
+    const coinslot = createClient({ apiKey: API_KEY });
+
+    const thrown = await coinslot.catalog.publish(card).then(
+      () => null,
+      (failure: unknown) => failure,
+    );
+
+    expect(thrown).toBeInstanceOf(TypeError);
+    expect(thrown).not.toBeInstanceOf(CoinslotError);
+  });
+
+  it("names both addresses when it is the address that is missing", async () => {
+    // The fix has to be in the sentence. A merchant reading "pass baseUrl" and
+    // nothing else goes looking for a hostname; there is deliberately no
+    // default, because choosing an environment is theirs to do on purpose.
+    const coinslot = createClient({ apiKey: API_KEY });
+
+    await expect(coinslot.catalog.publish(card)).rejects.toThrow(
+      /https:\/\/test\.coinslot\.nuanu\.ai/,
+    );
+    await expect(coinslot.catalog.publish(card)).rejects.toThrow(/https:\/\/coinslot\.nuanu\.ai/);
   });
 });
 

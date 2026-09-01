@@ -71,7 +71,7 @@ import { ParamNameSchema } from "./param-spec.js";
 import { IdentifierSchema, SalePriceSchema } from "./primitives.js";
 import { QuoteResponseSchema } from "./quote.js";
 import { ReceiptSchema } from "./receipt.js";
-import { OrderCallErrorSchema, OrderCallResultSchema, PublishResultSchema } from "./results.js";
+import { CallErrorSchema, OrderCallResultSchema, PublishResultSchema } from "./results.js";
 import { SellingStateSchema } from "./selling.js";
 
 /**
@@ -238,35 +238,26 @@ export const WorkerPollResponseSchema = z.strictObject({
  */
 const OrderCallFailedSchema = z.strictObject({
   ok: z.literal(false),
-  error: OrderCallErrorSchema,
+  error: CallErrorSchema,
 });
 
 /**
  * What delivering or refusing an order comes back as.
  *
- * `ok` is a value rather than a key, and that is the decision worth arguing.
- * What the portal promises the merchant is that the marker of success is one
- * and the same for a first delivery and for a repeated one — a merchant who
- * wrote `if (result === "delivered")` would have turned their own safe retry
- * into a failure branch. Any shape with a single marker keeps that promise.
- * Two things pick this one out of them.
+ * `ok` is a value rather than a key, and it is the same envelope every
+ * merchant-facing call of this surface answers in; the reasons are written down
+ * once, in `results.ts`, rather than argued again at each route. What this
+ * route adds to them is a word for which success it was: the marker of success
+ * is one and the same for a first delivery and for a repeated one, so a
+ * merchant who wrote `if (result === "delivered")` would have turned their own
+ * safe retry into a failure branch, and branching on `ok` and recording the
+ * word is what this shape makes the easy thing to do.
  *
- * A marker that is a key rather than a value reads as false in some of the
- * languages a merchant writes in: `{"ok": {}}` is falsy in Python and in PHP,
- * so the same idiom would say yes for a delivery and no for an acceptance. The
- * JSON Schema export exists for exactly the engineer working outside
- * TypeScript, and handing them a marker that flips with the payload would be
- * handing them the trap the single marker was meant to remove.
- *
- * And `ok` as a literal is a discriminator: it crosses into the export as a
- * `const` on each branch, which a generator can use, where "whichever key is
- * present" is something a reader has to work out. It is also the shape the
- * order machine already answers in, so the two do not need translating.
- *
- * Singular `error` where publishing has plural `errors`. A card can be wrong
- * in several places at once and is checked here; a delivery is checked against
- * its own card on the merchant's side before the call is made, so what this
- * call can fail on is the state of the order — one order, one reason.
+ * The failure is one `error` and not a list, and that is not an asymmetry with
+ * the publish. A call fails for one reason, wherever it is; what may be wrong
+ * in several places at once is the document that was sent, and those findings
+ * ride inside the error under `problems` — which is exactly what a delivery
+ * that is not what its card declares comes back with.
  *
  * Nothing here travels as an exception. A merchant's integration code is
  * expected to read this, branch on it and write some of it down.
@@ -754,7 +745,7 @@ export const API_ROUTES = Object.freeze({
     path: "/v0/catalog/publish",
     auth: "merchant_key",
     description:
-      "Publishes one product, or says what is wrong with the card. Republishing under the same merchant_item_id is how a card is changed rather than how a second one appears. The catalog identifier comes back in the result, and from then on it is what an agent, a purchase and a receipt all use. Two of the findings this can come back with are not about the card at all. A merchant who has not set the name their products are sold under is refused under the code no_seller_name, and the way past it is POST /v0/seller-name: a card published without one reaches a buyer's agent inside a payment request that names no seller. And on a deployment that settles on a real chain, a merchant who has set no wallet is refused under no_payout_wallet, with POST /v0/payout-wallet as the way past it: the money from that card's sales is paid to the merchant's own address directly, and without one there is nowhere for it to go. Both come back in the same list as whatever is wrong with the card, so one answer carries everything standing between this card and the catalog.",
+      "Publishes one product, or says what is wrong with the card. Republishing under the same merchant_item_id is how a card is changed rather than how a second one appears. The catalog identifier comes back beside ok, and from then on it is what an agent, a purchase and a receipt all use. A card that is not published comes back as ok:false under the code card_rejected, never retryable, with every finding named in the error's problems. Two of the findings this can come back with are not about the card at all. A merchant who has not set the name their products are sold under gets a finding whose code is no_seller_name, and the way past it is POST /v0/seller-name: a card published without one reaches a buyer's agent inside a payment request that names no seller. And on a deployment that settles on a real chain, a merchant who has set no wallet gets one whose code is no_payout_wallet, with POST /v0/payout-wallet as the way past it: the money from that card's sales is paid to the merchant's own address directly, and without one there is nowhere for it to go. Both come back in the same problems list as whatever is wrong with the card, so one answer carries everything standing between this card and the catalog.",
     request: CardSchema,
     response: { document: PublishResultSchema },
   },

@@ -15,7 +15,9 @@ import type { Environment, MerchantSelling, TransitionRejection } from "@coinslo
 import { createOrder, fulfillmentDeadline, isOpen, outcomeFor } from "@coinslot/core";
 import {
   type Acceptance,
+  CARD_REJECTED,
   type CabinetKey,
+  type CallError,
   CardSchema,
   type CatalogPage,
   CONTRACT_VERSION,
@@ -30,10 +32,9 @@ import {
   type MerchantKey,
   type MerchantKeyList,
   type OrderAcceptResponse,
-  type OrderCallError,
   type OrderCallResponse,
   type PayoutWallet,
-  type PublishError,
+  type Problem,
   type PublishResult,
   publicCardOf,
   purchaseCheckFor,
@@ -137,7 +138,7 @@ export type PurchaseAttempt =
   /** The purchase is under way and the agent is not waiting on it. */
   | { readonly step: "under_way"; readonly order: StoredOrder }
   | { readonly step: "no_such_item" }
-  | { readonly step: "params_rejected"; readonly problems: readonly PublishError[] }
+  | { readonly step: "params_rejected"; readonly problems: readonly Problem[] }
   | { readonly step: "not_selling"; readonly message: string }
   /** This payment has already been presented for a different order. */
   | {
@@ -356,7 +357,7 @@ export class Gateway {
     // "I cannot say who this is" is that nothing of theirs goes on sale. The
     // door resolved this key to a merchant a moment ago, so it does not happen.
     const merchant = await this.runtime.store.merchantById(merchantId);
-    const missing: PublishError[] = [];
+    const missing: Problem[] = [];
     if (merchant === null || !listedUnder(merchant.serviceName)) {
       missing.push(NO_SELLER_NAME);
     }
@@ -370,10 +371,10 @@ export class Gateway {
     }
 
     if (!parsed.success) {
-      return { errors: [...missing, ...findingsOf(parsed.error.issues)] };
+      return cardRejected([...missing, ...findingsOf(parsed.error.issues)]);
     }
     if (missing.length > 0) {
-      return { errors: missing };
+      return cardRejected(missing);
     }
 
     const stored = await this.runtime.store.publishCard(
@@ -381,7 +382,7 @@ export class Gateway {
       parsed.data,
       this.runtime.clock(),
     );
-    return { ok: { id: stored.id } };
+    return { ok: true, id: stored.id };
   }
 
   /**
@@ -1640,10 +1641,7 @@ export class Gateway {
    * republished mid-sale, and every case it gets right is one the gateway used
    * not to look at at all.
    */
-  async #goodsAgainstTheCard(
-    record: StoredOrder,
-    delivery: Delivery,
-  ): Promise<OrderCallError | null> {
+  async #goodsAgainstTheCard(record: StoredOrder, delivery: Delivery): Promise<CallError | null> {
     const stored = await this.runtime.store.cardById(record.itemId);
     if (stored === null) {
       // Our own catalog has lost the card an order of ours was made against.
@@ -1661,7 +1659,13 @@ export class Gateway {
     }
 
     const goods = `these goods are not what the card "${cutShort(stored.card.merchant_item_id)}" declares it delivers, so nothing was written down`;
-    const misfits = misfitsIn(findingsOf(fit.error.issues));
+    // The findings travel twice over, and on purpose. `problems` is the list a
+    // handler can walk field by field and fix; the sentence is what a person
+    // reads in a log, where nothing is going to walk anything. The sentence
+    // names a few of them and counts the rest, so the two are not the same
+    // text — one is the whole account, the other is enough to recognise it by.
+    const problems = findingsOf(fit.error.issues);
+    const misfits = misfitsIn(problems);
 
     // Two facts are true of a misfit delivery to an order whose ending has
     // already come, and only one of them was being said. "Nothing was written
@@ -1680,6 +1684,7 @@ export class Gateway {
         code: "delivery_does_not_match_card",
         message: `${goods} — and this order ended as ${record.order.state}, so there is nothing left to deliver against — ${misfits}`,
         retryable: false,
+        problems,
       };
     }
 
@@ -1691,6 +1696,7 @@ export class Gateway {
       // order on the merchant's behalf — would end a sale he could still make,
       // and would do it on the strength of one bad call.
       retryable: true,
+      problems,
     };
   }
 
@@ -1787,7 +1793,7 @@ export class Gateway {
  * contract allows for — the set is open — and each carries the state it was in,
  * because "this has no meaning here" is only useful alongside where "here" is.
  */
-function refusedCall(rejection: TransitionRejection): OrderCallError {
+function refusedCall(rejection: TransitionRejection): CallError {
   const closed = !isOpen(rejection.state);
   return {
     code: closed ? "order_already_closed" : rejection.code,
@@ -1932,23 +1938,58 @@ function cutShort(text: string): string {
     : `${text.slice(0, LETTERS_PER_MISFIT)}… (cut short)`;
 }
 
-/** Everything wrong with a delivery, in one line a person can act on. */
-function misfitsIn(findings: readonly PublishError[]): string {
+/** One finding, said where it is, in a length a line of prose can carry. */
+function misfitOf(finding: Problem): string {
   // An unrecognized key carries no path — zod names it in the message instead —
   // so the path is a prefix where there is one rather than the whole of it.
-  const named = findings
-    .slice(0, MISFITS_NAMED)
-    .map((finding) =>
-      cutShort(
-        finding.path.length === 0
-          ? finding.message
-          : `${finding.path.join(".")}: ${finding.message}`,
-      ),
-    )
-    .join("; ");
+  return cutShort(
+    finding.path.length === 0 ? finding.message : `${finding.path.join(".")}: ${finding.message}`,
+  );
+}
+
+/** Everything wrong with a delivery, in one line a person can act on. */
+function misfitsIn(findings: readonly Problem[]): string {
+  const named = findings.slice(0, MISFITS_NAMED).map(misfitOf).join("; ");
 
   const rest = findings.length - MISFITS_NAMED;
   return rest > 0 ? `${named} (and ${rest} more)` : named;
+}
+
+/**
+ * A card that is not going in the catalog, with everything standing in its way.
+ *
+ * The findings are the answer and the sentence is how it is recognised: a
+ * program reads `problems` field by field, and the message names the first of
+ * them and counts the rest, because a message that recited the list would be
+ * the same answer twice — once in a shape that can be acted on and once in a
+ * shape that cannot. The first is the one that leads the list, which is the
+ * merchant's own missing name or wallet wherever either is missing: the finding
+ * nothing on the card explains.
+ */
+function cardRejected(problems: readonly Problem[]): PublishResult {
+  const first = problems[0];
+  if (first === undefined) {
+    // "Refused, and here is nothing" is the one answer a merchant cannot act
+    // on, and it is not one this can send: a card is refused because something
+    // about it or about its merchant is wrong, and that something is what fills
+    // the list. Stopping here beats sending an answer the contract will not
+    // carry and nobody could use.
+    throw new Error("a card was refused with nothing named as standing in its way");
+  }
+
+  const counted = problems.length === 1 ? "one thing stands" : `${problems.length} things stand`;
+  return {
+    ok: false,
+    error: {
+      code: CARD_REJECTED,
+      message: `this card was not published: ${counted} between it and the catalog, and the first of them is ${misfitOf(first)}`,
+      // The same card published again is refused again. What changes the
+      // outcome is fixing what the findings name, and saying so here keeps a
+      // merchant's retry loop off a door that will not open.
+      retryable: false,
+      problems: [...problems],
+    },
+  };
 }
 
 /**
@@ -1962,7 +2003,7 @@ function misfitsIn(findings: readonly PublishError[]): string {
  * reading it — a person in a cabinet, and an engineer with a terminal and this
  * response.
  */
-const NO_SELLER_NAME: PublishError = {
+const NO_SELLER_NAME: Problem = {
   path: [],
   code: "no_seller_name",
   message:
@@ -1985,7 +2026,7 @@ const NO_SELLER_NAME: PublishError = {
  * address, it is the operator's, and a card published against it would send a
  * merchant's takings to somebody else with nobody the wiser.
  */
-const NO_PAYOUT_WALLET: PublishError = {
+const NO_PAYOUT_WALLET: Problem = {
   path: [],
   code: "no_payout_wallet",
   message:
@@ -1998,7 +2039,7 @@ const NO_PAYOUT_WALLET: PublishError = {
 /** Zod's account of what is wrong, in the shape the contract publishes. */
 function findingsOf(
   issues: readonly { path: readonly PropertyKey[]; code: string; message: string }[],
-): PublishError[] {
+): Problem[] {
   return issues.map((issue) => ({
     path: issue.path.map((step) => String(step)),
     code: issue.code,

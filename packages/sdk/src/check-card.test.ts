@@ -1,4 +1,4 @@
-import { PublishErrorSchema } from "@nuanu-ai/coinslot-contracts";
+import { ProblemSchema } from "@nuanu-ai/coinslot-contracts";
 import { describe, expect, it } from "vitest";
 import { checkCard } from "./check-card.js";
 
@@ -39,7 +39,7 @@ describe("checking a card before it is published", () => {
 
     expect(problems).toHaveLength(1);
     for (const problem of problems) {
-      expect(PublishErrorSchema.safeParse(problem).success).toBe(true);
+      expect(ProblemSchema.safeParse(problem).success).toBe(true);
     }
     expect(problems[0]?.path).toStrictEqual(["title"]);
     expect(problems[0]?.message).toMatch(/string/);
@@ -92,7 +92,7 @@ describe("checking a card before it is published", () => {
 
       expect(problems).toHaveLength(1);
       expect(problems[0]?.path).toStrictEqual([]);
-      expect(PublishErrorSchema.safeParse(problems[0]).success).toBe(true);
+      expect(ProblemSchema.safeParse(problems[0]).success).toBe(true);
     }
   });
 });

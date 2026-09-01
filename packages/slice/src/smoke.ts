@@ -198,8 +198,10 @@ async function main(): Promise<void> {
 
   try {
     const published = await merchant.client.catalog.publish(smokeCard);
-    if (!("ok" in published)) {
-      die(`the gateway refused the smoke card: ${JSON.stringify(published.errors)}`);
+    if (!published.ok) {
+      die(
+        `the gateway refused the smoke card (${published.error.code}): ${JSON.stringify(published.error.problems)}`,
+      );
     }
 
     const catalog = await buyer.catalog();

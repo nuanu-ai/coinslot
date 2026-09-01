@@ -119,7 +119,7 @@ const publishing = (served: Served, key: string, card: Card) =>
 const publish = async (served: Served, key: string, card: Card): Promise<string> => {
   const answered = await publishing(served, key, card);
   expect(answered.status, JSON.stringify(answered.body)).toBe(200);
-  return (answered.body as { ok: { id: string } }).ok.id;
+  return (answered.body as { id: string }).id;
 };
 
 /** The address a buyer's agent is actually told to pay for one product. */
@@ -289,12 +289,14 @@ describe("publishing before a wallet has been set", () => {
     const refused = await publishing(served, key, cardFor("a-room", "A room"));
 
     expect(refused.status).toBe(422);
-    const { errors } = refused.body as { errors: { code: string; message: string }[] };
+    const { problems } = (
+      refused.body as { error: { problems: { code: string; message: string }[] } }
+    ).error;
     // The words have to tell them what to do next. What is missing is not on
     // the card at all, so a merchant told "something is missing" would go
     // through the fields of a card looking for a field that is not there.
-    expect(errors.map((finding) => finding.code)).toContain("no_payout_wallet");
-    expect(errors.map((finding) => finding.message).join(" ")).toContain("/v0/payout-wallet");
+    expect(problems.map((finding) => finding.code)).toContain("no_payout_wallet");
+    expect(problems.map((finding) => finding.message).join(" ")).toContain("/v0/payout-wallet");
   });
 
   it("carries an empty path, because it is not about a field of the card", async () => {
@@ -304,8 +306,10 @@ describe("publishing before a wallet has been set", () => {
 
     const refused = await publishing(served, key, cardFor("a-room", "A room"));
 
-    const { errors } = refused.body as { errors: { path: string[]; code: string }[] };
-    expect(errors.find((finding) => finding.code === "no_payout_wallet")?.path).toStrictEqual([]);
+    const { problems } = (
+      refused.body as { error: { problems: { path: string[]; code: string }[] } }
+    ).error;
+    expect(problems.find((finding) => finding.code === "no_payout_wallet")?.path).toStrictEqual([]);
   });
 
   it("publishes for a merchant who has one, which is what makes the refusal a rule", async () => {
@@ -339,9 +343,9 @@ describe("publishing before a wallet has been set", () => {
     const refused = await publishing(served, key, cardFor("a-room", "A room"));
 
     expect(refused.status).toBe(422);
-    const { errors } = refused.body as { errors: { code: string }[] };
-    expect(errors.map((finding) => finding.code)).toContain("no_seller_name");
-    expect(errors.map((finding) => finding.code)).toContain("no_payout_wallet");
+    const { problems } = (refused.body as { error: { problems: { code: string }[] } }).error;
+    expect(problems.map((finding) => finding.code)).toContain("no_seller_name");
+    expect(problems.map((finding) => finding.code)).toContain("no_payout_wallet");
   });
 
   it("says what is wrong with the card as well", async () => {
@@ -354,9 +358,11 @@ describe("publishing before a wallet has been set", () => {
       price: { amount: "not a number", currency: "USD" },
     });
 
-    const { errors } = refused.body as { errors: { path: string[]; code: string }[] };
-    expect(errors.map((finding) => finding.code)).toContain("no_payout_wallet");
-    expect(errors.some((finding) => finding.path.includes("price"))).toBe(true);
+    const { problems } = (
+      refused.body as { error: { problems: { path: string[]; code: string }[] } }
+    ).error;
+    expect(problems.map((finding) => finding.code)).toContain("no_payout_wallet");
+    expect(problems.some((finding) => finding.path.includes("price"))).toBe(true);
   });
 
   it("lets a merchant publish as soon as they set one", async () => {

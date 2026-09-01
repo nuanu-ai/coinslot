@@ -1,5 +1,6 @@
 import type { Card } from "@nuanu-ai/coinslot-contracts";
 import {
+  CARD_REJECTED,
   CatalogPageSchema,
   PublishResultSchema,
   WorkerPollResponseSchema,
@@ -58,14 +59,14 @@ afterEach(async () => {
 const published = async (harnessed: Harness, card: Card): Promise<string> => {
   const result = await harnessed.gateway.publishCard(harnessed.merchant.id, card);
   expect(PublishResultSchema.safeParse(result).success).toBe(true);
-  if (!("ok" in result)) throw new Error(`publishing failed: ${JSON.stringify(result.errors)}`);
-  return result.ok.id;
+  if (!result.ok) throw new Error(`publishing failed: ${JSON.stringify(result.error.problems)}`);
+  return result.id;
 };
 
 describe("the catalog", () => {
   it("answers a card that will not do with everything wrong with it at once", async () => {
-    // A merchant fixing one field per round trip is the experience the plural
-    // errors exist to prevent.
+    // A merchant fixing one field per round trip is the experience the list of
+    // findings exists to prevent.
     const harnessed = await started();
 
     const result = await harnessed.gateway.publishCard(harnessed.merchant.id, {
@@ -74,8 +75,14 @@ describe("the catalog", () => {
     });
 
     expect(PublishResultSchema.safeParse(result).success).toBe(true);
-    if (!("errors" in result)) throw new Error("a broken card was published");
-    expect(result.errors.length).toBeGreaterThan(1);
+    if (result.ok) throw new Error("a broken card was published");
+    expect(result.error.code).toBe(CARD_REJECTED);
+    expect(result.error.retryable).toBe(false);
+    expect(result.error.problems.length).toBeGreaterThan(1);
+    // The sentence is not the list said again: it names the first finding and
+    // counts the rest, which is what a person reading one line of a log needs.
+    expect(result.error.message).not.toBe("");
+    expect(result.error.message).toContain(String(result.error.problems.length));
   });
 
   it("shows an agent the card as a card, and never the merchant's own key", async () => {
@@ -625,6 +632,12 @@ describe("the goods against the card that sold them", () => {
     if (answered?.ok !== false) throw new Error("an empty delivery closed the order");
     expect(answered.error.code).toBe("delivery_does_not_match_card");
     expect(answered.error.message).toContain("activation_code");
+    // The sentence is for the person reading a log; the findings are for the
+    // handler that has to be fixed, and they name the field rather than leaving
+    // his code to pick it back out of a sentence.
+    expect(answered.error.problems?.map((problem) => problem.path.join("."))).toStrictEqual([
+      "activation_code",
+    ]);
     // He can fix his handler and call again; the order is still his to finish.
     expect(answered.error.retryable).toBe(true);
 
@@ -928,6 +941,12 @@ describe("the goods against the card that sold them", () => {
     const wrongGoods = await harnessed.gateway.deliverOrder(harnessed.merchant.id, orderId, {});
     if (wrongGoods?.ok !== false) throw new Error("an empty delivery was taken");
     expect(wrongGoods.error.code).toBe("delivery_does_not_match_card");
+    // The order has ended, so there is nothing to send again — and what he sent
+    // is still his to know, in the same shape as on an order that still stands.
+    expect(wrongGoods.error.retryable).toBe(false);
+    expect(wrongGoods.error.problems?.map((problem) => problem.path.join("."))).toStrictEqual([
+      "activation_code",
+    ]);
 
     // And once his handler is fixed, the order's own answer reaches him.
     const rightGoods = await harnessed.gateway.deliverOrder(harnessed.merchant.id, orderId, {

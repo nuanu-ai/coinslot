@@ -177,7 +177,7 @@ it("carries one merchant's two products from publishing to the last refusal", as
       publish_card: (call) => {
         const key = (call.body as Card).merchant_item_id;
         published.push(key);
-        return { body: { ok: { id: `cat-${published.length}` } } };
+        return { body: { ok: true, id: `cat-${published.length}` } };
       },
       poll_worker: (_call, index) => polls[index] ?? parked,
       answer_quote: () => ({ body: { used: true } }),
@@ -192,8 +192,8 @@ it("carries one merchant's two products from publishing to the last refusal", as
   const forNumber = await coinslot.catalog.publish(numberCard);
   const forEsim = await coinslot.catalog.publish(esimCard);
 
-  expect(forNumber).toStrictEqual({ ok: { id: "cat-1" } });
-  expect(forEsim).toStrictEqual({ ok: { id: "cat-2" } });
+  expect(forNumber).toStrictEqual({ ok: true, id: "cat-1" });
+  expect(forEsim).toStrictEqual({ ok: true, id: "cat-2" });
 
   const problems: WorkerProblem[] = [];
   const events: OrderEvent[] = [];
