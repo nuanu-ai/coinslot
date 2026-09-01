@@ -882,7 +882,7 @@ pre {
   align-items: baseline;
   padding: 3px 14px;
   font-size: 12px;
-  border-left: 2px solid transparent;
+  border-left: 3px solid transparent;
   cursor: default;
 }
 
@@ -936,14 +936,37 @@ pre {
   justify-self: end;
 }
 
+/*
+ * An answer that did not work.
+ *
+ * Three signals rather than one, because this is the line somebody is scanning
+ * two hundred rows for: the edge, the ground and the words. The status at the
+ * end carries the same colour and a heavier weight, since in a log of answers
+ * the number is what a reader is actually looking for.
+ */
 .lrow.bad {
   border-left-color: var(--warn);
-  background: color-mix(in oklab, var(--warn) 6%, transparent);
+  background: color-mix(in oklab, var(--warn) 12%, transparent);
 }
 
 .lrow.bad .m,
 .lrow.bad .f {
   color: var(--warn);
+}
+
+.lrow.bad .f {
+  font-weight: 500;
+}
+
+.lline:has(.lrow.bad) > pre {
+  border-left: 2px solid var(--warn);
+}
+
+/* The purchase a refusal happened inside, marked at its head. */
+.rowgroup.bad {
+  color: var(--warn);
+  border-left: 2px solid var(--warn);
+  background: color-mix(in oklab, var(--warn) 9%, transparent);
 }
 
 /* --- connecting --------------------------------------------------------- */

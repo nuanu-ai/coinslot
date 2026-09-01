@@ -14,7 +14,7 @@
  * thing here that names an environment.
  */
 
-import type { Environment } from "@coinslot/core";
+import { type Environment, SITES } from "@coinslot/core";
 import {
   API_ROUTES,
   type Card,
@@ -574,18 +574,33 @@ export const renderEntry = (one: Entry): string => {
     : `<details class="lline"${stamp}><summary class="${classes}">${inside}</summary><pre>${escaped(json(one.detail))}</pre></details>`;
 };
 
-const logColumn = (entries: readonly Entry[]): string => {
-  const newestFirst = [...entries].reverse();
-  const rows: string[] = [];
-  let group: string | null | undefined;
+/** The lines of one purchase, in the order they arrived on screen. */
+interface Group {
+  readonly order: string | null;
+  readonly lines: Entry[];
+}
+
+const grouped = (newestFirst: readonly Entry[]): Group[] => {
+  const groups: Group[] = [];
   for (const one of newestFirst) {
     const order = orderOf(one);
-    if (order !== group) {
-      group = order;
-      rows.push(`<div class="rowgroup">${order === null ? "no order" : escaped(order)}</div>`);
-    }
-    rows.push(renderEntry(one));
+    const last = groups.at(-1);
+    if (last === undefined || last.order !== order) groups.push({ order, lines: [one] });
+    else last.lines.push(one);
   }
+  return groups;
+};
+
+const logColumn = (entries: readonly Entry[]): string => {
+  const rows = grouped([...entries].reverse()).flatMap((group) => {
+    // A purchase carrying a refusal is marked at its head, so which one went
+    // wrong is visible without opening any of its lines.
+    const wrong = group.lines.some(failed);
+    return [
+      `<div class="rowgroup${wrong ? " bad" : ""}">${group.order === null ? "no order" : escaped(group.order)}</div>`,
+      ...group.lines.map(renderEntry),
+    ];
+  });
   return `<aside class="log">
   <header>
     <div class="top"><h2>Log</h2><span class="tag">threaded by order</span></div>
@@ -599,6 +614,16 @@ const logColumn = (entries: readonly Entry[]): string => {
 };
 
 /* --- the whole page ----------------------------------------------------- */
+
+/**
+ * The gateway the box is filled with before anybody types.
+ *
+ * The test site rather than a laptop: that is where this console is pointed
+ * most of the time, and a local gateway is one paste away. It is built from
+ * `SITES` rather than written out, so the address here cannot drift from the
+ * one the door refuses a key in the name of.
+ */
+const GATEWAY_BY_DEFAULT = `https://${SITES.test}`;
 
 const KEY_WORDS: Readonly<Record<Environment, string>> = {
   live: "You connected with a live key. A purchase from this console signs a payment with real money behind it.",
@@ -621,7 +646,7 @@ const gate = (said: SaidBack | null): string =>
   ${hidden("action", "connect")}
   <h1>Coinslot stand</h1>
   <p class="lede">Three seats at one wire: the merchant who publishes, the agent who buys, and the merchant's code answering orders. All three need a gateway and a merchant key; the key stays in this process and never reaches this page.</p>
-  ${field("Gateway address", '<input required name="address" value="http://localhost:8080">')}
+  ${field("Gateway address", `<input required name="address" value="${escaped(GATEWAY_BY_DEFAULT)}">`)}
   ${field("Merchant key", '<input required name="api_key" type="password" autocomplete="off">')}
   <button type="submit" class="primary">Connect</button>
   ${said === null ? "" : `<div class="said-back${said.problem ? " problem" : ""}">${escaped(said.words)}</div>`}

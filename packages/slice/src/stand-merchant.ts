@@ -340,7 +340,14 @@ export const makeStandMerchant = (feed: Feed): StandMerchant => {
     });
 
     fresh.on("problem", (problem) => {
-      feed.write("gateway", problem.kind, problem);
+      // Named under `error` as well as carried whole: a worker problem is the
+      // gateway refusing what this handler sent, and the log reads a refusal
+      // off that field. Without it the one line that says the delivery was
+      // rejected would sit in the stream looking like every other line.
+      feed.write("gateway", `The gateway refused what the handler sent: ${problem.kind}.`, {
+        error: problem.kind,
+        problem,
+      });
     });
   };
 
