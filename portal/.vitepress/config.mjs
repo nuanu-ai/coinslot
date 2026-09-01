@@ -36,7 +36,12 @@ export default withMermaid(defineConfig({
       },
       {
         text: 'For the engineer',
+        // The addresses and the keys come first because they are wanted before
+        // the first call rather than after it, and because an engineer who is
+        // already integrated comes back for them and will not reread a guide
+        // to find one.
         items: [
+          { text: 'Where to call, and with which key', link: '/where-to-call' },
           { text: 'The first test sale', link: '/quickstart' },
           { text: 'The product card', link: '/cards' },
           { text: 'Orders and fulfillment modes', link: '/orders' },

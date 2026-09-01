@@ -67,23 +67,11 @@ const coinslot = createClient({
 })
 ```
 
-The address in `baseUrl` comes with the key when you connect. The client
-supplies none by itself, because nothing in the contract says where we are.
-The repository defines two public channels: the test channel is configured for
-`test.coinslot.nuanu.ai`, and the live channel for `coinslot.nuanu.ai`. This is
-the contract those deployments must meet, not a claim here that either address
-is already deployed or reachable.
-
-A key for the test environment starts with `csk_test_`; one for the live
-environment starts with `csk_live_`. The gateway accepts a key only in the
-environment it was issued for. Presented to the other environment, it is
-refused in words that name where it works.
-
-The order's `test` flag follows the configured chain, not the key as a separate
-switch. A gateway on the test channel's Base Sepolia chain marks an order as a
-test; one on the live channel's Base mainnet chain does not. This step worked
-if the client was built. Whether the key and address belong together is
-answered by the first call that reaches us, and that call is on the next step.
+Both values come from us together, and [Where to call, and with which
+key](/where-to-call) has the addresses, the key prefixes and the chain each
+environment settles on. This step worked if the client was built. Whether the
+key and address belong together is answered by the first call that reaches us,
+and that call is on the next step.
 
 ## 2. Describe the product with a card
 
@@ -401,15 +389,14 @@ carried ([Telling a repeat apart](/orders#telling-a-repeat-apart)).
 
 The first purchase of your product on the configured test channel is made by
 our sandbox buyer rather than by a live agent — a program that walks the whole
-path: it finds the card, asks the price, pays and takes delivery. That channel
-uses Base Sepolia test funds, and afterwards the whole test path can be seen
-working.
+path: it finds the card, asks the price, pays and takes delivery. It pays with
+test funds, and afterwards the whole test path can be seen working.
 
 During the pilot we start that purchase on your signal: say you are ready, and
-we run it with you watching, so that you see what happens at every step. A
-gateway configured for the test channel gives the order `test: true`; one
-configured for the live channel gives it `test: false`. The two channel
-contracts require separate keys, databases and chains.
+we run it with you watching, so that you see what happens at every step. The
+two channel contracts require separate keys, databases and chains, and what
+that means for the order this purchase leaves is on [Where to call, and with
+which key](/where-to-call).
 
 It all came together if the order reached your handler, the sandbox buyer
 received the goods, and the purchase left a receipt behind it.
