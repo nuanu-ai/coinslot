@@ -45,6 +45,17 @@ export interface ChallengeView {
   readonly payTo: string;
   readonly scheme: string;
   /**
+   * What the gateway itself says about this challenge, where it says anything.
+   *
+   * A 402 carries the server's own reason in the declaration, and on a card
+   * addressed without an order it is the sentence worth reading: the price
+   * quoted is the published one, and what a purchase costs is settled when the
+   * purchase is made. Shown as it arrives rather than paraphrased — it is the
+   * gateway's claim about its own answer, and a second wording beside it would
+   * be ours.
+   */
+  readonly said: string | null;
+  /**
    * The order this challenge was issued for, where it was issued for one.
    *
    * A challenge for a card alone — the GET a crawler makes — names no order,
@@ -95,12 +106,14 @@ export const readChallenge = (challenge: PaymentRequired): ChallengeView | null 
   if (first === undefined) return null;
   const extra = first.extra as Record<string, unknown> | undefined;
   const order = extra?.[ORDER_ID_IN_EXTRA];
+  const said = (challenge as { error?: unknown }).error;
   return {
     amount: first.amount,
     asset: first.asset,
     network: first.network,
     payTo: first.payTo,
     scheme: first.scheme,
+    said: typeof said === "string" && said !== "" ? said : null,
     orderId: typeof order === "string" ? order : null,
   };
 };

@@ -316,7 +316,7 @@ const requirements = (view: ChallengeView): string => `<div class="reqs">
   <div><div class="k">pay to</div><div class="v">${escaped(view.payTo)}</div></div>
   <div><div class="k">scheme</div><div class="v">${escaped(view.scheme)}</div></div>
   <div><div class="k">order in extra</div><div class="v">${view.orderId === null ? "none — this challenge is for the card alone" : escaped(view.orderId)}</div></div>
-</div>`;
+</div>${view.said === null ? "" : `<p class="aside">The gateway says: “${escaped(view.said)}”</p>`}`;
 
 const exchangePanel = (view: ExchangeView): string => {
   const hand =
