@@ -74,8 +74,15 @@ import {
 } from "./stand-page.js";
 import { templateNamed } from "./stand-templates.js";
 
-const TEST_BUYER_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 const BUYER_CEILING_USD = 50;
+
+const buyerKey = process.env.STAND_BUYER_KEY;
+if (buyerKey === undefined || buyerKey === "") {
+  throw new Error("STAND_BUYER_KEY is required: put the stand's test-wallet key in .env.stand.");
+}
+if (!/^0x[0-9a-fA-F]{64}$/.test(buyerKey)) {
+  throw new Error("STAND_BUYER_KEY must be 0x followed by 64 hexadecimal characters.");
+}
 
 const feed = makeFeed();
 const merchant = makeStandMerchant(feed);
@@ -320,7 +327,7 @@ const buyerFor = (): StandBuyer => {
   const { address } = requireConnection();
   return makeStandBuyer({
     baseUrl: address,
-    privateKey: TEST_BUYER_KEY,
+    privateKey: buyerKey,
     maxUsd: BUYER_CEILING_USD,
     fetch: tracing("agent"),
   });

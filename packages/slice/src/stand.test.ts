@@ -50,6 +50,29 @@ afterEach(async () => {
   gateway = undefined;
 });
 
+describe("the stand buyer's key", () => {
+  it("refuses to start when no test-wallet key was supplied", async () => {
+    const standPort = await freePort();
+    const { STAND_BUYER_KEY: _missing, ...withoutBuyerKey } = process.env;
+    let output = "";
+    stand = spawn("pnpm", ["exec", "tsx", "src/stand.ts"], {
+      cwd: fileURLToPath(new URL("../", import.meta.url)),
+      env: { ...withoutBuyerKey, STAND_PORT: String(standPort) },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    stand.stdout?.on("data", (chunk) => {
+      output += String(chunk);
+    });
+    stand.stderr?.on("data", (chunk) => {
+      output += String(chunk);
+    });
+
+    await waitUntil(() => stand?.exitCode !== null);
+    expect(stand.exitCode).toBe(1);
+    expect(output).toContain("STAND_BUYER_KEY");
+  }, 10_000);
+});
+
 describe("a stand pointed at a gateway elsewhere", () => {
   it("sends the purchase to the gateway it was given", async () => {
     let purchases = 0;
@@ -85,7 +108,11 @@ describe("a stand pointed at a gateway elsewhere", () => {
     let output = "";
     stand = spawn("pnpm", ["exec", "tsx", "src/stand.ts"], {
       cwd: fileURLToPath(new URL("../", import.meta.url)),
-      env: { ...process.env, STAND_PORT: String(standPort) },
+      env: {
+        ...process.env,
+        STAND_BUYER_KEY: `0x${"11".repeat(32)}`,
+        STAND_PORT: String(standPort),
+      },
       stdio: ["ignore", "pipe", "pipe"],
     });
     stand.stdout?.on("data", (chunk) => {

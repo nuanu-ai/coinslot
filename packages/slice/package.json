@@ -10,7 +10,7 @@
     "bootstrap": "tsx src/bootstrap.ts",
     "serve": "tsx src/serve.ts",
     "buy": "tsx src/buy.ts",
-    "stand": "tsx src/stand.ts"
+    "stand": "node --env-file-if-exists=../../.env.stand --import tsx src/stand.ts"
   },
   "devDependencies": {
     "@nuanu-ai/coinslot-contracts": "workspace:*",
