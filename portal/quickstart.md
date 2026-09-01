@@ -55,8 +55,8 @@ Release tags publish this package to the public npm registry. A stable release
 is installed through npm's default `latest` channel. Stage 0 does not publish
 prerelease versions.
 
-You are given a key to our API when you connect, and you keep it wherever you
-keep the rest of your secrets.
+The client needs two things from you: a key, which you keep wherever you keep
+the rest of your secrets, and the address to call.
 
 ```ts
 import { createClient } from '@nuanu-ai/coinslot'
@@ -67,11 +67,18 @@ const coinslot = createClient({
 })
 ```
 
-Both values come from us together, and [Where to call, and with which
-key](/where-to-call) has the addresses, the key prefixes and the chain each
-environment settles on. This step worked if the client was built. Whether the
-key and address belong together is answered by the first call that reaches us,
-and that call is on the next step.
+You make the key yourself, in your cabinet, on the API Keys screen: press
+"Issue a key", name it so you can tell it from the next one, and copy it — it
+is shown once and never again. The address is the environment you are working
+in: `https://test.coinslot.nuanu.ai` while you are building, and
+`https://coinslot.nuanu.ai` when you go live. Give the client the address and
+nothing after it; it adds the rest of the path itself. A key made in one
+environment does not open the other, and a key you issued on the test address
+starts with `csk_test_` so you can see at a glance which one you are holding.
+
+This step worked if the client was built. Whether the key and address belong
+together is answered by the first call that reaches us, and that call is on the
+next step.
 
 ## 2. Describe the product with a card
 
@@ -394,9 +401,9 @@ test funds, and afterwards the whole test path can be seen working.
 
 During the pilot we start that purchase on your signal: say you are ready, and
 we run it with you watching, so that you see what happens at every step. The
-two channel contracts require separate keys, databases and chains, and what
-that means for the order this purchase leaves is on [Where to call, and with
-which key](/where-to-call).
+order it leaves carries `test: true`, because the test address settles on a
+test chain — the flag follows the chain the payment settled on and not the key
+you called with.
 
 It all came together if the order reached your handler, the sandbox buyer
 received the goods, and the purchase left a receipt behind it.

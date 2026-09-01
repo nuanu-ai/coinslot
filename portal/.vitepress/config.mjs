@@ -41,7 +41,6 @@ export default withMermaid(defineConfig({
         // already integrated comes back for them and will not reread a guide
         // to find one.
         items: [
-          { text: 'Where to call, and with which key', link: '/where-to-call' },
           { text: 'The first test sale', link: '/quickstart' },
           { text: 'The product card', link: '/cards' },
           { text: 'Orders and fulfillment modes', link: '/orders' },
