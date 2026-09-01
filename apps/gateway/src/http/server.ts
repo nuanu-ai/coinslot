@@ -31,7 +31,7 @@
  * a decision nobody took.
  */
 
-import { environmentOfKeyPrefix, SITES } from "@coinslot/core";
+import { environmentOfKeyPrefix, keyPrefixFor, SITES } from "@coinslot/core";
 import {
   type AuthMode,
   type ErrorCode,
@@ -350,19 +350,20 @@ async function answer(
   carriesBody: boolean,
 ): Promise<void> {
   const caller = await callerBehind(route.auth, request, gateway);
-  if (caller === WRONG_ENVIRONMENT) {
+  if (caller === OTHER_ENVIRONMENT_PREFIX) {
     // The same code and the same status as every other refusal at this door.
     // Only the sentence differs, and that is the whole of what the design asks
-    // for: a key from the other environment is refused "with words rather than
-    // a status code".
+    // for: a value beginning with the other environment's prefix is refused
+    // with words rather than a status code. No digest lookup happened, so the
+    // sentence claims no more than the prefix proves.
     const theirs = gateway.environment === "live" ? "test" : "live";
     response
       .status(401)
       .json(
         refusal(
           "not_authorised",
-          `this is a ${theirs} key and this is the ${gateway.environment} site; ` +
-            `${theirs} keys work on ${SITES[theirs]}`,
+          `this value begins with ${keyPrefixFor(theirs)}; ` +
+            `keys with that prefix work on ${SITES[theirs]}`,
         ),
       );
     return;
@@ -445,15 +446,15 @@ async function answer(
 const REFUSED = Symbol("the key on this call opens nothing");
 
 /**
- * The key on this call is the other site's, which is the one refusal here with
- * more to say than no.
+ * The value on this call begins with the other site's key prefix, which is the
+ * one refusal here with more to say than no.
  *
  * A second value beside {@link REFUSED} rather than a field on it, because the
- * door either knows which site a key belongs to or it does not, and those are
- * two answers rather than one answer with a detail hanging off it. A field
- * would be a detail somewhere above here could read and forget to.
+ * door either sees the other site's prefix or it does not, and those are two
+ * answers rather than one answer with a detail hanging off it. A field would be
+ * a detail somewhere above here could read and forget to.
  */
-const WRONG_ENVIRONMENT = Symbol("the key on this call belongs to the other site");
+const OTHER_ENVIRONMENT_PREFIX = Symbol("the value begins with the other site's key prefix");
 
 /**
  * Who made a call that came through a door: the merchant, which key, and what
@@ -493,7 +494,7 @@ async function callerBehind(
   auth: AuthMode,
   request: Request,
   gateway: Gateway,
-): Promise<Caller | null | typeof REFUSED | typeof WRONG_ENVIRONMENT> {
+): Promise<Caller | null | typeof REFUSED | typeof OTHER_ENVIRONMENT_PREFIX> {
   switch (auth) {
     case "merchant_key": {
       const presented = bearerIn(request.header(MERCHANT_KEY_HEADER) ?? undefined);
@@ -511,19 +512,20 @@ async function callerBehind(
       // against nothing. "Every key issued before this stops working" has to be
       // true of the door and not merely of a database somebody emptied.
       //
-      // The two ways it can be wrong get two different answers. A key naming
-      // the other environment is told where it works: that gives nothing away —
-      // whoever presents it can read its own prefix — and it replaces the
-      // failure most likely to cost an integrator an afternoon, a bare 401 with
-      // nothing wrong with the key. Everything else gets the one answer every
-      // other refusal here gets, because a door that told a bare key from a
-      // guess apart would confirm which guesses had once been real keys.
+      // The two ways it can be wrong get two different answers. A value naming
+      // the other environment is told where keys with that prefix work: that
+      // gives nothing away — whoever presents it can read its prefix — and it
+      // replaces the failure most likely to cost an integrator an afternoon, a
+      // bare 401 that says nothing about the recognisable prefix. Everything
+      // else gets the one answer every other refusal here gets, because a door
+      // that told a bare key from a guess apart would confirm which guesses had
+      // once been real keys.
       const theirs = environmentOfKeyPrefix(presented);
       if (theirs === null) {
         return REFUSED;
       }
       if (theirs !== gateway.environment) {
-        return WRONG_ENVIRONMENT;
+        return OTHER_ENVIRONMENT_PREFIX;
       }
 
       const key = await gateway.keyBehind(presented);

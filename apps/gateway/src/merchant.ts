@@ -5,7 +5,7 @@
  * screens for it exist (ADR-0010). Against the local stack it is one line, run
  * on the gateway that is already up:
  *
- *   docker compose exec -e PAYMENT_NETWORK=eip155:84532 gateway \
+ *   docker compose exec gateway \
  *     pnpm --filter @coinslot/gateway merchant add "Someone's shop"
  *
  * Outside Docker it needs the same DATABASE_URL and the same PAYMENT_NETWORK
@@ -16,12 +16,10 @@
  *     PAYMENT_NETWORK=eip155:84532 \
  *     pnpm --filter @coinslot/gateway merchant list
  *
- * The chain is in both because a key carries the environment it was issued in,
- * and a database address says nothing about which chain the gateway in front of
- * it settles on. It is named on the `exec` as well because the sandbox's own
- * gateway service takes the chain from its default rather than from a line in
- * `compose.yaml`, so there is nothing in that container's environment for the
- * command to inherit.
+ * Outside Docker the chain is explicit because a key carries the environment
+ * it was issued in, and a database address says nothing about which chain the
+ * gateway in front of it settles on. Inside Docker the command inherits the
+ * channel's PAYMENT_NETWORK from Compose.
  *
  * What this file does is only the wiring. The commands are in
  * `merchant-command.ts`, where they are tested without a database.

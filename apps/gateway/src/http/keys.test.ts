@@ -769,13 +769,15 @@ const LIVE_CHAIN = {
   CDP_API_KEY_SECRET: "secret",
 };
 
-describe("a key from the other site", () => {
-  it("is told it is a test key and where test keys work", async () => {
-    // The gateway under test is live; the key presented is a test one.
+describe("what a presented value's prefix says", () => {
+  it("is told only which prefix it begins with and where keys with that prefix work", async () => {
+    // The gateway under test is live; the value presented merely begins like a
+    // test key. No digest lookup follows this branch, so the gateway knows
+    // nothing about whether this fabricated value is or ever was a key.
     const { served } = await started(LIVE_CHAIN);
 
     const answered = await served.call("GET", "/v0/cards", {
-      headers: bearer("csk_test_whatever-this-is"),
+      headers: bearer("csk_test_a-made-up-value"),
     });
 
     expect(answered.status).toBe(401);
@@ -787,16 +789,17 @@ describe("a key from the other site", () => {
     // than a wider surface.
     const said = refusalIn(answered);
     expect(said.code).toBe("not_authorised");
-    expect(said.message).toContain("test key");
-    expect(said.message).toContain("test.coinslot.nuanu.ai");
+    expect(said.message).toContain("this value begins with csk_test_");
+    expect(said.message).toContain("keys with that prefix work on test.coinslot.nuanu.ai");
+    expect(said.message).not.toContain("this is a test key");
   });
 
-  it("says nothing more to a key that names no environment at all", async () => {
+  it("says nothing more to a value that names no environment at all", async () => {
     // The bare prefix, a guess, a stranger's key: all one answer, because a
     // door that told them apart would confirm which guesses had once been real
     // keys — which is exactly what revoking one has to stop. A key that names
     // the other environment is the one exception, and it gives nothing away:
-    // whoever presents it can read its own prefix.
+    // whoever presents the value can read its prefix.
     const { served } = await started();
 
     const answered = await served.call("GET", "/v0/cards", {

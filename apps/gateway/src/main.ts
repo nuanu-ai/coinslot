@@ -175,9 +175,10 @@ const gateway = new Gateway(runtime);
  * was never configured at all.
  */
 async function seedTheSandbox(secret: string | null): Promise<void> {
+  const surface = config.surfaceMode.toUpperCase();
   if (secret === null) {
     console.log(
-      "[gateway] SANDBOX_MERCHANT_KEY is not set — a name with nothing after it reads the same as no " +
+      `[gateway] ${surface}: SANDBOX_MERCHANT_KEY is not set — a name with nothing after it reads the same as no ` +
         "name at all — so no key was seeded, and every key that opens a merchant here is one somebody issued",
     );
     return;
@@ -192,8 +193,8 @@ async function seedTheSandbox(secret: string | null): Promise<void> {
   );
   if (seeded.kind === "issued") {
     console.warn(
-      `[gateway] SANDBOX: the key in SANDBOX_MERCHANT_KEY now opens ${seeded.merchantId} — ` +
-        "a key from an environment cannot be revoked without a deployment, so no deployment should set it" +
+      `[gateway] ${surface}: the key in SANDBOX_MERCHANT_KEY now opens ${seeded.merchantId} — ` +
+        "its value also remains in deployment configuration, so a production deployment should not set it" +
         (seeded.listedAs === null
           ? ""
           : `. It had no listing name, so this start listed it as "${seeded.listedAs}" — the seller a ` +
@@ -204,14 +205,14 @@ async function seedTheSandbox(secret: string | null): Promise<void> {
   }
   if (seeded.kind === "already_there") {
     console.warn(
-      "[gateway] SANDBOX: the key in SANDBOX_MERCHANT_KEY was already in the database and still opens " +
-        "the sandbox merchant; this start issued no key",
+      `[gateway] ${surface}: the key in SANDBOX_MERCHANT_KEY was already in the database and still opens ` +
+        "the seeded merchant; this start issued no key",
     );
     return;
   }
   if (seeded.kind === "disabled") {
     console.warn(
-      "[gateway] the key in SANDBOX_MERCHANT_KEY exists and somebody disabled it; it is left disabled, " +
+      `[gateway] ${surface}: the key in SANDBOX_MERCHANT_KEY exists and somebody disabled it; it is left disabled, ` +
         "and nothing presenting it will get in",
     );
   }
