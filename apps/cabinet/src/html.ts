@@ -94,6 +94,41 @@ const surface = (mode: SurfaceMode): string => {
 };
 
 /**
+ * The way out of the cabinet, into the documentation.
+ *
+ * It is the other half of the way out of the documentation, which is a link in
+ * the bar of the portal reading "← Coinslot"
+ * (portal/.vitepress/theme/index.mjs). The two are one solution and are meant
+ * to read as one: the same class name, the same shape — an arrow and the name
+ * the destination wears in its own corner — the same muted colour until it is
+ * hovered, and the same place, at the edge of the bar beside the navigation
+ * rather than inside it. Only the arrow differs, because one side is going
+ * back and this one is going out.
+ *
+ * Not a sixth tab, and that is the whole of why it sits in the right-hand
+ * group. The tabs are the five places inside the cabinet, and every one of them
+ * hangs off the mount point; a tab that took a merchant off this application
+ * altogether would be the row lying about what it is. So it rides with the
+ * things in the bar that are not navigation — the selling light, the address,
+ * the control that signs a merchant out.
+ *
+ * The word is "Docs" and not "Documentation" because the page it lands on says
+ * "Docs" in its own corner (portal/.vitepress/config.mjs). Whoever presses it
+ * arrives at the word they pressed.
+ *
+ * The address is absolute and carries no base path: ADR-0005 §1 puts the
+ * documentation at /docs beside the cabinet at /cabinet on one origin, not
+ * under it, so /docs/ is the address on every deployment and the trailing
+ * slash is the form Caddy redirects to. Run on its own the cabinet has no
+ * /docs and this 404s, exactly as /styles/fonts.css does above, and for the
+ * same reason: the shared origin is Caddy's to assemble.
+ *
+ * The portal's half needs `target="_self"` to escape VitePress's router. There
+ * is no router here, so a plain anchor is the whole of it.
+ */
+const WAY_OUT = '<a class="way-out" href="/docs/" title="The Coinslot documentation">Docs →</a>';
+
+/**
  * One whole page.
  *
  * Beside the address in the corner, until it is confirmed, is the plain fact
@@ -136,6 +171,7 @@ ${surface(chrome.mode)}
       ).join("")}</nav>
     </div>
     <div class="whoami">
+      ${WAY_OUT}
       ${chrome.selling === undefined ? "" : state(chrome.selling)}
       <a class="who" href="${escaped(chrome.base)}/settings">${escaped(chrome.who)}</a>
       ${

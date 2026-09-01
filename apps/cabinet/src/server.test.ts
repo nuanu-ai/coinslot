@@ -2044,6 +2044,31 @@ describe("a merchant who has chosen no name", () => {
   });
 });
 
+describe("the way out to the documentation", () => {
+  it("is on every screen a merchant works on, and leaves the cabinet's mount point", async () => {
+    // The documentation was linked from the landing and from nowhere else, so a
+    // merchant already inside the cabinet had to leave it by hand to read a
+    // line of it. And it is beside the cabinet on one origin rather than under
+    // it (deploy/Caddyfile): a link that took the mount point along would send
+    // them to /cabinet/docs/, which is an address nothing answers.
+    const { browser, gateway } = await started({ base: "/cabinet" });
+    await publish(gateway, roomCard);
+    await browser.signIn();
+
+    for (const path of ["/cards", "/orders", "/receipts", "/keys", "/settings"]) {
+      const screen = await browser.get(`/cabinet${path}`);
+      expect(screen.status, path).toBe(200);
+
+      // Found by where it goes rather than by what it is called, and read for
+      // the words on it. An anchor with nothing between its tags is a link
+      // nobody can see or press, and would satisfy a check for the address
+      // alone.
+      const out = /<a[^>]+href="\/docs\/"[^>]*>([^<]+)<\/a>/.exec(screen.html);
+      expect(out?.[1]?.trim(), `${path} has no readable link to the documentation`).toBeTruthy();
+    }
+  });
+});
+
 describe("the cards screen", () => {
   it("shows each card with its key, price, delivery and state", async () => {
     const { browser, gateway } = await started();
