@@ -1039,6 +1039,25 @@ const server = createServer(async (request, response) => {
   notFound(response);
 });
 
+/*
+ * A door that will not open says so in words.
+ *
+ * The common case by far is a stand already running on this port, and left to
+ * itself Node answers that with an unhandled `error` event and a stack trace
+ * through `net` — which says everything except the two things somebody needs:
+ * what is wrong and what to do about it. Anything else still throws, because an
+ * error nobody wrote a sentence for is one the stack is the best account of.
+ */
+server.on("error", (error: NodeJS.ErrnoException) => {
+  if (error.code !== "EADDRINUSE") {
+    throw error;
+  }
+  console.error(
+    `Port ${port} is already taken, most likely by a stand that is still running. Stop that one, or start this with STAND_PORT set to a free port.`,
+  );
+  process.exitCode = 1;
+});
+
 server.listen(port, "127.0.0.1", () => console.log(`Coinslot stand: http://127.0.0.1:${port}`));
 
 const shutdown = async (): Promise<void> => {
