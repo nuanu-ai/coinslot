@@ -371,7 +371,7 @@ const agentTab = (state: PageState): string => {
   <div class="body">
     <form method="post">
       ${hidden("item_id", state.chosen)}
-      ${field("Parameters this card declares", `<textarea name="params" class="short">${escaped(state.paramsDraft)}</textarea>`, "Filled from the card's own declaration. Parameters that do not fit are refused before any payment is mentioned.")}
+      ${field("What this product asks you for", `<textarea name="params" class="short">${escaped(state.paramsDraft)}</textarea>`, "The card declares which fields it needs and this is filled from that declaration; what you put here are the answers. Anything that does not fit is refused before any payment is mentioned.")}
       <div class="actions submit">
         <button type="submit" name="action" value="start_purchase" class="primary">Start a purchase</button>
         <button type="submit" name="action" value="buy_now">Buy in one go</button>
