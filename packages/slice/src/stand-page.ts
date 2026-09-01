@@ -137,9 +137,17 @@ const dot = (tone: string, text: string): string =>
  * Written out by hand these would be a second copy of the wire, drifting the
  * first time a route is renamed — and drifting silently, because a wrong
  * address printed beside a working button looks exactly like a right one.
+ *
+ * With values it prints the address that will be called; with none it prints
+ * the route as the table writes it, `:order_id` and all. That is the honest
+ * label for a panel whose address is not decided until somebody types into it,
+ * and it avoids the alternative of feeding a stand-in through `expandPath`,
+ * which would percent-encode it into noise.
  */
-const route = (name: keyof typeof API_ROUTES, values: Record<string, string> = {}): string =>
-  `<code class="addr">${escaped(API_ROUTES[name].method)} ${escaped(expandPath(API_ROUTES[name].path, values))}</code>`;
+const route = (name: keyof typeof API_ROUTES, values?: Record<string, string>): string => {
+  const { method, path } = API_ROUTES[name];
+  return `<code class="addr">${escaped(method)} ${escaped(values === undefined ? path : expandPath(path, values))}</code>`;
+};
 
 /* --- words -------------------------------------------------------------- */
 
@@ -374,13 +382,14 @@ const agentTab = (state: PageState): string => {
 ${chosen}
 ${state.exchange === null ? "" : exchangePanel(state.exchange)}
 <section class="panel">
-  <header><h2>Ask what became of an order</h2><div class="side">the identifier is the whole of the proof</div></header>
+  <header><h2>Ask what became of an order</h2><div class="side">${route("get_order_status")}</div></header>
   <div class="body">
     <form method="post" class="row">
       ${hidden("action", "order_status")}
-      ${field("Order identifier", '<input required name="order_id">')}
+      ${field("Order identifier", '<input required name="order_id" placeholder="ord_…">')}
       <div><button type="submit">Ask</button></div>
     </form>
+    <p>Where an agent collects goods that came later, and where you look when this page has forgotten an exchange. It takes no key: an agent has no account here, so the identifier it was handed at the purchase is what stands in for one. Whoever holds that string can read the order — which is why the gateway hands it to exactly one party, and answers an identifier it has never seen exactly as it answers somebody else's.</p>
   </div>
 </section>`;
 };
