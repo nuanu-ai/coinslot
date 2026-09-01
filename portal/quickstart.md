@@ -205,6 +205,10 @@ The answer is whatever the handler returned. We send it ourselves, and there is
 no separate call for replying: a forgotten reply would be an order nobody
 delivered, and a returned value cannot be forgotten.
 
+The worker's first log line says which gateway it started against and whether
+the money there is real — it reads that from your own key. Glance at it once
+before trusting a green run: a test key rehearses, a live key sells.
+
 In the asynchronous mode the handler answers at once that the order is
 accepted, and confirms the delivery itself with a separate call, later and from
 anywhere in your code. That call is made on the order you kept, so an
