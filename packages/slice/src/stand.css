@@ -784,6 +784,15 @@ pre {
   gap: 10px;
 }
 
+/* What this column is, and what it is not. The second half earns its place:
+   the SDK's polling and the gateway's own steps are not here, and a reader who
+   is not told that reads the gaps as disorder. */
+.log > header .aside {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
 .lanes {
   display: flex;
   gap: 4px;

@@ -707,6 +707,7 @@ const logColumn = (entries: readonly Entry[]): string => {
   return `<aside class="log">
   <header>
     <div class="top"><h2>Log</h2><span class="tag">threaded by order</span></div>
+    <p class="aside">Everything this console sent or was handed, in the order it recorded them. Not here: the SDK's own polling, and the gateway's internal steps — so a purchase reads whole while the gateway's side of it does not.</p>
     <div class="lanes">${LANES.map(
       (lane) =>
         `<label class="sw"><input type="checkbox" checked data-lane="${escaped(lane)}">${escaped(lane)}</label>`,

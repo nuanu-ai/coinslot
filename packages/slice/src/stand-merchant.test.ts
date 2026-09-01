@@ -13,7 +13,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { CONTRACT_VERSION, type WorkerEnvelope } from "@nuanu-ai/coinslot-contracts";
 import { afterEach, describe, expect, it } from "vitest";
-import { makeFeed } from "./stand-log.js";
+import { type Entry, makeFeed } from "./stand-log.js";
 import { makeStandMerchant } from "./stand-merchant.js";
 
 const KEY = "the-key-the-stand-connects-with";
@@ -165,6 +165,27 @@ const blockingDeliveryGateway = async (): Promise<{
   };
 };
 
+/*
+ * These read the detail rather than the title, and that is deliberate. What
+ * this test is about is order — a delivery already in flight finishing before
+ * the replacement connection does — and the sentences the console writes are
+ * rewritten whenever somebody reading a screen cannot follow them. A test that
+ * held those sentences would fail on a wording change and pass on a broken
+ * ordering, which is the wrong way round.
+ */
+const detailOf = (entry: Entry): Record<string, unknown> =>
+  typeof entry.detail === "object" && entry.detail !== null
+    ? (entry.detail as Record<string, unknown>)
+    : {};
+
+/** The console saying it is holding the disconnect for work already begun. */
+const isWaitingForDeliveries = (entry: Entry): boolean =>
+  typeof detailOf(entry).deliveries === "number";
+
+/** The gateway's answer to a delivery made on an order accepted earlier. */
+const isDeliveryAnswered = (entry: Entry): boolean =>
+  entry.kind === "merchant" && detailOf(entry).result !== undefined;
+
 let merchant: ReturnType<typeof makeStandMerchant> | undefined;
 const shutting: Array<() => Promise<void>> = [];
 
@@ -231,38 +252,24 @@ describe("connecting the stand somewhere else", () => {
       const replacing = merchant.connect(nextGateway.url, KEY).then(() => {
         replacementFinished = true;
       });
-      await waitUntil(
-        () =>
-          feed
-            .entries()
-            .some(
-              (entry) => entry.title === "Waiting for in-flight delivery work before disconnect.",
-            ),
-        1_000,
-      );
+      await waitUntil(() => feed.entries().some(isWaitingForDeliveries), 1_000);
 
       expect(replacementFinished).toBe(false);
       oldGateway.releaseDelivery();
       await replacing;
       await waitUntil(() => nextGateway.polls() > 0);
 
-      const oldAnswer = feed
-        .entries()
-        .findIndex((entry) => entry.title === "The accepted-order delivery answered.");
+      const oldAnswer = feed.entries().findIndex(isDeliveryAnswered);
       const newConnection = feed
         .entries()
-        .findIndex(
-          (entry) =>
-            entry.title === "Connected the merchant." &&
-            (entry.detail as { base_url?: string }).base_url === nextGateway.url,
-        );
+        .findIndex((entry) => detailOf(entry).base_url === nextGateway.url);
       expect(oldAnswer).toBeGreaterThanOrEqual(0);
       expect(oldAnswer).toBeLessThan(newConnection);
       expect(
         feed
           .entries()
           .slice(newConnection + 1)
-          .some((entry) => entry.title === "The accepted-order delivery answered."),
+          .some(isDeliveryAnswered),
       ).toBe(false);
     } finally {
       oldGateway.releaseDelivery();

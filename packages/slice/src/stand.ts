@@ -52,6 +52,7 @@ import {
   listReceipts,
   pauseCard,
   pauseSelling,
+  type Reach,
   resumeCard,
   resumeSelling,
 } from "./stand-gateway.js";
@@ -200,8 +201,7 @@ const dropThisConnection = (): void => {
 };
 
 const readCards = async (generation: number): Promise<void> => {
-  const { address, key } = requireConnection();
-  const answer = await listCards(address, key);
+  const answer = await listCards(reaching());
   if (!connectionIsCurrent(generation)) return;
   const parsed = MerchantCardListSchema.safeParse(answer.body);
   if (!parsed.success) {
@@ -216,11 +216,6 @@ const readCards = async (generation: number): Promise<void> => {
   cards = parsed.data.cards;
   selling = parsed.data.selling;
   for (const one of cards) merchant.learn(one.card.merchant_item_id, one.card.result);
-  feed.got("gateway", "Read the merchant card list.", {
-    status: answer.status,
-    cards: cards.length,
-    selling: parsed.data.selling,
-  });
 };
 
 /**
@@ -233,8 +228,7 @@ const readCards = async (generation: number): Promise<void> => {
  * screen does.
  */
 const readOrders = async (generation: number): Promise<void> => {
-  const { address, key } = requireConnection();
-  const answer = await listOrders(address, key);
+  const answer = await listOrders(reaching());
   if (!connectionIsCurrent(generation)) return;
   const parsed = OrderListSchema.safeParse(answer.body);
   if (!parsed.success) {
@@ -247,15 +241,10 @@ const readOrders = async (generation: number): Promise<void> => {
   }
   orders = parsed.data.orders;
   ordersRead = true;
-  feed.got("gateway", "Read the merchant's orders.", {
-    status: answer.status,
-    orders: orders.length,
-  });
 };
 
 const readReceipts = async (generation: number): Promise<void> => {
-  const { address, key } = requireConnection();
-  const answer = await listReceipts(address, key);
+  const answer = await listReceipts(reaching());
   if (!connectionIsCurrent(generation)) return;
   const parsed = ReceiptListSchema.safeParse(answer.body);
   if (!parsed.success) {
@@ -268,47 +257,63 @@ const readReceipts = async (generation: number): Promise<void> => {
   }
   receipts = parsed.data.receipts;
   receiptsRead = true;
-  feed.got("gateway", "Read the merchant's receipts.", {
-    status: answer.status,
-    receipts: receipts.length,
-  });
 };
 
 /* --- the agent's side --------------------------------------------------- */
 
-const tracedFetch: typeof fetch = async (input, init) => {
-  const request = input instanceof Request ? input : new Request(input, init);
-  feed.sent("agent", `${request.method} ${new URL(request.url).pathname}`, {
-    url: request.url,
-    payment_signature_present: request.headers.has("payment-signature"),
-  });
-  try {
-    const response = await fetch(request);
-    const text = await response.clone().text();
-    let body: unknown = text === "" ? null : text;
+/**
+ * A fetch that writes both halves of what goes through it.
+ *
+ * The lane is a parameter because the console calls from two seats and they
+ * belong in different lanes: the agent's purchases, and the merchant-key calls
+ * the SDK does not carry. Before this, only the agent's went through here, so a
+ * merchant-key answer arrived in the log with no request in front of it — which
+ * reads as a log out of order rather than as one missing a half.
+ *
+ * Headers are never written down. The merchant key travels on every call in the
+ * second lane, and the one thing recorded about the headers is whether a
+ * payment signature was on them.
+ */
+const tracing =
+  (lane: string): typeof fetch =>
+  async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    feed.sent(lane, `${request.method} ${new URL(request.url).pathname}`, {
+      url: request.url,
+      payment_signature_present: request.headers.has("payment-signature"),
+    });
     try {
-      body = text === "" ? null : JSON.parse(text);
-    } catch {
-      // The response was still an answer. Keep its text, as a proxy page says
-      // something about the proxy rather than disappearing as a parse error.
+      const response = await fetch(request);
+      const text = await response.clone().text();
+      let body: unknown = text === "" ? null : text;
+      try {
+        body = text === "" ? null : JSON.parse(text);
+      } catch {
+        // The response was still an answer. Keep its text, as a proxy page says
+        // something about the proxy rather than disappearing as a parse error.
+      }
+      // The subject is said out loud. A lane means "this side of the wire" and
+      // not "this side did it": "Answered 402." in the agent's lane reads as the
+      // agent answering, which is backwards — the agent asked.
+      feed.got(lane, `The gateway answered ${response.status}.`, {
+        status: response.status,
+        url: request.url,
+        body,
+      });
+      return response;
+    } catch (error) {
+      feed.write(lane, "Nothing came back.", {
+        url: request.url,
+        error: wordsOf(error),
+      });
+      throw error;
     }
-    // The subject is said out loud. This line sits in the agent's lane, which
-    // means "the agent's side of the wire" and not "the agent did it" — and
-    // "Answered 402." in that lane reads as the agent answering, which is
-    // backwards: the agent asked, and this is what came back to it.
-    feed.got("agent", `The gateway answered ${response.status}.`, {
-      status: response.status,
-      url: request.url,
-      body,
-    });
-    return response;
-  } catch (error) {
-    feed.write("agent", "Nothing came back.", {
-      url: request.url,
-      error: wordsOf(error),
-    });
-    throw error;
-  }
+  };
+
+/** Where the merchant-key calls go, and the fetch this console watches them through. */
+const reaching = (): Reach => {
+  const { address, key } = requireConnection();
+  return { baseUrl: address, apiKey: key, fetch: tracing("gateway") };
 };
 
 const buyerFor = (): StandBuyer => {
@@ -317,7 +322,7 @@ const buyerFor = (): StandBuyer => {
     baseUrl: address,
     privateKey: TEST_BUYER_KEY,
     maxUsd: BUYER_CEILING_USD,
-    fetch: tracedFetch,
+    fetch: tracing("agent"),
   });
 };
 
@@ -528,7 +533,7 @@ const doAction = async (form: URLSearchParams): Promise<void> => {
       if (!connectionIsCurrent(generation)) return;
       await readOrders(generation);
       if (!connectionIsCurrent(generation)) return;
-      say(`Connected to ${address}.`);
+      say(`Connected to ${address}, and read this merchant's cards and orders.`);
       return;
     }
 
@@ -547,7 +552,7 @@ const doAction = async (form: URLSearchParams): Promise<void> => {
       publicItemsRead = false;
       exchange = null;
       chosen = null;
-      say("Disconnected the stand merchant.");
+      say("Disconnected. The merchant SDK has stopped polling and is holding nothing.");
       return;
     }
 
@@ -572,7 +577,7 @@ const doAction = async (form: URLSearchParams): Promise<void> => {
         throw new Error("Card must be a JSON object.");
       const outcome = await merchant.publish(document as CardInput);
       if (!connectionIsCurrent(generation)) return;
-      feed.got("merchant", "Publish call answered.", outcome);
+      feed.got("merchant", "The gateway answered the publish call.", outcome);
       await readCards(generation);
       if (!connectionIsCurrent(generation)) return;
       publicItemsRead = false;
@@ -594,35 +599,40 @@ const doAction = async (form: URLSearchParams): Promise<void> => {
     case "pause_card":
     case "resume_card": {
       const generation = connectionGeneration;
-      const { address, key } = requireConnection();
+      const reach = reaching();
       const itemId = form.get("item_id") ?? "";
       const answer =
-        action === "pause_card"
-          ? await pauseCard(address, key, itemId)
-          : await resumeCard(address, key, itemId);
+        action === "pause_card" ? await pauseCard(reach, itemId) : await resumeCard(reach, itemId);
       if (!connectionIsCurrent(generation)) return;
-      feed.got("gateway", `${action === "pause_card" ? "Paused" : "Resumed"} a card.`, answer);
       await readCards(generation);
       publicItemsRead = false;
+      say(
+        answer.status < 400
+          ? action === "pause_card"
+            ? "Took that card off sale. Orders already accepted still play out."
+            : "Put that card back on sale."
+          : `The gateway refused that, with ${answer.status}.`,
+      );
       return;
     }
 
     case "pause_selling":
     case "resume_selling": {
       const generation = connectionGeneration;
-      const { address, key } = requireConnection();
       const answer =
         action === "pause_selling"
-          ? await pauseSelling(address, key)
-          : await resumeSelling(address, key);
+          ? await pauseSelling(reaching())
+          : await resumeSelling(reaching());
       if (!connectionIsCurrent(generation)) return;
-      feed.got(
-        "gateway",
-        `${action === "pause_selling" ? "Paused" : "Resumed"} all selling.`,
-        answer,
-      );
       await readCards(generation);
       publicItemsRead = false;
+      say(
+        answer.status < 400
+          ? action === "pause_selling"
+            ? "Stopped selling everything. Every card now reads paused."
+            : "Started selling again. Cards paused on their own stay paused."
+          : `The gateway refused that, with ${answer.status}.`,
+      );
       return;
     }
 

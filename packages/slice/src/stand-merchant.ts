@@ -172,18 +172,18 @@ export const makeStandMerchant = (feed: Feed): StandMerchant => {
   const handOver = async (order: LiveOrder): Promise<void> => {
     try {
       const delivery = deliveryFor(order.merchant_item_id);
-      feed.sent("merchant", "Delivering an accepted order.", {
+      feed.sent("merchant", "The handler delivered the goods it had promised.", {
         order_id: order.id,
         merchant_item_id: order.merchant_item_id,
         delivery,
       });
       const result = await order.deliver(delivery);
-      feed.got("merchant", "The accepted-order delivery answered.", {
+      feed.got("merchant", "The gateway answered that delivery.", {
         order_id: order.id,
         result,
       });
     } catch (error: unknown) {
-      feed.sent("merchant", "The later delivery could not be completed.", {
+      feed.sent("merchant", "That promised delivery could not be completed.", {
         order_id: order.id,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -210,7 +210,7 @@ export const makeStandMerchant = (feed: Feed): StandMerchant => {
     for (const timer of session.timers) clearTimeout(timer);
     session.timers.clear();
     if (session.inFlight.size > 0) {
-      feed.write("stand", "Waiting for in-flight delivery work before disconnect.", {
+      feed.write("stand", "Waiting for a delivery already in flight before stopping the SDK.", {
         deliveries: session.inFlight.size,
       });
     }
@@ -225,7 +225,7 @@ export const makeStandMerchant = (feed: Feed): StandMerchant => {
       params: order.params,
       since: Date.now(),
     });
-    feed.write("merchant", "An order is waiting for you.", {
+    feed.write("merchant", "An order is being held at the console, waiting for you to answer it.", {
       order_id: order.id,
       merchant_item_id: order.merchant_item_id,
       params: order.params,
@@ -253,38 +253,48 @@ export const makeStandMerchant = (feed: Feed): StandMerchant => {
       case "deliver": {
         const delivery = deliveryFor(order.merchant_item_id);
         const answer = order.delivered(delivery);
-        writeOrderAnswer("Delivering an order.", order, { delivery });
+        writeOrderAnswer("The handler delivered the goods.", order, { delivery });
         return answer;
       }
       case "accept_then_deliver": {
         taken.set(order.id, order);
         const answer = order.accepted({ eta_seconds: Math.ceil(moods.deliverAfterMs / 1_000) });
-        writeOrderAnswer("Accepting an order for later delivery.", order, { answer });
+        writeOrderAnswer("The handler accepted the order and promised the goods later.", order, {
+          answer,
+        });
         deliverLater(order);
         return answer;
       }
       case "accept_and_say_nothing": {
         taken.set(order.id, order);
         const answer = order.accepted();
-        writeOrderAnswer("Accepting an order without a later delivery.", order, { answer });
+        writeOrderAnswer("The handler accepted the order and will never deliver it.", order, {
+          answer,
+        });
         return answer;
       }
       case "refuse": {
         const answer = order.refused(moods.refusal);
-        writeOrderAnswer("Refusing an order.", order, { refusal: moods.refusal });
+        writeOrderAnswer("The handler refused the order.", order, { refusal: moods.refusal });
         return answer;
       }
       case "say_nothing": {
         await wait(SILENCE_PAST_DEADLINES_MS);
         const delivery = deliveryFor(order.merchant_item_id);
         const answer = order.delivered(delivery);
-        writeOrderAnswer("Delivering an order after its deadline.", order, { delivery });
+        writeOrderAnswer(
+          "The handler delivered, long past the deadline the card promised.",
+          order,
+          { delivery },
+        );
         return answer;
       }
       case "answer_wrong_shape": {
         const delivery = { a_field_this_card_never_declared: "wrong-shape" };
         const answer = order.delivered(delivery);
-        writeOrderAnswer("Delivering a shape the card never declared.", order, { delivery });
+        writeOrderAnswer("The handler delivered a shape the card never declared.", order, {
+          delivery,
+        });
         return answer;
       }
     }
@@ -292,7 +302,7 @@ export const makeStandMerchant = (feed: Feed): StandMerchant => {
 
   const register = (fresh: CoinslotClient): void => {
     fresh.on("order", async (order) => {
-      feed.got("merchant", "An order arrived.", {
+      feed.got("merchant", "The SDK handed the handler an order.", {
         order_id: order.id,
         merchant_item_id: order.merchant_item_id,
         params: order.params,
@@ -303,7 +313,7 @@ export const makeStandMerchant = (feed: Feed): StandMerchant => {
       const answered = await askAbout(order);
       if (answered === RAN_OUT) {
         const answer = order.refused(NOBODY_ANSWERED);
-        writeOrderAnswer("Refusing an order nobody answered.", order, {
+        writeOrderAnswer("Nobody at the console answered, so the handler refused.", order, {
           refusal: NOBODY_ANSWERED,
         });
         return answer;
@@ -312,13 +322,13 @@ export const makeStandMerchant = (feed: Feed): StandMerchant => {
     });
 
     fresh.on("quote", async (question) => {
-      feed.got("merchant", "A price question arrived.", {
+      feed.got("merchant", "The SDK handed the handler a price question.", {
         merchant_item_id: question.merchant_item_id,
         price_id: question.price_id,
       });
       if (moods.quote === "unavailable") {
         const answer = question.unavailable();
-        feed.sent("merchant", "Saying a price is unavailable.", {
+        feed.sent("merchant", "The handler said this product has no price right now.", {
           price_id: question.price_id,
           answer,
         });
@@ -328,7 +338,7 @@ export const makeStandMerchant = (feed: Feed): StandMerchant => {
         await wait(SILENCE_PAST_DEADLINES_MS);
       }
       const answer = question.available(moods.price);
-      feed.sent("merchant", "Answering a price question.", {
+      feed.sent("merchant", "The handler answered the price question.", {
         price_id: question.price_id,
         answer,
       });
@@ -337,7 +347,7 @@ export const makeStandMerchant = (feed: Feed): StandMerchant => {
 
     fresh.on("event", (event) => {
       taken.delete(event.order_id);
-      feed.got("gateway", "An order event arrived.", event);
+      feed.got("gateway", "The gateway sent an event about an order.", event);
     });
 
     fresh.on("problem", (problem) => {
@@ -384,7 +394,7 @@ export const makeStandMerchant = (feed: Feed): StandMerchant => {
       if (order === undefined) return false;
       try {
         const result = await order.refuse(moods.refusal);
-        feed.sent("merchant", "Refusing an order taken on earlier.", {
+        feed.sent("merchant", "The handler refused an order it had already accepted.", {
           order_id: orderId,
           refusal: moods.refusal,
           result,
@@ -405,7 +415,11 @@ export const makeStandMerchant = (feed: Feed): StandMerchant => {
       await fresh.start();
       client = fresh;
       address = baseUrl;
-      feed.write("stand", "Connected the merchant.", { base_url: baseUrl });
+      feed.write(
+        "stand",
+        "Started the merchant SDK. It is polling this gateway for work from now on.",
+        { base_url: baseUrl },
+      );
     },
     async disconnect() {
       const stopping = client;
@@ -417,7 +431,7 @@ export const makeStandMerchant = (feed: Feed): StandMerchant => {
       await stopDeliveries();
       if (stopping !== undefined) {
         await stopping.stop();
-        feed.write("stand", "Disconnected the merchant.");
+        feed.write("stand", "Stopped the merchant SDK. It is no longer polling and holds nothing.");
       }
     },
     async publish(card) {
@@ -425,7 +439,7 @@ export const makeStandMerchant = (feed: Feed): StandMerchant => {
         throw new Error("Connect the stand merchant before publishing a card.");
       }
       const result = await client.catalog.publish(card);
-      feed.sent("merchant", "Published a card.", {
+      feed.sent("merchant", "Published a card through the SDK.", {
         merchant_item_id: card.merchant_item_id,
         result,
       });
