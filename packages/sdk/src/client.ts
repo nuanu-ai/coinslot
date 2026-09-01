@@ -457,6 +457,45 @@ const reportToConsole: ProblemReporter = (problem: WorkerProblem): void => {
   console.error(`[coinslot] ${problem.kind}: ${problem.message}`, problem.cause);
 };
 
+/**
+ * What a key says about the world it was issued in, read from its own prefix.
+ *
+ * ADR-0020 is what makes reading it here legitimate rather than clever: every
+ * key carries the environment it was issued in as its prefix, and whoever holds
+ * a key can read that prefix. So a worker learns which deployment it joined
+ * without a field on the wire, a line in a response document or a step in a
+ * handshake — none of which this adds.
+ *
+ * The rule's home is `packages/core/src/deployment/environment.ts`, where
+ * `keyPrefixFor` writes these prefixes and `environmentOfKeyPrefix` reads them.
+ * The two strings below are a second copy of that rule and not a use of it,
+ * because this package cannot depend on that module at runtime: it is private
+ * to the workspace and unpublished, and the dependency tree a merchant installs
+ * is a recorded decision (ADR-0003 §8) that does not grow to reach it.
+ *
+ * A copy is a thing that drifts, and these two must not. What holds them
+ * together is `which-world.test.ts`: it builds its keys out of core's own
+ * `keyPrefixFor` and asserts the sentences written here, so a prefix changed on
+ * one side and not the other fails `pnpm test` instead of going quiet in
+ * somebody's log. That import is dev-time and reaches nothing published — the
+ * tarball ships `dist`, and the build leaves the tests out. Changing either
+ * side means changing both in the same commit.
+ *
+ * A key matching neither prefix says nothing at all, which is the third case
+ * ADR-0020 names: a key issued before the prefix existed, or one that is not
+ * ours. There is nothing to fall back to. Guessing is wrong in both directions
+ * — telling a merchant their money is play when it is real, or the other way
+ * round — and no line at all is better than a wrong claim about whose money is
+ * at stake.
+ */
+const WHAT_THE_KEY_SAYS: Readonly<Record<string, string>> = Object.freeze({
+  csk_test_: "with a test key: the money there is not real",
+  csk_live_: "with a live key: the money there is real",
+});
+
+const whatTheKeySays = (apiKey: string): string | undefined =>
+  Object.entries(WHAT_THE_KEY_SAYS).find(([prefix]) => apiKey.startsWith(prefix))?.[1];
+
 const keyOf = (apiKey: string | undefined): string => {
   if (typeof apiKey !== "string" || apiKey.trim() === "") {
     throw new TypeError(
@@ -529,6 +568,41 @@ export const createClient = (options: ClientOptions): CoinslotClient => {
   let worker: RunningWorker | undefined;
   /** Set while a stop is in flight, and shared by every caller of stop(). */
   let stopping: Promise<void> | undefined;
+  /** Whether the world this client works in has already been said. */
+  let worldIsSaid = false;
+
+  /**
+   * The one line this package writes uninvited: where this worker is pointed
+   * and whether the money there is real.
+   *
+   * Once per client and not once per start. The key cannot change under a
+   * client and neither can the address, so a second line would carry no second
+   * fact — and a supervisor that stops and starts a worker on a schedule would
+   * turn it into the kind of line people learn to scroll past. The question is
+   * closed even where the answer is silence: a key naming no environment is
+   * asked about once and never again.
+   *
+   * It goes to the console because that is where this package already writes
+   * when nobody gave it anywhere else to write, and at the informational level
+   * because that is what it is. `console.error` would put it in front of every
+   * log collector as a fault on a worker that has just started correctly, which
+   * is a false alarm and the one thing this line must never look like.
+   *
+   * It is not a `WorkerProblem`: the merchant's reporter is for what went
+   * wrong, and a process counting problems should not have to filter out the
+   * one that means everything is fine.
+   */
+  const sayWhichWorld = (): void => {
+    if (worldIsSaid) return;
+
+    worldIsSaid = true;
+
+    const words = whatTheKeySays(gateway.apiKey);
+
+    if (words === undefined) return;
+
+    console.info(`[coinslot] worker started against ${gateway.baseUrl} ${words}`);
+  };
 
   const orderCall = async (
     route: "deliver_order" | "refuse_order",
@@ -723,6 +797,11 @@ export const createClient = (options: ClientOptions): CoinslotClient => {
             )} before start(), or the loop would take work off the queue that nobody answers`,
         );
       }
+
+      // After every refusal above and before the loop: a start that threw
+      // opened nothing, and a line saying otherwise would be the first thing a
+      // merchant read on the way to an exception.
+      sayWhichWorld();
 
       worker = startWorker(gateway, registry);
     },

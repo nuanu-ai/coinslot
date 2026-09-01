@@ -39,6 +39,7 @@
     "@nuanu-ai/coinslot-contracts": "workspace:*"
   },
   "devDependencies": {
+    "@coinslot/core": "workspace:*",
     "vitest": "^4.1.11"
   }
 }
