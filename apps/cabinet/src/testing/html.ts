@@ -12,9 +12,16 @@
  * literal text `&lt;` would come out as a bracket, the bracket would be
  * stripped as if it were markup, and a test would report tags on a page that
  * has none.
+ *
+ * A tag becomes a space, so that two elements' words do not fuse into one that
+ * nobody can read — with `<wbr>` the one exception, because it is defined as a
+ * place a line may break and nothing else. A browser draws no space for it and
+ * a reader copying the text gets none, so a space here would be this helper
+ * disagreeing with every browser about what is on the page.
  */
 export const readable = (html: string): string =>
   html
+    .replaceAll(/<wbr\s*\/?>/gi, "")
     .replaceAll(/<[^>]*>/g, " ")
     .replaceAll("&lt;", "<")
     .replaceAll("&gt;", ">")

@@ -47,6 +47,7 @@ import { type Answer, type GatewayClient, gatewayFor, type Registrar } from "./g
 import { type Identity, identityFor } from "./identity.js";
 import type { Message } from "./mail.js";
 import { buildApp } from "./server.js";
+import { readable } from "./testing/html.js";
 
 /**
  * The key the gateway harness's own merchant holds, named rather than spelled
@@ -573,24 +574,6 @@ const overASocket = (
       });
     });
   });
-
-/**
- * The page's text with the tags taken out, so a test reads what a person does.
- *
- * The entities are decoded after the tags are stripped, and the ampersand last
- * of all: decoded first, a page carrying the literal text `&lt;` would come out
- * as a bracket and this would report markup where there is none.
- */
-const readable = (html: string): string =>
-  html
-    .replaceAll(/<[^>]*>/g, " ")
-    .replaceAll("&lt;", "<")
-    .replaceAll("&gt;", ">")
-    .replaceAll("&#39;", "'")
-    .replaceAll("&quot;", '"')
-    .replaceAll("&amp;", "&")
-    .replaceAll(/\s+/g, " ")
-    .trim();
 
 const publish = async (gateway: Served, card: Card): Promise<string> => {
   const answered = await gateway.call("POST", "/v0/catalog/publish", {
@@ -2070,6 +2053,32 @@ describe("the way out to the documentation", () => {
 });
 
 describe("the cards screen", () => {
+  it("gives each card the whole address an agent buys it at, and it is one that works", async () => {
+    // The one thing a merchant cannot work out from this screen without it:
+    // where their product actually is. It is the whole address rather than an
+    // identifier to assemble one from, and it carries our catalog identifier
+    // rather than the merchant's own — the two are different strings, and a
+    // merchant who pasted theirs into it would be handed a 404 by a gateway
+    // that is working perfectly.
+    const running = await started({ cabinet: { PUBLIC_BASE_URL: "https://shop.example.com" } });
+    const itemId = await publish(running.gateway, roomCard);
+    await running.browser.signIn();
+
+    const screen = await running.browser.get("/cards");
+    const shown = /https:\/\/shop\.example\.com(\/v0\/items\/\S+?\/purchase)/.exec(
+      readable(screen.html),
+    );
+
+    expect(shown?.[1], "the cards screen names the address").toBe(`/v0/items/${itemId}/purchase`);
+    // And it is not a template that happens to match: an agent asking at that
+    // very path is answered with the payment challenge rather than a 404.
+    expect(await purchasable(running.gateway, itemId)).toBe(true);
+    // Text and not a link. Pressing it asks without paying, which is answered
+    // in a header with no page behind it — a merchant who clicked would read a
+    // blank window as their card being broken.
+    expect(screen.html).not.toContain('href="https://shop.example.com/v0/items/');
+  });
+
   it("shows each card with its key, price, delivery and state", async () => {
     const { browser, gateway } = await started();
     await publish(gateway, roomCard);

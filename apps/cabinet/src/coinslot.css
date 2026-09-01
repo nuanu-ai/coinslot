@@ -109,6 +109,24 @@ h1 {
   color: var(--fg);
 }
 
+/*
+ * The address an agent buys a card at, under its title on the cards screen.
+ *
+ * Text rather than a link, because asking for it without paying is answered
+ * with a demand for payment carried in a header — a browser is handed a blank
+ * page, and a merchant who pressed it reads that as their card being broken.
+ * So it is set to be read and copied: the whole of it, in the mono face the
+ * rest of the identifiers use, wrapping wherever it has to rather than pushing
+ * the table wider than the screen.
+ */
+.buy {
+  margin-top: 3px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
 .lede {
   padding: 32px 32px 0;
   display: flex;

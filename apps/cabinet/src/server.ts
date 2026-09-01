@@ -1076,7 +1076,11 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
     if (!name.ok) {
       return trouble(response, base, name);
     }
-    response.type("html").send(cardsScreen(viewing(request, base, name.document), cards.document));
+    response
+      .type("html")
+      .send(
+        cardsScreen(viewing(request, base, name.document), cards.document, config.publicBaseUrl),
+      );
   });
 
   app.get(`${base}/orders`, async (request, response) => {

@@ -12,11 +12,13 @@
  */
 
 import type { SurfaceMode } from "@coinslot/core";
-import type {
-  MerchantCard,
-  MerchantCardList,
-  OrderList,
-  ReceiptList,
+import {
+  API_ROUTES,
+  expandPath,
+  type MerchantCard,
+  type MerchantCardList,
+  type OrderList,
+  type ReceiptList,
 } from "@nuanu-ai/coinslot-contracts";
 import { escaped, page, state, type Tab, table } from "./html.js";
 import type { PayoutWallet } from "./payout-wallet.js";
@@ -155,7 +157,44 @@ const cardControl = (base: string, entry: MerchantCard): string => {
 <button type="submit">Pause</button></form>`;
 };
 
-export const cardsScreen = (viewer: Viewer, cards: MerchantCardList): string => {
+/**
+ * The address an agent buys one card at.
+ *
+ * Built from the route table rather than written out here, for the reason the
+ * cabinet's client gives: a second transcription of the surface is a second
+ * chance for it to come apart. What goes in front of it is the origin the
+ * deployment is reached at, which is not the gateway address the cabinet itself
+ * calls — that one is inside the compose network and means nothing to anybody
+ * outside it.
+ *
+ * The identifier is our catalog one and not the merchant's own. They are two
+ * different strings and only one of them is in this address: a merchant who
+ * pasted their own `merchant_item_id` into it would be handed a 404 by a
+ * gateway that is working perfectly.
+ */
+const buyingAddress = (origin: string, entry: MerchantCard): string =>
+  `${origin}${expandPath(API_ROUTES.purchase_item.path, { item_id: entry.id })}`;
+
+/**
+ * One address, marked up so that it wraps where a reader expects it to.
+ *
+ * An address is longer than the column it sits in, so it wraps; left to the
+ * browser it wraps mid-word — "…/pur" above "chase" — which reads as a broken
+ * string rather than a wrapped one. `<wbr>` before each separator says where
+ * the breaks may fall, so a wrapped address breaks between its parts.
+ *
+ * It is a zero-width mark and not a soft hyphen: nothing is added to the text,
+ * so a merchant who selects this and copies it gets the address and not a
+ * hyphenated version of it that no client would accept.
+ */
+const wrappable = (address: string): string => {
+  const [origin, ...segments] = address.split(/(?<!\/)\/(?!\/)/);
+  return [escaped(origin ?? "")]
+    .concat(segments.map((segment) => `<wbr>/${escaped(segment)}`))
+    .join("");
+};
+
+export const cardsScreen = (viewer: Viewer, cards: MerchantCardList, origin: string): string => {
   const { base } = viewer;
   const paused = cards.cards.filter((entry) => entry.paused).length;
   // Three words and not two. Folding "departed" into "stopped" would offer a
@@ -168,7 +207,7 @@ export const cardsScreen = (viewer: Viewer, cards: MerchantCardList): string => 
 
   const rows = cards.cards.map(
     (entry) => `<tr class="${entry.selling === "open" ? "" : "off"}">
-<td><div class="title">${escaped(entry.card.title)}</div><div class="under">${escaped(cardAside(entry))}</div></td>
+<td><div class="title">${escaped(entry.card.title)}</div><div class="under">${escaped(cardAside(entry))}</div><div class="buy">${wrappable(buyingAddress(origin, entry))}</div></td>
 <td class="key">${escaped(entry.card.merchant_item_id)}</td>
 <td class="amount">${escaped(money(entry.card.price))}</td>
 <td class="quiet">${escaped(FULFILLMENT_WORDS[entry.card.fulfillment])}</td>
@@ -209,6 +248,16 @@ ${table(
     : "You have not published a card yet. Your code publishes them; they appear here.",
 )}
   <div class="note"><span class="mark">&#8627;</span><span>${escaped(sellingNote(cards.selling))}</span></div>
+  <div class="note"><span class="mark">&#8627;</span><span>${escaped(
+    // Text and not a link, and the reason is what happens when you press one.
+    // Asking for this address without paying is answered with a demand for
+    // payment that travels in a header, so a browser is handed a blank page
+    // and a merchant who clicked reads that as their card being broken.
+    "The line under each product is the address an agent buys it at. Asking for it without paying" +
+      " answers with a demand for payment rather than a page, so it is for handing to an agent or" +
+      " trying from a terminal, not for opening here. A card that is off sale is refused at that" +
+      " address instead of being offered.",
+  )}</span></div>
 `;
 
   return framed({ viewer, tab: "cards", title: "Product cards", selling: cards.selling, body });
