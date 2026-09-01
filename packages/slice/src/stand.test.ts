@@ -118,7 +118,7 @@ describe("a stand pointed at a gateway elsewhere", () => {
     expect(connected.status).toBe(303);
 
     const bought = await post(
-      new URLSearchParams({ action: "buy", item_id: "remote-item", params: "{}" }),
+      new URLSearchParams({ action: "start_purchase", item_id: "remote-item", params: "{}" }),
     );
     expect(bought.status).toBe(303);
     await waitUntil(() => purchases > 0, 1_000);
