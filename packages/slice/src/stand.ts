@@ -526,7 +526,18 @@ const doAction = async (form: URLSearchParams): Promise<void> => {
       await readCards(generation);
       if (!connectionIsCurrent(generation)) return;
       publicItemsRead = false;
-      say("Sent the card draft to the merchant SDK.");
+      // Publishing answers `{ ok }` or `{ errors }` under a clean status, so a
+      // console that reported the call rather than its answer would say a card
+      // went up when the gateway had just refused it.
+      if ("errors" in outcome) {
+        const first = outcome.errors[0];
+        throw new Error(
+          first === undefined
+            ? "The gateway refused this card and named no reason."
+            : `The gateway refused this card: ${first.code} — ${first.message}`,
+        );
+      }
+      say(`Published ${(document as CardInput).merchant_item_id} as ${outcome.ok.id}.`);
       return;
     }
 

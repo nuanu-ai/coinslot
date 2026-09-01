@@ -554,7 +554,16 @@ const failed = (entry: Entry): boolean => {
   // is how a challenge arrives, and it is on the happy path of every purchase.
   if (typeof detail.status === "number" && detail.status >= 400 && detail.status !== 402)
     return true;
-  return detail.error !== undefined || detail.issues !== undefined;
+  if (detail.error !== undefined) return true;
+  // The plural ones are the answers that arrived fine and said no: publishing a
+  // card comes back `{ ok }` or `{ errors }` at HTTP 200, and a document that
+  // did not fit its schema comes back as issues. An answer whose status is
+  // clean and whose body is a refusal is exactly the line this whole reading
+  // exists to catch.
+  for (const many of [detail.errors, detail.issues]) {
+    if (Array.isArray(many) && many.length > 0) return true;
+  }
+  return false;
 };
 
 /**
@@ -591,8 +600,17 @@ const grouped = (newestFirst: readonly Entry[]): Group[] => {
   return groups;
 };
 
+/*
+ * Oldest first, which is what a log is.
+ *
+ * Newest-first put the answer above the question and the confirmation above the
+ * call that earned it, so one purchase read backwards while the purchases
+ * themselves read forwards. Written the way it happened, the group heading
+ * comes before its lines and a conversation reads as one; the column is parked
+ * at the bottom and follows new lines, the way every log anybody has read does.
+ */
 const logColumn = (entries: readonly Entry[]): string => {
-  const rows = grouped([...entries].reverse()).flatMap((group) => {
+  const rows = grouped(entries).flatMap((group) => {
     // A purchase carrying a refusal is marked at its head, so which one went
     // wrong is visible without opening any of its lines.
     const wrong = group.lines.some(failed);
@@ -724,9 +742,21 @@ for (const box of document.querySelectorAll(".lanes input")) {
 // exactly like the lines the page came with. A stir means what the page is
 // drawing changed underneath it — worth interrupting a reader for, and not
 // worth interrupting somebody who is typing.
+const following = () => log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+const follow = () => {
+  log.scrollTop = log.scrollHeight;
+};
+follow();
 new EventSource("/feed").onmessage = (event) => {
   const news = JSON.parse(event.data);
-  if (news.entry !== undefined) log.insertAdjacentHTML("afterbegin", news.entry);
+  if (news.entry !== undefined) {
+    const wasFollowing = following();
+    log.insertAdjacentHTML("beforeend", news.entry);
+    // Only if the reader was already at the live end. Yanking somebody back
+    // down while they are reading what went wrong ten lines up is worse than
+    // making them scroll.
+    if (wasFollowing) follow();
+  }
   const typing = document.activeElement !== null && document.activeElement !== document.body;
   if (news.stir === true && !typing) location.reload();
 };
