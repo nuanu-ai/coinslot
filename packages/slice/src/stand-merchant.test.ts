@@ -15,6 +15,7 @@ import { CONTRACT_VERSION, type WorkerEnvelope } from "@nuanu-ai/coinslot-contra
 import { afterEach, describe, expect, it } from "vitest";
 import { type Entry, makeFeed } from "./stand-log.js";
 import { makeStandMerchant } from "./stand-merchant.js";
+import { renderEntry } from "./stand-page.js";
 
 const KEY = "the-key-the-stand-connects-with";
 
@@ -116,6 +117,62 @@ const orderGateway = async (): Promise<{
   };
 };
 
+/** What the gateway says when the goods are not the ones the card declares. */
+const DELIVERY_REFUSED = {
+  ok: false,
+  error: {
+    code: "delivery_does_not_match_card",
+    message: "this delivery is not what the card for this order declares",
+    retryable: true,
+    problems: [
+      {
+        path: ["access_url"],
+        code: "unrecognized_keys",
+        message: "this card declares no such field",
+      },
+    ],
+  },
+};
+
+/** A gateway that hands over one order and then will not take the delivery. */
+const refusingDeliveryGateway = async (): Promise<{
+  url: string;
+  close: () => Promise<void>;
+}> => {
+  let sent = false;
+  const server: Server = createServer(async (request, response) => {
+    if (request.url?.endsWith("/worker/poll") === true) {
+      const envelopes = sent ? [] : [orderAfterMove()];
+      sent = true;
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify({ contract_version: CONTRACT_VERSION, envelopes }));
+      return;
+    }
+    for await (const _chunk of request) {
+      // Drained before answering, so keep-alive cannot carry a body forward.
+    }
+    response.setHeader("content-type", "application/json");
+    if (request.url?.endsWith("/deliver") === true) {
+      // The refusal arrives under a clean status on purpose. An answer that
+      // said no with a 4xx would be caught by the status arm of the reading
+      // this is about, and the arm that matters here would never be reached.
+      response.end(JSON.stringify(DELIVERY_REFUSED));
+      return;
+    }
+    response.end(JSON.stringify({ ok: true, result: "accepted" }));
+  });
+  server.listen(0, "127.0.0.1");
+  await new Promise<void>((resolve) => server.once("listening", resolve));
+  const { port } = server.address() as AddressInfo;
+  return {
+    url: `http://127.0.0.1:${port}`,
+    close: () =>
+      new Promise<void>((resolve, reject) => {
+        server.close((error) => (error === undefined ? resolve() : reject(error)));
+      }),
+  };
+};
+
 const blockingDeliveryGateway = async (): Promise<{
   url: string;
   deliveryBegan: () => boolean;
@@ -195,6 +252,42 @@ afterEach(async () => {
   for (const close of shutting.splice(0)) {
     await close();
   }
+});
+
+describe("a closing call the gateway would not take", () => {
+  it("writes it as a line the log reads as failed, with the reason on it", async () => {
+    // The promise: a refusal that arrives under a clean status is still visible
+    // in the log. It is the one line in a run of two hundred that a person at
+    // the stand has to find, and everything about it looks ordinary — HTTP 200,
+    // an answer where an answer was expected. What marks it is the reading in
+    // `stand-page`, and that reading is fed by what this side puts in the
+    // detail. Written whole under `result` alone the refusal is swallowed: the
+    // envelope's `ok` sits one level down where nothing looks for it, and the
+    // line renders like every other.
+    const gateway = await refusingDeliveryGateway();
+    shutting.push(gateway.close);
+    const feed = makeFeed();
+
+    merchant = makeStandMerchant(feed);
+    merchant.moods.order = "accept_then_deliver";
+    merchant.moods.deliverAfterMs = 0;
+    await merchant.connect(gateway.url, KEY);
+    await waitUntil(() => feed.entries().some(isDeliveryAnswered));
+
+    const answered = feed.entries().find(isDeliveryAnswered);
+    if (answered === undefined) throw new Error("the delivery was never answered");
+
+    // Marked, by the reader the page actually uses rather than by a copy of its
+    // rule written here.
+    expect(renderEntry(answered)).toContain("bad");
+
+    // And carrying what to do about it: the word a merchant's own program
+    // branches on, and the finding their handler has to act on.
+    const said = detailOf(answered).error;
+    expect(said).toContain("delivery_does_not_match_card");
+    expect(said).toContain("access_url");
+    expect(said).toContain("this card declares no such field");
+  });
 });
 
 describe("connecting the stand somewhere else", () => {
