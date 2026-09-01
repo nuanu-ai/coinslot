@@ -1,93 +1,58 @@
 # 0011. The order identifier is the agent's proof, for now
 
 Date: 2026-08-27
-Status: accepted for test payments; live payment blocked pending Dmitry's recorded choice
+Status: accepted for the controlled test and live launch; revisit before the first external buyer
 
 ## Context
 
-An agent that buys an asynchronous product pays, and the answer it gets carries
-an order and no goods — the goods do not exist yet. Nothing then lets it come
-back for them. `get_order_status` is written in the contract, at
-`GET /v0/orders/:order_id/status`, and its `auth` is `"undecided"`: the route's
-own description says nothing in this contract or in any decision says how an
-agent proves an order is theirs, so the route is not in the list a gateway may
-serve. It is not mounted.
+An agent that buys an asynchronous product receives an order before the goods
+exist. It needs `GET /v0/orders/:order_id/status` to return later, but the
+contract originally left authentication undecided and the gateway did not
+mount the route. The pilot eSIM therefore had no usable delivery path for an
+agent that is not an email inbox.
 
-So the asynchronous half of the catalogue takes money and strands the buyer.
-For the pilot merchant that is one of two products — the eSIM — and its goods
-travel out of band, by the address given at purchase. An agent that is not a
-mailbox has no way to learn that anything arrived.
-
-Every other door in this system is a merchant's, and merchants have keys. An
-agent has no account, no key and no registration, and inventing one for the
-pilot would be a larger decision than this one — it would make buying require
-signing up, which is the opposite of what the product is for.
+Merchants have accounts and keys. Buyers deliberately do not: making an agent
+register before buying would undo the product's no-prior-relationship model.
 
 ## Decision
 
-**Knowing the order identifier is the proof.** The route is mounted, its `auth`
-becomes `"order_id"`, and whoever presents an identifier is answered about that
-order and no other.
+**Knowing the order identifier is the proof in both environments.** Whoever
+presents the long random identifier is answered about that order and no other.
+The production site uses the same rule as the test site for the controlled
+launch with no external users.
 
-The identifier already has the properties this leans on. It is generated from a
-random source, it is long enough not to be guessed, and it is never published —
-it is not in the catalogue and not in any listing an agent can read.
+The identifier is generated from a random source, is impractical to guess and
+is absent from catalogues and order listings. It is not exclusive to the
+buyer: Coinslot and the merchant also receive it as parties to the sale. It is
+a key to one order, not proof of payment ownership. Ownership still comes only
+from the verified payer.
 
-It is not, however, held by one party alone, and an earlier draft of this
-decision said it was. It travels in the payment challenge, down the merchant's
-own stream and into their receipts, so a merchant holds every identifier of
-every buyer they sold to. That does not weaken the door: the merchant already
-holds the whole of those orders, because they are their own sales, and this
-route shows a buyer strictly less than the merchant's routes already show
-them. What it does mean is that the identifier is a key to one order among the
-parties to that order's sale, and not a secret between us and the buyer. The
-gateway does not lean on it for anything else — ownership of a payment is
-decided by the verified payer, never by who knows an identifier.
-
-The answer is deliberately smaller than the merchant's view of the same order.
-It carries what the buyer is owed and what became of their money: the state,
-the price, and the goods once the order has closed as delivered. Once the order
-has closed, and not merely once the merchant has handed something over: a
-synchronous delivery whose charge then failed would otherwise be a way to take
-the goods and pay nothing, and the two doors would disagree about one order.
-
-It does not carry the merchant's own identifier for the product, the merchant's
-notes, or anything about other orders.
-
-An identifier that names no order is answered exactly as one that names
-somebody else's would be, so the route does not tell the two apart for anybody
-probing it.
+The buyer response carries the order's state, price and goods after the order
+has closed as delivered. It omits the merchant's product identifier, notes and
+other orders. A missing identifier receives the same outward answer as an
+unknown one, so probing does not distinguish them.
 
 ## Consequences
 
-The asynchronous purchase stops being a dead end, which is what makes half the
-pilot catalogue sellable at all.
+Asynchronous purchases have a collection path. The weakness is explicit:
+anyone who obtains an identifier through a log, proxy or agent store can read
+that order. They cannot change it, act as its payer or enumerate other orders.
 
-The weakness is stated rather than hidden: anyone who obtains an order
-identifier can read that order. The places it can leak are the ordinary ones —
-a log, a proxy, an agent's own storage — and they are the same places a bearer
-token leaks from. For a pilot whose orders are all marked as tests and whose
-money is testnet money, that is a proportionate trade. It stops being
-proportionate the moment real money moves.
-
-**The gate before the first live payment is closed.** No live payment may be
-made until Dmitry records one of two choices here: narrow this door — the
-natural next form is proving control of the paying address, which the gateway
-already knows from the verified payment — or accept it again deliberately for
-real money, with that reasoning written down. The prepared first-sale ceremony
-stops at this gate; this decision chooses neither path yet.
+Dmitry accepts this bearer-link risk for the first controlled live launch. No
+external users exist yet, so wallet login would delay running the two
+environments without protecting a public audience. Before the first buyer or
+agent outside Dmitry's controlled launch, this decision is revisited and the
+door is either narrowed or explicitly accepted for that new audience.
 
 ## Alternatives rejected
 
-**Leave it unmounted.** Honest, and it is what today does. But it means the
-gateway takes money for a product it has no way to hand over, and the contract
-already calls that out. Not shipping the route does not make the problem
-smaller; it moves it onto the buyer.
+**Leave the route unmounted.** This avoids the weak door but takes money for an
+asynchronous product that an agent cannot collect.
 
-**Make the agent prove control of the paying address.** The right long-term
-answer, and the one the trigger above points at. It needs a challenge to sign
-and a verification path, which is real machinery for a walking skeleton, and it
-would be built on guesses about how agent wallets sign outside a payment.
+**Make the agent prove control of the paying address now.** This remains the
+long-term direction. x402 provides Sign-In-With-X: the gateway can ask a wallet
+to sign a challenge and verify that the caller controls an address. The
+integration is deliberately deferred until the launch has an external user.
 
-**Give agents accounts and keys.** Turns buying into signing up. The product
-exists so that an agent with a budget can buy without a relationship first.
+**Give buyers accounts and keys.** This turns buying into signing up, while the
+product exists so an agent with a budget can buy without a relationship first.

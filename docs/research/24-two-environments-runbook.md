@@ -272,12 +272,12 @@ current; retain the release and host evidence for those claims separately.
 
 ## The live site's first sale
 
-> **STOP — ADR-0011 blocks a live payment.** Do not run any part of this
-> ceremony that publishes live products or signs a payment until Dmitry records
-> one of the two choices in `docs/decisions/0011-agent-collection-door.md`:
-> narrow the order-status door, or deliberately re-accept its bearer-order-id
-> risk for real money. This runbook chooses neither. The checklist below is
-> prepared only, and the stop remains in force until that decision is written.
+ADR-0011 permits the controlled live launch to use the same order-status door
+as test: knowing the long random order identifier is enough to read that one
+order. Dmitry accepted that risk while there are no external users and deferred
+Sign-In-With-X. Before the first buyer or agent outside this controlled launch,
+stop and revisit ADR-0011. This decision removes the architecture stop; it does
+not remove the spending confirmation and cleanup checks in the ceremony below.
 
 After the ADR gate is resolved, first verify without printing the file that
 registration is still closed by the host variable Compose actually consumes.
