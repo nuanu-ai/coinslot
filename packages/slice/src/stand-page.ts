@@ -15,7 +15,6 @@ export interface PageMoods {
 
 export interface PageState {
   readonly address: string | null;
-  readonly loopback: boolean;
   readonly moods: PageMoods;
   readonly cardDraft: string;
   readonly goodsDraft: string;
@@ -72,7 +71,7 @@ export const renderPage = (state: PageState): string => {
           '<label>Gateway address <input required name="address" value="http://localhost:8080"></label><label>Merchant key <input required name="api_key" type="password" autocomplete="off"></label>',
           "Connect",
         )
-      : `<p>Connected to <code>${escaped(state.address)}</code> (${state.loopback ? "loopback: buying is allowed" : "not loopback: connecting and publishing are allowed; buying is refused"}).</p>${form("disconnect", "", "Disconnect")}`;
+      : `<p>Connected to <code>${escaped(state.address)}</code>. Every gateway-facing action uses this gateway.</p>${form("disconnect", "", "Disconnect")}`;
   const templates = `${form("template", '<input type="hidden" name="template" value="0">', "Rented-number template")}${form("template", '<input type="hidden" name="template" value="1">', "eSIM template")}`;
   const publish = form(
     "publish",

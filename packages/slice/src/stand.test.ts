@@ -53,6 +53,7 @@ afterEach(async () => {
 describe("a stand pointed at a gateway elsewhere", () => {
   it("sends the purchase to the gateway it was given", async () => {
     let purchases = 0;
+    const purchaseAuthorities: string[] = [];
     gateway = createServer(async (request, response) => {
       for await (const _chunk of request) {
         // Drain each request before answering so keep-alive cannot carry its
@@ -69,6 +70,7 @@ describe("a stand pointed at a gateway elsewhere", () => {
       }
       if (request.url === "/v0/items/remote-item/purchase") {
         purchases += 1;
+        purchaseAuthorities.push(request.headers.host ?? "");
         response.end(JSON.stringify({ received: true }));
         return;
       }
@@ -121,5 +123,6 @@ describe("a stand pointed at a gateway elsewhere", () => {
     expect(bought.status).toBe(303);
     await waitUntil(() => purchases > 0, 1_000);
     expect(purchases).toBe(1);
+    expect(purchaseAuthorities).toEqual([`0.0.0.0:${gatewayPort}`]);
   }, 15_000);
 });

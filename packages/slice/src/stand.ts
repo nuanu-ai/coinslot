@@ -1,5 +1,5 @@
 /**
- * A loopback-only console for walking the merchant and buyer sides together.
+ * A local console for walking the merchant and buyer sides together.
  *
  * It keeps the merchant key only in this process.  The page and feed receive
  * the fact of a connection, never the credential that opened it.
@@ -78,15 +78,6 @@ const asJson = (text: string, named: string): unknown => {
     return JSON.parse(text);
   } catch {
     throw new Error(`${named} must be JSON.`);
-  }
-};
-
-const isLoopback = (address: string): boolean => {
-  try {
-    const host = new URL(address).hostname.toLowerCase();
-    return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]";
-  } catch {
-    return false;
   }
 };
 
@@ -396,13 +387,6 @@ const doAction = async (form: URLSearchParams): Promise<void> => {
       const buyer = buyerFor(generation);
       const itemId = form.get("item_id") ?? "";
       if (itemId === "") throw new Error("A public item id is required to buy.");
-      const { address } = requireConnection();
-      if (!isLoopback(address)) {
-        say(
-          `The stand is connected to ${address}. Connecting and publishing are allowed there, but buying is allowed only against a loopback gateway because this buyer can sign a real payment.`,
-        );
-        return;
-      }
       const rawParams = form.get("params") ?? paramsDraft;
       paramsDraft = rawParams;
       const bought = await buyer.buy(
@@ -563,7 +547,6 @@ const server = createServer(async (request, response) => {
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(
       renderPage({
         address,
-        loopback: address !== null && isLoopback(address),
         moods: merchant.moods,
         cardDraft,
         goodsDraft,
