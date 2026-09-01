@@ -13,12 +13,23 @@
  * — says so, which is true of it.
  */
 
+/**
+ * Which way a line went, from this console's side of the wire.
+ *
+ * Null is a line about the console itself — connecting, choosing, being told
+ * something by its own machinery — which crossed nothing and must not be drawn
+ * as though it had.
+ */
+export type Way = "sent" | "got" | null;
+
 export interface Entry {
   readonly id: number;
   readonly at: string;
   readonly kind: string;
   readonly title: string;
   readonly detail: unknown;
+  /** Sent by this console, received by it, or neither. */
+  readonly way: Way;
   /**
    * The order this belongs to, or null where it belongs to no purchase.
    *
@@ -32,7 +43,19 @@ export interface Entry {
 }
 
 export interface Feed {
+  /**
+   * A line about the console itself, which crossed no wire.
+   *
+   * The two beside it are the ones that did, and they are separate verbs rather
+   * than a flag on this one so that every call site says which way it went at
+   * the site — a direction worked out later from the wording is a guess, and
+   * the wording is exactly what was unreadable before.
+   */
   write(kind: string, title: string, detail?: unknown): void;
+  /** Something this console put on the wire. */
+  sent(kind: string, title: string, detail?: unknown): void;
+  /** Something that came back to it, or arrived at it unasked. */
+  got(kind: string, title: string, detail?: unknown): void;
   /**
    * Says which order the console is working on. Naming one also names the lines
    * written since the last time this was called, which are the lines that led
@@ -50,21 +73,32 @@ export const makeFeed = (now: () => number = Date.now): Feed => {
   let order: string | null = null;
   let sinceMark: Entry[] = [];
 
+  const record = (kind: string, title: string, detail: unknown, way: Way): void => {
+    const entry: Entry = {
+      id: entries.length + 1,
+      at: new Date(now()).toISOString(),
+      kind,
+      title,
+      detail,
+      order,
+      way,
+    };
+    entries.push(entry);
+    if (order === null) sinceMark.push(entry);
+    for (const listener of listeners) {
+      listener(entry);
+    }
+  };
+
   return {
     write(kind, title, detail) {
-      const entry: Entry = {
-        id: entries.length + 1,
-        at: new Date(now()).toISOString(),
-        kind,
-        title,
-        detail,
-        order,
-      };
-      entries.push(entry);
-      if (order === null) sinceMark.push(entry);
-      for (const listener of listeners) {
-        listener(entry);
-      }
+      record(kind, title, detail, null);
+    },
+    sent(kind, title, detail) {
+      record(kind, title, detail, "sent");
+    },
+    got(kind, title, detail) {
+      record(kind, title, detail, "got");
     },
     about(which) {
       if (which !== null) {

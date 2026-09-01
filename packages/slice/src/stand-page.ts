@@ -546,6 +546,19 @@ const ordersTab = (state: PageState): string => {
 /* --- the log ------------------------------------------------------------ */
 
 const LANES: readonly string[] = ["stand", "merchant", "agent", "gateway"];
+/**
+ * Which way a line went, from this console's side.
+ *
+ * The lane already says who is speaking and said nothing about direction, so a
+ * request and the answer to it read as two sentences about the same thing and
+ * the reader had to work out which was which from the wording. A blank is a
+ * line that crossed nothing, and blank is the honest mark for it.
+ */
+const WAY_MARKS: Readonly<Record<string, string>> = {
+  sent: "\u2192",
+  got: "\u2190",
+};
+
 const LANE_LETTERS: Readonly<Record<string, string>> = {
   stand: "st",
   merchant: "me",
@@ -589,6 +602,18 @@ const factOf = (entry: Entry): string => {
 };
 
 /**
+ * Long opaque identifiers, cut to the part a person actually matches rows on.
+ *
+ * A price identifier is thirty-six characters and a line is one row high, so
+ * printed whole it takes the width the sentence needed and leaves "A pric…".
+ * The first eight are enough to pair two lines about one thing by eye, and
+ * nothing is lost: the whole of it is in the row's tooltip and in the payload
+ * the row opens.
+ */
+const shortened = (words: string): string =>
+  words.replace(/\b([a-z]{2,5}_[0-9a-f]{8})[0-9a-f]{8,}\b/g, "$1\u2026");
+
+/**
  * Whether this line is an answer that did not work.
  *
  * Read off the detail rather than told by the writer: an HTTP status at or
@@ -624,7 +649,12 @@ const failed = (entry: Entry): boolean => {
 export const renderEntry = (one: Entry): string => {
   const lane = LANES.includes(one.kind) ? one.kind : "stand";
   const classes = `lrow ${escaped(lane)}${failed(one) ? " bad" : ""}`;
-  const inside = `<span class="t">${escaped(one.at.slice(11, 19))}</span><span class="l">${escaped(LANE_LETTERS[lane] ?? "st")}</span><span class="m" title="${escaped(one.title)}">${escaped(one.title)}</span><span class="f">${escaped(factOf(one))}</span>`;
+  const fact = factOf(one);
+  // A status the sentence has already said is not worth a column: "Answered
+  // 402." beside a 402 spends width on saying it twice.
+  const beside = fact !== "" && one.title.includes(fact) ? "" : fact;
+  const way = one.way === null ? "" : (WAY_MARKS[one.way] ?? "");
+  const inside = `<span class="t">${escaped(one.at.slice(11, 19))}</span><span class="l">${escaped(LANE_LETTERS[lane] ?? "st")}</span><span class="w ${escaped(one.way ?? "none")}" title="${one.way === "sent" ? "this console sent it" : one.way === "got" ? "this console received it" : "nothing crossed the wire"}">${way}</span><span class="m" title="${escaped(one.title)}">${escaped(shortened(one.title))}</span><span class="f" title="${escaped(beside)}">${escaped(shortened(beside))}</span>`;
   const order = orderOf(one);
   const stamp = ` data-order="${escaped(order ?? "")}"`;
   return one.detail === undefined

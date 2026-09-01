@@ -840,9 +840,10 @@ pre {
 .rowgroup {
   padding: 5px 14px 3px;
   font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  /* Set as it is written, and not shouted: an identifier in capitals is harder
+     to read and matches nothing anybody will paste it into. */
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
   color: var(--muted);
   background: var(--raised);
   border-bottom: var(--hairline) solid var(--line);
@@ -877,7 +878,10 @@ pre {
 
 .lrow {
   display: grid;
-  grid-template-columns: 52px 20px minmax(0, 1fr) auto;
+  /* The last column is capped, because the sentence is the content and an
+     identifier is a label on it: uncapped, a thirty-six character price id
+     took the width the words needed. */
+  grid-template-columns: 52px 20px 10px minmax(0, 1fr) minmax(0, auto);
   gap: 8px;
   align-items: baseline;
   padding: 3px 14px;
@@ -923,6 +927,25 @@ pre {
   color: var(--muted);
 }
 
+/* Out of this console, or into it. Drawn in the lane's own colour, because the
+   two facts belong together: who spoke, and which way. */
+.lrow .w {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.lrow.agent .w.sent,
+.lrow.agent .w.got {
+  color: var(--accent);
+}
+
+.lrow.merchant .w.sent,
+.lrow.merchant .w.got {
+  color: var(--ok);
+}
+
 .lrow .m {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -934,6 +957,10 @@ pre {
   font-size: 11px;
   color: var(--muted);
   justify-self: end;
+  max-width: 13ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /*

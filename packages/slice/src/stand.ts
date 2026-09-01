@@ -204,7 +204,7 @@ const readCards = async (generation: number): Promise<void> => {
   if (!connectionIsCurrent(generation)) return;
   const parsed = MerchantCardListSchema.safeParse(answer.body);
   if (!parsed.success) {
-    feed.write("gateway", "The merchant card list could not be parsed.", {
+    feed.got("gateway", "The merchant card list could not be parsed.", {
       status: answer.status,
       body: answer.body,
       issues: parsed.error.issues,
@@ -215,7 +215,7 @@ const readCards = async (generation: number): Promise<void> => {
   cards = parsed.data.cards;
   selling = parsed.data.selling;
   for (const one of cards) merchant.learn(one.card.merchant_item_id, one.card.result);
-  feed.write("gateway", "Read the merchant card list.", {
+  feed.got("gateway", "Read the merchant card list.", {
     status: answer.status,
     cards: cards.length,
     selling: parsed.data.selling,
@@ -237,7 +237,7 @@ const readOrders = async (generation: number): Promise<void> => {
   if (!connectionIsCurrent(generation)) return;
   const parsed = OrderListSchema.safeParse(answer.body);
   if (!parsed.success) {
-    feed.write("gateway", "The order list could not be parsed.", {
+    feed.got("gateway", "The order list could not be parsed.", {
       status: answer.status,
       body: answer.body,
       issues: parsed.error.issues,
@@ -246,7 +246,7 @@ const readOrders = async (generation: number): Promise<void> => {
   }
   orders = parsed.data.orders;
   ordersRead = true;
-  feed.write("gateway", "Read the merchant's orders.", {
+  feed.got("gateway", "Read the merchant's orders.", {
     status: answer.status,
     orders: orders.length,
   });
@@ -258,7 +258,7 @@ const readReceipts = async (generation: number): Promise<void> => {
   if (!connectionIsCurrent(generation)) return;
   const parsed = ReceiptListSchema.safeParse(answer.body);
   if (!parsed.success) {
-    feed.write("gateway", "The receipt list could not be parsed.", {
+    feed.got("gateway", "The receipt list could not be parsed.", {
       status: answer.status,
       body: answer.body,
       issues: parsed.error.issues,
@@ -267,7 +267,7 @@ const readReceipts = async (generation: number): Promise<void> => {
   }
   receipts = parsed.data.receipts;
   receiptsRead = true;
-  feed.write("gateway", "Read the merchant's receipts.", {
+  feed.got("gateway", "Read the merchant's receipts.", {
     status: answer.status,
     receipts: receipts.length,
   });
@@ -277,7 +277,7 @@ const readReceipts = async (generation: number): Promise<void> => {
 
 const tracedFetch: typeof fetch = async (input, init) => {
   const request = input instanceof Request ? input : new Request(input, init);
-  feed.write("agent", `${request.method} ${new URL(request.url).pathname}`, {
+  feed.sent("agent", `${request.method} ${new URL(request.url).pathname}`, {
     url: request.url,
     payment_signature_present: request.headers.has("payment-signature"),
   });
@@ -291,14 +291,18 @@ const tracedFetch: typeof fetch = async (input, init) => {
       // The response was still an answer. Keep its text, as a proxy page says
       // something about the proxy rather than disappearing as a parse error.
     }
-    feed.write("agent", `Answered ${response.status}.`, {
+    // The subject is said out loud. This line sits in the agent's lane, which
+    // means "the agent's side of the wire" and not "the agent did it" — and
+    // "Answered 402." in that lane reads as the agent answering, which is
+    // backwards: the agent asked, and this is what came back to it.
+    feed.got("agent", `The gateway answered ${response.status}.`, {
       status: response.status,
       url: request.url,
       body,
     });
     return response;
   } catch (error) {
-    feed.write("agent", "The call did not complete.", {
+    feed.write("agent", "Nothing came back.", {
       url: request.url,
       error: wordsOf(error),
     });
@@ -568,7 +572,7 @@ const doAction = async (form: URLSearchParams): Promise<void> => {
         throw new Error("Card must be a JSON object.");
       const outcome = await merchant.publish(document as CardInput);
       if (!connectionIsCurrent(generation)) return;
-      feed.write("merchant", "Publish call answered.", outcome);
+      feed.got("merchant", "Publish call answered.", outcome);
       await readCards(generation);
       if (!connectionIsCurrent(generation)) return;
       publicItemsRead = false;
@@ -597,7 +601,7 @@ const doAction = async (form: URLSearchParams): Promise<void> => {
           ? await pauseCard(address, key, itemId)
           : await resumeCard(address, key, itemId);
       if (!connectionIsCurrent(generation)) return;
-      feed.write("gateway", `${action === "pause_card" ? "Paused" : "Resumed"} a card.`, answer);
+      feed.got("gateway", `${action === "pause_card" ? "Paused" : "Resumed"} a card.`, answer);
       await readCards(generation);
       publicItemsRead = false;
       return;
@@ -612,7 +616,7 @@ const doAction = async (form: URLSearchParams): Promise<void> => {
           ? await pauseSelling(address, key)
           : await resumeSelling(address, key);
       if (!connectionIsCurrent(generation)) return;
-      feed.write(
+      feed.got(
         "gateway",
         `${action === "pause_selling" ? "Paused" : "Resumed"} all selling.`,
         answer,

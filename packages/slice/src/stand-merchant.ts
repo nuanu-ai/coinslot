@@ -155,12 +155,13 @@ export const makeStandMerchant = (feed: Feed): StandMerchant => {
   const deliveryFor = (merchantItemId: string): Delivery =>
     moods.delivery ?? filledFrom(results.get(merchantItemId));
 
+  /** Every answer the handler gives is something this side put on the wire. */
   const writeOrderAnswer = (
     title: string,
     order: LiveOrder,
     detail: Record<string, unknown>,
   ): void => {
-    feed.write("merchant", title, {
+    feed.sent("merchant", title, {
       order_id: order.id,
       merchant_item_id: order.merchant_item_id,
       ...detail,
@@ -171,18 +172,18 @@ export const makeStandMerchant = (feed: Feed): StandMerchant => {
   const handOver = async (order: LiveOrder): Promise<void> => {
     try {
       const delivery = deliveryFor(order.merchant_item_id);
-      feed.write("merchant", "Delivering an accepted order.", {
+      feed.sent("merchant", "Delivering an accepted order.", {
         order_id: order.id,
         merchant_item_id: order.merchant_item_id,
         delivery,
       });
       const result = await order.deliver(delivery);
-      feed.write("merchant", "The accepted-order delivery answered.", {
+      feed.got("merchant", "The accepted-order delivery answered.", {
         order_id: order.id,
         result,
       });
     } catch (error: unknown) {
-      feed.write("merchant", "The later delivery could not be completed.", {
+      feed.sent("merchant", "The later delivery could not be completed.", {
         order_id: order.id,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -291,7 +292,7 @@ export const makeStandMerchant = (feed: Feed): StandMerchant => {
 
   const register = (fresh: CoinslotClient): void => {
     fresh.on("order", async (order) => {
-      feed.write("merchant", "An order arrived.", {
+      feed.got("merchant", "An order arrived.", {
         order_id: order.id,
         merchant_item_id: order.merchant_item_id,
         params: order.params,
@@ -311,13 +312,13 @@ export const makeStandMerchant = (feed: Feed): StandMerchant => {
     });
 
     fresh.on("quote", async (question) => {
-      feed.write("merchant", "A price question arrived.", {
+      feed.got("merchant", "A price question arrived.", {
         merchant_item_id: question.merchant_item_id,
         price_id: question.price_id,
       });
       if (moods.quote === "unavailable") {
         const answer = question.unavailable();
-        feed.write("merchant", "Saying a price is unavailable.", {
+        feed.sent("merchant", "Saying a price is unavailable.", {
           price_id: question.price_id,
           answer,
         });
@@ -327,7 +328,7 @@ export const makeStandMerchant = (feed: Feed): StandMerchant => {
         await wait(SILENCE_PAST_DEADLINES_MS);
       }
       const answer = question.available(moods.price);
-      feed.write("merchant", "Answering a price question.", {
+      feed.sent("merchant", "Answering a price question.", {
         price_id: question.price_id,
         answer,
       });
@@ -336,7 +337,7 @@ export const makeStandMerchant = (feed: Feed): StandMerchant => {
 
     fresh.on("event", (event) => {
       taken.delete(event.order_id);
-      feed.write("gateway", "An order event arrived.", event);
+      feed.got("gateway", "An order event arrived.", event);
     });
 
     fresh.on("problem", (problem) => {
@@ -344,7 +345,7 @@ export const makeStandMerchant = (feed: Feed): StandMerchant => {
       // gateway refusing what this handler sent, and the log reads a refusal
       // off that field. Without it the one line that says the delivery was
       // rejected would sit in the stream looking like every other line.
-      feed.write("gateway", `The gateway refused what the handler sent: ${problem.kind}.`, {
+      feed.got("gateway", `The gateway refused what the handler sent: ${problem.kind}.`, {
         error: problem.kind,
         problem,
       });
@@ -383,13 +384,13 @@ export const makeStandMerchant = (feed: Feed): StandMerchant => {
       if (order === undefined) return false;
       try {
         const result = await order.refuse(moods.refusal);
-        feed.write("merchant", "Refusing an order taken on earlier.", {
+        feed.sent("merchant", "Refusing an order taken on earlier.", {
           order_id: orderId,
           refusal: moods.refusal,
           result,
         });
       } catch (error: unknown) {
-        feed.write("merchant", "That refusal could not be completed.", {
+        feed.sent("merchant", "That refusal could not be completed.", {
           order_id: orderId,
           error: error instanceof Error ? error.message : String(error),
         });
@@ -424,7 +425,7 @@ export const makeStandMerchant = (feed: Feed): StandMerchant => {
         throw new Error("Connect the stand merchant before publishing a card.");
       }
       const result = await client.catalog.publish(card);
-      feed.write("merchant", "Published a card.", {
+      feed.sent("merchant", "Published a card.", {
         merchant_item_id: card.merchant_item_id,
         result,
       });
