@@ -118,9 +118,10 @@ An invalid card raises no exception. Every answer to this call carries `ok`,
 and it is either true or false: true means the card was accepted and our
 catalogue `id` is there beside it, false means the answer carries an `error`
 instead. The error has a code to branch on — `card_rejected` where we would not
-publish the card — a sentence you can print, and `problems`: one finding for
-each thing standing between this card and the catalogue, naming the field it is
-about and what is wrong with it. That list is never empty.
+publish the card — a sentence you can print, and `problems`: the findings
+standing between this card and the catalogue, each with a code, words a person
+can act on, and the path to the field it is about where it is about one. That
+list is never empty.
 
 Not every finding is about the card. A name for buyers to read that you have
 not set, or a wallet for your sales to be paid into, arrives in the same list,
@@ -130,11 +131,15 @@ the error says as much: its `retryable` flag is false, because what changes the
 answer is fixing what the findings name.
 
 A call that fails for some other reason — a key we do not accept, an address
-that does not answer — does throw, as a `CoinslotError`. It carries a `code`,
-drawn from the same words the returned errors use, and `route`, the name of the
-call it happened on, so a `catch` can tell what happened without reading the
-sentence. A client built wrong — no key, an address that is not an address — is
-a `TypeError` at the line that is wrong, before anything leaves your process.
+that does not answer — does throw, as a `CoinslotError`. It carries a `code`.
+Where we refused the call in words, that word is the code: a key we will not
+take arrives as `not_authorised`, not as something about the network. Where no
+answer arrived, or none these tools could read, it is one of the three words
+they use for that. It is the same vocabulary either way, and the same one the
+returned errors carry. It also carries `route`, the name of the call it happened
+on, so a `catch` can tell what happened without reading the sentence. A client
+built wrong — no key, an address that is not an address — is a `TypeError` at
+the line that is wrong, before anything leaves your process.
 
 The field `merchant_item_id` is your own identifier for the product, the same
 one it has in your database. We issue our catalogue `id` beside it, but your

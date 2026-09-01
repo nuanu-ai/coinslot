@@ -147,10 +147,13 @@ the cut marked, so a handler that sent a hundred names nobody asked for is told
 the first several of them and that the text went on, without a count of what was
 left out.
 
-That cut is the sentence's alone. The same findings travel beside it as a list —
-one for each thing that did not fit, with the path to the field, a code and
-words a person can act on — and the list leaves nothing out ([when a closing
-call does not go through](/orders#when-a-closing-call-does-not-go-through)).
+That cut is the sentence's alone. The same findings travel beside it as a list,
+and the list leaves nothing out. A field your card declares and your handler got
+wrong is one finding there, carrying the path to it, a code and words a person
+can act on. The fields your card never declared are one finding between them,
+with an empty path — there is no path to a name the card never had — and all of
+those names inside its own words ([when a closing call does not go
+through](/orders#when-a-closing-call-does-not-go-through)).
 
 Every field of the result is required until you mark it `required: false`. The
 result is a promise, and a delivery missing a promised field does not go

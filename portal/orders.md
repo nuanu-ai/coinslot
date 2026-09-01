@@ -238,10 +238,11 @@ the same `order.id` and it succeeds again, marked as already delivered: no
 second delivery happened and no second charge. There is nothing here for your
 code to treat as a failure: `ok` is true in both cases, and you do not have to
 branch on the word inside it. The word is there when you do want it — a delivery
-that closed a refund debt rather than completing a sale says so. Repeating the call after a dropped connection is therefore safe. A
-repeat is not weighed against the card at all, because there is nothing left
-for it to write: what it carries is neither checked nor kept. What it ought to
-carry is in [Telling a repeat apart](#telling-a-repeat-apart).
+that closed a refund debt rather than completing a sale says so. Repeating the
+call after a dropped connection is therefore safe. A repeat is not weighed
+against the card at all, because there is nothing left for it to write: what it
+carries is neither checked nor kept. What it ought to carry is in [Telling a
+repeat apart](#telling-a-repeat-apart).
 
 A late call is accepted. If your delivery deadline has passed, the order is
 already marked as needing a refund and the refund has not yet gone out,
@@ -279,11 +280,30 @@ means a third thing by the flag: that call arrived and was understood, so the
 same goods sent again get the same refusal, and the retry that helps is the one
 carrying what the card declares.
 
-Where the error is about the goods you sent, the fields that did not fit travel
-as findings in `error.problems` as well as in the sentence: one for each field,
-with the path to it, a code and words a person can act on. The sentence names a
-few of them and counts the rest, because it is written to be read in a log; the
-list leaves nothing out.
+A code outside those seven is the ordinary case rather than the exception, and
+the commonest one is us refusing the call at the door: a key we will not take,
+an order identifier that names nothing, a body we could not read. Those come
+back under our own word for the refusal — `not_authorised`, `no_such_order` —
+because that word is the one that tells you what to do about it. The three the
+tools produce say only what they say: no answer arrived, or one did and could
+not be read. Neither is ever put in front of a refusal we wrote out in words.
+On a refusal of ours the flag is true and is claiming less than it looks:
+nothing in the answer separates the ones that will stand for ever — that key,
+that missing order — from a call that fell over on our side and would go through
+on a second attempt, and between sending you back once for nothing and telling
+you to stop where the call would have worked, we send you back. Read the code:
+where it names something about the call you made rather than about the moment
+you made it, an identical second call gets an identical answer.
+
+Where the error is about the goods you sent, what did not fit travels as
+findings in `error.problems`, and that list is the complete account. A field
+your card declares and your delivery got wrong is one finding there, carrying
+the path to it, a code and words a person can act on. The fields your card never
+declared are one finding between them, with an empty path — there is no path to
+a name the card never had — and all of those names inside its own words. The
+`message` beside the list is a single line, written to be read in a log: it says
+how many findings there are, quotes one or a few of them, and marks the place
+where a long one was cut short. Print that to a person; branch on the list.
 
 ## Refusing after you have taken the order on
 
