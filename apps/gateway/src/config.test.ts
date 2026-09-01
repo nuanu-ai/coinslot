@@ -177,6 +177,38 @@ describe("loadConfig", () => {
     ).not.toThrow();
   });
 
+  describe("a credential set to nothing", () => {
+    it("reads the same as a credential nobody set", () => {
+      // A compose file hands a service a fixed list of names, so "not this one"
+      // is written as the name with nothing after it. Read as a credential of
+      // length zero it would refuse the value and stop every laptop.
+      const started = loadConfig({ ...required, CDP_API_KEY_ID: "", CDP_API_KEY_SECRET: "" });
+
+      expect(started.payment.cdpApiKeyId).toBeNull();
+      expect(started.payment.cdpApiKeySecret).toBeNull();
+    });
+
+    it("still refuses a real credential beside a facilitator that settles nothing", () => {
+      // The door ADR-0008 put here does not move: what changed is the reading of
+      // nothing, not the reading of something.
+      expect(() =>
+        loadConfig({ ...required, FACILITATOR_URL: SANDBOX_FACILITATOR, CDP_API_KEY_ID: "key-id" }),
+      ).toThrowError(/left over from somewhere else/);
+    });
+
+    it("still refuses Coinbase's facilitator with a credential set to nothing", () => {
+      expect(() =>
+        loadConfig({
+          ...required,
+          PAYMENT_NETWORK: "eip155:8453",
+          FACILITATOR_URL: "https://api.cdp.coinbase.com/platform/v2/x402",
+          CDP_API_KEY_ID: "key-id",
+          CDP_API_KEY_SECRET: "",
+        }),
+      ).toThrowError(/CDP_API_KEY_SECRET/);
+    });
+  });
+
   it("refuses the CDP facilitator without the credentials it takes no request without", () => {
     // The mirror of the door above, and the one that costs money rather than
     // tidiness. The CDP facilitator answers nothing unsigned, so a deployment
@@ -408,9 +440,9 @@ describe("loadConfig", () => {
     // comes up selling, and the floor is on what a sandbox may hand out: a real
     // key is generated with thirty-two bytes behind it and chosen by nobody.
     expect(
-      loadConfig({ ...required, SANDBOX_MERCHANT_KEY: "a-sandbox-key-long-enough" })
+      loadConfig({ ...required, SANDBOX_MERCHANT_KEY: "csk_test_a-key-long-enough" })
         .sandboxMerchantKey,
-    ).toBe("a-sandbox-key-long-enough");
+    ).toBe("csk_test_a-key-long-enough");
 
     expect(() => loadConfig({ ...required, SANDBOX_MERCHANT_KEY: "short" })).toThrowError(
       /SANDBOX_MERCHANT_KEY: must be at least 16 characters/,
@@ -586,5 +618,185 @@ describe("loadConfig", () => {
     expect(refused, refused).toContain("10000ms");
     expect(refused, refused).toContain("merchant's price");
     expect(refused, refused).toContain("9000ms");
+  });
+});
+
+describe("a seeded key belongs to this environment", () => {
+  it("takes a key carrying this environment's prefix", () => {
+    expect(() =>
+      loadConfig({ ...required, SANDBOX_MERCHANT_KEY: "csk_test_a-key-long-enough" }),
+    ).not.toThrow();
+  });
+
+  it("stops the process on a key from the other environment", () => {
+    // The laptop's `.env` seeding a live gateway with a key written down in a
+    // repository is the mistake this is for.
+    expect(() =>
+      loadConfig({
+        ...required,
+        PAYMENT_NETWORK: "eip155:8453",
+        FACILITATOR_URL: "https://api.cdp.coinbase.com/platform/v2/x402",
+        CDP_API_KEY_ID: "key-id",
+        CDP_API_KEY_SECRET: "secret",
+        SANDBOX_MERCHANT_KEY: "csk_test_a-key-long-enough",
+      }),
+    ).toThrowError(/SANDBOX_MERCHANT_KEY.*csk_live_/s);
+  });
+
+  it("stops the process on a key carrying no environment at all", () => {
+    expect(() =>
+      loadConfig({ ...required, SANDBOX_MERCHANT_KEY: "local-sandbox-merchant-key" }),
+    ).toThrowError(/SANDBOX_MERCHANT_KEY.*csk_test_/s);
+  });
+
+  it("seeds nothing when the name is handed over with nothing after it", () => {
+    expect(loadConfig({ ...required, SANDBOX_MERCHANT_KEY: "" }).sandboxMerchantKey).toBeNull();
+  });
+});
+
+describe("the environment is derived from the chain", () => {
+  it("reads a written testnet as a test environment", () => {
+    expect(loadConfig({ ...required, PAYMENT_NETWORK: "eip155:84532" }).environment).toBe("test");
+  });
+
+  it("reads Base mainnet as a live environment", () => {
+    expect(
+      loadConfig({
+        ...required,
+        PAYMENT_NETWORK: "eip155:8453",
+        FACILITATOR_URL: "https://api.cdp.coinbase.com/platform/v2/x402",
+        CDP_API_KEY_ID: "key-id",
+        CDP_API_KEY_SECRET: "secret",
+      }).environment,
+    ).toBe("live");
+  });
+
+  it("stops the process on a chain that is on neither list", () => {
+    expect(() => loadConfig({ ...required, PAYMENT_NETWORK: "eip155:1" })).toThrowError(
+      /PAYMENT_NETWORK.*neither written list/s,
+    );
+  });
+
+  it("says which three things this process is, for the surfaces", () => {
+    expect(loadConfig(required).surfaceMode).toBe("test");
+    expect(loadConfig({ ...required, FACILITATOR_URL: SANDBOX_FACILITATOR }).surfaceMode).toBe(
+      "sandbox",
+    );
+  });
+});
+
+describe("a live chain is allowed exactly one facilitator", () => {
+  const live = {
+    ...required,
+    PAYMENT_NETWORK: "eip155:8453",
+    FACILITATOR_URL: "https://api.cdp.coinbase.com/platform/v2/x402",
+    CDP_API_KEY_ID: "key-id",
+    CDP_API_KEY_SECRET: "secret",
+  };
+
+  it("starts on Coinbase's canonical facilitator with both credentials", () => {
+    expect(() => loadConfig(live)).not.toThrow();
+  });
+
+  it("refuses the scripted facilitator, which takes payments that never happened", () => {
+    const { CDP_API_KEY_ID, CDP_API_KEY_SECRET, ...noCredentials } = live;
+    expect(() =>
+      loadConfig({ ...noCredentials, FACILITATOR_URL: SANDBOX_FACILITATOR }),
+    ).toThrowError(/eip155:8453.*sandbox:scripted/s);
+  });
+
+  it("refuses the public x402 facilitator", () => {
+    const { CDP_API_KEY_ID, CDP_API_KEY_SECRET, ...noCredentials } = live;
+    expect(() =>
+      loadConfig({ ...noCredentials, FACILITATOR_URL: "https://x402.org/facilitator" }),
+    ).toThrowError(/eip155:8453.*x402\.org/s);
+  });
+
+  it("refuses the default that arrives when nobody names the variable at all", () => {
+    // The copied environment file, and the one that would otherwise pass every
+    // other check: FACILITATOR_URL falls back to the public facilitator, so a
+    // `.env` from the test host with one line changed to eip155:8453 would
+    // start, issue csk_live_ keys, show no banner, and settle somewhere the
+    // pilot does not settle.
+    const { FACILITATOR_URL, CDP_API_KEY_ID, CDP_API_KEY_SECRET, ...unnamed } = live;
+    expect(() => loadConfig(unnamed)).toThrowError(/eip155:8453.*FACILITATOR_URL/s);
+  });
+
+  it("refuses Coinbase's facilitator without credentials", () => {
+    const { CDP_API_KEY_ID, CDP_API_KEY_SECRET, ...noCredentials } = live;
+    expect(() => loadConfig(noCredentials)).toThrowError(/CDP_API_KEY_ID and CDP_API_KEY_SECRET/);
+  });
+
+  it("refuses Coinbase's facilitator over http, which puts a bearer token on the wire in the clear", () => {
+    expect(() =>
+      loadConfig({ ...live, FACILITATOR_URL: "http://api.cdp.coinbase.com/platform/v2/x402" }),
+    ).toThrowError(/https:/);
+  });
+
+  it("takes the same endpoint written with a trailing slash", () => {
+    // The same deployment, and the client takes the slash off before it signs
+    // anything. Refusing it would be an operator with a correct configuration
+    // being told it is wrong.
+    expect(() =>
+      loadConfig({ ...live, FACILITATOR_URL: "https://api.cdp.coinbase.com/platform/v2/x402/" }),
+    ).not.toThrow();
+  });
+
+  it("refuses Coinbase's host with a path the facilitator does not answer on", () => {
+    // Starts healthy, issues csk_live_ keys, and fails at the first buyer: the
+    // gateway builds /verify and /settle under whatever base it was given.
+    expect(() =>
+      loadConfig({ ...live, FACILITATOR_URL: "https://api.cdp.coinbase.com/wrong" }),
+    ).toThrowError(/https:\/\/api\.cdp\.coinbase\.com\/platform\/v2\/x402/);
+  });
+
+  it("refuses a name and password written into Coinbase's address", () => {
+    // Two costs, and the first settles it on its own: a request whose address
+    // carries credentials is refused where it is built, so every verify and
+    // every settle throws, in front of a buyer, on a gateway that came up
+    // healthy. The second is that the refusal prints the address it was given,
+    // so a password written there also reaches the operator's log.
+    expect(() =>
+      loadConfig({
+        ...live,
+        FACILITATOR_URL: "https://someone:secret@api.cdp.coinbase.com/platform/v2/x402",
+      }),
+    ).toThrowError(/https:\/\/api\.cdp\.coinbase\.com\/platform\/v2\/x402/);
+  });
+
+  it("refuses a port the facilitator does not answer on", () => {
+    // The host is right, the path is right, and nothing is listening there.
+    // That is the wrong-path failure again under a different spelling: the
+    // gateway starts, issues keys, and finds out at the first buyer.
+    expect(() =>
+      loadConfig({
+        ...live,
+        FACILITATOR_URL: "https://api.cdp.coinbase.com:8443/platform/v2/x402",
+      }),
+    ).toThrowError(/https:\/\/api\.cdp\.coinbase\.com\/platform\/v2\/x402/);
+  });
+
+  it("takes the same endpoint with the port https already means written out", () => {
+    // `:443` is what `https:` means, and the address parser drops it, so this
+    // is the canonical endpoint spelled in full. Refusing it would be an
+    // operator with a correct live configuration told it is wrong.
+    expect(() =>
+      loadConfig({
+        ...live,
+        FACILITATOR_URL: "https://api.cdp.coinbase.com:443/platform/v2/x402",
+      }),
+    ).not.toThrow();
+  });
+
+  it("leaves a test chain free to keep the scripted facilitator", () => {
+    // The laptop requires exactly that pairing, and it is what makes
+    // `docker compose up` sell with no network, no wallet and no faucet.
+    expect(() =>
+      loadConfig({
+        ...required,
+        PAYMENT_NETWORK: "eip155:84532",
+        FACILITATOR_URL: SANDBOX_FACILITATOR,
+      }),
+    ).not.toThrow();
   });
 });

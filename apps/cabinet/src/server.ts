@@ -245,6 +245,18 @@ const people = new WeakMap<Request, Person>();
 export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
   const app = express();
   const base = config.basePath;
+  const viewing = (request: Request, pageBase: string, sellerName?: string | null): Viewer =>
+    viewingAt(request, pageBase, config.surfaceMode, sellerName);
+  const viewingSettings = (
+    request: Request,
+    pageBase: string,
+    settings: { sellerName: string | null; payoutWallet: string | null },
+    walletProblem?: string,
+  ): Viewer => viewingSettingsAt(request, pageBase, config.surfaceMode, settings, walletProblem);
+  const problemPage = (pageBase: string, said: string): string =>
+    problemPageAt(pageBase, config.surfaceMode, said);
+  const trouble = (response: Response, pageBase: string, answer: Answer<unknown>): void =>
+    troubleAt(response, pageBase, config.surfaceMode, answer);
   const identity = parts.identity;
   const shortest = identity.shortestPassword;
   const clientFor =
@@ -307,7 +319,7 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
   // handler would think to doubt it. The forms are the only thing a browser
   // posts here, and they are small.
   app.use(express.urlencoded({ extended: false, limit: "16kb" }));
-  app.use(sameOriginUnder(base));
+  app.use(sameOriginUnder(base, config.surfaceMode));
 
   // Under one origin the cabinet is reached at BASE_PATH, so that is where a
   // probe looks; at the bare root it is what a container health check asks for.
@@ -333,7 +345,7 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
       response.redirect(303, `${base}/cards`);
       return;
     }
-    response.type("html").send(signInScreen(base));
+    response.type("html").send(signInScreen(base, config.surfaceMode));
   });
 
   /**
@@ -466,7 +478,7 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
       response
         .status(400)
         .type("html")
-        .send(signInScreen(base, "Enter your address and your password."));
+        .send(signInScreen(base, config.surfaceMode, "Enter your address and your password."));
       return;
     }
 
@@ -489,7 +501,13 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
       response
         .status(401)
         .type("html")
-        .send(signInScreen(base, "That address and password do not match an account."));
+        .send(
+          signInScreen(
+            base,
+            config.surfaceMode,
+            "That address and password do not match an account.",
+          ),
+        );
       return;
     }
 
@@ -500,7 +518,10 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
       // because an empty cabinet reads as a catalogue somebody emptied. The
       // session the component opened along the way has already been ended.
       console.log("[cabinet] a sign-in was refused: the account has no merchant");
-      response.status(403).type("html").send(signInScreen(base, NO_MERCHANT));
+      response
+        .status(403)
+        .type("html")
+        .send(signInScreen(base, config.surfaceMode, NO_MERCHANT));
       return;
     }
 
@@ -537,7 +558,7 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
     if (await alreadySignedIn(request, response)) {
       return;
     }
-    response.type("html").send(registerScreen(base, shortest));
+    response.type("html").send(registerScreen(base, shortest, config.surfaceMode));
   });
 
   app.post(`${base}/register`, async (request, response) => {
@@ -562,7 +583,7 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
       response
         .status(400)
         .type("html")
-        .send(registerScreen(base, shortest, wrong));
+        .send(registerScreen(base, shortest, config.surfaceMode, wrong));
       return;
     }
 
@@ -583,7 +604,7 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
         response
           .status(403)
           .type("html")
-          .send(registerScreen(base, shortest, REGISTRATION_REFUSED));
+          .send(registerScreen(base, shortest, config.surfaceMode, REGISTRATION_REFUSED));
         return;
       }
       // A 400 says the document this cabinet sent is not one the route takes,
@@ -604,6 +625,7 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
           registerScreen(
             base,
             shortest,
+            config.surfaceMode,
             made.status === 400
               ? `Nothing was made, and it is this cabinet's own request that was refused: ${made.why}`
               : "Nothing was made: the part of Coinslot that creates a merchant did not answer as" +
@@ -629,7 +651,7 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
       response
         .status(403)
         .type("html")
-        .send(registerScreen(base, shortest, REGISTRATION_REFUSED));
+        .send(registerScreen(base, shortest, config.surfaceMode, REGISTRATION_REFUSED));
       return;
     }
 
@@ -647,6 +669,7 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
           registerScreen(
             base,
             shortest,
+            config.surfaceMode,
             registered.why === "undone"
               ? "Your merchant was created and your account was not, so there is nothing here to" +
                   " sign into yet. Nothing was charged and nothing else was changed. Register" +
@@ -669,7 +692,7 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
   });
 
   app.get(`${base}/password/forgot`, (_request, response) => {
-    response.type("html").send(forgotScreen(base));
+    response.type("html").send(forgotScreen(base, config.surfaceMode));
   });
 
   app.post(`${base}/password/forgot`, async (request, response) => {
@@ -679,7 +702,7 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
       response
         .status(400)
         .type("html")
-        .send(forgotScreen(base, "Enter the address on your account."));
+        .send(forgotScreen(base, config.surfaceMode, "Enter the address on your account."));
       return;
     }
 
@@ -689,7 +712,7 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
     // because a form that answered either of those questions would be a way of
     // asking who sells here.
     await identity.askForANewPassword(email);
-    response.type("html").send(linkSentScreen(base));
+    response.type("html").send(linkSentScreen(base, config.surfaceMode));
   });
 
   app.get(`${base}/password/new`, (request, response) => {
@@ -704,7 +727,7 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
     // The link is not spent here. This page only draws the form; the token is
     // handed back with the new password and is checked once, in the post — so a
     // preview fetch by a mail client cannot burn somebody's only link.
-    response.type("html").send(newPasswordScreen(base, token, shortest));
+    response.type("html").send(newPasswordScreen(base, token, shortest, config.surfaceMode));
   });
 
   app.post(`${base}/password/new`, async (request, response) => {
@@ -725,6 +748,7 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
             base,
             token,
             shortest,
+            config.surfaceMode,
             `A password has to be at least ${shortest} characters.`,
           ),
         );
@@ -740,6 +764,7 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
             base,
             token,
             shortest,
+            config.surfaceMode,
             "That link does not work any more. A link can be used once and stops working an hour" +
               " after it is sent. Ask for another one from the sign-in page.",
           ),
@@ -758,7 +783,7 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
     response
       .status(worked ? 200 : 400)
       .type("html")
-      .send(confirmedScreen(base, worked));
+      .send(confirmedScreen(base, worked, config.surfaceMode));
   });
 
   /**
@@ -800,7 +825,10 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
           // belongs to cannot draw a single screen.
           await identity.signOut(request.headers.cookie);
           forget(response);
-          response.status(403).type("html").send(signInScreen(base, NO_MERCHANT));
+          response
+            .status(403)
+            .type("html")
+            .send(signInScreen(base, config.surfaceMode, NO_MERCHANT));
           return;
         }
         people.set(request, person);
@@ -842,7 +870,9 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
   });
 
   app.get(`${base}/password`, (request, response) => {
-    response.type("html").send(passwordScreen(base, whoIs(request).email, shortest));
+    response
+      .type("html")
+      .send(passwordScreen(base, whoIs(request).email, shortest, config.surfaceMode));
   });
 
   app.post(`${base}/password`, async (request, response) => {
@@ -861,6 +891,7 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
             base,
             person.email,
             shortest,
+            config.surfaceMode,
             `A new password has to be at least ${shortest} characters.`,
           ),
         );
@@ -870,7 +901,15 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
       response
         .status(401)
         .type("html")
-        .send(passwordScreen(base, person.email, shortest, "That is not your current password."));
+        .send(
+          passwordScreen(
+            base,
+            person.email,
+            shortest,
+            config.surfaceMode,
+            "That is not your current password.",
+          ),
+        );
       return;
     }
 
@@ -890,7 +929,7 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
    * page does.
    */
   app.get(`${base}/choose-name`, (_request, response) => {
-    response.type("html").send(chooseNameScreen(base));
+    response.type("html").send(chooseNameScreen(base, config.surfaceMode));
   });
 
   app.post(`${base}/choose-name`, async (request, response) => {
@@ -900,7 +939,10 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
     // rule is not what they broke, and the way past this screen is on it.
     const wrong = typed === "" ? NAME_NEEDED : whatIsWrongWithTheName(typed);
     if (wrong !== null) {
-      response.status(400).type("html").send(chooseNameScreen(base, wrong));
+      response
+        .status(400)
+        .type("html")
+        .send(chooseNameScreen(base, config.surfaceMode, wrong));
       return;
     }
 
@@ -1298,7 +1340,7 @@ const sameHost = (origin: string, host: string): boolean => {
   return here !== null && hostOf(origin) === here;
 };
 
-function sameOriginUnder(base: string) {
+function sameOriginUnder(base: string, mode: CabinetConfig["surfaceMode"]) {
   return (request: Request, response: Response, next: () => void): void => {
     const origin = request.headers.origin;
     if (request.method !== "POST" || origin === undefined) {
@@ -1328,7 +1370,7 @@ function sameOriginUnder(base: string) {
     response
       .status(403)
       .type("html")
-      .send(problemPage(base, "This form did not come from the cabinet."));
+      .send(problemPageAt(base, mode, "This form did not come from the cabinet."));
   };
 }
 
@@ -1360,9 +1402,14 @@ function whoIs(request: Request): Person {
  * line about an unset name has to have asked, and a screen that has not asked
  * must not draw a line either way about it.
  */
-const viewing = (request: Request, base: string, sellerName?: string | null): Viewer => {
+const viewingAt = (
+  request: Request,
+  base: string,
+  mode: Viewer["mode"],
+  sellerName?: string | null,
+): Viewer => {
   const person = whoIs(request);
-  return { base, who: person.email, confirmed: person.confirmed, sellerName };
+  return { base, mode, who: person.email, confirmed: person.confirmed, sellerName };
 };
 
 /**
@@ -1373,13 +1420,14 @@ const viewing = (request: Request, base: string, sellerName?: string | null): Vi
  * the gateway for the address must not be able to say anything about it, and
  * the cheapest way to hold that is for those screens to have no way to.
  */
-const viewingSettings = (
+const viewingSettingsAt = (
   request: Request,
   base: string,
+  mode: Viewer["mode"],
   settings: { sellerName: string | null; payoutWallet: string | null },
   walletProblem?: string,
 ): Viewer => ({
-  ...viewing(request, base, settings.sellerName),
+  ...viewingAt(request, base, mode, settings.sellerName),
   payout: {
     wallet: settings.payoutWallet,
     ...(walletProblem === undefined ? {} : { problem: walletProblem }),
@@ -1439,7 +1487,12 @@ const noted = (person: Person, did: string): void => {
 };
 
 /** What a merchant is shown when the gateway would not answer. */
-function trouble(response: Response, base: string, answer: Answer<unknown>): void {
+function troubleAt(
+  response: Response,
+  base: string,
+  mode: CabinetConfig["surfaceMode"],
+  answer: Answer<unknown>,
+): void {
   if (answer.ok) {
     return;
   }
@@ -1460,8 +1513,9 @@ function trouble(response: Response, base: string, answer: Answer<unknown>): voi
       .status(502)
       .type("html")
       .send(
-        problemPage(
+        problemPageAt(
           base,
+          mode,
           "The gateway will not accept the key stored for this account, so none of these" +
             " screens can be drawn. Signing in again does not help: the cabinet asks for a" +
             " fresh key with the one it is holding, and that is the key being refused. A new" +
@@ -1479,12 +1533,15 @@ function trouble(response: Response, base: string, answer: Answer<unknown>): voi
     response
       .status(502)
       .type("html")
-      .send(problemPage(base, `The gateway did not answer: ${answer.why}`));
+      .send(problemPageAt(base, mode, `The gateway did not answer: ${answer.why}`));
     return;
   }
   // The gateway answered and refused. Its own sentence, under its own status:
   // nothing is claimed about what did or did not happen beyond what it said.
-  response.status(answer.status).type("html").send(problemPage(base, answer.why));
+  response
+    .status(answer.status)
+    .type("html")
+    .send(problemPageAt(base, mode, answer.why));
 }
 
 /**
@@ -1503,7 +1560,7 @@ function tooLarge(thrown: unknown): boolean {
   );
 }
 
-function problemPage(base: string, said: string): string {
+function problemPageAt(base: string, mode: CabinetConfig["surfaceMode"], said: string): string {
   return bare(
     base,
     "Something went wrong",
@@ -1512,5 +1569,6 @@ function problemPage(base: string, said: string): string {
 <p>${escaped(said)}</p>
 <button type="submit">Try again</button>
 </form></div>`,
+    mode,
   );
 }

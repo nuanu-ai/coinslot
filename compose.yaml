@@ -72,9 +72,14 @@
 #   COINSLOT_PUBLIC_ORIGIN  what a browser types             http://localhost:8080
 #   COINSLOT_WEB_PUBLISH    the published port of the door   8080:8080
 #   COINSLOT_COOKIE_SECURE  Secure on the session cookie     false
-#   COINSLOT_MERCHANT_KEY   the key the mock merchant        local-sandbox-merchant-key
+#   COINSLOT_FACILITATOR_URL  how payments are facilitated   sandbox:scripted
+#   COINSLOT_PAYMENT_NETWORK  the chain payments use         eip155:84532
+#   CDP_API_KEY_ID             Coinbase facilitator key ID   absent
+#   CDP_API_KEY_SECRET         Coinbase facilitator secret   absent
+#   COINSLOT_SURFACE_MODE     what the static pages say       sandbox
+#   COINSLOT_MERCHANT_KEY   the key the mock merchant        csk_test_local-sandbox-merchant-key
 #                           sells with
-#   COINSLOT_SEED_KEY       the key the gateway writes at    local-sandbox-merchant-key
+#   COINSLOT_SEED_KEY       the key the gateway writes at    csk_test_local-sandbox-merchant-key
 #                           start-up, or nothing at all
 #   COINSLOT_INVITATION     the code registration is         register-on-this-laptop
 #                           behind, or nothing at all
@@ -96,13 +101,23 @@
 # come up selling with nothing run by hand: at start the gateway hangs a row for
 # that key on the sandbox's merchant, if there is not one there already. A
 # second boot writes nothing, and a key disabled at a terminal is left disabled
-# — revoking one is not a thing a restart undoes. What a key kept in a file
-# cannot do is go away: disabling its row stops it opening anything, but the
-# string is still in the file the gateway is handed at every start, so retiring
-# it is an edit and a deployment rather than a row disabled, and a database
-# brought up from nothing is seeded off that same line again. A deployment
-# therefore issues a key with `merchant key` instead, puts it in
-# COINSLOT_MERCHANT_KEY, and sets COINSLOT_SEED_KEY to nothing at all:
+# — revoking one is not a thing a restart undoes.
+#
+# A stack on a server is seeded too, with a key of its own: one generated for
+# that host, kept in its `.env`, and carrying the prefix of the site it is for —
+# `csk_test_` on the test site, `csk_live_` on the live one. The door reads that
+# prefix before it looks anything up, so a key carrying the other site's is
+# turned away there whatever the database holds, and a key seeded under the
+# wrong prefix opens nothing on the host it was seeded into.
+#
+# What a key kept in a file cannot do is go away: disabling its row stops it
+# opening anything, but the string is still in the file the gateway is handed at
+# every start, so retiring it is an edit and a deployment rather than a row
+# disabled, and a database brought up from nothing is seeded off that same line
+# again. That is the reason to stop seeding once nothing presents that key any
+# more — once whatever sells on that host has a key of its own, issued with
+# `merchant key` and put in COINSLOT_MERCHANT_KEY, the deployment sets seeding
+# to nothing:
 #
 #   COINSLOT_SEED_KEY=
 #
@@ -200,19 +215,22 @@ services:
       # merchant every card, order and receipt here belongs to, so that the two
       # services below are recognised without anybody running a command. A
       # second boot writes nothing, and a key disabled at a terminal stays
-      # disabled. No deployment sets this — a key in an environment cannot be
-      # revoked without a deployment, which is what moving keys into rows fixed.
-      # Its own variable rather than the one the cabinet presents, because the
-      # two part company on a server: this one is read from a file at every
-      # start and put back into the database whenever the row is missing, which
-      # is what makes it a key nobody can retire without a deployment. Set to
-      # nothing, this process writes no key and every key is one somebody
-      # issued.
+      # disabled. A deployment sets this too, to a key generated for that host
+      # and carrying that site's prefix, because the merchant service below
+      # reads its key out of a file and has nothing to present until a row for
+      # it exists; a person registering with an invitation needs none of it. It
+      # is unset once nothing presents that key any more — once whatever sells
+      # there has a key of its own. Its own variable rather than
+      # the one the cabinet presents, because the two part company on a server:
+      # this one is read from a file at every start and put back into the
+      # database whenever the row is missing, which is what makes it a key
+      # nobody can retire without a deployment. Set to nothing, this process
+      # writes no key and every key is one somebody issued.
       #
       # The dash carries no colon on purpose: `${VAR-default}` gives the default
       # only when nobody named the variable, so a deployment naming it with
       # nothing after it gets nothing rather than the sandbox's key back.
-      SANDBOX_MERCHANT_KEY: "${COINSLOT_SEED_KEY-local-sandbox-merchant-key}"
+      SANDBOX_MERCHANT_KEY: "${COINSLOT_SEED_KEY-csk_test_local-sandbox-merchant-key}"
       # The code that stands in the door of registration. Nobody registering has
       # a key yet, so this is what is between a stranger who finds the hostname
       # and a merchant of their own — and the catalogue is one across merchants,
@@ -239,11 +257,24 @@ services:
       # whatever it publishes — which is why a deployment names the origin
       # itself rather than a number this line does arithmetic on.
       PUBLIC_BASE_URL: "${COINSLOT_PUBLIC_ORIGIN:-http://localhost:${COINSLOT_HOST_PORT:-8080}}"
-      # No chain behind this stack (ADR-0008). Payments are verified and settled
-      # against nothing, so a purchase completes here with no network, no wallet
-      # and no faucet — which is what makes the cabinet worth opening. The
-      # gateway says so in one line at startup.
-      FACILITATOR_URL: sandbox:scripted
+      # The laptop's values are the defaults, and they are the reason this is a
+      # variable at all: no chain behind this stack (ADR-0008), so a purchase
+      # completes here with no network, no wallet and no faucet. A public
+      # deployment names its own pair in its `.env`, and the release preflight
+      # holds each channel to the pair it declared — because a test chain must
+      # keep accepting the scripted facilitator, so the runtime cannot make
+      # this check for itself.
+      FACILITATOR_URL: "${COINSLOT_FACILITATOR_URL:-sandbox:scripted}"
+      PAYMENT_NETWORK: "${COINSLOT_PAYMENT_NETWORK:-eip155:84532}"
+      # Absent on a laptop and on the test site, which settle through
+      # facilitators that ask for nothing, and required on a live chain, where
+      # the gateway refuses to start without both (ADR-0008). The dash carries
+      # no colon for the reason SANDBOX_MERCHANT_KEY gives above, and the name
+      # with nothing after it reads as no credential at all — which the schema
+      # above teaches it to do, and which is what every stack but the live one
+      # hands this service.
+      CDP_API_KEY_ID: "${CDP_API_KEY_ID-}"
+      CDP_API_KEY_SECRET: "${CDP_API_KEY_SECRET-}"
       # A challenge has to name somewhere for the money to go or it cannot be
       # built at all, so this is here to give the document a shape where the
       # merchant selling has set no address of their own — which is what a stack
@@ -314,6 +345,11 @@ services:
       MAIL_URL: "${MAIL_URL:-sandbox:log}"
       MAIL_API_KEY: "${MAIL_API_KEY:-}"
       MAIL_FROM: "${MAIL_FROM:-Coinslot <no-reply@localhost>}"
+      # The same two its gateway reads. The cabinet gives them no defaults of
+      # its own and refuses to start without them; these lines are what a
+      # compose deployment hands it.
+      FACILITATOR_URL: "${COINSLOT_FACILITATOR_URL:-sandbox:scripted}"
+      PAYMENT_NETWORK: "${COINSLOT_PAYMENT_NETWORK:-eip155:84532}"
       # There is no merchant key here, and its absence is the point rather than
       # an omission. The cabinet used to be given one and use it for the life of
       # the process, so every screen showed that merchant's money whoever was
@@ -384,7 +420,7 @@ services:
       # "MERCHANT_API_KEY is not set … there is no default for it" — which is
       # what a deployment that emptied the variable should get, rather than the
       # key printed in this file quietly selling on a server.
-      MERCHANT_API_KEY: "${COINSLOT_MERCHANT_KEY-local-sandbox-merchant-key}"
+      MERCHANT_API_KEY: "${COINSLOT_MERCHANT_KEY-csk_test_local-sandbox-merchant-key}"
     depends_on:
       gateway:
         condition: service_healthy
@@ -488,6 +524,12 @@ services:
       # hostname on a server, which is what turns it on. deploy/Caddyfile says
       # why TLS-ALPN is the only challenge that can reach it here.
       COINSLOT_SITE_ADDRESS: "${COINSLOT_SITE_ADDRESS:-:8080}"
+      # What the landing and the portal say about this stack. It is a variable
+      # rather than a derivation because Caddy cannot read a CAIP-2 identifier
+      # and cannot hold the list of chains (deploy/Caddyfile). Two fields can
+      # disagree, so the release checks this one against the channel before
+      # anything starts and against the rendered pages afterwards.
+      COINSLOT_SURFACE_MODE: "${COINSLOT_SURFACE_MODE:-sandbox}"
     volumes:
       # The landing and the routing are mounted over the copies baked into the
       # image so that editing either shows up on reload. The documentation is

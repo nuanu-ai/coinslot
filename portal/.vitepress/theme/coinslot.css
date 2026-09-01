@@ -100,6 +100,18 @@
   --coinslot-on-accent: oklch(0.19 0.012 260);
 }
 
+/* The paragraph is the band rather than its marker div. Caddy removes the
+   paragraph for a live page while leaving the positive mode marker behind. */
+.surface-words {
+  margin: 0;
+  padding: 12px max(24px, calc((100vw - 1152px) / 2));
+  border-bottom: 1px solid var(--vp-c-divider);
+  background: var(--vp-c-bg-alt);
+  color: var(--vp-c-text-2);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
 /* Three corners the theme rounds and the rest of the site does not. */
 .VPButton,
 .vp-doc div[class*="language-"],

@@ -81,10 +81,6 @@ const queue = queueOn(config.databaseUrl, {
  */
 async function paymentLayer(): Promise<Facilitator> {
   if (isSandboxFacilitator(config.payment.facilitatorUrl)) {
-    console.warn(
-      "[gateway] SANDBOX: no chain behind this process — every payment it accepts is pretend, " +
-        "nothing arrives at the address in a challenge, and no receipt it writes points at a transfer",
-    );
     return new ScriptedFacilitator();
   }
 
@@ -92,6 +88,47 @@ async function paymentLayer(): Promise<Facilitator> {
   await refuseUnlessCredentialsSign(client);
   return new X402Facilitator(client, edge);
 }
+
+/**
+ * The first line of the log, and what an operator reads to know which of the
+ * three things this process is.
+ *
+ * It used to announce only the sandbox, because there was only one other
+ * thing to be. There are three now, and the difference between "settles with
+ * test funds" and "settles against nothing" is one somebody acts on.
+ */
+function announceTheEnvironment(): void {
+  const { network, facilitatorUrl } = config.payment;
+  const where = `${network} through ${facilitatorUrl}`;
+
+  switch (config.surfaceMode) {
+    case "sandbox":
+      console.warn(
+        `[gateway] SANDBOX on ${where}: no chain stands behind this process — every payment it ` +
+          "accepts is pretend, nothing arrives at the address in a challenge, and no receipt it " +
+          "writes points at a transfer",
+      );
+      return;
+    case "test":
+      console.warn(
+        `[gateway] TEST environment on ${where}: payments settle with test funds, every order and ` +
+          "receipt is marked as a test, and every key issued here begins with csk_test_",
+      );
+      return;
+    case "live":
+      console.log(
+        `[gateway] LIVE on ${where}: the money is real, nothing is marked as a test, and every key ` +
+          "issued here begins with csk_live_",
+      );
+      return;
+    default: {
+      const unannounced: never = config.surfaceMode;
+      throw new Error(`this gateway has no words for ${String(unannounced)}`);
+    }
+  }
+}
+
+announceTheEnvironment();
 
 const runtime: Runtime = {
   config,
@@ -138,19 +175,26 @@ const gateway = new Gateway(runtime);
  * was never configured at all.
  */
 async function seedTheSandbox(secret: string | null): Promise<void> {
+  const surface = config.surfaceMode.toUpperCase();
   if (secret === null) {
     console.log(
-      "[gateway] SANDBOX_MERCHANT_KEY is not set — a name with nothing after it reads the same as no " +
+      `[gateway] ${surface}: SANDBOX_MERCHANT_KEY is not set — a name with nothing after it reads the same as no ` +
         "name at all — so no key was seeded, and every key that opens a merchant here is one somebody issued",
     );
     return;
   }
 
-  const seeded = await seedSandboxKey(runtime.store, runtime.ids, secret, runtime.clock());
+  const seeded = await seedSandboxKey(
+    runtime.store,
+    runtime.ids,
+    secret,
+    runtime.clock(),
+    config.surfaceMode,
+  );
   if (seeded.kind === "issued") {
     console.warn(
-      `[gateway] SANDBOX: the key in SANDBOX_MERCHANT_KEY now opens ${seeded.merchantId} — ` +
-        "a key from an environment cannot be revoked without a deployment, so no deployment should set it" +
+      `[gateway] ${surface}: the key in SANDBOX_MERCHANT_KEY now opens ${seeded.merchantId} — ` +
+        "its value also remains in deployment configuration, so a production deployment should not set it" +
         (seeded.listedAs === null
           ? ""
           : `. It had no listing name, so this start listed it as "${seeded.listedAs}" — the seller a ` +
@@ -161,14 +205,14 @@ async function seedTheSandbox(secret: string | null): Promise<void> {
   }
   if (seeded.kind === "already_there") {
     console.warn(
-      "[gateway] SANDBOX: the key in SANDBOX_MERCHANT_KEY was already in the database and still opens " +
-        "the sandbox merchant; this start issued no key",
+      `[gateway] ${surface}: the key in SANDBOX_MERCHANT_KEY was already in the database and still opens ` +
+        "the seeded merchant; this start issued no key",
     );
     return;
   }
   if (seeded.kind === "disabled") {
     console.warn(
-      "[gateway] the key in SANDBOX_MERCHANT_KEY exists and somebody disabled it; it is left disabled, " +
+      `[gateway] ${surface}: the key in SANDBOX_MERCHANT_KEY exists and somebody disabled it; it is left disabled, ` +
         "and nothing presenting it will get in",
     );
   }

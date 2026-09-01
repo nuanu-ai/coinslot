@@ -15,6 +15,18 @@
   --section-gap: clamp(56px, 8vw, 88px);
 }
 
+/* The paragraph is the band rather than its marker div. A live page keeps the
+   marker and renders no paragraph, so it also leaves no empty strip behind. */
+.surface-words {
+  margin: 0;
+  padding: 12px var(--gutter);
+  border-bottom: var(--hairline) solid var(--line);
+  background: var(--raised);
+  color: var(--muted);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
 .grid {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));

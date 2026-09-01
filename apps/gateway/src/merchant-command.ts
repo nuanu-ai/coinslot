@@ -37,6 +37,7 @@
  * keys being rows is for.
  */
 
+import type { Environment } from "@coinslot/core";
 import { ZodError } from "zod";
 import { issueKey, makeMerchant, setPayoutWallet, setServiceName } from "./app/merchants.js";
 import type { Ids } from "./ports/clock.js";
@@ -60,13 +61,22 @@ const USAGE = [
   "Nothing here can show a key again: what is kept is a digest of it.",
 ];
 
-/** Runs one command. The answer is the exit code. */
+/**
+ * Runs one command. The answer is the exit code.
+ *
+ * The environment is handed in rather than worked out here, because a key
+ * carries the environment it was issued in and this command has no way to see
+ * one: the database address it is pointed at says nothing about which chain the
+ * gateway behind it settles on. Whoever wires this up is told, and refuses to
+ * guess.
+ */
 export async function runMerchant(
   argv: readonly string[],
   store: Store,
   ids: Ids,
   now: () => number,
   say: (line: string) => void,
+  environment: Environment,
 ): Promise<number> {
   const [verb, first, ...rest] = argv;
 
@@ -85,7 +95,7 @@ export async function runMerchant(
     const label = rest.join(" ").trim();
     return label === ""
       ? needs(say, "key", "a label", 'key the_merchant "the shop\'s own worker"')
-      : await addKey(store, ids, now, say, first, label);
+      : await addKey(store, ids, now, say, first, label, environment);
   }
   if (verb === "listed-as") {
     if (first === undefined) {
@@ -294,6 +304,7 @@ async function addKey(
   say: (line: string) => void,
   merchantId: string,
   label: string,
+  environment: Environment,
 ): Promise<number> {
   // Looked up first, so that naming a merchant who is not there is a sentence
   // somebody reads rather than a foreign key violation out of the driver.
@@ -302,7 +313,7 @@ async function addKey(
     return 1;
   }
 
-  const issued = await issueKey(store, ids, merchantId, label, now());
+  const issued = await issueKey(store, ids, merchantId, label, now(), environment);
   say(`A key for ${merchantId}, called "${issued.key.label}", under ${issued.key.id}.`);
   say("This is the key. It is shown once and nothing keeps a readable copy:");
   say("");

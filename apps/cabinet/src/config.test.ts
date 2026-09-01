@@ -14,6 +14,8 @@ import { loadConfig } from "./config.js";
 const REQUIRED = {
   DATABASE_URL: "postgres://coinslot:coinslot@postgres:5432/coinslot",
   AUTH_SECRET: "a-secret-that-is-at-least-32-characters-long",
+  PAYMENT_NETWORK: "eip155:84532",
+  FACILITATOR_URL: "sandbox:scripted",
 };
 
 const given = (environment: Record<string, string> = {}): Record<string, string> => ({
@@ -58,6 +60,57 @@ describe("what the cabinet will not start without", () => {
     // key's length — is checked where a key is now taken in, which is the
     // command that makes an account.
     expect(() => loadConfig(given({ MERCHANT_API_KEY: "short" }))).not.toThrow();
+  });
+});
+
+describe("the cabinet is told which stack it is in front of", () => {
+  const required = {
+    DATABASE_URL: "postgres://coinslot@localhost:5432/coinslot",
+    AUTH_SECRET: "a-secret-that-is-at-least-thirty-two-characters",
+    PAYMENT_NETWORK: "eip155:84532",
+    FACILITATOR_URL: "sandbox:scripted",
+  };
+
+  it("runs the same derivation its gateway runs", () => {
+    // Production break: the cabinet could label a stack differently from its
+    // gateway, so a merchant would read a false statement about their money.
+    expect(loadConfig(required).surfaceMode).toBe("sandbox");
+    expect(
+      loadConfig({ ...required, FACILITATOR_URL: "https://x402.org/facilitator" }).surfaceMode,
+    ).toBe("test");
+    expect(
+      loadConfig({
+        ...required,
+        PAYMENT_NETWORK: "eip155:8453",
+        FACILITATOR_URL: "https://api.cdp.coinbase.com/platform/v2/x402",
+      }).surfaceMode,
+    ).toBe("live");
+  });
+
+  it("refuses to start when it was handed no chain", () => {
+    // Production break: a cabinet could start without the chain it describes.
+    const { PAYMENT_NETWORK, ...withoutChain } = required;
+    expect(() => loadConfig(withoutChain)).toThrowError(/PAYMENT_NETWORK.*not set/s);
+  });
+
+  it("refuses to start when it was handed no facilitator", () => {
+    // Production break: a cabinet could start without the facilitator it describes.
+    const { FACILITATOR_URL, ...withoutFacilitator } = required;
+    expect(() => loadConfig(withoutFacilitator)).toThrowError(/FACILITATOR_URL.*not set/s);
+  });
+
+  it("gives neither a default, unlike the gateway", () => {
+    // The gateway defaulting towards play money is the safe direction for a
+    // process that moves it. A live cabinet falling back to a test chain would
+    // print, over a merchant's real receipts, that none of this money is real.
+    expect(() =>
+      loadConfig({ DATABASE_URL: required.DATABASE_URL, AUTH_SECRET: required.AUTH_SECRET }),
+    ).toThrow();
+  });
+
+  it("refuses a chain on neither written list", () => {
+    // Production break: a page could claim a mode for a chain the contract rejects.
+    expect(() => loadConfig({ ...required, PAYMENT_NETWORK: "eip155:1" })).toThrow();
   });
 });
 

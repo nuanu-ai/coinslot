@@ -10,6 +10,8 @@
  * it appears on.
  */
 
+import { SURFACE_MARKER_ATTRIBUTE, SURFACE_WORDS, type SurfaceMode } from "@coinslot/core";
+
 /** Text on its way into a page, with the five characters that are not text. */
 export const escaped = (value: string): string =>
   value
@@ -23,6 +25,8 @@ export const escaped = (value: string): string =>
 export type Tab = "cards" | "orders" | "receipts" | "keys" | "settings";
 
 export interface Chrome {
+  /** Which of the three things this stack is, so every page names it. */
+  readonly mode: SurfaceMode;
   /** Where the cabinet is mounted, "" when it is at the root of its origin. */
   readonly base: string;
   /**
@@ -81,6 +85,14 @@ const TABS: readonly [Tab, string][] = [
   ["settings", "Settings"],
 ];
 
+/** Every page names its mode and warns only where there is something to warn about. */
+const surface = (mode: SurfaceMode): string => {
+  const words = SURFACE_WORDS[mode];
+  return words === null
+    ? `<div ${SURFACE_MARKER_ATTRIBUTE}="${escaped(mode)}"></div>`
+    : `<div class="surface" ${SURFACE_MARKER_ATTRIBUTE}="${escaped(mode)}"><p class="surface-words">${escaped(words)}</p></div>`;
+};
+
 /**
  * One whole page.
  *
@@ -113,6 +125,7 @@ export const page = (chrome: Chrome): string => `<!doctype html>
 </head>
 <body>
 <div class="page">
+${surface(chrome.mode)}
   <div class="top">
     <div class="brand">
       <span class="wordmark">coinslot</span>
@@ -165,7 +178,12 @@ const unnamedNote = (base: string): string => `  <div class="callout">
 `;
 
 /** A page with no navigation, for a merchant who is not signed in yet. */
-export const bare = (base: string, title: string, body: string): string => `<!doctype html>
+export const bare = (
+  base: string,
+  title: string,
+  body: string,
+  mode: SurfaceMode,
+): string => `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -175,6 +193,7 @@ export const bare = (base: string, title: string, body: string): string => `<!do
 <link rel="stylesheet" href="${escaped(base)}/coinslot.css">
 </head>
 <body>
+${surface(mode)}
 ${body}
 </body>
 </html>

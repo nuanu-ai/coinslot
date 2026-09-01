@@ -1,0 +1,244 @@
+{
+  "name": "two-environments",
+  "networks": {
+    "default": {
+      "name": "two-environments_default",
+      "ipam": {}
+    }
+  },
+  "services": {
+    "cabinet": {
+      "build": {
+        "context": "/Users/dmitry/Dev/coinslot/.claude/worktrees/two-environments",
+        "dockerfile": "deploy/Dockerfile.app"
+      },
+      "command": [
+        "pnpm",
+        "--filter",
+        "@coinslot/cabinet",
+        "start"
+      ],
+      "depends_on": {
+        "gateway": {
+          "condition": "service_started",
+          "required": true
+        },
+        "migrate": {
+          "condition": "service_completed_successfully",
+          "required": true
+        },
+        "postgres": {
+          "condition": "service_healthy",
+          "required": true
+        }
+      },
+      "entrypoint": null,
+      "environment": {
+        "AUTH_SECRET": "not-the-secret-written-in-this-repository-either",
+        "BASE_PATH": "/cabinet",
+        "COOKIE_SECURE": "true",
+        "DATABASE_URL": "postgres://coinslot:coinslot@postgres:5432/coinslot",
+        "FACILITATOR_URL": "https://api.cdp.coinbase.com/platform/v2/x402",
+        "GATEWAY_URL": "http://gateway:3000",
+        "MAIL_API_KEY": "",
+        "MAIL_FROM": "Coinslot \u003cno-reply@localhost\u003e",
+        "MAIL_URL": "sandbox:log",
+        "PAYMENT_NETWORK": "eip155:8453",
+        "PORT": "3001",
+        "PUBLIC_BASE_URL": "https://coinslot.nuanu.ai"
+      },
+      "healthcheck": {
+        "test": [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3001/healthz').then(r=\u003eprocess.exit(r.ok?0:1)).catch(()=\u003eprocess.exit(1))"
+        ],
+        "timeout": "3s",
+        "interval": "3s",
+        "retries": 15,
+        "start_period": "15s"
+      },
+      "image": "coinslot-app",
+      "networks": {
+        "default": null
+      },
+      "restart": "unless-stopped"
+    },
+    "gateway": {
+      "build": {
+        "context": "/Users/dmitry/Dev/coinslot/.claude/worktrees/two-environments",
+        "dockerfile": "deploy/Dockerfile.app"
+      },
+      "command": [
+        "pnpm",
+        "--filter",
+        "@coinslot/gateway",
+        "start"
+      ],
+      "depends_on": {
+        "migrate": {
+          "condition": "service_completed_successfully",
+          "required": true
+        },
+        "postgres": {
+          "condition": "service_healthy",
+          "required": true
+        }
+      },
+      "entrypoint": null,
+      "environment": {
+        "CDP_API_KEY_ID": "a-placeholder-key-id",
+        "CDP_API_KEY_SECRET": "a-placeholder-secret",
+        "DATABASE_URL": "postgres://coinslot:coinslot@postgres:5432/coinslot",
+        "FACILITATOR_URL": "https://api.cdp.coinbase.com/platform/v2/x402",
+        "PAYMENT_NETWORK": "eip155:8453",
+        "PAY_TO_ADDRESS": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "PORT": "3000",
+        "PUBLIC_BASE_URL": "https://coinslot.nuanu.ai",
+        "REGISTRATION_INVITATION": "",
+        "SANDBOX_MERCHANT_KEY": "csk_live_not-the-one-in-this-repository"
+      },
+      "healthcheck": {
+        "test": [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/healthz').then(r=\u003eprocess.exit(r.ok?0:1)).catch(()=\u003eprocess.exit(1))"
+        ],
+        "timeout": "3s",
+        "interval": "3s",
+        "retries": 15,
+        "start_period": "15s"
+      },
+      "image": "coinslot-app",
+      "networks": {
+        "default": null
+      },
+      "restart": "unless-stopped"
+    },
+    "migrate": {
+      "build": {
+        "context": "/Users/dmitry/Dev/coinslot/.claude/worktrees/two-environments",
+        "dockerfile": "deploy/Dockerfile.app"
+      },
+      "command": [
+        "pnpm",
+        "db:migrate"
+      ],
+      "depends_on": {
+        "postgres": {
+          "condition": "service_healthy",
+          "required": true
+        }
+      },
+      "entrypoint": null,
+      "environment": {
+        "DATABASE_URL": "postgres://coinslot:coinslot@postgres:5432/coinslot"
+      },
+      "image": "coinslot-app",
+      "networks": {
+        "default": null
+      },
+      "restart": "no"
+    },
+    "postgres": {
+      "command": null,
+      "entrypoint": null,
+      "environment": {
+        "POSTGRES_DB": "coinslot",
+        "POSTGRES_PASSWORD": "coinslot",
+        "POSTGRES_USER": "coinslot"
+      },
+      "healthcheck": {
+        "test": [
+          "CMD-SHELL",
+          "pg_isready -U coinslot -d coinslot"
+        ],
+        "timeout": "3s",
+        "interval": "2s",
+        "retries": 15
+      },
+      "image": "postgres:17-alpine",
+      "networks": {
+        "default": null
+      },
+      "restart": "unless-stopped",
+      "volumes": [
+        {
+          "type": "volume",
+          "source": "coinslot-postgres",
+          "target": "/var/lib/postgresql/data",
+          "volume": {}
+        },
+        {
+          "type": "bind",
+          "source": "/Users/dmitry/Dev/coinslot/.claude/worktrees/two-environments/deploy/postgres-init",
+          "target": "/docker-entrypoint-initdb.d",
+          "read_only": true,
+          "bind": {}
+        }
+      ]
+    },
+    "web": {
+      "build": {
+        "context": "/Users/dmitry/Dev/coinslot/.claude/worktrees/two-environments",
+        "dockerfile": "deploy/Dockerfile.web"
+      },
+      "command": null,
+      "depends_on": {
+        "cabinet": {
+          "condition": "service_healthy",
+          "required": false
+        },
+        "gateway": {
+          "condition": "service_healthy",
+          "required": false
+        }
+      },
+      "entrypoint": null,
+      "environment": {
+        "COINSLOT_SITE_ADDRESS": "coinslot.nuanu.ai",
+        "COINSLOT_SURFACE_MODE": "live"
+      },
+      "image": "coinslot-web",
+      "networks": {
+        "default": null
+      },
+      "ports": [
+        {
+          "mode": "ingress",
+          "host_ip": "10.20.10.20",
+          "target": 443,
+          "published": "443",
+          "protocol": "tcp"
+        }
+      ],
+      "restart": "unless-stopped",
+      "volumes": [
+        {
+          "type": "volume",
+          "source": "coinslot-caddy",
+          "target": "/data",
+          "volume": {}
+        }
+      ]
+    }
+  },
+  "volumes": {
+    "coinslot-caddy": {
+      "name": "two-environments_coinslot-caddy"
+    },
+    "coinslot-postgres": {
+      "name": "two-environments_coinslot-postgres"
+    }
+  },
+  "x-app": {
+    "build": {
+      "context": ".",
+      "dockerfile": "deploy/Dockerfile.app"
+    },
+    "image": "coinslot-app",
+    "restart": "unless-stopped"
+  }
+}

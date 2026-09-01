@@ -26,9 +26,9 @@ describe("@coinslot/core", () => {
     expect(manifest.dependencies ?? {}).toStrictEqual({});
   });
 
-  it("hands the gateway everything it needs to run an order, and nothing more", () => {
+  it("hands its consumers everything they need, and nothing more", () => {
     // Two ways to fail, and the second is why this is an equality rather than a
-    // loop of `typeof`. A name missing means the gateway is reaching into the
+    // loop of `typeof`. A name missing means a consumer is reaching into the
     // package's internals for something that was meant to be on the surface. A
     // name that is here and not below means a function nobody outside this
     // package calls, and every one of those is surface a stranger's engineer is
@@ -48,6 +48,19 @@ describe("@coinslot/core", () => {
       "modeOf",
       "isOpen",
       "assertNever",
+      // `./deployment/environment.ts` is a foundation module: its own header
+      // says its callers are the keys a deployment issues and the mark its
+      // pages write, none of which this task touches yet. Its full contract
+      // is exported now rather than grown export by export, so only
+      // `isTestnetChain` is actually reached from outside the package today
+      // — by the two smoke commands in `packages/slice` — and the rest
+      // become load-bearing as the tasks that need them land.
+      "isSandboxFacilitator",
+      "isTestnetChain",
+      "environmentOf",
+      "surfaceModeOf",
+      "keyPrefixFor",
+      "environmentOfKeyPrefix",
     ];
     const exported = Object.entries(core)
       .filter(([, value]) => typeof value === "function")

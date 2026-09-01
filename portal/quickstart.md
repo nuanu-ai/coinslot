@@ -69,7 +69,20 @@ const coinslot = createClient({
 
 The address in `baseUrl` comes with the key when you connect. The client
 supplies none by itself, because nothing in the contract says where we are.
-This step worked if the client was built. Whether the key is the right one is
+The repository defines two public channels: the test channel is configured for
+`test.coinslot.nuanu.ai`, and the live channel for `coinslot.nuanu.ai`. This is
+the contract those deployments must meet, not a claim here that either address
+is already deployed or reachable.
+
+A key for the test environment starts with `csk_test_`; one for the live
+environment starts with `csk_live_`. The gateway accepts a key only in the
+environment it was issued for. Presented to the other environment, it is
+refused in words that name where it works.
+
+The order's `test` flag follows the configured chain, not the key as a separate
+switch. A gateway on the test channel's Base Sepolia chain marks an order as a
+test; one on the live channel's Base mainnet chain does not. This step worked
+if the client was built. Whether the key and address belong together is
 answered by the first call that reaches us, and that call is on the next step.
 
 ## 2. Describe the product with a card
@@ -144,8 +157,12 @@ the next step. There is a third mode as well, and it cannot be published during
 the pilot. That one, and the reason a product rather than a channel picks its
 mode, are in the [card reference](/cards).
 
-The step is done when the call has returned a catalogue `id`. The card is not
-visible outside yet: it goes into the catalogues on step 6.
+The step is done when the call has returned a catalogue `id`. Publication is
+the act that puts the card in this Coinslot environment's own catalogue, as
+long as the merchant and card are selling. The test purchase below proves that
+the product can be bought and delivered; it does not publish the card. Whether
+an external discovery catalogue indexes the paid resource is a different
+measurement, described on step 6.
 
 ## 3. Take an order and deliver the goods
 
@@ -382,31 +399,40 @@ carried ([Telling a repeat apart](/orders#telling-a-repeat-apart)).
 
 ## 5. Walk a test purchase
 
-The first purchase of your product is made by our sandbox buyer rather than by
-a live agent — a program that walks the whole path: it finds the card, asks the
-price, pays and takes delivery. It is a real purchase on test money, and
-afterwards the whole chain can be seen working.
+The first purchase of your product on the configured test channel is made by
+our sandbox buyer rather than by a live agent — a program that walks the whole
+path: it finds the card, asks the price, pays and takes delivery. That channel
+uses Base Sepolia test funds, and afterwards the whole test path can be seen
+working.
 
 During the pilot we start that purchase on your signal: say you are ready, and
-we run it with you watching, so that you see what happens at every step. The
-order from the sandbox buyer arrives with the `test` flag — and so does every
-other order during the pilot, because the sandbox is not separated from the
-live system yet. Read the flag; do not fork on it until it can tell one order
-from another.
+we run it with you watching, so that you see what happens at every step. A
+gateway configured for the test channel gives the order `test: true`; one
+configured for the live channel gives it `test: false`. The two channel
+contracts require separate keys, databases and chains.
 
 It all came together if the order reached your handler, the sandbox buyer
 received the goods, and the purchase left a receipt behind it.
 
-## 6. Go into the catalogues
+## 6. Prove the sale; measure external discovery separately
 
-The card goes into the catalogues once the test purchase has gone through.
-Before it is published we check the card for completeness on our side too: an
-agent has to be able to buy from it.
+The publish call on step 2 puts the card into that Coinslot channel's own
+catalogue before this purchase. The purchase is the proof that an agent can
+buy it: the order reaches your handler, the buyer receives the declared goods,
+and the sale leaves a receipt.
 
-Done when the card is visible in a catalogue. From that moment a live agent can
-buy it, and connecting new catalogues, moving to new exchange formats and
-editing cards as products and prices change are our work and do not touch your
-code.
+A settled payment is also the event an external discovery catalogue such as
+Coinbase Bazaar may index. That is a different surface from Coinslot's own
+catalogue, and indexing is not established merely because the purchase or the
+receipt succeeded. We measure it and report "settled, not yet listed" when the
+settlement is known but no external listing has appeared; whether a testnet
+settlement is eligible remains an open question.
+
+Publication on the live channel is a separate act with that environment's key.
+Passing the test-channel purchase copies neither a card nor its evidence into
+the live environment. Connecting new catalogues, moving to new exchange
+formats and editing cards as products and prices change are our work and do
+not touch your code.
 
 ## What is not settled yet
 
@@ -424,11 +450,9 @@ code.
   by the pilot; the ready-made tools are for Node only.
 - The surface of the other order transports: the request to an address of
   yours, and the cursor that pulls batches.
-- What separates the sandbox from the live system: a separate environment, a
-  separate access key, or only the `test` flag on the order.
 - The half of the check that would send one order twice and watch for a second
-  delivery. Nothing on our surface raises a test order to send, and behind that
-  sits the question of what separates the sandbox from the live system.
+  delivery. Nothing on our surface raises that order to send, so this check
+  still cannot exercise your delivery system's idempotency from outside.
 - Where to say that you are ready for a test purchase: we have no channel for
   that yet.
 - Starting the test purchase with a command of your own — after the pilot.

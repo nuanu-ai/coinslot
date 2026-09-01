@@ -26,7 +26,14 @@ import { readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { connect } from "node:net";
-import { buyOverHttp, type Harness, harness, type Served, serve } from "@coinslot/gateway/testing";
+import {
+  buyOverHttp,
+  type Harness,
+  harness,
+  type Served,
+  serve,
+  theMerchantKey,
+} from "@coinslot/gateway/testing";
 import {
   type Card,
   checksummedAddressOf,
@@ -41,7 +48,14 @@ import { type Identity, identityFor } from "./identity.js";
 import type { Message } from "./mail.js";
 import { buildApp } from "./server.js";
 
-const KEY = "a-merchant-key-long-enough";
+/**
+ * The key the gateway harness's own merchant holds, named rather than spelled
+ * again. Every call in this file goes to a real gateway, whose door reads the
+ * environment off the prefix, so a second copy of the string here would come
+ * apart from the harness the first time that prefix changed. Every gateway this
+ * file boots is a test one, which is why the environment can be named here.
+ */
+const KEY = theMerchantKey("test");
 const asMerchant = { authorization: `Bearer ${KEY}` };
 const PAY_TO = "0x0000000000000000000000000000000000000001";
 
@@ -382,6 +396,8 @@ async function visiting(
     GATEWAY_URL: gatewayUrl,
     DATABASE_URL: "postgres://nobody@nowhere:5432/unused",
     AUTH_SECRET: "a-secret-that-is-at-least-32-characters-long",
+    PAYMENT_NETWORK: "eip155:84532",
+    FACILITATOR_URL: "sandbox:scripted",
     ...(basePath === "" ? {} : { BASE_PATH: basePath }),
     ...(options.cabinet ?? {}),
   });
@@ -2917,6 +2933,8 @@ describe("when something goes wrong that the merchant has to get out of", () => 
       GATEWAY_URL: "http://127.0.0.1:1",
       DATABASE_URL: "postgres://nobody@nowhere:5432/unused",
       AUTH_SECRET: "a-secret-that-is-at-least-32-characters-long",
+      PAYMENT_NETWORK: "eip155:84532",
+      FACILITATOR_URL: "sandbox:scripted",
     });
     const { identity } = await withIdentity(config, async () => undefined);
     const app = buildApp(config, {

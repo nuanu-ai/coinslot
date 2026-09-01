@@ -20,6 +20,7 @@
 import type { Card, MerchantKeyList } from "@nuanu-ai/coinslot-contracts";
 import { decodePaymentRequiredHeader } from "@x402/core/http";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { keyDigest } from "../app/merchants.js";
 import { type Harness, harness, type Served, serve } from "../testing/harness.js";
 import { PAYMENT_REQUIRED_HEADER } from "./x402.js";
 
@@ -755,6 +756,115 @@ describe("forgetting the key a call was made with", () => {
     expect(await opensTheDoor(served, fresh)).toBe(true);
     // One row went and no more, however many times it was asked for.
     expect(await keysInAll(harnessed, made.merchant_id)).toBe(before - 1);
+  });
+});
+
+/** The code and the sentence out of a refusal, which is what this door says. */
+const refusalIn = (answered: { readonly body: unknown }): { code: string; message: string } =>
+  (answered.body as { error: { code: string; message: string } }).error;
+
+/**
+ * What makes a harness a live one: Base mainnet, and the one facilitator a live
+ * chain is allowed. The harness wires the scripted facilitator whatever the
+ * configuration says, so naming Coinbase's here buys the derivation and nothing
+ * else.
+ */
+const LIVE_CHAIN = {
+  PAYMENT_NETWORK: "eip155:8453",
+  FACILITATOR_URL: "https://api.cdp.coinbase.com/platform/v2/x402",
+  CDP_API_KEY_ID: "key-id",
+  CDP_API_KEY_SECRET: "secret",
+};
+
+describe("what a presented value's prefix says", () => {
+  it("is told only which prefix it begins with and where keys with that prefix work", async () => {
+    // The gateway under test is live; the value presented merely begins like a
+    // test key. No digest lookup follows this branch, so the gateway knows
+    // nothing about whether this fabricated value is or ever was a key.
+    const { served } = await started(LIVE_CHAIN);
+
+    const answered = await served.call("GET", "/v0/cards", {
+      headers: bearer("csk_test_a-made-up-value"),
+    });
+
+    expect(answered.status).toBe(401);
+    // The same code every other refusal at this door carries. What changes is
+    // the sentence: a new machine-readable code would be a new value in a
+    // closed response enum, which by ADR-0006 moves CONTRACT_VERSION from "1"
+    // and stops every installed worker at startup — a heavy price for words,
+    // and the charter's answer to a finding is honest words at the door rather
+    // than a wider surface.
+    const said = refusalIn(answered);
+    expect(said.code).toBe("not_authorised");
+    expect(said.message).toContain("this value begins with csk_test_");
+    expect(said.message).toContain("keys with that prefix work on test.coinslot.nuanu.ai");
+    expect(said.message).not.toContain("this is a test key");
+  });
+
+  it("says nothing more to a value that names no environment at all", async () => {
+    // The bare prefix, a guess, a stranger's key: all one answer, because a
+    // door that told them apart would confirm which guesses had once been real
+    // keys — which is exactly what revoking one has to stop. A key that names
+    // the other environment is the one exception, and it gives nothing away:
+    // whoever presents the value can read its prefix.
+    const { served } = await started();
+
+    const answered = await served.call("GET", "/v0/cards", {
+      headers: bearer("csk_not-an-environment"),
+    });
+
+    expect(answered.status).toBe(401);
+    const said = refusalIn(answered);
+    expect(said.code).toBe("not_authorised");
+    expect(said.message).not.toContain("coinslot.nuanu.ai");
+  });
+
+  it("turns away a key from before this change, whose digest is still in the database", async () => {
+    // The delete-first promise, made by the door rather than by a database
+    // somebody emptied: the row is there, the digest matches, and the key still
+    // opens nothing. Without this the promise would hold only because the host
+    // reset destroyed both volumes, which is a fact about an afternoon rather
+    // than about the system.
+    const { harnessed, served } = await started();
+    const legacy = "a-merchant-key-long-enough";
+    await harnessed.store.addKey(
+      {
+        id: "mk_legacy",
+        merchantId: harnessed.merchant.id,
+        label: "issued before the split",
+        purpose: "merchant_code",
+        digest: keyDigest(legacy),
+      },
+      harnessed.now(),
+    );
+
+    // The premise, asserted rather than assumed. This is the lookup the door
+    // makes, and it finds the row — so what turns the key away below is the
+    // prefix and not a write that never landed. Left out, a change that made
+    // this `addKey` do nothing would leave the test green and testing nothing.
+    expect(await harnessed.store.workingKey(keyDigest(legacy))).not.toBeNull();
+    expect(await opensTheDoor(served, legacy)).toBe(false);
+  });
+
+  it("lets this environment's own key through to the lookup", async () => {
+    const { harnessed, served } = await started();
+
+    expect(await opensTheDoor(served, harnessed.merchant.key)).toBe(true);
+  });
+
+  it("lets a live gateway's own key through, which is the same rule the other way", async () => {
+    // The rule read in the other direction, and the fixture every HTTP test in
+    // this repository leans on. A harness whose key was a constant carrying
+    // `csk_test_` handed a live gateway a key its own door refuses, so a test
+    // that overrode the chain would fail at its first call for a reason that
+    // had nothing to do with what it was testing — and the smoke, which boots
+    // through the same shape one package over, would fail wholesale on the day
+    // it was first pointed at mainnet.
+    const { harnessed, served } = await started(LIVE_CHAIN);
+
+    // Asserted, so that a door which accepted everything could not pass this.
+    expect(harnessed.merchant.key.startsWith("csk_live_")).toBe(true);
+    expect(await opensTheDoor(served, harnessed.merchant.key)).toBe(true);
   });
 });
 

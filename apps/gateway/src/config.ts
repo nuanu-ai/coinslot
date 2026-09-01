@@ -1,4 +1,24 @@
+import {
+  CDP_FACILITATOR_URL,
+  type Environment,
+  environmentOf,
+  environmentOfKeyPrefix,
+  isSandboxFacilitator,
+  keyPrefixFor,
+  SANDBOX_FACILITATOR,
+  type SurfaceMode,
+  surfaceModeOf,
+} from "@coinslot/core";
 import { z } from "zod";
+
+/**
+ * The sandbox address and the question about it are the core's, and they are
+ * passed straight on from here so that nothing in this package has to know
+ * that they moved. The cabinet asks the same question of the same string, and
+ * two spellings of one distinguished value is the disagreement the core module
+ * exists to remove (ADR-0008, ADR-0020).
+ */
+export { isSandboxFacilitator, SANDBOX_FACILITATOR };
 
 /**
  * We tell "the variable is not set" apart from "it is set wrong": the engineer
@@ -9,21 +29,6 @@ function absentOrWrong(whenWrong: string) {
   return (issue: { input: unknown }): string =>
     issue.input === undefined ? "the variable is not set" : whenWrong;
 }
-
-/**
- * The address that selects the scripted facilitator: the gateway verifies and
- * settles against nothing, and every payment it accepts is pretend.
- *
- * It is a value of `FACILITATOR_URL` rather than a flag beside it, so a
- * configuration cannot hold a real facilitator and the sandbox at once
- * (ADR-0008). The scheme is one nobody can reach, which is what makes a typo a
- * refusal at startup instead of an address that quietly does not answer.
- */
-export const SANDBOX_FACILITATOR = "sandbox:scripted";
-
-/** Whether this gateway settles against nothing. */
-export const isSandboxFacilitator = (facilitatorUrl: string): boolean =>
-  facilitatorUrl === SANDBOX_FACILITATOR;
 
 /**
  * The domain Coinbase's facilitator answers on, and the reason it is a domain
@@ -113,6 +118,57 @@ const isOtherCoinbaseHost = (facilitatorUrl: string): boolean => {
   const host = hostOf(facilitatorUrl);
   return host !== null && isUnder(host, COINBASE_DOMAIN) && !isUnder(host, CDP_FACILITATOR_DOMAIN);
 };
+
+/**
+ * Whether this is the one address a live chain may settle through.
+ *
+ * Every part of the address is compared, and the reason is that nothing here
+ * ever calls this string as it stands: the gateway builds `/verify` and
+ * `/settle` under it and hands the result to a client that signs for the host
+ * it names. Anything wrong anywhere in it comes up healthy and is discovered
+ * at the first buyer.
+ *
+ * The scheme, because `FACILITATOR_URL` takes `http:` as readily as `https:`
+ * and Coinbase is recognised by hostname, so `http://api.cdp.coinbase.com/…`
+ * satisfies every other check here and would put both credentials on the wire
+ * in the clear. The host, in the one spelling `hostOf` writes every host down
+ * to. The port, which has to be the one `https:` already means, because
+ * nothing of Coinbase's answers on another — `:443` written out is dropped by
+ * the address parser before it reaches this comparison, so the spelling that
+ * is merely explicit still passes. A user name and password, which must not be
+ * there at all: a request built from an address carrying credentials is
+ * refused where it is built, so every call would throw, and the refusal that
+ * sends an operator looking would print the password into their log on the way
+ * past. The path, with trailing slashes off, because the x402 facilitator
+ * client takes those off before it joins `/verify` on — a wrong path under the
+ * right host is the failure this whole rule is shaped around, while a trailing
+ * slash is the same endpoint and must not be refused. And a query or a
+ * fragment, which must be absent, because either would be carried into the
+ * middle of every request built under the base.
+ *
+ * This is a narrower question than `isCdpFacilitator` and does not replace it.
+ * That one asks who may be handed credentials, which is a question about a host
+ * (ADR-0008); this one asks what a chain where the money is real may settle
+ * through, which is a question about one endpoint (ADR-0020).
+ */
+function isTheLiveFacilitator(facilitatorUrl: string): boolean {
+  const host = hostOf(facilitatorUrl);
+  if (host === null) {
+    return false;
+  }
+  const given = new URL(facilitatorUrl);
+  const wanted = new URL(CDP_FACILITATOR_URL);
+  return (
+    given.protocol === "https:" &&
+    host === wanted.hostname &&
+    given.port === "" &&
+    given.username === "" &&
+    given.password === "" &&
+    given.pathname.replace(/\/+$/, "") === wanted.pathname.replace(/\/+$/, "") &&
+    given.search === "" &&
+    given.hash === ""
+  );
+}
 
 function isHttpUrl(value: string): boolean {
   if (!URL.canParse(value)) {
@@ -263,14 +319,25 @@ const environmentSchema = z.object({
    * merchant everything in a database of this age belongs to, if it is not
    * there already, and after that the door reads it the way it reads every
    * other key. What it buys is the sandbox in `compose.yaml`, where the same
-   * string is also given to the cabinet and to the merchant process, next to
-   * the database password and for the same reason.
+   * string is also given to the merchant process, next to the database password
+   * and for the same reason. Not to the cabinet: it has no merchant key in its
+   * configuration at all, and holds one of its own instead, made at every
+   * sign-in and typed by nobody (ADR-0014 §2).
    *
-   * Unset it anywhere that is not a sandbox. A key in an environment is a key
-   * that cannot be revoked without a deployment, which is the thing keys became
-   * rows in order to fix, and a key nobody typed is a key nobody meant to
-   * issue. Absent, this process writes nothing and every key is one somebody
-   * made deliberately.
+   * A deployment sets it too, to a key generated for that host, kept in its own
+   * file, and carrying that site's prefix, because the merchant process a stack
+   * runs beside the gateway reads its key out of that file and has nothing to
+   * present until a row for it exists. A person needs none of this — an
+   * invitation makes them a merchant with a key of their own and no terminal
+   * (ADR-0014 §3) — so what seeding is for is whatever the stack itself sells
+   * as. What to keep in mind is that a key in an environment is a key that
+   * cannot be revoked without a deployment, which is the thing keys became rows
+   * in order to fix: disabling its row stops it opening anything, and the string
+   * is still handed to this process at every start, so a fresh database is
+   * seeded off that same line again. So it is unset once nothing presents that
+   * key any more — once whatever sells on that host has a key of its own.
+   * Absent, this process writes nothing and every key is one somebody made
+   * deliberately.
    *
    * Set to nothing reads the same as never set, and that is the one spelling
    * that matters to whoever unsets it. A deployment says this in a file the
@@ -280,9 +347,11 @@ const environmentSchema = z.object({
    * did exactly what the paragraph above asks would find the gateway will not
    * start. There is no reading in which nothing is a key.
    *
-   * The length floor is a floor on what a sandbox is allowed to hand out, not
-   * on what a real key looks like: a real one is generated with thirty-two
-   * bytes behind it and never chosen by anybody.
+   * The length floor is a floor on what a stack is allowed to hand out, not on
+   * what a real key looks like: a real one is generated with thirty-two bytes
+   * behind it and never chosen by anybody. Its prefix says which environment
+   * the key belongs to; `loadConfig` checks that separately after it derives
+   * the environment from the payment network.
    */
   SANDBOX_MERCHANT_KEY: z
     .string({ error: absentOrWrong("must be a string") })
@@ -538,9 +607,29 @@ const environmentSchema = z.object({
    * truncated paste would invite them to pay nobody.
    */
   PAY_TO_ADDRESS: z.string().min(1).optional(),
-  CDP_API_KEY_ID: z.string().min(1).optional(),
-  CDP_API_KEY_SECRET: z.string().min(1).optional(),
+  // The cabinet applies this same rule to its mail key: Compose hands every
+  // service a fixed list of names, so an unset credential arrives as its name
+  // with nothing after it. A zero-length credential is no credential, not a
+  // malformed one that stops a stack whose facilitator asks for neither.
+  CDP_API_KEY_ID: emptyIsAbsent(z.string().min(1)),
+  CDP_API_KEY_SECRET: emptyIsAbsent(z.string().min(1)),
 });
+
+/**
+ * A credential set to nothing, read the way a credential nobody set is read.
+ *
+ * This is not leniency for a malformed secret. Compose has one fixed
+ * environment shape for a service, so its spelling of "not for this stack" is
+ * an empty value. The rule below then distinguishes that absence from a real,
+ * non-empty credential before the facilitator checks make their decision.
+ */
+function emptyIsAbsent(rule: z.ZodType<string, string>) {
+  return z
+    .string()
+    .optional()
+    .transform((given) => (given === undefined || given === "" ? undefined : given))
+    .pipe(z.union([z.undefined(), rule]));
+}
 
 /** Every waiting the order machine is given, in milliseconds. */
 export interface DeadlineConfig {
@@ -582,7 +671,7 @@ export interface PaymentConfig {
 export interface GatewayConfig {
   readonly databaseUrl: string;
   readonly port: number;
-  /** A key the sandbox is seeded with at start-up, or nothing at all. */
+  /** A key this environment is seeded with at start-up, or nothing at all. */
   readonly sandboxMerchantKey: string | null;
   /** The code registration is behind, or nothing at all, which closes it. */
   readonly registrationInvitation: string | null;
@@ -602,6 +691,17 @@ export interface GatewayConfig {
   readonly redelivery: RedeliveryConfig;
   readonly worker: WorkerConfig;
   readonly payment: PaymentConfig;
+  /**
+   * Whether this deployment's money is real, derived from the chain and from
+   * nothing else. It decides the prefix on every key it issues and the `test`
+   * mark on every order and receipt it writes.
+   */
+  readonly environment: Environment;
+  /**
+   * What this process is allowed to say it is — a third thing, because a
+   * sandbox settles against nothing on a chain whose name says otherwise.
+   */
+  readonly surfaceMode: SurfaceMode;
 }
 
 /**
@@ -736,6 +836,74 @@ export function loadConfig(environment: Record<string, string | undefined>): Gat
     );
   }
 
+  // The chain is read before anything is decided from it, and a chain on
+  // neither list ends the process here rather than being sorted into a side.
+  // It is pushed onto the same list as the rest so that an operator learns
+  // every problem in one restart rather than one variable per restart.
+  let chainEnvironment: Environment | null = null;
+  try {
+    chainEnvironment = environmentOf(network);
+  } catch (thrown) {
+    problems.push(thrown instanceof Error ? thrown.message : String(thrown));
+  }
+
+  // A key in an environment is a key that cannot be revoked without a
+  // deployment, which is the thing keys became rows in order to fix. The
+  // prefix rule is about which environment a key belongs to and is not a test
+  // of whether it is secret — on the public test stack the laptop's default
+  // would pass this, which is why the release checks separately that the
+  // seeded key is not the value written in this repository.
+  const seeded = environmentValues.SANDBOX_MERCHANT_KEY;
+  if (chainEnvironment !== null && seeded !== null) {
+    const theirs = environmentOfKeyPrefix(seeded);
+    if (theirs !== chainEnvironment) {
+      problems.push(
+        `SANDBOX_MERCHANT_KEY does not carry this environment's prefix — PAYMENT_NETWORK is ` +
+          `${JSON.stringify(network)}, which is a ${chainEnvironment} environment, so a key seeded here ` +
+          `must begin with ${JSON.stringify(keyPrefixFor(chainEnvironment))}. A key seeded under the ` +
+          "other environment's prefix opens nothing, because the door turns it away by its prefix " +
+          "before it is looked up",
+      );
+    }
+  }
+
+  // A live chain is allowed exactly one facilitator, and the rule is about the
+  // scheme and the path as much as the host.
+  //
+  // Two of the ways this can be wrong reach a buyer. `sandbox:scripted` on a
+  // live chain takes payments that never happened while pointing at a chain
+  // where money is real. The unset default is worse because it is silent:
+  // FACILITATOR_URL falls back to the public facilitator, so a `.env` copied
+  // from the test host with one line changed would start, issue csk_live_
+  // keys, show no banner, and settle somewhere the pilot does not settle.
+  // Going live must not be something that happens by forgetting a variable.
+  //
+  // The scheme is here because FACILITATOR_URL accepts http: as readily as
+  // https: and Coinbase is recognised by hostname, so
+  // `http://api.cdp.coinbase.com/…` satisfies every other check this gateway
+  // makes and would put both credentials on the wire in the clear. A bearer
+  // token is the whole of the account it was issued to.
+  //
+  // The path is here because the gateway builds /verify and /settle under
+  // whatever base it was given, so a wrong path under the right host starts
+  // healthy and fails at the first buyer.
+  //
+  // Compared by its parts and not as one string. The same deployment is
+  // written down several ways — the x402 client takes trailing slashes off the
+  // base before joining `/verify` onto it, so `…/x402/` reaches and signs for
+  // exactly the same endpoint — and refusing a spelling that works would be
+  // this door failing open in the other direction: an operator with a correct
+  // live configuration told it is wrong.
+  if (chainEnvironment === "live" && !isTheLiveFacilitator(environmentValues.FACILITATOR_URL)) {
+    problems.push(
+      `PAYMENT_NETWORK is ${JSON.stringify(network)}, where the money is real, and FACILITATOR_URL ` +
+        `is ${JSON.stringify(environmentValues.FACILITATOR_URL)} — a live chain settles through ` +
+        `${CDP_FACILITATOR_URL} and nothing else, with CDP_API_KEY_ID and CDP_API_KEY_SECRET both ` +
+        "set. Nothing else here can verify or settle, and every other value either takes payments " +
+        "that never happened or sends credentials somewhere they were not issued for",
+    );
+  }
+
   if (payTo !== null && network.startsWith("eip155:") && !/^0x[0-9a-fA-F]{40}$/.test(payTo)) {
     problems.push(
       `PAY_TO_ADDRESS is ${JSON.stringify(payTo)}, which is not an address on ${network}`,
@@ -747,6 +915,10 @@ export function loadConfig(environment: Record<string, string | undefined>): Gat
       `The gateway cannot start, these settings do not work together — ${problems.join("; ")}`,
     );
   }
+
+  // Past the throw above, the chain is one of the written ones, so it is asked
+  // again rather than carried down here as a null nobody may look at.
+  const derivedEnvironment = environmentOf(network);
 
   return {
     databaseUrl: environmentValues.DATABASE_URL,
@@ -779,5 +951,7 @@ export function loadConfig(environment: Record<string, string | undefined>): Gat
       cdpApiKeyId: environmentValues.CDP_API_KEY_ID ?? null,
       cdpApiKeySecret: environmentValues.CDP_API_KEY_SECRET ?? null,
     },
+    environment: derivedEnvironment,
+    surfaceMode: surfaceModeOf(network, environmentValues.FACILITATOR_URL),
   };
 }

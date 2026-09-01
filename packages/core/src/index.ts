@@ -22,6 +22,23 @@ export function assertNever(value: never, context?: string): never {
   throw new Error(`Unhandled variant${where}: ${JSON.stringify(value)}`);
 }
 
+export type { Environment, SurfaceMode } from "./deployment/environment.js";
+export {
+  CDP_FACILITATOR_URL,
+  environmentOf,
+  environmentOfKeyPrefix,
+  isSandboxFacilitator,
+  isTestnetChain,
+  keyPrefixFor,
+  LIVE_CHAINS,
+  PUBLIC_X402_FACILITATOR_URL,
+  SANDBOX_FACILITATOR,
+  SITES,
+  SURFACE_MARKER_ATTRIBUTE,
+  SURFACE_WORDS,
+  surfaceModeOf,
+  TESTNET_CHAINS,
+} from "./deployment/environment.js";
 /**
  * The order state machine. The design it implements is
  * `docs/research/16-order-state-machine.md` with all three of its addition

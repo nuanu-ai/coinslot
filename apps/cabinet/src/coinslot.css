@@ -368,6 +368,22 @@ td.control {
   font-size: 13.5px;
 }
 
+.surface {
+  margin: 0 32px 32px;
+  border: var(--hairline) solid var(--line);
+  border-left: 2px solid var(--warn);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  background: var(--surface);
+  line-height: 1.55;
+}
+
+.surface-words {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13.5px;
+}
+
 .summary {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));

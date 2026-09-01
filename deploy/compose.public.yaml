@@ -1,0 +1,38 @@
+# What every public deployment changes about the laptop's stack.
+#
+# Everything that differs between the two channels is a variable in the host's
+# `.env` — the chain, the facilitator, the surface mode, the origin, the Caddy
+# address, the published port, the seeded key, the invitation — so there is one
+# file here rather than one per channel. What is in it is the three things that
+# are true of any stack this repository does not run on somebody's laptop.
+
+services:
+  postgres:
+    # Two stacks cannot both take 5432, and nothing outside the Compose network
+    # has any business reaching either database. The migration suite runs
+    # against a disposable server of its own (deploy/release.sh), so nothing on
+    # the host needs a port here at all.
+    ports: !override []
+
+  merchant:
+    # The laptop's fixture, kept out of a public catalog without the laptop
+    # having to ask. The base file leaves this service unprofiled so
+    # `docker compose up` still brings up a stack that sells; here it is given
+    # a profile nothing enables.
+    #
+    # Two things would go wrong if it ran. On a settling stack its publication
+    # is refused — the seeded merchant has no payout wallet yet — so the service
+    # never reports healthy and `up -d --wait` cannot finish. And a public
+    # catalog has no business selling an eSIM and a room that nobody sells.
+    #
+    # What this keeps out is the deployment: no public stack runs that process
+    # on its own, unattended. It does not stop an operator starting the same
+    # process by hand against a stack for the length of a test, which is exactly
+    # what the live site's first sale does.
+    profiles: ["fixtures"]
+
+  web:
+    # The preview serves the files baked into the SHA-tagged image. The base
+    # file's bind mounts exist only for local edit-and-reload work.
+    volumes: !override
+      - coinslot-caddy:/data

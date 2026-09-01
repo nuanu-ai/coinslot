@@ -31,6 +31,7 @@
  * a decision nobody took.
  */
 
+import { environmentOfKeyPrefix, keyPrefixFor, SITES } from "@coinslot/core";
 import {
   type AuthMode,
   type ErrorCode,
@@ -349,6 +350,24 @@ async function answer(
   carriesBody: boolean,
 ): Promise<void> {
   const caller = await callerBehind(route.auth, request, gateway);
+  if (caller === OTHER_ENVIRONMENT_PREFIX) {
+    // The same code and the same status as every other refusal at this door.
+    // Only the sentence differs, and that is the whole of what the design asks
+    // for: a value beginning with the other environment's prefix is refused
+    // with words rather than a status code. No digest lookup happened, so the
+    // sentence claims no more than the prefix proves.
+    const theirs = gateway.environment === "live" ? "test" : "live";
+    response
+      .status(401)
+      .json(
+        refusal(
+          "not_authorised",
+          `this value begins with ${keyPrefixFor(theirs)}; ` +
+            `keys with that prefix work on ${SITES[theirs]}`,
+        ),
+      );
+    return;
+  }
   if (caller === REFUSED) {
     // Which key would have worked is not said, whether one was sent at all is
     // not said, and a key that was issued and then revoked is refused in
@@ -427,6 +446,17 @@ async function answer(
 const REFUSED = Symbol("the key on this call opens nothing");
 
 /**
+ * The value on this call begins with the other site's key prefix, which is the
+ * one refusal here with more to say than no.
+ *
+ * A second value beside {@link REFUSED} rather than a field on it, because the
+ * door either sees the other site's prefix or it does not, and those are two
+ * answers rather than one answer with a detail hanging off it. A field would be
+ * a detail somewhere above here could read and forget to.
+ */
+const OTHER_ENVIRONMENT_PREFIX = Symbol("the value begins with the other site's key prefix");
+
+/**
  * Who made a call that came through a door: the merchant, which key, and what
  * that key was made for.
  */
@@ -464,13 +494,40 @@ async function callerBehind(
   auth: AuthMode,
   request: Request,
   gateway: Gateway,
-): Promise<Caller | null | typeof REFUSED> {
+): Promise<Caller | null | typeof REFUSED | typeof OTHER_ENVIRONMENT_PREFIX> {
   switch (auth) {
     case "merchant_key": {
       const presented = bearerIn(request.header(MERCHANT_KEY_HEADER) ?? undefined);
       if (presented === null) {
         return REFUSED;
       }
+
+      // Read before the digest is looked up, and only this environment's own
+      // prefix goes any further.
+      //
+      // The filter is structural rather than decorative. This gateway issues
+      // keys under one prefix and no other, so a key carrying anything else
+      // cannot be a key it issued — and the row that would otherwise answer for
+      // one is a key from before this change, issued by a gateway that settled
+      // against nothing. "Every key issued before this stops working" has to be
+      // true of the door and not merely of a database somebody emptied.
+      //
+      // The two ways it can be wrong get two different answers. A value naming
+      // the other environment is told where keys with that prefix work: that
+      // gives nothing away — whoever presents it can read its prefix — and it
+      // replaces the failure most likely to cost an integrator an afternoon, a
+      // bare 401 that says nothing about the recognisable prefix. Everything
+      // else gets the one answer every other refusal here gets, because a door
+      // that told a bare key from a guess apart would confirm which guesses had
+      // once been real keys.
+      const theirs = environmentOfKeyPrefix(presented);
+      if (theirs === null) {
+        return REFUSED;
+      }
+      if (theirs !== gateway.environment) {
+        return OTHER_ENVIRONMENT_PREFIX;
+      }
+
       const key = await gateway.keyBehind(presented);
       return key === null
         ? REFUSED

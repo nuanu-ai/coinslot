@@ -11,6 +11,7 @@
  * weaker thing. `words.ts` carries those cases and the reasons.
  */
 
+import type { SurfaceMode } from "@coinslot/core";
 import type {
   MerchantCard,
   MerchantCardList,
@@ -37,6 +38,8 @@ import {
  * is looking at it is a screen nobody can be held to.
  */
 export interface Viewer {
+  /** Which stack this person is looking at, as derived from its gateway. */
+  readonly mode: SurfaceMode;
   /** Where the cabinet is mounted, "" when it is at the root of its origin. */
   readonly base: string;
   /** The address of the person signed in. */
@@ -81,6 +84,7 @@ interface Frame {
 
 const framed = (frame: Frame): string =>
   page({
+    mode: frame.viewer.mode,
     base: frame.viewer.base,
     who: frame.viewer.who,
     confirmed: frame.viewer.confirmed,

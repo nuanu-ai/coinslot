@@ -177,6 +177,7 @@ ${
 `;
 
   return page({
+    mode: viewer.mode,
     base,
     who: viewer.who,
     confirmed: viewer.confirmed,
@@ -216,6 +217,7 @@ export const newKeyScreen = (viewer: Viewer, label: string, secret: string): str
 `;
 
   return page({
+    mode: viewer.mode,
     base,
     who: viewer.who,
     confirmed: viewer.confirmed,

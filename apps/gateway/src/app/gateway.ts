@@ -9,14 +9,9 @@
  * about it. A price question that went unanswered becomes the event "the
  * merchant was silent", and whether silence sells is decided elsewhere, by
  * mode, exactly as ADR-0002 §3 says.
- *
- * One thing in stage one is narrower than the model and is written here rather
- * than discovered later: every order is a test order, because the separation of
- * the sandbox from the real thing is stage two of the pilot plan and there is
- * nothing yet to tell them apart with.
  */
 
-import type { MerchantSelling, TransitionRejection } from "@coinslot/core";
+import type { Environment, MerchantSelling, TransitionRejection } from "@coinslot/core";
 import { createOrder, fulfillmentDeadline, isOpen, outcomeFor } from "@coinslot/core";
 import {
   type Acceptance,
@@ -77,12 +72,6 @@ import {
   sellingFor,
 } from "./runtime.js";
 import { purchaseOf, Waiting } from "./waiting.js";
-
-/**
- * Stage one sells nothing for real money: the separation of the sandbox from
- * the live network is stage two, so every order is marked as what it is.
- */
-const STAGE_ONE_ORDERS_ARE_TESTS = true;
 
 /**
  * How stale the mark on a key is allowed to get before a call refreshes it.
@@ -591,6 +580,7 @@ export class Gateway {
       this.runtime.store,
       this.runtime.ids,
       this.runtime.clock(),
+      this.runtime.config.environment,
     );
 
     if (registered === null) {
@@ -751,6 +741,7 @@ export class Gateway {
       merchantId,
       label,
       this.runtime.clock(),
+      this.runtime.config.environment,
     );
     return { key: merchantKeyOf(issued.key), secret: issued.secret };
   }
@@ -783,6 +774,7 @@ export class Gateway {
       this.runtime.ids,
       merchantId,
       this.runtime.clock(),
+      this.runtime.config.environment,
     );
     return { secret: issued.secret };
   }
@@ -909,7 +901,11 @@ export class Gateway {
         currency: stored.card.price.currency,
         asOf: stored.asOf,
       },
-      test: STAGE_ONE_ORDERS_ARE_TESTS,
+      // Whether the money that pays for this is real, which is the chain's
+      // answer and not a stage of the plan. `order.test` and `receipt.test`
+      // are what those fields were always for; the receipt takes its own copy
+      // from the order in `runner.ts`, so this is the one place it is decided.
+      test: this.runtime.config.environment === "test",
       // One word out of the two switches a merchant has — the whole catalog and
       // this card — and out of whether that merchant could make a sale at all:
       // an address for the money, a name to sell under. Whichever of them it
@@ -1192,6 +1188,11 @@ export class Gateway {
     } catch (thrown) {
       console.error(`[gateway] the last use of the key ${key.id} was not written down`, thrown);
     }
+  }
+
+  /** Which site this is, for the one refusal that says so out loud. */
+  get environment(): Environment {
+    return this.runtime.config.environment;
   }
 
   // --- the merchant's stream ------------------------------------------------

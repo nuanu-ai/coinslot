@@ -26,6 +26,7 @@ const SHAPED = "0x0123456789abcdef0123456789abcdef01234567";
 
 const looking = (payout?: Viewer["payout"]): Viewer => ({
   base: "",
+  mode: "sandbox",
   who: "dmitry@example.com",
   confirmed: true,
   ...(payout === undefined ? {} : { payout }),

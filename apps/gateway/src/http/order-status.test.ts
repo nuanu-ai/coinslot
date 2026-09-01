@@ -26,7 +26,7 @@ import {
   type SeededMerchant,
   type Served,
   serve,
-  THE_MERCHANT_KEY,
+  theMerchantKey,
 } from "../testing/harness.js";
 
 const PAY_TO = "0x0000000000000000000000000000000000000001";
@@ -74,7 +74,7 @@ const keyOf = (merchant: SeededMerchant): Record<string, string> => ({
 const publish = async (
   served: Served,
   card: Card,
-  headers: Record<string, string> = { authorization: `Bearer ${THE_MERCHANT_KEY}` },
+  headers: Record<string, string> = { authorization: `Bearer ${theMerchantKey("test")}` },
 ): Promise<string> => {
   const answered = await served.call("POST", "/v0/catalog/publish", { body: card, headers });
   expect(answered.status, JSON.stringify(answered.body)).toBe(200);

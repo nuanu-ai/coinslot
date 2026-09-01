@@ -93,9 +93,13 @@ owes anyway. Nothing about the sandbox introduces an unmarked test payment.
 
 What this does not do is make the sandbox safe to point at a real chain. It
 makes the two impossible to hold at once, which is a different and smaller
-promise. A gateway in sandbox on a machine an agent can reach will take
-payments that never happened; the protection against that is that nobody
-deploys it, not that it refuses to run.
+promise. ADR-0020 adds the half that was missing: a gateway whose chain is one
+where the money is real refuses the scripted facilitator at startup and does
+not come up, so the pairing that would take payments that never happened while
+naming a chain where they would have been real cannot be configured. What is
+left over is a sandbox on a test chain that an agent can reach, and there the
+old sentence still holds — it will take payments that never happened, of money
+that was never real either, and the sandbox belongs on a laptop.
 
 The address in a challenge issued by a sandbox receives nothing, ever. It has
 to be there for the challenge to have a shape at all, and it is the one field
