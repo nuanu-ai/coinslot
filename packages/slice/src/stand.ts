@@ -28,6 +28,8 @@ import {
   type Delivery,
   MerchantCardListSchema,
   type Money,
+  OrderListSchema,
+  type OrderWithStatus,
   type ParamSpec,
   type PublicCard,
   type Receipt,
@@ -46,6 +48,7 @@ import {
 } from "./stand-buyer.js";
 import {
   listCards,
+  listOrders,
   listReceipts,
   pauseCard,
   pauseSelling,
@@ -81,6 +84,8 @@ let apiKey: string | null = null;
 let keyEnvironment: Environment | null = null;
 let cards: ReturnType<typeof MerchantCardListSchema.parse>["cards"] = [];
 let selling: SellingState | null = null;
+let orders: readonly OrderWithStatus[] = [];
+let ordersRead = false;
 let receipts: readonly Receipt[] = [];
 let receiptsRead = false;
 let publicItems: readonly PublicCard[] = [];
@@ -214,6 +219,36 @@ const readCards = async (generation: number): Promise<void> => {
     status: answer.status,
     cards: cards.length,
     selling: parsed.data.selling,
+  });
+};
+
+/**
+ * The merchant's own list of orders.
+ *
+ * The tab used to show only what this console was holding — an order waiting
+ * for a person, an order accepted and still owed — and both are momentary. A
+ * standing answer of "deliver at once" put an order through in one breath and
+ * left the merchant's seat with nothing on it, which is not what a merchant's
+ * screen does.
+ */
+const readOrders = async (generation: number): Promise<void> => {
+  const { address, key } = requireConnection();
+  const answer = await listOrders(address, key);
+  if (!connectionIsCurrent(generation)) return;
+  const parsed = OrderListSchema.safeParse(answer.body);
+  if (!parsed.success) {
+    feed.write("gateway", "The order list could not be parsed.", {
+      status: answer.status,
+      body: answer.body,
+      issues: parsed.error.issues,
+    });
+    return;
+  }
+  orders = parsed.data.orders;
+  ordersRead = true;
+  feed.write("gateway", "Read the merchant's orders.", {
+    status: answer.status,
+    orders: orders.length,
   });
 };
 
@@ -397,8 +432,13 @@ const agentCall = (on: Exchange, run: () => Promise<void>): void => {
       beat(on, "agent", `The call did not complete: ${wordsOf(error)}`, "", null, "bad");
       on.closed = true;
     })
-    .finally(() => {
+    .finally(async () => {
       on.waiting = false;
+      // An agent call is the moment an order changes, so the merchant's seat is
+      // brought up to date without anybody pressing anything for it.
+      if (merchant.connected() !== null) {
+        await readOrders(connectionGeneration).catch(() => undefined);
+      }
       stir();
     });
 };
@@ -467,6 +507,8 @@ const doAction = async (form: URLSearchParams): Promise<void> => {
       // gateway's cards must not remain actionable on this page.
       cards = [];
       selling = null;
+      orders = [];
+      ordersRead = false;
       receipts = [];
       receiptsRead = false;
       publicItems = [];
@@ -479,6 +521,8 @@ const doAction = async (form: URLSearchParams): Promise<void> => {
       if (!connectionIsCurrent(generation)) return;
       await readCards(generation);
       if (!connectionIsCurrent(generation)) return;
+      await readOrders(generation);
+      if (!connectionIsCurrent(generation)) return;
       say(`Connected to ${address}.`);
       return;
     }
@@ -490,6 +534,8 @@ const doAction = async (form: URLSearchParams): Promise<void> => {
       keyEnvironment = null;
       cards = [];
       selling = null;
+      orders = [];
+      ordersRead = false;
       receipts = [];
       receiptsRead = false;
       publicItems = [];
@@ -732,6 +778,7 @@ const doAction = async (form: URLSearchParams): Promise<void> => {
       if (!merchant.answerHeld(orderId, answer as HeldAnswer))
         throw new Error("That order is no longer being held.");
       say(`Answered ${orderId}.`);
+      await readOrders(connectionGeneration);
       return;
     }
 
@@ -743,6 +790,7 @@ const doAction = async (form: URLSearchParams): Promise<void> => {
           ? await merchant.deliverOwed(orderId)
           : await merchant.refuseOwed(orderId);
       if (!done) throw new Error("That order is no longer owed anything.");
+      await readOrders(connectionGeneration);
       return;
     }
 
@@ -760,6 +808,11 @@ const doAction = async (form: URLSearchParams): Promise<void> => {
       );
       return;
     }
+
+    case "read_orders":
+      await readOrders(connectionGeneration);
+      say(`This merchant has ${orders.length} priced order${orders.length === 1 ? "" : "s"}.`);
+      return;
 
     case "read_receipts":
       await readReceipts(connectionGeneration);
@@ -895,6 +948,8 @@ const drawTab = (tab: Tab): string =>
       id: one.id,
       merchantItemId: one.merchant_item_id,
     })),
+    orders,
+    ordersRead,
     receipts,
     receiptsRead,
   });

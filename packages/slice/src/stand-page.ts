@@ -21,6 +21,8 @@ import {
   expandPath,
   type MerchantCard,
   type Money,
+  type OrderStatus,
+  type OrderWithStatus,
   type PublicCard,
   RECOMMENDED_REFUSAL_CODES,
   type Receipt,
@@ -105,6 +107,8 @@ export interface PageState {
   readonly goodsDraft: string;
   readonly held: readonly HeldOrder[];
   readonly owed: readonly { readonly id: string; readonly merchantItemId: string }[];
+  readonly orders: readonly OrderWithStatus[];
+  readonly ordersRead: boolean;
   readonly receipts: readonly Receipt[];
   readonly receiptsRead: boolean;
 }
@@ -415,6 +419,26 @@ const heldMail = (one: HeldOrder): string => {
 </div>`;
 };
 
+/**
+ * What an order's own word means, in the tone a screen paints it.
+ *
+ * The words are the order machine's and are printed as they arrive: a status
+ * this console has never met still reads as itself rather than as a shrug, and
+ * a second vocabulary beside the gateway's is exactly what a merchant should
+ * not have to learn.
+ */
+const orderTone = (status: OrderStatus): string =>
+  status === "delivered" ? "ok" : status === "in_progress" ? "busy" : "warn";
+
+const orderRow = (one: OrderWithStatus): string => `<tr>
+  <td>
+    <div class="under mono">${escaped(one.id)}</div>
+    <div class="under">${escaped(one.merchant_item_id)}</div>
+  </td>
+  <td>${dot(orderTone(one.status), one.status.replaceAll("_", " "))}</td>
+  <td>${escaped(one.price.amount)} ${escaped(one.price.currency)}${one.test ? ' <span class="tag">test</span>' : ""}</td>
+</tr>`;
+
 const receiptRow = (one: Receipt): string => `<tr>
   <td><div class="under mono">${escaped(one.id)}</div></td>
   <td><div class="under mono">${escaped(one.order_id)}</div></td>
@@ -484,6 +508,22 @@ const ordersTab = (state: PageState): string => {
 <section class="panel">
   <header><h2>Owed</h2><div class="side">accepted, not yet delivered</div></header>
   ${owed}
+</section>
+<section class="panel">
+  <header>
+    <h2>Orders</h2>
+    <div class="side">${route("list_orders")}${form("read_orders", "", "Read again")}</div>
+  </header>
+  ${
+    !state.ordersRead
+      ? '<p class="empty">Not read yet.</p>'
+      : state.orders.length === 0
+        ? '<p class="empty">None. An order that closed before anybody named a price for it is not in this list at all — the gateway says so, and those are read one at a time by their identifier.</p>'
+        : `<div class="scroller"><table>
+<thead><tr><th>Order</th><th>State</th><th>Priced at</th></tr></thead>
+<tbody>${state.orders.map(orderRow).join("")}</tbody>
+</table></div>`
+  }
 </section>
 <section class="panel">
   <header>

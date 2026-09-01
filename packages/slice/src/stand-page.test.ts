@@ -38,6 +38,8 @@ const connected = (keyEnvironment: PageState["keyEnvironment"]): string =>
     goodsDraft: "",
     held: [],
     owed: [],
+    orders: [],
+    ordersRead: false,
     receipts: [],
     receiptsRead: false,
   });

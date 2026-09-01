@@ -59,5 +59,8 @@ export const pauseSelling = (baseUrl: string, apiKey: string): Promise<GatewayAn
 export const resumeSelling = (baseUrl: string, apiKey: string): Promise<GatewayAnswer> =>
   call(baseUrl, apiKey, API_ROUTES.resume_selling);
 
+export const listOrders = (baseUrl: string, apiKey: string): Promise<GatewayAnswer> =>
+  call(baseUrl, apiKey, API_ROUTES.list_orders);
+
 export const listReceipts = (baseUrl: string, apiKey: string): Promise<GatewayAnswer> =>
   call(baseUrl, apiKey, API_ROUTES.list_receipts);
