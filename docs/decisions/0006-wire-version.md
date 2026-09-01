@@ -49,6 +49,16 @@ the routes and is not derived from it.
    times under one surface, and the day the surface itself changes shape is the
    day the prefix moves.
 
+   The prefix travels further than our own surface: the purchase address is
+   the identity a resource is listed under in external catalogs, so moving
+   the prefix retires one listed resource and introduces another — the old
+   entry stops answering `402` and is eventually removed, the new one earns
+   its own bootstrap settle and starts its ranking afresh
+   (`docs/research/04-spike-bazaar-listing.md`). That is chosen rather than
+   suffered: to an agent, an incompatibly changed wire *is* a different
+   resource, and an address that survived its own breaking change would
+   break buyers silently instead of visibly.
+
 ## Consequences
 
 - Gained: an installed SDK either reads the whole vocabulary it was built for or
@@ -56,3 +66,6 @@ the routes and is not derived from it.
   truth.
 - Paid: even an additive informational result requires a contract-version move
   and coordinated gateway delivery. That cost starts with contract `"1"`.
+- Paid, on the day the prefix ever moves: every external listing under the old
+  prefix is a listing to re-earn — a fresh bootstrap settle, a ranking started
+  from zero.
