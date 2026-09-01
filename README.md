@@ -33,14 +33,23 @@ pnpm buy esim                 # the one delivered later
 The gateway settles against nothing locally (ADR-0008): a purchase completes
 with no wallet, no network and no faucet, and the first line of its log says so.
 
-To sign into the cabinet, make an account for the merchant the stack seeded.
-The key is read from standard input rather than given as an argument, which
-would sit in the shell's history and in everybody's process list:
+The cabinet is where a merchant sets the name buyers see and issues the keys
+their own code calls with. The way in is to register:
 
 ```
-printf %s local-sandbox-merchant-key | docker compose exec -T cabinet \
-  pnpm --filter @coinslot/cabinet account add you@example.com the_merchant
+open http://localhost:8080/cabinet/register
 ```
+
+The form asks for an email, a password and an invitation. The invitation is
+`register-on-this-laptop`, which `compose.yaml` sets by default. Registering
+makes the merchant, signs you in as them, and puts you on the one question the
+form did not ask — the name buyers see. The credential the cabinet acts as that
+merchant with is made and held by the cabinet; it is never something you type.
+
+That merchant is a new one, and it is not `the_merchant` — the merchant the
+stack seeds, whose two cards the merchant process publishes and `pnpm buy`
+buys. Somebody who has just registered has no cards and no keys of their own,
+which is the truth about a merchant who has written no code yet (ADR-0014).
 
 If port 8080 is taken, `COINSLOT_HOST_PORT=8090 docker compose up` moves the
 stack and nothing else — the buy command runs on the host and needs

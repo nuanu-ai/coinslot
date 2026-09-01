@@ -59,12 +59,15 @@ overlapping sign-ins leave an account naming a key that is gone. Reaching only
 the key in the caller's hand, nobody can take away a credential anybody else
 holds. What that costs is that nothing sweeps up after an interrupted sign-in;
 clearing those by age is counted from the cabinet, which knows the keys still in
-use, and is not built. A merchant cannot disable the key their own call was
-made with — a rule in the route, because that click leaves whoever made it
-calling with something the gateway no longer takes. It sees the key on the
-call, so two keys disabling each other in one moment still leave a merchant
-with none of their own, which nobody has decided to refuse; the way back in is
-a key of the other kind.
+use, and is not built — the gateway now records when a key was last called, but
+a cabinet key nobody has used is as likely to be the one on the row of a person
+who has not signed in for a while, and removing that locks them out from the
+outside, so the age that decides is the cabinet's. A merchant cannot disable the
+key their own call was made with — a rule in the route, because that click
+leaves whoever made it calling with something the gateway no longer takes. It
+sees the key on the call, so two keys disabling each other in one moment still
+leave a merchant with none of their own, which nobody has decided to refuse;
+the way back in is a key of the other kind.
 
 ## Consequences
 

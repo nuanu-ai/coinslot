@@ -81,7 +81,7 @@ const TABS: readonly [Tab, string][] = [
   ["cards", "Cards"],
   ["orders", "Orders"],
   ["receipts", "Receipts"],
-  ["keys", "Keys"],
+  ["keys", "API Keys"],
   ["settings", "Settings"],
 ];
 

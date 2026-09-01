@@ -7,7 +7,7 @@
  * key, and without touching anybody's session in this cabinet — and ADR-0014 §5
  * brings that from a command somebody runs at a terminal to a screen.
  *
- * Two things about the list are decisions rather than layout. The revoked keys
+ * Three things about the list are decisions rather than layout. The revoked keys
  * are on it, because "which key did I turn off, and when" is a question
  * somebody has on exactly this screen and a list of only the working ones
  * answers it with silence. And every row on it is a key the merchant asked for:
@@ -16,7 +16,10 @@
  * that could take a merchant's cabinet away from them. What the gateway does
  * say beside the list, as `this_call`, is the identifier of that key — for a
  * caller reaching the API with a key of the merchant's own, which is what needs
- * to know. This screen is not one of those and does not read it.
+ * to know. This screen is not one of those and does not read it. The third is
+ * the last call each key was seen on, which is the thing a merchant is here to
+ * find out and the one place this screen can mislead them; `lastCall` below is
+ * where an empty column is kept from turning into a claim about the key.
  *
  * An empty list follows from the same fact and is the ordinary state of a
  * merchant who has just registered: they have a cabinet because they signed
@@ -39,10 +42,46 @@ const keyRow = (base: string, entry: MerchantKey): string => {
   return `<tr class="${revoked ? "off" : ""}">
 <td><div class="title">${escaped(entry.label)}</div><div class="under mono">${escaped(entry.id)}</div></td>
 <td class="quiet">${escaped(moment(entry.created_at))}</td>
+<td class="quiet">${escaped(lastCall(entry))}</td>
 <td class="quiet">${revoked ? escaped(`Revoked ${moment(entry.disabled_at ?? "")}`) : "Works"}</td>
 <td class="control">${keyControl(base, entry)}</td>
 </tr>`;
 };
+
+/**
+ * When something last called with this key, in the words a merchant reads.
+ *
+ * This is the column the screen is worth opening for — a merchant with three
+ * keys is asking which of them is safe to turn off, and nothing else on the row
+ * answers that. So it is also the column where being wrong costs the most, and
+ * the whole of the danger is in the empty one.
+ *
+ * The gateway did not check whether anybody has called with a key; it wrote
+ * down the calls it saw. Those are different claims, and a key made before it
+ * started writing carries the same blank as a key nobody has ever used. So the
+ * words here say what is true of both — there is no record — and stop. "Never
+ * used" would be the confident version of a sentence nobody checked, on the
+ * page where acting on it turns off a key that may be in the merchant's own
+ * worker. Which of the two blanks a row is showing is not on the wire, and the
+ * note under the table says so rather than the row pretending to know.
+ *
+ * The instant goes through `moment` like every other instant on these screens.
+ * A second way of writing a time would put two formats on one page and a
+ * merchant comparing them.
+ */
+const lastCall = (entry: MerchantKey): string =>
+  entry.last_used_at === null ? NO_CALLS_RECORDED : moment(entry.last_used_at);
+
+/**
+ * The empty answer, named once because the note under the table quotes it.
+ *
+ * Written out in both places it would drift, and the drift is not cosmetic: the
+ * note is the only thing that tells a merchant this blank covers two situations
+ * and which one they are looking at cannot be known. A word in the table that
+ * the explanation below no longer mentions is a word with nothing explaining
+ * it.
+ */
+const NO_CALLS_RECORDED = "No calls recorded";
 
 /**
  * What a merchant can do to one key from this list, which is sometimes nothing.
@@ -86,7 +125,7 @@ export const keysScreen = (viewer: Viewer, keys: MerchantKeyList, problem?: stri
   const body = `
   <div class="lede">
     <div>
-      <h1>Keys</h1>
+      <h1>API Keys</h1>
       <p>${escaped(
         none
           ? `You have issued no keys yet, which is where every merchant starts. ${WHAT_A_KEY_IS}` +
@@ -104,13 +143,21 @@ ${
   none
     ? '<div class="scroller"><p class="empty">No keys yet.</p></div>'
     : `<div class="scroller"><table>
-<thead><tr><th>Name</th><th>Made</th><th>State</th><th></th></tr></thead>
+<thead><tr><th>Name</th><th>Made</th><th>Last call</th><th>State</th><th></th></tr></thead>
 <tbody>${keys.keys.map((entry) => keyRow(base, entry)).join("")}</tbody>
 </table></div>
   <div class="note"><span class="mark">&#8627;</span><span>${escaped(
     "This is what the gateway answered with, and its answer does not say whether it is all of" +
       " them. Nothing pages this list yet and nothing here counts your keys for you — the number" +
       " above counts the rows below and nothing more.",
+  )}</span></div>
+  <div class="note"><span class="mark">&#8627;</span><span>${escaped(
+    "The last call is written down every few minutes rather than on every one, so a key" +
+      ` something is using right now shows a time that far behind. "${NO_CALLS_RECORDED}" is` +
+      ' what it says rather than "never used", and the difference matters for the keys you' +
+      " have had the longest: we began recording this recently, so a key older than that shows" +
+      " the same thing whether or not anything has been calling with it, and this page cannot" +
+      " tell you which. Any key shows a time as soon as it is used again.",
   )}</span></div>`
 }
   <div class="lede">
@@ -135,7 +182,7 @@ ${
     who: viewer.who,
     confirmed: viewer.confirmed,
     tab: "keys",
-    title: "Keys",
+    title: "API Keys",
     body,
   });
 };
@@ -166,7 +213,7 @@ export const newKeyScreen = (viewer: Viewer, label: string, secret: string): str
       " asks your browser to send the form again, which issues another key rather than showing" +
       " you this one.",
   )}</span></div>
-  <p class="quiet"><a href="${escaped(base)}/keys">Back to your keys</a></p>
+  <p class="quiet"><a href="${escaped(base)}/keys">Back to your API keys</a></p>
 `;
 
   return page({

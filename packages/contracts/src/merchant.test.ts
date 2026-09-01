@@ -20,6 +20,7 @@ const working = {
   id: "mk_4d21bb",
   label: "the shop's own worker",
   created_at: "2026-08-26T09:00:00Z",
+  last_used_at: "2026-08-30T14:05:00Z",
   disabled_at: null,
 };
 
@@ -43,11 +44,38 @@ describe("one of a merchant's keys", () => {
     expect(MerchantKeySchema.parse(revoked)).toStrictEqual(revoked);
   });
 
-  for (const field of ["id", "label", "created_at", "disabled_at"]) {
+  for (const field of ["id", "label", "created_at", "disabled_at", "last_used_at"]) {
     it(`refuses a key without ${field} and names it`, () => {
       expectMissingFieldRejected(MerchantKeySchema, working, field);
     });
   }
+
+  it("accepts a key with no call recorded against it", () => {
+    // The blank, which is one field and not two. A key nothing has called and a
+    // key older than this record carry the same null here, and this document
+    // does not claim to tell them apart — the field is what was written down,
+    // and the words that admit the ambiguity live on the screen that draws it.
+    const quiet = { ...working, last_used_at: null };
+
+    expect(MerchantKeySchema.parse(quiet)).toStrictEqual(quiet);
+  });
+
+  it("says when a key was last used rather than leaving the field out", () => {
+    // The same reason `disabled_at` is required: an absent field is a silence a
+    // reader cannot tell from an oversight, and this one would be read as the
+    // key having been used at some unstated time or never at all, either of
+    // which is a screen inventing an answer.
+    const { last_used_at, ...withoutIt } = working;
+
+    expect(last_used_at).not.toBeUndefined();
+    expect(MerchantKeySchema.safeParse(withoutIt).success).toBe(false);
+  });
+
+  it("refuses a last use that names no moment in time", () => {
+    expect(MerchantKeySchema.safeParse({ ...working, last_used_at: "2026-08-30" }).success).toBe(
+      false,
+    );
+  });
 
   it("says a key works rather than leaving the field out", () => {
     // Null is the fact "this key has not been revoked". An absent field is a

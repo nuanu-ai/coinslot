@@ -378,6 +378,24 @@ export interface StoredKey {
   readonly createdAt: number;
   /** When it was revoked, or null while it still opens the door. */
   readonly disabledAt: number | null;
+  /**
+   * The last call this key was seen on, as far as anything wrote down.
+   *
+   * It lags on purpose. The door reaches this row on every request behind it
+   * and a write on every one of them is a write on the money path, so the
+   * instant is refreshed only once the one on the row has gone stale — see
+   * {@link Store.noteKeyUse}. What it therefore answers is "this key was in use
+   * around then", which is the question somebody deciding whether to revoke it
+   * has, and not "this is the last request it opened".
+   *
+   * Null is the absence of a record rather than the absence of calls. The keys
+   * that were already there when this column arrived carry it too, and nothing
+   * on the row tells them from a key nobody has called — a second column would
+   * separate them, and it would outlive by years the few weeks in which any row
+   * needs it. What carries that instead is the sentence beside the column
+   * wherever it is drawn.
+   */
+  readonly lastUsedAt: number | null;
 }
 
 /** One card in the public catalog, with the word its own merchant sells under. */
@@ -515,6 +533,32 @@ export interface Store {
     },
     at: number,
   ): Promise<StoredKey>;
+
+  /**
+   * Writes down that a call came in on this key at this instant.
+   *
+   * Two things about it are the caller's rather than this one's, and both are
+   * deliberate.
+   *
+   * The thinning is the caller's. This writes every time it is asked, and the
+   * door asks only once the instant on the row has gone stale — a store that
+   * took the window and decided for itself would still be a statement sent on
+   * every request behind the door, which is a write on the money path for a
+   * fact nobody reads more than once a day.
+   *
+   * And so is what happens when it fails. Nothing a merchant buys depends on
+   * this having been written, so the door swallows a failure here and answers
+   * the call; a purchase refused because a column could not be updated would be
+   * a screen taking down a sale.
+   *
+   * What it promises in return is that the mark never goes backwards. Two
+   * gateway processes write it from two clocks and the door does not serialise
+   * them, so an older instant can arrive after a newer one — taken as written,
+   * a key in constant use would read as one nobody has touched since morning.
+   * A key that is not there is not an error: it is a key revoked or forgotten
+   * between the door reading it and this being written.
+   */
+  noteKeyUse(id: string, at: number): Promise<void>;
 
   /**
    * The key a request presented, by its digest — and nothing at all where there

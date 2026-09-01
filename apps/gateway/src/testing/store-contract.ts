@@ -1220,6 +1220,77 @@ export function describeStore(name: string, open: () => Promise<Store>): void {
         expect(asLogged(forTheIdentifier)).not.toContain("digest-2");
         expect(asLogged(forTheDigest)).not.toContain("digest-1");
       });
+
+      it("is made with no call recorded against it", async () => {
+        // A key that was written a moment ago and a key older than this column
+        // come back with the same empty answer, and that is the whole of what
+        // the row claims: no call has been recorded. It does not claim nobody
+        // has called, because for one of those two rows nobody looked.
+        const store = await twoMerchants();
+
+        const made = await store.addKey(
+          { id: "mk_1", merchantId: A, label: "one", digest: "digest-1", purpose: "merchant_code" },
+          1_000,
+        );
+
+        expect(made.lastUsedAt).toBeNull();
+      });
+
+      it("carries the instant of the last call made with it, and no other key's", async () => {
+        // The whole point of the column: a merchant with three keys is asking
+        // which of them can be revoked, and nothing else on this row answers
+        // that. One key's use moving another's would answer it wrongly in the
+        // dangerous direction — a key that is in somebody's worker looking
+        // busy, or an idle one looking used.
+        const store = await twoMerchants();
+        await store.addKey(
+          { id: "mk_1", merchantId: A, label: "one", digest: "digest-1", purpose: "merchant_code" },
+          1_000,
+        );
+        await store.addKey(
+          { id: "mk_2", merchantId: A, label: "two", digest: "digest-2", purpose: "merchant_code" },
+          2_000,
+        );
+
+        await store.noteKeyUse("mk_1", 5_000);
+
+        expect((await store.workingKey("digest-1"))?.lastUsedAt).toBe(5_000);
+        expect((await store.workingKey("digest-2"))?.lastUsedAt).toBeNull();
+      });
+
+      it("keeps the later call when two of them are written down out of order", async () => {
+        // Two gateway processes write this, each from its own clock, and the
+        // door thins the writes rather than serialising them — so an older
+        // instant can arrive after a newer one. Taken as written, the mark
+        // would jump backwards and a key in constant use would read as one
+        // nobody has touched since this morning.
+        const store = await twoMerchants();
+        await store.addKey(
+          { id: "mk_1", merchantId: A, label: "one", digest: "digest-1", purpose: "merchant_code" },
+          1_000,
+        );
+
+        await store.noteKeyUse("mk_1", 9_000);
+        await store.noteKeyUse("mk_1", 5_000);
+
+        expect((await store.workingKey("digest-1"))?.lastUsedAt).toBe(9_000);
+      });
+
+      it("keeps the call it last carried when it is revoked", async () => {
+        // Revoking is the decision the mark is read for, and the row stays on
+        // the list afterwards. A revocation that cleared it would take away the
+        // evidence for the very thing it had just been used to decide, on the
+        // screen where "which key did I turn off, and why" is asked next week.
+        const store = await twoMerchants();
+        await store.addKey(
+          { id: "mk_1", merchantId: A, label: "one", digest: "digest-1", purpose: "merchant_code" },
+          1_000,
+        );
+        await store.noteKeyUse("mk_1", 5_000);
+
+        expect((await store.disableKey("mk_1", 7_000))?.lastUsedAt).toBe(5_000);
+        expect((await store.keysOf(A))[0]?.lastUsedAt).toBe(5_000);
+      });
     });
 
     describe("an order", () => {

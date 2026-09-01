@@ -2509,22 +2509,27 @@ describe("the keys screen", () => {
    * here and not a row, which is what the screen is drawn against.
    */
   const CABINET_KEY = "key_the_cabinet_is_using";
+  /** A key something is calling with, which is the ordinary row. */
   const NIGHTLY: MerchantKey = {
     id: "key_the_nightly_job",
     label: "the nightly job",
     created_at: "2026-08-20T09:00:00.000Z",
+    last_used_at: "2026-08-27T02:15:00.000Z",
     disabled_at: null,
   };
+  /** A key with no call recorded against it, which is two situations at once. */
   const ANOTHER: MerchantKey = {
     id: "key_the_workers_use",
     label: "the worker on the small box",
     created_at: "2026-08-24T11:30:00.000Z",
+    last_used_at: null,
     disabled_at: null,
   };
   const REVOKED: MerchantKey = {
     id: "key_the_laptop_had",
     label: "the laptop that went missing",
     created_at: "2026-07-01T08:00:00.000Z",
+    last_used_at: null,
     disabled_at: "2026-08-26T17:45:00.000Z",
   };
   const SECRET = "the-secret-shown-once-and-never-again";
@@ -2551,7 +2556,13 @@ describe("the keys screen", () => {
           return {
             ok: true,
             document: {
-              key: { id: "key_the_new_one", label, created_at: NOW, disabled_at: null },
+              key: {
+                id: "key_the_new_one",
+                label,
+                created_at: NOW,
+                last_used_at: null,
+                disabled_at: null,
+              },
               secret: SECRET,
             },
           };
@@ -2608,6 +2619,73 @@ describe("the keys screen", () => {
     const page = (await browser.get("/keys")).html;
 
     expect(page).not.toContain(`/keys/${REVOKED.id}/disable`);
+  });
+
+  /**
+   * What one key's row says in the column whose header this matches.
+   *
+   * Read through the header rather than by counting cells, so a column added
+   * beside this one does not quietly move what is being read.
+   */
+  const inColumn = (html: string, keyId: string, header: RegExp): string => {
+    const heading = html.match(/<thead>[\s\S]*?<\/thead>/)?.[0] ?? "";
+    const headers = [...heading.matchAll(/<th[^>]*>([\s\S]*?)<\/th>/g)].map((cell) =>
+      readable(cell[1] ?? ""),
+    );
+    const at = headers.findIndex((word) => header.test(word));
+    if (at < 0) {
+      throw new Error(`no column of this table is headed ${header}: ${headers.join(", ")}`);
+    }
+    const row = (html.match(/<tr[\s\S]*?<\/tr>/g) ?? []).find((one) => one.includes(keyId));
+    if (row === undefined) {
+      throw new Error(`no row of this table is the key ${keyId}`);
+    }
+    return readable([...row.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)][at]?.[1] ?? "");
+  };
+
+  it("says when each key was last called, and stops there when it cannot", async () => {
+    // The column the screen is worth opening for: which of these keys is safe
+    // to revoke. A key something is calling with says when, in the format every
+    // other instant on these screens is written in.
+    //
+    // The empty one is where this screen can do harm. The gateway did not check
+    // whether anybody has called with that key — it wrote down the calls it
+    // saw — and a key older than the writing carries the same blank as a key
+    // nobody has ever used. Nothing on the wire tells the two apart, so the
+    // words must not either. Which words they are is a person's choice; that
+    // they claim only a missing record is the promise, and "never" is the word
+    // this cell reaches for when it forgets which of the two it may say.
+    const { browser } = await started({ client: withKeys().client });
+    await browser.signIn();
+
+    const page = (await browser.get("/keys")).html;
+    const called = inColumn(page, NIGHTLY.id, /last/i);
+    const quiet = inColumn(page, ANOTHER.id, /last/i);
+
+    expect(called).toBe("2026-08-27 02:15:00 UTC");
+    expect(quiet).not.toBe("");
+    expect(quiet).toMatch(/record/i);
+    expect(quiet).not.toMatch(/never/i);
+    // And it is not the day the key was made wearing this column's hat. That is
+    // the one instant the screen has to hand when it has no call to show, and
+    // putting it here would be a date a merchant reads as a call — the exact
+    // lie the migration refused to write into the row.
+    expect(quiet).not.toBe(inColumn(page, ANOTHER.id, /made/i));
+  });
+
+  it("says under the table that an empty last call is two situations", async () => {
+    // The words the removed field was carrying. A merchant reading "No calls
+    // recorded" beside a key they issued in June has to be able to find out
+    // that we began recording this recently and that their oldest keys show
+    // the same thing either way — otherwise the honest phrase in the cell is
+    // read as the confident one, which is where it started.
+    const { browser } = await started({ client: withKeys().client });
+    await browser.signIn();
+
+    const text = readable((await browser.get("/keys")).html);
+
+    expect(text).toMatch(/began recording|started recording/i);
+    expect(text).toMatch(/cannot tell you which|which it is/i);
   });
 
   it("issues a key, shows its secret once, and says that is the only time", async () => {
