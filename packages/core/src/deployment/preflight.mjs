@@ -85,6 +85,15 @@ export function problemsWith(channel, resolved) {
         );
       }
     }
+  } else {
+    for (const name of ["CDP_API_KEY_ID", "CDP_API_KEY_SECRET"]) {
+      if ((gateway[name] ?? "") !== "") {
+        problems.push(
+          `gateway: ${name} is set, and the ${channel} channel must not receive live ` +
+            "facilitator credentials",
+        );
+      }
+    }
   }
 
   equal("web", "COINSLOT_SURFACE_MODE", web.COINSLOT_SURFACE_MODE, wanted.surfaceMode);

@@ -104,6 +104,13 @@ describe("the chain and the facilitator together", () => {
     }
   });
 
+  it("refuses the test channel with either live credential set", () => {
+    for (const name of ["CDP_API_KEY_ID", "CDP_API_KEY_SECRET"]) {
+      const wrong = withEnv(TEST_CHANNEL, "gateway", name, `synthetic-${name.toLowerCase()}`);
+      expect(problemsWith("test", wrong)).toContainEqual(expect.stringMatching(name));
+    }
+  });
+
   it("refuses a chain neither channel declared", () => {
     const wrong = withEnv(TEST_CHANNEL, "gateway", "PAYMENT_NETWORK", "eip155:11155111");
     expect(problemsWith("test", wrong)).toContainEqual(expect.stringMatching(/PAYMENT_NETWORK/));
@@ -295,6 +302,24 @@ describe("the release entry point", () => {
     expect(result.stdout ?? "").toBe("");
     expect(stderr).toContain("web: the published bindings");
     expectNoFixtureSecrets(stderr, TEST_CHANNEL);
+  });
+
+  it("reports every test-channel live credential without printing either value", () => {
+    const withId = withEnv(TEST_CHANNEL, "gateway", "CDP_API_KEY_ID", "synthetic-live-key-id");
+    const wrong = withEnv(
+      withEnv(withId, "gateway", "CDP_API_KEY_SECRET", "synthetic-live-key-secret"),
+      "cabinet",
+      "COOKIE_SECURE",
+      "false",
+    );
+    const result = runCli("test", JSON.stringify(wrong));
+    const stderr = result.stderr ?? "";
+    expect(result.status).toBe(65);
+    expect(result.stdout ?? "").toBe("");
+    expect(stderr).toContain("CDP_API_KEY_ID");
+    expect(stderr).toContain("CDP_API_KEY_SECRET");
+    expect(stderr).toContain("COOKIE_SECURE");
+    expectNoFixtureSecrets(stderr, wrong);
   });
 
   it("refuses malformed JSON without printing input", () => {
