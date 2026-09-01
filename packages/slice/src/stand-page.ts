@@ -32,6 +32,7 @@ import {
 import type { ChallengeView } from "./stand-buyer.js";
 import type { Entry } from "./stand-log.js";
 import type { HeldOrder, OrderMood, QuoteMood } from "./stand-merchant.js";
+import { TEMPLATES } from "./stand-templates.js";
 
 export type Tab = "catalogue" | "agent" | "orders";
 
@@ -271,9 +272,14 @@ const catalogueTab = (state: PageState): string => {
 <section class="panel">
   <header>
     <h2>Publish a card</h2>
-    <div class="side">${form("template", hidden("template", "0"), "Rented number")}${form("template", hidden("template", "1"), "eSIM")}<span class="why">worked examples</span></div>
+    <div class="side">${route("publish_card")}</div>
   </header>
   <div class="body">
+    <div class="actions">${TEMPLATES.map(
+      (one) =>
+        `<form method="post" class="inline">${hidden("action", "template")}${hidden("template", one.key)}<button type="submit" title="${escaped(one.about)}">${escaped(one.label)}</button></form>`,
+    ).join("")}</div>
+    <p>The first three are the files the portal prints on its own pages, read from disk rather than copied — a button that stops publishing is a documented example that stopped working. The fourth is the shape the public x402 catalogue is full of: a synchronous lookup answering with JSON, at a fraction of a cent. The last two are the pilot's own products.</p>
     ${form("publish", field("Card (JSON)", `<textarea name="card">${escaped(state.cardDraft)}</textarea>`), "Publish", true)}
     <p>Publishing the same <code>merchant_item_id</code> again replaces the card. There is no unpublish: the gateway offers publish, pause and resume, so pausing is how a card comes off sale.</p>
   </div>

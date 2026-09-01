@@ -71,6 +71,7 @@ import {
   type SaidBack,
   type Tab,
 } from "./stand-page.js";
+import { templateNamed } from "./stand-templates.js";
 
 const TEST_BUYER_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 const BUYER_CEILING_USD = 50;
@@ -553,13 +554,12 @@ const doAction = async (form: URLSearchParams): Promise<void> => {
     /* --- the catalogue tab --- */
 
     case "template": {
-      const index = Number(form.get("template"));
-      const template = CATALOG[index];
-      if (template === undefined) throw new Error("That card template does not exist.");
-      const draft = structuredClone(template) as Record<string, unknown>;
-      if (draft.fulfillment === "async") draft.fulfill_deadline_seconds = 10;
-      cardDraft = JSON.stringify(draft, null, 2);
-      say("Copied the card template into the draft.");
+      const template = templateNamed(form.get("template") ?? "");
+      if (template === undefined) throw new Error("That card example does not exist.");
+      cardDraft = await template.read();
+      say(
+        `Copied “${template.label}” into the draft. Nothing is published until you press Publish.`,
+      );
       return;
     }
 
