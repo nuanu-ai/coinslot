@@ -209,7 +209,10 @@ The release script checks the origin by resolving the hostname directly to the
 host. That does not traverse public DNS and ingress. After the future first
 release of a channel, run these checks from a machine outside the deployment
 host and its ingress. They verify the public page markers and the two public
-JSON endpoints without reading any authenticated data.
+JSON endpoints without reading any authenticated data. Select `test` after
+the test channel's first release and `live` after the live channel's first
+release. Select `both` only after both first releases exist, when rechecking
+the two public paths together.
 
 ```bash
 set -euo pipefail
@@ -242,12 +245,30 @@ check_public_site() {
   done
 }
 
-check_public_site test.coinslot.nuanu.ai test
-check_public_site coinslot.nuanu.ai live
+read -r -p 'Released channel to check (test, live, or both): ' released_channel
+case "$released_channel" in
+  test)
+    check_public_site test.coinslot.nuanu.ai test
+    ;;
+  live)
+    check_public_site coinslot.nuanu.ai live
+    ;;
+  both)
+    check_public_site test.coinslot.nuanu.ai test
+    check_public_site coinslot.nuanu.ai live
+    ;;
+  *)
+    printf '%s\n' 'STOP: choose exactly test, live, or both.' >&2
+    exit 1
+    ;;
+esac
 ```
 
 These commands are a prepared acceptance check, not a statement that either
-hostname or ingress path currently answers.
+hostname or ingress path currently answers. A passing result is evidence only
+for public DNS, ingress, page markers, and endpoint responses observed by that
+outside machine. It does not prove which repository revision or deployment is
+current; retain the release and host evidence for those claims separately.
 
 ## The live site's first sale
 
