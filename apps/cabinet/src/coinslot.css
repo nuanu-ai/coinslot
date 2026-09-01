@@ -91,6 +91,24 @@ h1 {
   font-size: 13px;
 }
 
+/*
+ * The way out to the documentation, and the counterpart of the way out of it
+ * (portal/.vitepress/theme/coinslot.css, same class name). Both are muted
+ * until they are hovered, so that neither reads as one of the places the bar
+ * navigates to; both stop at one line, because a bar that reflows around a
+ * link is a bar that moves under the cursor. Everything else about it —
+ * no underline at rest, one on hover — is the cabinet's own convention for a
+ * link, taken from tokens.css the way the portal's half takes VitePress's.
+ */
+.way-out {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.way-out:hover {
+  color: var(--fg);
+}
+
 .lede {
   padding: 32px 32px 0;
   display: flex;
