@@ -233,10 +233,24 @@ for path in / /docs/ /cabinet/sign-in; do
     || fail "${path} does not say it is the ${channel} environment"
 done
 
-for path in /healthz /x402/catalog; do
+# The paths this probes travel with the release rather than with this script.
+#
+# The list used to be written here, and here is the one place a release
+# cannot update: this script is installed outside the checkout. On 2026-09-03
+# the storefront moved from /v0/items to /x402, every stack activated cleanly,
+# and this copy went on asking for /v0/catalog — a red release with nothing
+# wrong in it. So the candidate carries the list in deploy/smoke-paths, one
+# path per line, and a candidate that carries none is refused rather than
+# probed against a guess. A repair delivery therefore targets a commit from
+# that day onward, which is also the first commit whose paths this can know.
+readonly smoke_paths_file="${deployment}/deploy/smoke-paths"
+[[ -f "${smoke_paths_file}" ]] || fail 'the release carries no deploy/smoke-paths'
+while IFS= read -r path || [[ -n "${path}" ]]; do
+  [[ -z "${path}" || "${path}" == \#* ]] && continue
+  [[ "${path}" =~ ^/[A-Za-z0-9/._-]*$ ]] || fail "deploy/smoke-paths: not a path: ${path}"
   curl --disable -fsS --noproxy '*' --max-time 15 --resolve "${resolve}" "${base}${path}" >/dev/null \
     || fail "${path} did not answer"
-done
+done <"${smoke_paths_file}"
 
 # `origin-verified` and not `verified`, because that is what was proved. Every
 # curl above went to 10.20.10.20 with --resolve, which is the backend address

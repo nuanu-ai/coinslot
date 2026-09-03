@@ -1,0 +1,6 @@
+# The paths a release probes on the origin once the stack is up, one per
+# line. deploy/release.sh reads this file from the delivered candidate, so a
+# route that moves in the repository moves here in the same change — the
+# script on the host never has to learn the new spelling.
+/healthz
+/x402/catalog
