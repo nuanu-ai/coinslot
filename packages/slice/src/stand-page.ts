@@ -90,6 +90,13 @@ export interface PageState {
    * are different sentences and only one of them is true.
    */
   readonly keyEnvironment: Environment | null;
+  /**
+   * Why the merchant's subscription ended, where it has.
+   *
+   * A fatal worker problem stops the loop, and a page that went on showing a
+   * connection would be claiming a subscription this process no longer has.
+   */
+  readonly stopped: string | null;
   readonly said: SaidBack | null;
   readonly entries: readonly Entry[];
   readonly standing: Standing;
@@ -268,6 +275,9 @@ const catalogueTab = (state: PageState): string => {
     <div class="side">${word === null ? "Not read yet." : dot(word.tone, `this merchant is ${word.text}`)}${route("list_merchant_cards")}${form("read_cards", "", "Read again")}${switching}</div>
   </header>
   ${table}
+  <div class="body">
+    <p>Publishing goes through the SDK. Reading this list back, pausing a card and stopping all selling do not — the SDK does not carry them, they are the merchant's cabinet operations, and this console calls them over HTTP with the merchant key for that reason.</p>
+  </div>
 </section>
 <section class="panel">
   <header>
@@ -457,7 +467,7 @@ const ordersTab = (state: PageState): string => {
   const codes = Object.values(RECOMMENDED_REFUSAL_CODES);
   const owed =
     state.owed.length === 0
-      ? '<p class="empty">Nothing. An order appears here once the handler has accepted it and still owes the goods.</p>'
+      ? "<p class=\"empty\">Nothing owed. This is the gateway's own answer through <code>orders.list({ open: true })</code>, which is what a merchant's process reads after a restart — so it survives reconnecting, and what this console happens to hold in memory does not.</p>"
       : `<div class="scroller"><table>
 <thead><tr><th>Order</th><th>Product</th><th></th></tr></thead>
 <tbody>${state.owed
@@ -465,7 +475,7 @@ const ordersTab = (state: PageState): string => {
             (one) => `<tr>
     <td><div class="under mono">${escaped(one.id)}</div></td>
     <td>${escaped(one.merchantItemId)}</td>
-    <td class="ctl"><div class="actions">${form("deliver_owed", hidden("order_id", one.id), "Deliver now", true)}${form("refuse_owed", hidden("order_id", one.id), "Refuse")}</div></td>
+    <td class="ctl"><div class="actions">${form("deliver_owed", `${hidden("order_id", one.id)}${hidden("merchant_item_id", one.merchantItemId)}`, "Deliver now", true)}${form("refuse_owed", hidden("order_id", one.id), "Refuse")}</div></td>
   </tr>`,
           )
           .join("")}</tbody>
@@ -513,7 +523,7 @@ const ordersTab = (state: PageState): string => {
   }
 </section>
 <section class="panel">
-  <header><h2>Owed</h2><div class="side">accepted, not yet delivered</div></header>
+  <header><h2>Owed</h2><div class="side">${route("list_orders")} · open=true</div></header>
   ${owed}
 </section>
 <section class="panel">
@@ -805,6 +815,7 @@ export const renderPage = (state: PageState): string => {
     </div>
   </div>
   ${surface}
+  ${state.stopped === null ? "" : `<div class="surface live">The merchant's subscription has ended and this process is no longer being handed anything: ${escaped(state.stopped)} Reconnect to start a new one.</div>`}
   <div class="split">
     <div class="work">
       ${state.said === null ? "" : `<div class="said-back${state.said.problem ? " problem" : ""}">${escaped(state.said.words)}</div>`}

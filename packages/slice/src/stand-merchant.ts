@@ -6,9 +6,12 @@
  * person. The feed records what crossed this boundary; it neither replaces the
  * gateway's journal nor teaches the merchant key to any observer.
  *
- * What the screen reads back is `held` and `taken`: the orders waiting for a
- * person and the orders accepted with goods still owed. Everything else this
- * half does lands in the feed, which is the console's one shared thread.
+ * Everything a merchant's code can do here goes through the SDK, and that is
+ * the point of the file rather than a convenience: an outside engineer reading
+ * it must not learn to assemble by hand what the package already carries. So
+ * the orders on screen are `client.orders.list`, the calls that close them are
+ * the ones on the rows it returns, and the only calls in this console made with
+ * raw HTTP are the ones the SDK deliberately does not have.
  */
 
 import {
@@ -18,6 +21,7 @@ import {
   type Delivery,
   type HandlerAnswer,
   type LiveOrder,
+  type LiveOrderWithStatus,
   type Money,
   type OrderCallResponse,
   type PublishResult,
@@ -64,20 +68,34 @@ export interface HeldOrder {
 export interface StandMerchant {
   readonly moods: Moods;
   connected(): string | null;
+  /**
+   * Why the subscription ended, where it has.
+   *
+   * A fatal problem stops the loop. A console that went on saying "connected"
+   * after one would be claiming a subscription it no longer has.
+   */
+  stopped(): string | null;
   connect(baseUrl: string, apiKey: string): Promise<void>;
   disconnect(): Promise<void>;
   publish(card: CardInput): Promise<PublishResult>;
   learn(merchantItemId: string, result: ParamSpec): void;
-  /** Orders accepted and not yet delivered. */
-  readonly taken: ReadonlyMap<string, LiveOrder>;
+  /**
+   * This merchant's orders, and with `open` only those still owed something.
+   *
+   * Through `client.orders.list`, which is what the SDK offers for exactly
+   * this: the rows come back carrying the calls that close them, and the open
+   * ones are what a process reads after a restart. What this process happens to
+   * be holding in memory is not that list and does not survive a reconnection.
+   */
+  orders(open?: boolean): Promise<readonly LiveOrderWithStatus[]>;
   /** Orders the handler is holding open until a person answers. */
   readonly held: ReadonlyMap<string, HeldOrder>;
   /** Answers one held order. False when it is no longer being held. */
   answerHeld(orderId: string, answer: HeldAnswer): boolean;
-  /** Delivers an order taken on earlier, now. False when it is no longer owed. */
-  deliverOwed(orderId: string): Promise<boolean>;
-  /** Refuses an order taken on earlier. False when it is no longer owed. */
-  refuseOwed(orderId: string): Promise<boolean>;
+  /** Delivers an order taken on earlier, named by its own identifier. */
+  deliverOwed(orderId: string, merchantItemId: string): Promise<void>;
+  /** Refuses an order taken on earlier, named by its own identifier. */
+  refuseOwed(orderId: string): Promise<void>;
 }
 
 // The worker dispatches handlers serially, so waiting longer blocks every other
@@ -152,9 +170,47 @@ export const makeStandMerchant = (feed: Feed): StandMerchant => {
   let deliverySession = makeDeliverySession();
   let client: CoinslotClient | undefined;
   let address: string | null = null;
+  let stoppedBecause: string | null = null;
 
-  const deliveryFor = (merchantItemId: string): Delivery =>
-    moods.delivery ?? filledFrom(results.get(merchantItemId));
+  const connectedClient = (): CoinslotClient => {
+    if (client === undefined) {
+      throw new Error("Connect the stand merchant before asking it for anything.");
+    }
+    return client;
+  };
+
+  /**
+   * The calls that close one order, named by its identifier.
+   *
+   * `orders.forId` reaches no gateway — the SDK offers it for the process that
+   * kept an identifier and nothing else, which is exactly what a console
+   * pressing a button on a row has. The order object a handler was given works
+   * too, and stops existing the moment this process reconnects.
+   */
+  const calls = (orderId: string) => connectedClient().orders.forId(orderId);
+
+  /**
+   * What this handler hands over for one product.
+   *
+   * The goods are made from the card's own `result` declaration, which this
+   * console learns when it reads the merchant's cards. A card published
+   * somewhere else after that — from the cabinet, from another process — is one
+   * it has never read, and the fields it would fill are none. That case says so
+   * rather than delivering an empty object into a refusal nobody can explain:
+   * it is a gap in this console, not in the SDK, and it is one press of "Read
+   * again" on the catalogue away.
+   */
+  const deliveryFor = (merchantItemId: string): Delivery => {
+    if (moods.delivery !== null) return moods.delivery;
+    const declared = results.get(merchantItemId);
+    if (declared === undefined) {
+      feed.write(
+        "stand",
+        `This console has not read the card ${merchantItemId} declares, so it has nothing to deliver for it. Read the catalogue again, or paste the goods yourself.`,
+      );
+    }
+    return filledFrom(declared);
+  };
 
   /** Every answer the handler gives is something this side put on the wire. */
   const writeOrderAnswer = (
@@ -189,26 +245,29 @@ export const makeStandMerchant = (feed: Feed): StandMerchant => {
     return { error: `${result.error.code} — ${said}`, result };
   };
 
-  /** Hands over the goods for an order taken on earlier, and says how it went. */
-  const handOver = async (order: LiveOrder): Promise<void> => {
-    try {
-      const delivery = deliveryFor(order.merchant_item_id);
-      feed.sent("merchant", "The handler delivered the goods it had promised.", {
-        order_id: order.id,
-        merchant_item_id: order.merchant_item_id,
-        delivery,
-      });
-      const result = await order.deliver(delivery);
-      feed.got("merchant", "The gateway answered that delivery.", {
-        order_id: order.id,
-        ...answerRead(result),
-      });
-    } catch (error: unknown) {
-      feed.sent("merchant", "That promised delivery could not be completed.", {
-        order_id: order.id,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
+  /**
+   * Hands over the goods for an order taken on earlier, and says how it went.
+   *
+   * No try/catch, and that is deliberate. The SDK's transport says in its own
+   * header that nothing there throws: a call that did not get through comes
+   * back as an answer saying so. A catch around it would teach a reader of this
+   * file — which is meant to read like a merchant's own code — to write a
+   * handler for an exception that never arrives, and no branch on the answer
+   * that always does.
+   */
+  const handOver = async (orderId: string, merchantItemId: string): Promise<void> => {
+    const delivery = deliveryFor(merchantItemId);
+    feed.sent("merchant", "The handler delivered the goods it had promised.", {
+      order_id: orderId,
+      merchant_item_id: merchantItemId,
+      delivery,
+    });
+    const result = await calls(orderId).deliver(delivery);
+    feed.got(
+      "merchant",
+      result.ok ? "The gateway took that delivery." : "The gateway would not take that delivery.",
+      { order_id: orderId, ...answerRead(result) },
+    );
   };
 
   const deliverLater = (order: LiveOrder): void => {
@@ -218,7 +277,7 @@ export const makeStandMerchant = (feed: Feed): StandMerchant => {
       if (session.cancelling || taken.get(order.id) !== order) {
         return;
       }
-      const inFlight = handOver(order);
+      const inFlight = handOver(order.id, order.merchant_item_id);
       session.inFlight.add(inFlight);
       void inFlight.then(() => session.inFlight.delete(inFlight));
     }, moods.deliverAfterMs);
@@ -371,14 +430,23 @@ export const makeStandMerchant = (feed: Feed): StandMerchant => {
       feed.got("gateway", "The gateway sent an event about an order.", event);
     });
 
+    // Eleven kinds arrive here and exactly one of them is the gateway refusing
+    // what this handler sent. A poll that never got through, a handler that
+    // threw, an answer this SDK would not send, a dialect mismatch that stops
+    // the loop — a console calling all of them "the gateway refused" is wrong
+    // about ten. The SDK already writes one sentence a person can act on, so
+    // that sentence is the line; the kind travels beside it as the fact it is,
+    // and a fatal one ends the subscription on screen rather than leaving the
+    // top of the page claiming a loop that has stopped.
     fresh.on("problem", (problem) => {
-      // Named under `error` as well as carried whole: a worker problem is the
-      // gateway refusing what this handler sent, and the log reads a refusal
-      // off that field. Without it the one line that says the delivery was
-      // rejected would sit in the stream looking like every other line.
-      feed.got("gateway", `The gateway refused what the handler sent: ${problem.kind}.`, {
+      if (problem.fatal && stoppedBecause === null) {
+        stoppedBecause = problem.message;
+      }
+      feed.got("gateway", problem.message, {
         error: problem.kind,
-        problem,
+        fatal: problem.fatal,
+        ...(problem.subject === undefined ? {} : { subject: problem.subject }),
+        ...(problem.cause === undefined ? {} : { cause: String(problem.cause) }),
       });
     });
   };
@@ -394,9 +462,9 @@ export const makeStandMerchant = (feed: Feed): StandMerchant => {
 
   return {
     moods,
-    taken,
     held,
     connected: () => address,
+    stopped: () => stoppedBecause,
     answerHeld(orderId, answer) {
       const resolve = answering.get(orderId);
       if (resolve === undefined) return false;
@@ -404,33 +472,38 @@ export const makeStandMerchant = (feed: Feed): StandMerchant => {
       resolve(answer);
       return true;
     },
-    async deliverOwed(orderId) {
-      const order = taken.get(orderId);
-      if (order === undefined) return false;
-      await handOver(order);
-      return true;
+    async orders(open) {
+      const listed = await connectedClient().orders.list(
+        open === true ? { open: true } : undefined,
+      );
+      feed.got(
+        "merchant",
+        open === true
+          ? "Read the orders still owed something, through the SDK."
+          : "Read this merchant's orders, through the SDK.",
+        { open: open === true, orders: listed.length },
+      );
+      return listed;
+    },
+    async deliverOwed(orderId, merchantItemId) {
+      await handOver(orderId, merchantItemId);
     },
     async refuseOwed(orderId) {
-      const order = taken.get(orderId);
-      if (order === undefined) return false;
-      try {
-        const result = await order.refuse(moods.refusal);
-        feed.sent("merchant", "The handler refused an order it had already accepted.", {
-          order_id: orderId,
-          refusal: moods.refusal,
-          ...answerRead(result),
-        });
-      } catch (error: unknown) {
-        feed.sent("merchant", "That refusal could not be completed.", {
-          order_id: orderId,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-      return true;
+      feed.sent("merchant", "The handler refused an order it had already accepted.", {
+        order_id: orderId,
+        refusal: moods.refusal,
+      });
+      const result = await calls(orderId).refuse(moods.refusal);
+      feed.got(
+        "merchant",
+        result.ok ? "The gateway took that refusal." : "The gateway would not take that refusal.",
+        { order_id: orderId, ...answerRead(result) },
+      );
     },
     async connect(baseUrl, apiKey) {
       await this.disconnect();
       deliverySession = makeDeliverySession();
+      stoppedBecause = null;
       const fresh = createClient({ baseUrl, apiKey });
       register(fresh);
       await fresh.start();

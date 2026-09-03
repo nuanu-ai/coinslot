@@ -28,7 +28,6 @@ import {
   type Delivery,
   MerchantCardListSchema,
   type Money,
-  OrderListSchema,
   type OrderWithStatus,
   type ParamSpec,
   type PublicCard,
@@ -48,7 +47,6 @@ import {
 } from "./stand-buyer.js";
 import {
   listCards,
-  listOrders,
   listReceipts,
   pauseCard,
   pauseSelling,
@@ -94,6 +92,7 @@ let keyEnvironment: Environment | null = null;
 let cards: ReturnType<typeof MerchantCardListSchema.parse>["cards"] = [];
 let selling: SellingState | null = null;
 let orders: readonly OrderWithStatus[] = [];
+let owed: readonly { readonly id: string; readonly merchant_item_id: string }[] = [];
 let ordersRead = false;
 let receipts: readonly Receipt[] = [];
 let receiptsRead = false;
@@ -226,27 +225,19 @@ const readCards = async (generation: number): Promise<void> => {
 };
 
 /**
- * The merchant's own list of orders.
+ * The merchant's own orders, through the SDK that carries them.
  *
- * The tab used to show only what this console was holding — an order waiting
- * for a person, an order accepted and still owed — and both are momentary. A
- * standing answer of "deliver at once" put an order through in one breath and
- * left the merchant's seat with nothing on it, which is not what a merchant's
- * screen does.
+ * Two lists, because the SDK draws the line: everything, for the table a
+ * merchant reads their sales off, and `open` for the ones still owed something,
+ * which the SDK's own words call what a process reads after a restart. The
+ * console used to show what it happened to be holding in memory instead, and
+ * that is empty after a reconnection while the gateway still has open orders.
  */
 const readOrders = async (generation: number): Promise<void> => {
-  const answer = await listOrders(reaching());
+  const [all, still] = await Promise.all([merchant.orders(), merchant.orders(true)]);
   if (!connectionIsCurrent(generation)) return;
-  const parsed = OrderListSchema.safeParse(answer.body);
-  if (!parsed.success) {
-    feed.got("gateway", "The order list could not be parsed.", {
-      status: answer.status,
-      body: answer.body,
-      issues: parsed.error.issues,
-    });
-    return;
-  }
-  orders = parsed.data.orders;
+  orders = all;
+  owed = still;
   ordersRead = true;
 };
 
@@ -832,11 +823,11 @@ const doAction = async (form: URLSearchParams): Promise<void> => {
     case "deliver_owed":
     case "refuse_owed": {
       const orderId = form.get("order_id") ?? "";
-      const done =
-        action === "deliver_owed"
-          ? await merchant.deliverOwed(orderId)
-          : await merchant.refuseOwed(orderId);
-      if (!done) throw new Error("That order is no longer owed anything.");
+      if (action === "deliver_owed") {
+        await merchant.deliverOwed(orderId, form.get("merchant_item_id") ?? "");
+      } else {
+        await merchant.refuseOwed(orderId);
+      }
       await readOrders(connectionGeneration);
       return;
     }
@@ -973,6 +964,7 @@ const drawTab = (tab: Tab): string =>
     tab,
     address: merchant.connected(),
     keyEnvironment,
+    stopped: merchant.stopped(),
     said,
     entries: feed.entries(),
     standing: {
@@ -991,10 +983,7 @@ const drawTab = (tab: Tab): string =>
     moods: merchant.moods,
     goodsDraft,
     held: [...merchant.held.values()],
-    owed: [...merchant.taken.values()].map((one) => ({
-      id: one.id,
-      merchantItemId: one.merchant_item_id,
-    })),
+    owed: owed.map((one) => ({ id: one.id, merchantItemId: one.merchant_item_id })),
     orders,
     ordersRead,
     receipts,

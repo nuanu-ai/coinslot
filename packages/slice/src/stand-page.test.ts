@@ -17,6 +17,7 @@ const connected = (keyEnvironment: PageState["keyEnvironment"]): string =>
     tab: "agent",
     address: "http://localhost:8080",
     keyEnvironment,
+    stopped: null,
     said: null,
     entries: [],
     standing: { order: "deliver", quote: "price", held: 0 },

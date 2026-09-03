@@ -5,6 +5,12 @@
  * SDK subscription.  These calls use the contract table so their addresses do
  * not become a second, drifting surface.
  *
+ * What is here is only what the SDK does not carry, and that boundary is the
+ * point: an order list is not here, because `client.orders.list` exists and a
+ * console assembling that request by hand would teach an outside engineer to do
+ * the same. Cards, receipts and the two selling switches are the merchant's
+ * cabinet operations, which the SDK deliberately does not have.
+ *
  * The fetch is handed in rather than taken from the global, and that is the
  * whole of why: the console records what crosses its edges by wrapping the
  * fetch, and a call that reached around it left only its answer in the log —
@@ -68,9 +74,6 @@ export const pauseSelling = (reach: Reach): Promise<GatewayAnswer> =>
 
 export const resumeSelling = (reach: Reach): Promise<GatewayAnswer> =>
   call(reach, API_ROUTES.resume_selling);
-
-export const listOrders = (reach: Reach): Promise<GatewayAnswer> =>
-  call(reach, API_ROUTES.list_orders);
 
 export const listReceipts = (reach: Reach): Promise<GatewayAnswer> =>
   call(reach, API_ROUTES.list_receipts);

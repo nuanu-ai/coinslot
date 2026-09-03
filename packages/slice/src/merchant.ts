@@ -15,8 +15,12 @@
  * later through the explicit `deliver` call, which is the merchant's to make.
  * What it keeps for that later call is the order itself rather than its
  * identifier — the calls that close an order live on the order — and what it
- * delivers is a function of the order's own parameters, held to the card's
- * declared result by the SDK before it leaves.
+ * delivers is a function of the order's own parameters. Nothing on this side
+ * holds those goods to the card: the SDK checks that an answer has the shape an
+ * answer has, and it has never seen the card. The card is the gateway's, and so
+ * is the check — a delivery that is not what the card declares comes back
+ * refused under `delivery_does_not_match_card`, which is a problem this
+ * merchant is told about rather than an exception here.
  *
  * It records what it was told without doing anything — the events, and any
  * problem the SDK reported — so a test can assert not only what happened but

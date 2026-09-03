@@ -12,9 +12,11 @@
  *
  * The cards are held to the real `CardSchema` the moment they are published, so
  * anything wrong with one of them fails the merchant's own publish call rather
- * than this file. The goods are held to the same card's `result` declaration by
- * the SDK before they ever reach an agent, which is why `goodsFor` returns
- * exactly the fields each card declares and no others.
+ * than this file. `goodsFor` returns exactly the fields each card declares and
+ * no others because this file writes it that way, and not because anything on
+ * the merchant's side would stop it: the check against the card's `result` is
+ * the gateway's, on the far end of the delivery, and it comes back as a refusal
+ * rather than as an error here.
  */
 
 import type { Card, Delivery } from "@nuanu-ai/coinslot-contracts";
