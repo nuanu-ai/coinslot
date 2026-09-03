@@ -466,6 +466,58 @@ describe("loadConfig", () => {
     );
   });
 
+  it("comes up with no test buyer and with ceilings on what one may spend", () => {
+    // Nothing is bought unless somebody configures a wallet to buy with, and
+    // the two ceilings exist whether or not anybody set them: a stack that
+    // forgot them is not a stack with no limit.
+    const config = loadConfig(required);
+
+    expect(config.testPurchase).toStrictEqual({
+      buyerKey: null,
+      maxUsd: "5.00",
+      perHour: 5,
+    });
+
+    const set = loadConfig({
+      ...required,
+      TEST_PURCHASE_BUYER_KEY: `0x${"11".repeat(32)}`,
+      TEST_PURCHASE_MAX_USD: "0.50",
+      TEST_PURCHASE_PER_HOUR: "2",
+    });
+    expect(set.testPurchase).toStrictEqual({
+      buyerKey: `0x${"11".repeat(32)}`,
+      maxUsd: "0.50",
+      perHour: 2,
+    });
+  });
+
+  it("refuses a test buyer's key that is not one, and reads nothing as no buyer", () => {
+    // The same rule PAY_TO_ADDRESS keeps and for the same reason: a truncated
+    // paste that starts the process is a failure that arrives at a merchant's
+    // first test purchase, where it looks like the feature is broken.
+    expect(refusalFor({ TEST_PURCHASE_BUYER_KEY: "0xnot-a-key" })).toContain(
+      "TEST_PURCHASE_BUYER_KEY",
+    );
+    expect(refusalFor({ TEST_PURCHASE_BUYER_KEY: `0x${"11".repeat(31)}` })).toContain(
+      "TEST_PURCHASE_BUYER_KEY",
+    );
+    // Compose's spelling of "not for this stack" is the name with nothing after
+    // it, and it has to read as the absence rather than as a malformed key.
+    expect(
+      loadConfig({ ...required, TEST_PURCHASE_BUYER_KEY: "" }).testPurchase.buyerKey,
+    ).toBeNull();
+  });
+
+  it("refuses a ceiling on a test purchase that is not an amount, or is nothing at all", () => {
+    // A ceiling of zero buys nothing and refuses everything, which is a
+    // deployment that looks configured and has the feature switched off.
+    expect(refusalFor({ TEST_PURCHASE_MAX_USD: "five dollars" })).toContain(
+      "TEST_PURCHASE_MAX_USD",
+    );
+    expect(refusalFor({ TEST_PURCHASE_MAX_USD: "0" })).toContain("TEST_PURCHASE_MAX_USD");
+    expect(refusalFor({ TEST_PURCHASE_PER_HOUR: "0" })).toContain("TEST_PURCHASE_PER_HOUR");
+  });
+
   it("refuses a deadline that is not a whole number of milliseconds above zero", () => {
     expect(() => loadConfig({ ...required, QUOTE_RESPONSE_MS: "0" })).toThrowError(
       /QUOTE_RESPONSE_MS: must be a whole number of milliseconds above zero/,
