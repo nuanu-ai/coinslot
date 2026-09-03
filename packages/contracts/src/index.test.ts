@@ -134,7 +134,7 @@ describe("@nuanu-ai/coinslot-contracts", () => {
     // clock at 1 (ADR-0006). It stands at 2 because the publish answer changed
     // shape: a strict reader built against 1 cannot parse the envelope that
     // replaced it, and it has to stop at the handshake rather than report a
-    // published card as an answer it could not read (ADR-0021).
+    // published card as an answer it could not read (ADR-0022).
     expect(CONTRACT_VERSION).toBe("2");
 
     // Contracts is the only package the SDK drags along, so its dependency

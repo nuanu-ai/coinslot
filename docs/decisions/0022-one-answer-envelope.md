@@ -1,4 +1,4 @@
-# 0021. One envelope for every answer, and two words for what went wrong
+# 0022. One envelope for every answer, and two words for what went wrong
 
 Date: 2026-09-01
 Status: accepted
