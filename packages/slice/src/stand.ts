@@ -667,9 +667,26 @@ const doAction = async (form: URLSearchParams): Promise<void> => {
     case "ask_price": {
       const on = requireExchange();
       const buyer = buyerFor();
+      const askedAtPurchase =
+        publicItems.find((one) => one.id === on.itemId)?.price_checked_at_purchase === true;
       beat(on, "agent", "Asked what this card costs, without opening anything.", "GET");
       agentCall(on, async () => {
         recordAnswer(on, await buyer.askPrice(on.itemId));
+        // The console says this, and the wire does not. A challenge for a card
+        // alone quotes the published price and does not ask the merchant, and
+        // the gateway's own line beside it is the ecosystem's boilerplate
+        // (ADR-0021). Explaining that to a person is this console's job, and
+        // the flag it reads is the one the catalogue publishes for exactly this.
+        if (askedAtPurchase) {
+          beat(
+            on,
+            "gateway",
+            "That is the price this card was published at. Its price is asked of the merchant when an order opens, so a purchase settles its own and can differ.",
+            "",
+            undefined,
+            "now",
+          );
+        }
       });
       return;
     }

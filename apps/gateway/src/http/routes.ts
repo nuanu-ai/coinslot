@@ -616,7 +616,18 @@ async function purchase(
           payoutWallet: offered.payoutWallet,
         },
         "GET",
-        "this resource is paid for; the price here is the published one and a purchase is priced when it is made",
+        // What every other paid resource on this shelf says here, and no more.
+        // Measured 2026-09-01 across eighteen hosts in the public catalogue
+        // (docs/research/25-what-the-challenge-says.md): fourteen of the
+        // fifteen challenges that came back carry an error line, and thirteen
+        // of those are the words below. Nobody puts anything about their
+        // product in it, and nothing reads it — the catalogue's own record
+        // drops the field. What used to be here explained that this price is
+        // the published one and a purchase is priced when it is made; that is
+        // true, has no reader in this field, and is not load-bearing, because
+        // an agent signs against the requirements of the call it actually
+        // makes and its own ceiling catches a difference. ADR-0021.
+        "payment required",
       ),
     );
     return written(response, PAYMENT_REQUIRED, {});
