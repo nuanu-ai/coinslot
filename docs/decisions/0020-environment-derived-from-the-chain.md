@@ -5,10 +5,11 @@ Status: accepted
 
 ## Context
 
-The one deployment we run becomes two. A test site takes every green commit on
-`main` and settles on Base Sepolia with test funds; a live site is delivered by
-a version tag and settles on Base mainnet, where the money is real. They are
-one image out of one repository, and all that separates them is configuration.
+The one deployment we run becomes two. A test site settles on Base Sepolia with
+test funds; a live site settles on Base mainnet, where the money is real. They
+are one image out of one repository, and all that separates them is
+configuration. ADR-0016 owns how commits reach those sites and records the
+current delivery pause.
 
 Something has to tell one from the other, because the difference leaves the
 building: it is the prefix on every key a merchant is issued, the `test` field

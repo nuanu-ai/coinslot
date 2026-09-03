@@ -81,8 +81,8 @@ echo
 echo "What the tarballs would ship"
 # An allowlist and not a list of things we fear. Naming the bad files would
 # pass anything nobody thought of — a stray `.env`, a `node_modules`, the
-# sources — whereas `dist` plus the manifest is the entire agreed surface, so
-# anything else appearing is the finding.
+# sources — whereas `dist`, the manifest and the legal notices are the entire
+# agreed surface, so anything else appearing is the finding.
 #
 # The two named patterns are inside that surface rather than outside it, and
 # that is why they need naming as well. `files` ships `dist` and only `dist`,
@@ -92,10 +92,14 @@ echo "What the tarballs would ship"
 # exclusions in tsconfig.build.json.
 for tarball in "$scratch"/nuanu-ai-coinslot-*.tgz; do
   unexpected="$(tar -tzf "$tarball" |
-    grep -vE '^package/(package\.json|README\.md|dist/)' || true)"
+    grep -vE '^package/(package\.json|README\.md|LICENSE|NOTICE|dist/)' || true)"
   compiled_tests="$(tar -tzf "$tarball" | grep -E '\.test\.|/testing/' || true)"
   check "$(basename "$tarball") ships its build and nothing else" "" \
     "${unexpected}${compiled_tests}"
+  contains "$(basename "$tarball") carries the Apache license" "Apache License" \
+    "$(tar -xOzf "$tarball" package/LICENSE)"
+  contains "$(basename "$tarball") attributes Nuanu AI" "Nuanu AI" \
+    "$(tar -xOzf "$tarball" package/NOTICE)"
 done
 
 contains "the command is in it" "package/dist/cli.js" \

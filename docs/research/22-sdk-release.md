@@ -6,10 +6,9 @@ commit:
 - `@nuanu-ai/coinslot-contracts`, because every SDK install resolves it at runtime;
 - `@nuanu-ai/coinslot`, whose version must be the version written in the tag.
 
-The workflow is `.github/workflows/publish-sdk.yml`. It runs on the Comino
-self-hosted pool, accepts GitHub's OIDC token through `id-token: write`, and
-keeps npm provenance off because the source repository is private. It carries
-no npm credential.
+The workflow is `.github/workflows/publish-sdk.yml`. It runs on a GitHub-hosted
+runner, accepts GitHub's OIDC token through `id-token: write`, and publishes
+public provenance. It carries no npm credential.
 
 ## Prepare a release
 
@@ -30,10 +29,10 @@ packs both packages, installs them with npm outside the workspace, compiles a
 strict TypeScript consumer, imports the SDK with Node, and runs the documented
 command with positive and negative cards.
 
-Commit and push that prepared version, then wait for the `CI` workflow to deploy
-that exact commit. Before making the tag, run the publish workflow manually on
-`main` with `release_tag=sdk-v0.1.0` and `dry_run=true`. For SDK `0.1.0`, the
-normal release after the package names have been bootstrapped starts with:
+Commit and push that prepared version, then wait for the `CI` workflow to pass
+on that exact commit. Before making the tag, run the publish workflow manually
+on `main` with `release_tag=sdk-v0.1.0` and `dry_run=true`. For SDK `0.1.0`,
+the normal release after the package names have been bootstrapped starts with:
 
 ```sh
 git tag sdk-v0.1.0
@@ -46,16 +45,16 @@ exist.
 
 The workflow refuses a tag whose version differs from the SDK manifest, a tag
 whose commit is not the commit being built, and a tagged commit that is not
-reachable from `origin/main`. It also waits for the `CI` workflow, including
-the deploy job, to succeed for that exact commit. Stage 0 publishes stable
-versions only and assigns them npm dist-tag `latest`; prereleases are refused
-instead of deriving another public channel from an unchecked name.
+reachable from `origin/main`. It also waits for the `CI` workflow to succeed
+for that exact commit. Stage 0 publishes stable versions only and assigns them
+npm dist-tag `latest`; prereleases are refused instead of deriving another
+public channel from an unchecked name.
 
 ## Bootstrap the two package names once
 
 npm can attach a trusted publisher only after a package name exists. The first
 release therefore needs one authenticated publication from the exact commit
-after its CI and deployment have succeeded. Use an npm account that owns the
+after its CI has succeeded. Use an npm account that owns the
 `nuanu-ai` organization and requires 2FA. Create the release tag locally but do
 not push it yet, check that it names `HEAD`, and let Changesets publish
 contracts before the SDK:
@@ -97,7 +96,8 @@ The equivalent npm website settings are:
 - allowed action: `npm publish`.
 
 Then set package publishing access to require 2FA and disallow ordinary tokens.
-Every later `sdk-v*` tag publishes through OIDC on Comino without an npm secret.
+Every later `sdk-v*` tag publishes through OIDC on a GitHub-hosted runner
+without an npm secret.
 
 ## Acceptance
 

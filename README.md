@@ -254,7 +254,7 @@ pnpm check:decisions
 ```
 
 That is the gate before a push, and CI runs the same on every push and pull
-request. A commit on `main` that passes it is the commit that gets deployed.
+request. Automatic test and live delivery is paused during the public cutover.
 
 Three more cost something and are kept apart for that reason:
 
@@ -283,3 +283,9 @@ page and the behavior it describes cannot drift apart quietly.
 
 Engineering artifacts are written in English; research and product documents in
 the language of their readers, which is why some of the above is in Russian.
+
+## License
+
+Coinslot is licensed under the Apache License 2.0. Distributions must retain
+the notices required by that license, including the attribution to Nuanu AI in
+[`NOTICE`](NOTICE). See [`LICENSE`](LICENSE) for the license terms.

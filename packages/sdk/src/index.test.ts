@@ -141,12 +141,14 @@ describe("@nuanu-ai/coinslot", () => {
     expect(manifest.name).toBe("@nuanu-ai/coinslot");
     expect(manifest.private).toBeUndefined();
     expect(manifest.version).not.toBe("0.0.0");
-    expect(manifest.files).toStrictEqual(["dist"]);
-    expect(manifest.license).toBe("UNLICENSED");
+    expect(manifest.files).toStrictEqual(["dist", "LICENSE", "NOTICE"]);
+    expect(manifest.license).toBe("Apache-2.0");
     expect(manifest.repository).toBeDefined();
     expect(manifest.engines?.node).toBeDefined();
     expect(manifest.scripts?.prepack).toBeDefined();
     expect(manifest.publishConfig?.access).toBe("public");
     expect(existsSync(new URL("../README.md", import.meta.url))).toBe(true);
+    expect(existsSync(new URL("../LICENSE", import.meta.url))).toBe(true);
+    expect(readFileSync(new URL("../NOTICE", import.meta.url), "utf8")).toContain("Nuanu AI");
   });
 });

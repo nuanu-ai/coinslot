@@ -12,7 +12,7 @@
     "usdc"
   ],
   "homepage": "https://coinslot.nuanu.ai/docs/",
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/nuanu-ai/coinslot.git",
@@ -22,7 +22,9 @@
     "node": ">=24"
   },
   "files": [
-    "dist"
+    "dist",
+    "LICENSE",
+    "NOTICE"
   ],
   "exports": {
     ".": "./src/index.ts"

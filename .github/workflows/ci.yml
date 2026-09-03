@@ -13,23 +13,20 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  # A main run may already be replacing containers. Let it finish, then deliver
-  # the newer commit; pull-request feedback may still discard an obsolete run.
+  # Keep main and tag evidence complete; pull-request feedback may discard an
+  # obsolete run.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# The jobs run on the org's own comino build pool: GitHub-hosted runners are
-# unavailable on this org's Actions billing. The repo is private, so
-# pull_request jobs only ever run code from people who already have write
-# access to this repository.
+# Public pull requests run only on GitHub-hosted infrastructure. No job in this
+# repository receives a route or credential that can deliver to test or live.
 jobs:
   # These checks share one checkout and one install. Four matrix jobs used to
-  # spend almost nine minutes contending over the same self-hosted tool cache
-  # while the checks themselves took seconds, and setup-node could ask pnpm for
-  # its store before Corepack had made pnpm available. One gate has one answer:
-  # this exact commit is fit to release, or it is not.
+  # spend almost nine minutes doing setup while the checks themselves took
+  # seconds. One gate has one answer: this exact commit is fit to release, or it
+  # is not.
   gate:
     name: gate
-    runs-on: [self-hosted, comino]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
 
@@ -37,9 +34,7 @@ jobs:
         with:
           node-version: 24
           # setup-node v5 otherwise infers pnpm from packageManager and tries to
-          # cache it before the next step has enabled Corepack. That race made
-          # unchanged commits alternate between a green gate and "Unable to
-          # locate executable file: pnpm".
+          # cache it before the next step has enabled Corepack.
           package-manager-cache: false
 
       # pnpm arrives through Corepack; its version is taken from packageManager
@@ -55,10 +50,8 @@ jobs:
       # source tree including tests and emits nothing.
       - run: pnpm build
 
-      # test:db runs before activation on the deployment host, against its own
-      # `coinslot_test` database. The Comino runners have no Docker executable,
-      # so a service container here fails before the first step and proves
-      # nothing about a migration.
+      # test:db stays outside this free, deterministic gate. It runs against the
+      # deployment host's own `coinslot_test` database before activation.
 
   # The portal is a job of its own because it is a project of its own: a
   # separate vitepress build with its own lockfile, deliberately outside the
@@ -66,7 +59,7 @@ jobs:
   # code. Folding it into the gate would install it twice and undo that.
   portal:
     name: portal
-    runs-on: [self-hosted, comino]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
 
@@ -97,80 +90,7 @@ jobs:
   # The decision log needs neither Node nor dependencies — only bash and files.
   decisions:
     name: decisions
-    runs-on: [self-hosted, comino]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - run: ./scripts/check-decisions.sh
-
-  deploy-test:
-    name: deliver test.coinslot.nuanu.ai
-    needs: [gate, portal, decisions]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: [self-hosted, comino]
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Deliver the green commit to the test stack
-        env:
-          DEPLOY_KEY: ${{ secrets.COINSLOT_TEST_SSH_KEY }}
-        run: |
-          set -euo pipefail
-          key="${RUNNER_TEMP}/coinslot-preview-key"
-          known_hosts="${RUNNER_TEMP}/coinslot-known-hosts"
-          trap 'rm -f "${key}" "${known_hosts}"' EXIT
-          install -m 600 /dev/null "${key}"
-          printf '%s\n' "${DEPLOY_KEY}" > "${key}"
-          unset DEPLOY_KEY
-          printf '%s\n' '10.20.10.20 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEQIT814RTQJApGFR91u2TyN5o9WMePvqREYgOjNWSsO' > "${known_hosts}"
-          ssh_options=(-i "${key}" -o BatchMode=yes -o ConnectTimeout=10 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=${known_hosts}")
-
-          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
-          # shellcheck disable=SC2029
-          git archive --format=tar HEAD | \
-            ssh "${ssh_options[@]}" dmitry@10.20.10.20 "release-test ${GITHUB_SHA}"
-
-  deploy-live:
-    name: deliver coinslot.nuanu.ai
-    # The same three jobs run on the tag's own commit. The portal ships with
-    # this commit, so a portal whose examples went missing is not a commit fit
-    # to release on either channel.
-    needs: [gate, portal, decisions]
-    # A `push` event runs the workflow file from the pushed ref, so a tag on an
-    # unmerged branch runs that branch's workflow with that branch's access to
-    # this secret. The decision is to keep the simple tag deploy: the actor
-    # that rule would guard against is somebody holding write access to this
-    # repository, of whom there is one, and who can already put a commit on
-    # `main`. When there are users, this is the paragraph to reopen.
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    runs-on: [self-hosted, comino]
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Deliver the tagged commit to the live stack
-        env:
-          # A different secret and a different forced command. The key that can
-          # deploy the test site cannot deploy the live one.
-          DEPLOY_KEY: ${{ secrets.COINSLOT_LIVE_SSH_KEY }}
-        run: |
-          set -euo pipefail
-          key="${RUNNER_TEMP}/coinslot-live-key"
-          known_hosts="${RUNNER_TEMP}/coinslot-known-hosts"
-          trap 'rm -f "${key}" "${known_hosts}"' EXIT
-          install -m 600 /dev/null "${key}"
-          printf '%s\n' "${DEPLOY_KEY}" > "${key}"
-          unset DEPLOY_KEY
-          printf '%s\n' '10.20.10.20 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEQIT814RTQJApGFR91u2TyN5o9WMePvqREYgOjNWSsO' > "${known_hosts}"
-          ssh_options=(-i "${key}" -o BatchMode=yes -o ConnectTimeout=10 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=${known_hosts}")
-
-          tag="${GITHUB_REF#refs/tags/}"
-          if [[ ! "${tag}" =~ ^v[0-9A-Za-z.+-]{1,64}$ ]]; then
-            printf '%s\n' 'coinslot release refused: live tag must match ^v[0-9A-Za-z.+-]{1,64}$' >&2
-            exit 64
-          fi
-          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
-          # The tag and the green SHA intentionally expand here; the server
-          # receives only the resulting `release-live <tag> <sha>` forced
-          # command.
-          # shellcheck disable=SC2029
-          git archive --format=tar HEAD | \
-            ssh "${ssh_options[@]}" dmitry@10.20.10.20 "release-live ${tag} ${GITHUB_SHA}"

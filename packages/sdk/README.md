@@ -130,6 +130,6 @@ hear about that and about everything else that did not get through.
 
 ## License
 
-This package is `UNLICENSED`. Publication on npm makes the package installable;
-it does not grant a license to copy, modify or redistribute it outside an
-agreement with Coinslot.
+Licensed under the Apache License 2.0. Distributions that include this package
+must retain the notices required by that license, including the attribution to
+Nuanu AI in `NOTICE`.

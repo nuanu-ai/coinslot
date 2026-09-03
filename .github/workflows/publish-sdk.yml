@@ -29,7 +29,7 @@ concurrency:
 jobs:
   publish:
     if: github.actor != 'github-actions[bot]'
-    runs-on: [self-hosted, comino]
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
@@ -58,7 +58,7 @@ jobs:
             test "$GITHUB_SHA" = "$(git rev-parse origin/main)"
           fi
 
-      - name: Require the tagged commit to be deployed
+      - name: Require the tagged commit to pass CI
         if: env.DRY_RUN != 'true'
         uses: actions/github-script@v8
         with:
@@ -78,7 +78,7 @@ jobs:
 
               if (run?.status === "completed") {
                 if (run.conclusion === "success") {
-                  core.info(`CI and deploy succeeded for ${context.sha} in run ${run.id}`);
+                  core.info(`CI succeeded for ${context.sha} in run ${run.id}`);
                   return;
                 }
                 core.setFailed(`CI run ${run.id} concluded ${run.conclusion} for ${context.sha}`);
@@ -89,7 +89,7 @@ jobs:
               await new Promise((resolve) => setTimeout(resolve, 15_000));
             }
 
-            core.setFailed(`Timed out waiting for CI and deploy of ${context.sha}`);
+            core.setFailed(`Timed out waiting for CI on ${context.sha}`);
 
       - name: Set up Node.js
         uses: actions/setup-node@v5
@@ -102,8 +102,8 @@ jobs:
         run: corepack enable
 
       # This is the version proven by the adjacent Mercuryo Agent Pay release
-      # workflow on the same runner pool. Node's bundled npm is not the release
-      # authority and may be older than npm Trusted Publishing support.
+      # workflow. Node's bundled npm is not the release authority and may be
+      # older than npm Trusted Publishing support.
       - name: Install npm with Trusted Publishing support
         run: npm install -g npm@11.6.2
 
@@ -140,9 +140,7 @@ jobs:
       - name: Publish unpublished package versions
         if: env.DRY_RUN != 'true'
         env:
-          # The source repository is private, so npm cannot issue a public
-          # provenance statement for it. Authentication still uses GitHub OIDC.
-          NPM_CONFIG_PROVENANCE: 'false'
+          NPM_CONFIG_PROVENANCE: 'true'
         run: pnpm exec changeset publish --tag "${{ steps.release.outputs.dist_tag }}"
 
       - name: Verify the registry accepted the exact release
