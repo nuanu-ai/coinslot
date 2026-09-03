@@ -13,8 +13,6 @@ import {
   ORDER_STATUSES,
   ReceiptOutcomeSchema,
   SELLING_STATES,
-  TEST_PURCHASE_OUTCOMES,
-  TEST_PURCHASE_STEPS,
 } from "@nuanu-ai/coinslot-contracts";
 import { describe, expect, it } from "vitest";
 import {
@@ -24,8 +22,6 @@ import {
   needsAttention,
   ORDER_WORDS,
   SELLING_WORDS,
-  TEST_PURCHASE_STEP_WORDS,
-  TEST_PURCHASE_WORDS,
 } from "./words.js";
 
 describe("the words a merchant reads", () => {
@@ -55,23 +51,6 @@ describe("the words a merchant reads", () => {
     for (const selling of SELLING_STATES) {
       expect(SELLING_WORDS[selling]?.text, selling).toBeTruthy();
     }
-  });
-
-  it("has one for every ending a walked test purchase can have, and every door it goes through", () => {
-    for (const outcome of TEST_PURCHASE_OUTCOMES) {
-      expect(TEST_PURCHASE_WORDS[outcome]?.text, outcome).toBeTruthy();
-    }
-    for (const step of TEST_PURCHASE_STEPS) {
-      expect(TEST_PURCHASE_STEP_WORDS[step], step).toBeTruthy();
-    }
-  });
-
-  it("does not draw a card whose goods come later as a walk that went wrong", () => {
-    // The money moved and the merchant took the order on: that is the whole of
-    // what an asynchronous card can do inside a purchase, and a merchant shown
-    // it as a failure would go looking for a fault on the day it worked.
-    expect(TEST_PURCHASE_WORDS.accepted.tone).not.toBe("warn");
-    expect(TEST_PURCHASE_WORDS.stopped.tone).toBe("warn");
   });
 
   it("calls out the two endings that stay open owing something, and nothing else", () => {

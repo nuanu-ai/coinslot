@@ -26,13 +26,7 @@
  * nothing — not that nothing was charged.
  */
 
-import type {
-  Fulfillment,
-  OrderStatus,
-  SellingState,
-  TestPurchaseOutcome,
-  TestPurchaseStepName,
-} from "@nuanu-ai/coinslot-contracts";
+import type { Fulfillment, OrderStatus, SellingState } from "@nuanu-ai/coinslot-contracts";
 
 /** How a state reads to the eye, before any word is read. */
 export type Tone = "ok" | "warn" | "busy" | "quiet";
@@ -82,37 +76,6 @@ export const SELLING_WORDS: Readonly<Record<SellingState, Word>> = Object.freeze
   paused: { text: "paused", tone: "warn" },
   departed: { text: "left", tone: "quiet" },
 });
-
-/**
- * What a walked test purchase came to.
- *
- * `accepted` is `busy` rather than `warn`, and that is the whole decision in
- * this map. It is the honest ending of a walk of a card whose goods come later
- * — the money moved and the merchant took the order on — so drawing it as
- * something gone wrong would tell a merchant their asynchronous card is broken
- * on the day it worked.
- */
-export const TEST_PURCHASE_WORDS: Readonly<Record<TestPurchaseOutcome, Word>> = Object.freeze({
-  delivered: { text: "delivered", tone: "ok" },
-  accepted: { text: "accepted, goods to come", tone: "busy" },
-  stopped: { text: "stopped", tone: "warn" },
-});
-
-/**
- * The four doors a buying agent goes through, named for the merchant.
- *
- * They are near enough to the wire's own words to look like a map that earns
- * nothing, and it is here for the reason every map in this file is: a door
- * added to the walk later would otherwise reach a merchant as `undefined` in
- * the column that says where their integration stopped.
- */
-export const TEST_PURCHASE_STEP_WORDS: Readonly<Record<TestPurchaseStepName, string>> =
-  Object.freeze({
-    catalog: "The catalog",
-    price: "The price",
-    payment: "The payment",
-    delivery: "The delivery",
-  });
 
 /**
  * The orders that are open and are owed something the merchant can act on.

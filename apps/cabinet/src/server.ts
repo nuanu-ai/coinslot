@@ -39,14 +39,7 @@ import type { Identity, Person } from "./identity.js";
 import { keysScreen, newKeyScreen } from "./keys.js";
 import { WALLET_NEEDED, whatIsWrongWithTheWallet } from "./payout-wallet.js";
 import { printable } from "./printable.js";
-import {
-  cardsScreen,
-  ordersScreen,
-  paramsFromForm,
-  receiptsScreen,
-  testPurchaseScreen,
-  type Viewer,
-} from "./screens.js";
+import { cardsScreen, ordersScreen, receiptsScreen, type Viewer } from "./screens.js";
 import {
   chooseNameScreen,
   NAME_CANNOT_BE_TAKEN_AWAY,
@@ -1139,64 +1132,6 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
       );
   });
 
-  /**
-   * A merchant buying one of their own cards, to find out whether a stranger's
-   * agent could (ADR-0023).
-   *
-   * The card is fetched first because the request cannot be built without it:
-   * what a purchase of a card has to carry is declared on that card and nowhere
-   * else, so the boxes the merchant filled in are read against the card's own
-   * `params` and everything else that was posted is dropped.
-   *
-   * A walk that did not get through is a page and not a failure: the gateway
-   * answers it with the transcript, and "it stopped at the price, and the
-   * storefront said the card is not on sale" is the answer the merchant pressed
-   * the button for. Only the refusals that stop a walk before it starts arrive
-   * here as refusals, and those are shown in the gateway's own words.
-   *
-   * Nothing here holds an opinion about the world this cabinet is in. The cards
-   * screen offers no such control where the money is real, and the gateway
-   * refuses every one of these there — a third copy of that rule in this handler
-   * would be a third place for it to be edited and a second place for it to
-   * disagree.
-   */
-  app.post(`${base}/cards/:item_id/test-purchase`, async (request, response) => {
-    const itemId = request.params.item_id ?? "";
-    const gateway = gatewayAs(request);
-    const cards = await gateway.cards();
-    if (!cards.ok) {
-      return trouble(response, base, cards);
-    }
-
-    const entry = cards.document.cards.find((card) => card.id === itemId);
-    if (entry === undefined) {
-      // The list this looked in is the merchant's own, so a card that is not in
-      // it is either nobody's or somebody else's — and the gateway answers
-      // those two identically for the same reason this does.
-      response.status(404).type("html").send(problemPage(base, "There is no such product."));
-      return;
-    }
-
-    const walked = await gateway.testPurchase(
-      itemId,
-      paramsFromForm(entry.card.params ?? {}, (request.body ?? {}) as Record<string, unknown>),
-    );
-    if (!walked.ok) {
-      return trouble(response, base, walked);
-    }
-
-    noted(
-      whoIs(request),
-      `walked a test purchase of the card ${itemId}: ${walked.document.outcome}`,
-    );
-    // Answered with the page rather than a redirect, which this cabinet
-    // otherwise only does for a new key. `screens.ts` says why: the transcript
-    // lives for the length of this answer and there is nowhere to put it.
-    response
-      .type("html")
-      .send(testPurchaseScreen(viewing(request, base), cards.document, entry, walked.document));
-  });
-
   for (const [verb, paused] of [
     ["pause", true],
     ["resume", false],
@@ -1607,23 +1542,10 @@ function troubleAt(
   }
   // The gateway answered and refused. Its own sentence, under its own status:
   // nothing is claimed about what did or did not happen beyond what it said.
-  //
-  // With one thing added, and only where the envelope carries it. A refusal
-  // marked retryable is a delay, and a merchant shown one as a dead end goes
-  // hunting for a fault in their own integration instead of waiting. How long
-  // is deliberately not said: nothing on this side knows, the gateway does not
-  // say, and a number invented here would be the one claim on this page that
-  // stands behind nothing.
   response
     .status(answer.status)
     .type("html")
-    .send(
-      problemPageAt(
-        base,
-        mode,
-        answer.retryable === true ? `${answer.why} This one can be tried again later.` : answer.why,
-      ),
-    );
+    .send(problemPageAt(base, mode, answer.why));
 }
 
 /**
