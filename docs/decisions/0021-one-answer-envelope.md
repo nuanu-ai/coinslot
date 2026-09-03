@@ -41,10 +41,11 @@ word `errors` is gone. A refused publish is `card_rejected` and is never
 retryable: the same card gets the same answer, and what changes the outcome is
 fixing what the findings name.
 
-What throws shares the vocabulary. `CoinslotError` carries `code` and `route` —
-the gateway's own code where the gateway refused in words we recognise, and
-otherwise the same three the order calls return. A client built wrong stays a
-`TypeError`.
+What throws shares the vocabulary. `CoinslotError` carries `code`, `route` and
+`retryable` — the gateway's own code and its own answer about calling again
+where the gateway refused in words we recognise, and otherwise the same three
+codes the order calls return, with `retryable` true because nothing was learned
+about the call. A client built wrong stays a `TypeError`.
 
 `CONTRACT_VERSION` moves from `1` to `2`: a strict reader built against `1`
 cannot parse the new publish answer, and must stop at the handshake rather than

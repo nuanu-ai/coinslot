@@ -458,11 +458,25 @@ export class CoinslotError extends Error {
   /** The call it happened on, named as the contract's route table names it. */
   readonly route: string;
 
-  constructor(code: string, route: string, message: string) {
+  /**
+   * Whether making the same call again could get past this.
+   *
+   * Here for the same reason the code is: the calls that throw and the calls
+   * that return are the same calls failing the same ways, and a merchant who
+   * had to work out from a `catch` what a returned error would have told them
+   * outright is being charged twice for one lesson. The gateway's own answer
+   * where the gateway refused in words, and true where nothing readable came
+   * back — which is a statement about what this package knows, not a promise
+   * that the call will work.
+   */
+  readonly retryable: boolean;
+
+  constructor(code: string, route: string, message: string, retryable: boolean) {
     super(message);
     this.name = "CoinslotError";
     this.code = code;
     this.route = route;
+    this.retryable = retryable;
   }
 }
 
@@ -477,34 +491,40 @@ export class CoinslotError extends Error {
  * same choice `document` makes for the calls that throw, so one refusal has one
  * name whether the merchant catches it or branches on it.
  *
- * `retryable` says whether calling again could change the outcome, and it is
- * true here in every case. For the three silences it plainly could: none of
- * them is a state of the order, and none will still be true in a minute if a
- * network settled or a proxy went away. For a door refusal it is over-claimed
- * and knowingly so — most of them (`no_such_order`, `not_authorised`, a body
- * this gateway would not read) will answer the same way for ever, but
- * `gateway_failed` is the same envelope around a defect and says in its own
- * sentence that nothing was decided, so a blanket "do not call again" would
- * tell a merchant their delivery is impossible when the gateway had merely
- * fallen over. Nothing on the wire separates the two: the status is not
- * consulted anywhere in this package, deliberately, and the codes are an open
- * set this package does not own. Telling a merchant to try again where trying
- * is futile costs them a wasted call; telling them to stop where the call would
- * have worked costs them the sale. Until a refusal carries the answer itself —
- * the envelope has room for it — this claims the cheaper of the two mistakes.
+ * `retryable` says whether calling again could change the outcome, and it has
+ * two sources because there are two situations. Where the gateway refused in
+ * words, the answer is the gateway's own: it is the side that knows whether
+ * the door is shut or was merely shut a moment ago, and this package does not
+ * improve on what it was told. Where no answer arrived, or none that could be
+ * read, there is nothing to defer to and the answer is true — none of those
+ * three is a state of the order, and none will still be true in a minute if a
+ * network settled or a proxy went away.
  *
- * The sentence about repeating safely is only added where the contract says
- * the call may be repeated: delivering is idempotent by the order's
- * identifier, and taking an order on happens again on every redelivery.
- * Refusing is documented as neither, so nothing is claimed about it.
+ * The fallback is `true` and not `false` on purpose. It is reached only when
+ * this package could not read an answer, which is a statement about our
+ * knowledge and not about the order; saying "do not call again" there would be
+ * this package inventing the one fact the merchant came for.
+ *
+ * The sentence about repeating safely is added where two things hold at once:
+ * the contract says the call may be repeated — delivering is idempotent by the
+ * order's identifier, and taking an order on happens again on every
+ * redelivery, while refusing is documented as neither — and calling again
+ * could get anywhere. Offering "you may safely repeat this" under a refusal
+ * that will answer the same way for ever is an invitation to do something
+ * pointless, and it reads as encouragement.
  */
-const failedCall = (repeatIsSafe: boolean, failure: TransportFailure): CallError => ({
-  code: failure.refusal?.code ?? CODE_FOR[failure.reach],
-  message: repeatIsSafe
-    ? `${whatIsKnown(failure)}: ${failure.reason} — this call may be made again without doing its work twice`
-    : `${whatIsKnown(failure)}: ${failure.reason}`,
-  retryable: true,
-});
+const failedCall = (repeatIsSafe: boolean, failure: TransportFailure): CallError => {
+  const retryable = failure.refusal?.retryable ?? true;
+
+  return {
+    code: failure.refusal?.code ?? CODE_FOR[failure.reach],
+    message:
+      repeatIsSafe && retryable
+        ? `${whatIsKnown(failure)}: ${failure.reason} — this call may be made again without doing its work twice`
+        : `${whatIsKnown(failure)}: ${failure.reason}`,
+    retryable,
+  };
+};
 
 /**
  * The reporter a client gets when the merchant registered none.
@@ -765,11 +785,14 @@ export const createClient = (options: ClientOptions): CoinslotClient => {
       // The gateway's own word wherever it wrote one, and one of ours only
       // where it did not. A refusal we recognise carries the reason a merchant
       // can act on, and replacing it with "we could not read the answer" would
-      // throw away the one thing they came here for.
+      // throw away the one thing they came here for. The same holds for its
+      // answer about calling again — this is the rule `failedCall` applies for
+      // the calls that return, applied here so the two roads agree.
       throw new CoinslotError(
         failure.refusal?.code ?? CODE_FOR[failure.reach],
         failure.route,
         failure.reason,
+        failure.refusal?.retryable ?? true,
       );
     }
 

@@ -136,7 +136,8 @@ Where we refused the call in words, that word is the code: a key we will not
 take arrives as `not_authorised`, not as something about the network. Where no
 answer arrived, or none these tools could read, it is one of the three words
 they use for that. It is the same vocabulary either way, and the same one the
-returned errors carry. It also carries `route`, the name of the call it happened
+returned errors carry. It also carries `retryable`, answering the same question
+it answers on a returned error, and `route`, the name of the call it happened
 on, so a `catch` can tell what happened without reading the sentence. A client
 built wrong — no key, an address that is not an address — is a `TypeError` at
 the line that is wrong, before anything leaves your process.

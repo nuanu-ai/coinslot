@@ -241,7 +241,7 @@ describe("an identifier that names nothing", () => {
 
     expect(first.status).toBe(404);
     expect(first.body).toStrictEqual({
-      error: { code: "no_such_order", message: "there is no such order" },
+      error: { code: "no_such_order", message: "there is no such order", retryable: false },
     });
     expect(second.body).toStrictEqual(first.body);
   });

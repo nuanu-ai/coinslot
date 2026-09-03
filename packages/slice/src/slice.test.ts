@@ -393,7 +393,7 @@ describe("the stage-one gate: a sandbox purchase, green from catalog to receipt"
     expect(invented.state).toBeNull();
     expect(invented.delivered).toBeNull();
     expect(invented.body).toStrictEqual({
-      error: { code: "no_such_order", message: "there is no such order" },
+      error: { code: "no_such_order", message: "there is no such order", retryable: false },
     });
 
     const another = await buyer.status("ord_nor_this_one");

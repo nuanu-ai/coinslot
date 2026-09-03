@@ -479,6 +479,7 @@ describe("a refusal the gateway put into words", () => {
       code: "order_closed_before_it_was_priced",
       message:
         "this order ended as rejected before anybody named a price for it, so there is no sale to describe",
+      retryable: false,
       status: "rejected",
     },
   });
@@ -511,7 +512,7 @@ describe("a refusal the gateway put into words", () => {
       deliver_order: () => ({
         status: 404,
         text: JSON.stringify({
-          error: { code: "no_such_order", message: "there is no such order" },
+          error: { code: "no_such_order", message: "there is no such order", retryable: false },
         }),
       }),
     });
@@ -542,7 +543,11 @@ describe("a refusal the gateway put into words", () => {
     const answer = {
       status: 401,
       text: JSON.stringify({
-        error: { code: "not_authorised", message: "this call is behind the merchant's key" },
+        error: {
+          code: "not_authorised",
+          message: "this call is behind the merchant's key",
+          retryable: false,
+        },
       }),
     };
     const coinslot = await gatewayServing({
@@ -560,6 +565,62 @@ describe("a refusal the gateway put into words", () => {
 
     expect(returned.ok === false && returned.error.code).toBe("not_authorised");
     expect(thrown instanceof CoinslotError && thrown.code).toBe("not_authorised");
+    // And the same answer about calling again on both roads, for the same
+    // reason: a merchant who catches one and branches on the other is looking
+    // at one refusal, and it cannot be definitive in a `catch` and worth
+    // repeating in an `if`.
+    expect(returned.ok === false && returned.error.retryable).toBe(false);
+    expect(thrown instanceof CoinslotError && thrown.retryable).toBe(false);
+  });
+
+  it("takes the gateway's word about calling again rather than deciding for it", async () => {
+    // The rule this package is not allowed to improve on. Only the side that
+    // refused knows whether its door is shut or was merely shut a moment ago,
+    // and the two refusals below are the two answers — the same shape, the
+    // same status, opposite advice. Deciding either of them here, from the
+    // code or from the status, would be a guess dressed as a fact.
+    const said = (retryable: boolean) => ({
+      status: 500,
+      text: JSON.stringify({
+        error: { code: "gateway_failed", message: "nothing was decided", retryable },
+      }),
+    });
+
+    const willing = await gatewayServing({ deliver_order: () => said(true) });
+    const definite = await gatewayServing({ deliver_order: () => said(false) });
+
+    const first = await willing.orders
+      .forId("order-1")
+      .deliver({ access_url: "https://a.example" });
+    const second = await definite.orders
+      .forId("order-1")
+      .deliver({ access_url: "https://a.example" });
+
+    expect(first.ok === false && first.error.retryable).toBe(true);
+    expect(second.ok === false && second.error.retryable).toBe(false);
+
+    // The invitation to repeat rides with the flag, not with the route. It is
+    // true of `deliver` that a repeat does no work twice, and useless to say
+    // over a refusal that will answer the same way for ever.
+    expect(first.ok === false && first.error.message).toMatch(/may be made again/);
+    expect(second.ok === false && second.error.message).not.toMatch(/may be made again/);
+  });
+
+  it("says a call it could not read may be worth making again", async () => {
+    // The fallback, and the direction it leans. Nothing readable came back, so
+    // there is no gateway answer to defer to — and "do not call again" would be
+    // this package inventing the one fact the merchant came here for out of its
+    // own failure to parse.
+    const coinslot = await gatewayServing({
+      deliver_order: () => ({ status: 502, text: "<html>a proxy, not a gateway</html>" }),
+    });
+
+    const result = await coinslot.orders.forId("order-1").deliver({
+      access_url: "https://a.example",
+    });
+
+    expect(result.ok === false && result.error.code).toBe(ANSWER_NOT_UNDERSTOOD);
+    expect(result.ok === false && result.error.retryable).toBe(true);
   });
 
   it("still says what came back when the answer is not a refusal either", async () => {
@@ -615,7 +676,11 @@ describe("what is thrown where a route has no failure branch", () => {
       publish_card: () => ({
         status: 401,
         text: JSON.stringify({
-          error: { code: "not_authorised", message: "this key does not open this call" },
+          error: {
+            code: "not_authorised",
+            message: "this key does not open this call",
+            retryable: false,
+          },
         }),
       }),
     });

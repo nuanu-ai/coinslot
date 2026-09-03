@@ -591,11 +591,30 @@ export const ErrorEnvelopeSchema = z
 
       /** The same refusal in words, for whoever has to do something about it. */
       message: z.string().regex(/\S/, "a refusal carries an explanation a person can read"),
+
+      /**
+       * Whether making this same call again could succeed.
+       *
+       * A fact about this refusal, not an instruction: how long to wait, how
+       * many times, and whether to bother at all are the caller's, who knows
+       * what the call was worth. What the caller cannot know from outside is
+       * whether the door is shut or merely was shut a moment ago, and that is
+       * the one thing said here.
+       *
+       * The gateway assigns it conservatively. True is claimed only where
+       * repeating this very call is genuinely the way through — the call that
+       * fell over before anything was decided, the answer that is not ready
+       * yet. Everything definitive, and everything arguable, is false: a
+       * caller who stops early loses one call they could have made again,
+       * and a caller who loops against a door that will never open spends
+       * until somebody notices.
+       */
+      retryable: z.boolean(),
     }),
   })
   .meta({
     description:
-      'How every call on this surface says no. One shape for every refusal of every route, whatever it is about and whatever HTTP status it arrives under: an object whose only field is "error", carrying a machine-readable code and a sentence a person can act on. Both are always present — a refusal with a code and no words is one only its author can read. The code is an open set here on purpose: a gateway meets situations this contract has not named, and what this schema promises is the shape rather than the vocabulary, so an unfamiliar code parses and stays readable. The codes this gateway sends today are published beside it as a list, to switch over rather than to validate against — a consumer covers those and keeps a default arm for the one it has never seen, where the sentence in this envelope is what it shows. Inside "error" a refusal may carry more about itself — where an order ended, whether a second attempt could succeed, which fields of a document did not fit — and a reader that does not recognise those must still be able to read the code and the sentence. Nothing rides beside the envelope: a body carrying anything at the top level other than "error" is not a refusal, and reading one as a refusal would turn a document that merely mentions an error into a call that failed.',
+      'How every call on this surface says no. One shape for every refusal of every route, whatever it is about and whatever HTTP status it arrives under: an object whose only field is "error", carrying a machine-readable code, a sentence a person can act on, and "retryable". All three are always present — a refusal with a code and no words is one only its author can read, and one that will not say whether calling again could work leaves the caller to guess between a retry loop against a door that never opens and an abandoned call that would have gone through. "retryable" is a fact about this refusal and not an instruction: it answers "could this same call succeed if it were made again", and how long to wait, how often, and whether to bother at all stay with the caller, who is the one who knows what the call was worth. This gateway assigns it conservatively — true only where repeating the very same call is genuinely the way through, such as a call that fell over before anything was decided or an answer that is not ready yet; everything definitive, and everything arguable, is false. The code is an open set here on purpose: a gateway meets situations this contract has not named, and what this schema promises is the shape rather than the vocabulary, so an unfamiliar code parses and stays readable. The codes this gateway sends today are published beside it as a list, to switch over rather than to validate against — a consumer covers those and keeps a default arm for the one it has never seen, where the sentence in this envelope is what it shows. Inside "error" a refusal may carry more about itself — where an order ended, which fields of a document did not fit — and a reader that does not recognise those must still be able to read the three that are always there. Nothing rides beside the envelope: a body carrying anything at the top level other than "error" is not a refusal, and reading one as a refusal would turn a document that merely mentions an error into a call that failed.',
   });
 
 export type ErrorEnvelope = z.infer<typeof ErrorEnvelopeSchema>;

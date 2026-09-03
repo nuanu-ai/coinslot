@@ -271,8 +271,12 @@ describe("what a call answers with", () => {
     try {
       const answered = await fetch(`http://127.0.0.1:${port}/x402/catalog`);
       expect(answered.status).toBe(500);
+      // Retryable, and it is the one refusal on this surface that is. Nothing
+      // was decided here — the call fell over inside us — so the caller who
+      // makes it again is not repeating a mistake, they are making the call
+      // they were owed the first time.
       expect((await answered.json()) as { error: { code: string } }).toMatchObject({
-        error: { code: "gateway_failed" },
+        error: { code: "gateway_failed", retryable: true },
       });
     } finally {
       server.close();
@@ -294,6 +298,26 @@ describe("what a call answers with", () => {
     expect(refused.error.message).toBe("the payment layer would not vouch for this");
     expect(refused.error.code).toBe("payment_not_verified");
     expect(refused.error.retryable).toBe(true);
+  });
+
+  it("tells a caller a definitive refusal is definitive, on the wire", async () => {
+    // The other side of the flag, and the side that pays for itself. An
+    // address that is not a call will not become one between two attempts, and
+    // a caller that read "retryable" as a suggestion to try again would sit in
+    // a loop against a door with nothing behind it. Read off the body a client
+    // actually receives, because that is the only place the promise is kept.
+    const { served } = await started();
+
+    const answered = await served.call("GET", "/v0/nothing-is-here");
+
+    expect(answered.status).toBe(404);
+    expect(answered.body).toStrictEqual({
+      error: {
+        code: "no_such_route",
+        message: "there is no call at this address",
+        retryable: false,
+      },
+    });
   });
 
   it("sends every code the contract publishes, and publishes every code it sends", () => {
@@ -890,6 +914,9 @@ describe("whose purchase it is", () => {
       error: {
         code: "not_this_purchase",
         message: "this order already belongs to another payment",
+        // The order is somebody else's; presenting this payment again gets the
+        // same answer for as long as that stays true, which is for good.
+        retryable: false,
       },
     });
     // The stranger was never charged, and the order is still the buyer's.

@@ -287,13 +287,20 @@ back under our own word for the refusal — `not_authorised`, `no_such_order` �
 because that word is the one that tells you what to do about it. The three the
 tools produce say only what they say: no answer arrived, or one did and could
 not be read. Neither is ever put in front of a refusal we wrote out in words.
-On a refusal of ours the flag is true and is claiming less than it looks:
-nothing in the answer separates the ones that will stand for ever — that key,
-that missing order — from a call that fell over on our side and would go through
-on a second attempt, and between sending you back once for nothing and telling
-you to stop where the call would have worked, we send you back. Read the code:
-where it names something about the call you made rather than about the moment
-you made it, an identical second call gets an identical answer.
+On a refusal of ours the flag is ours too, and we assign it carefully. It is
+true only where making the same call again is genuinely the way through — the
+call that fell over before anything was decided, the order whose price is not
+worked out yet. Everything settled, and everything we are merely unsure about,
+is false: a key we will not take, an order that is not there, a card its
+merchant has paused. Some of those do change eventually, but not because you
+called again, and a flag that said otherwise would have you polling a door
+somebody else has to open.
+
+The three the tools produce keep the flag true, and there it means something
+weaker. Those are not refusals at all: no answer arrived, or one arrived that
+could not be read. Nothing is known about the call, so nothing is claimed about
+it — trying again is worth doing precisely because the first attempt settled
+nothing.
 
 Where the error is about the goods you sent, what did not fit travels as
 findings in `error.problems`, and that list is the complete account. A field

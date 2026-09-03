@@ -23,9 +23,15 @@ Renamed: the type `PublishError` is `Problem`, and `OrderCallError` is
 exported for the code above.
 
 A call with no failure branch of its own — publishing, `orders.get`,
-`orders.list` — now throws `CoinslotError` with `code` and `route` instead of a
-bare `Error`, under the same codes the order calls return. A client built wrong
-is still a `TypeError`.
+`orders.list` — now throws `CoinslotError` with `code`, `route` and `retryable`
+instead of a bare `Error`, under the same codes the order calls return. A client
+built wrong is still a `TypeError`.
+
+Every refusal the gateway sends now carries `retryable` beside its code and its
+sentence, answering whether making the same call again could succeed. It is
+assigned conservatively — true only where repeating the call is itself the way
+through — and it is what the SDK reports for a call the gateway refused in
+words, in place of the blanket `true` it used to claim.
 
 The verify command's internals (`runVerify`, `VERIFY_EXIT`, `NOT_JSON`,
 `IDEMPOTENCY_IS_NOT_BUILDABLE`, `Say`) are no longer exported. Run the command

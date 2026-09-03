@@ -186,8 +186,17 @@ export interface TransportFailure {
    * why. It carries the code as a value and not only inside the sentence,
    * because a caller that wants to branch on the reason should not be parsing
    * prose to find it.
+   *
+   * `retryable` travels with it for the same reason and is the gateway's own
+   * answer about its own refusal: whether making this call again could get
+   * past it. Only the side that refused knows, and this package must not
+   * improve on what it was told.
    */
-  readonly refusal?: { readonly code: string; readonly message: string };
+  readonly refusal?: {
+    readonly code: string;
+    readonly message: string;
+    readonly retryable: boolean;
+  };
 }
 
 export type Answer<N extends RouteName> =
@@ -386,14 +395,14 @@ export const callRoute = async <N extends RouteName>(
   const refused = ErrorEnvelopeSchema.safeParse(body);
 
   if (refused.success) {
-    const { code, message } = refused.data.error;
+    const { code, message, retryable } = refused.data.error;
 
     return failure(
       name,
       `${name} at ${url.href} was refused ${response.status}: ${code} — ${message}`,
       REACH.ANSWERED,
       body,
-      { code, message },
+      { code, message, retryable },
     );
   }
 
