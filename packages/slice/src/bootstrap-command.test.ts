@@ -74,7 +74,7 @@ const env = (extra: Record<string, string | undefined> = {}) => ({
 });
 
 const aChallenge = (over: Partial<Challenge> = {}): Challenge => ({
-  resourceUrl: "https://coinslot.example/v0/items/itm_1/purchase",
+  resourceUrl: "https://coinslot.example/x402/itm_1/purchase",
   payTo: A_MERCHANT,
   network: BASE_SEPOLIA,
   asset: USDC_ON_BASE_SEPOLIA,
@@ -420,7 +420,7 @@ describe("the gates in front of a payment", () => {
     // with no chain behind it warns in its own log and nowhere else, and the
     // address it pins into every challenge is what is left.
     const refused = couldEverBeListed(
-      aChallenge({ resourceUrl: "http://localhost:8080/v0/items/itm_1/purchase" }),
+      aChallenge({ resourceUrl: "http://localhost:8080/x402/itm_1/purchase" }),
     );
 
     expect(refused.ok).toBe(false);
@@ -527,7 +527,7 @@ describe("a whole run", () => {
   });
 
   it("buys every card in the catalog and reports the one it found in discovery", async () => {
-    const resource = "https://coinslot.example/v0/items/itm_1/purchase";
+    const resource = "https://coinslot.example/x402/itm_1/purchase";
     const run = aRun({
       catalog: [aCard("itm_1")],
       walks: [[resource]],
@@ -561,7 +561,7 @@ describe("a whole run", () => {
   });
 
   it("keeps walking until the resource turns up, and says how long it took", async () => {
-    const resource = "https://coinslot.example/v0/items/itm_1/purchase";
+    const resource = "https://coinslot.example/x402/itm_1/purchase";
     const run = aRun({ walks: [[], [], [resource]], catalog: [aCard("itm_1")] });
 
     expect(await run.run(["--confirm"])).toBe(0);
@@ -581,8 +581,7 @@ describe("a whole run", () => {
 
   it("does not pay a gateway nothing could crawl, and does not call that a refusal", async () => {
     const run = aRun({
-      challenges: () =>
-        aChallenge({ resourceUrl: "http://localhost:8080/v0/items/itm_1/purchase" }),
+      challenges: () => aChallenge({ resourceUrl: "http://localhost:8080/x402/itm_1/purchase" }),
     });
 
     expect(await run.run(["--confirm"])).toBe(1);
@@ -777,7 +776,7 @@ describe("reading a gateway and the discovery catalog, over a real socket", () =
       x402Version: 2,
       ...(over.error === undefined ? {} : { error: over.error }),
       resource: {
-        url: "https://coinslot.example/v0/items/itm_1/purchase",
+        url: "https://coinslot.example/x402/itm_1/purchase",
         description: "A room for the night",
         mimeType: "application/json",
       },
@@ -866,7 +865,7 @@ describe("reading a gateway and the discovery catalog, over a real socket", () =
     // The address is the one the challenge pins, never the one this was called
     // at: behind a terminator those are two different strings, and it is the
     // pinned one a listing is keyed on.
-    expect(challenge.resourceUrl).toBe("https://coinslot.example/v0/items/itm_1/purchase");
+    expect(challenge.resourceUrl).toBe("https://coinslot.example/x402/itm_1/purchase");
     expect(challenge.payTo).toBe(A_MERCHANT);
     expect(challenge).toMatchObject({ amount: "10000", decimals: 6, symbol: "USDC" });
   });

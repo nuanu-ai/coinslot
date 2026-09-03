@@ -91,7 +91,7 @@ describe("a stand pointed at a gateway elsewhere", () => {
         response.end(JSON.stringify({ selling: "open", cards: [] }));
         return;
       }
-      if (request.url === "/v0/items/remote-item/purchase") {
+      if (request.url === "/x402/remote-item/purchase") {
         purchases += 1;
         purchaseAuthorities.push(request.headers.host ?? "");
         response.end(JSON.stringify({ received: true }));

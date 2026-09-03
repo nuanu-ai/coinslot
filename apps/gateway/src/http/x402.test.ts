@@ -496,7 +496,7 @@ describe("the discovery declaration a challenge carries", () => {
     // resource identity is what a listing is keyed on: two spellings would be
     // two listings, or one that flickers between them.
     expect(challenge("GET", { serviceName: null }).resource.url).toBe(
-      "https://coinslot.example/v0/items/itm_4d21bb/purchase",
+      "https://coinslot.example/x402/itm_4d21bb/purchase",
     );
   });
 

@@ -727,6 +727,26 @@ export interface RouteDefinition {
  * that no two sit at one address under one method, and that every schema named
  * here is one the contract registry publishes, since the registry and this
  * table are the whole of what a reader outside TypeScript has.
+ *
+ * Two prefixes are in this table and they are two different kinds of address.
+ * `/v0` is the merchant's API, and it is versioned for the ordinary reason a
+ * classic API is: an integrator writes code against it, and the number is what
+ * lets that code keep working while the shapes underneath it change. `/x402` is
+ * the storefront — the catalog an agent browses, the address it buys at, and
+ * the door it comes back to for its own order — and it carries no version at
+ * all. Those three addresses are not something an integrator holds in a client
+ * library; they are a product identity. A discovery catalog keys a listing on
+ * the address it was given, strangers' agents construct them from a base and an
+ * identifier, and both of those outlive any dialect we speak. So the protocol
+ * versions where the protocol can be read — the `x402Version` field inside the
+ * challenge — and the address stays put. A version segment in a storefront path
+ * would be a promise to keep every old segment answering forever, made to
+ * catalogs we do not run.
+ *
+ * Which door a call is behind is still `auth` and never the prefix. The two
+ * happen to agree today, and a reader who took that for the rule would mount
+ * the next route by its address; `apps/gateway/src/http/server.ts` says what
+ * that costs.
  */
 export const API_ROUTES = Object.freeze({
   publish_card: {
@@ -968,7 +988,7 @@ export const API_ROUTES = Object.freeze({
 
   list_catalog: {
     method: "GET",
-    path: "/v0/catalog",
+    path: "/x402/catalog",
     auth: "none",
     description:
       "Products offered for sale, as an agent reads them. Each is the projection of a published card: our catalog identifier rather than the merchant's own key, and nothing about how the merchant's price is asked for beyond the fact that it will be asked again.",
@@ -977,7 +997,7 @@ export const API_ROUTES = Object.freeze({
 
   purchase_item: {
     method: "POST",
-    path: "/v0/items/:item_id/purchase",
+    path: "/x402/:item_id/purchase",
     auth: "none",
     description:
       "Buying one product. The payment is what stands in for authorisation, so there is no key on this call. It begins with the payment exchange of the x402 protocol: a call with no payment on it is answered with a challenge, which travels in a header and carries no document. What a paid purchase is answered with is the state of the order it made — the same document the status route answers with, whatever the card's mode and whether the purchase ended in the goods or in something else, so an agent that bought and an agent that came back later read one shape. No receipt of ours is in it: a receipt is the merchant's record of the sale and is read behind the merchant's key. What an agent is told about its own money is the price and the word for whether that money was real, and, where the payment executed as the last step of this exchange, the settlement the payment layer signs into a header on this answer — a card whose money moves as the order is opened has already spent that step, so no settlement comes back here and the two fields are the whole of it. The address also answers the challenge on GET, because the validators and crawlers that list a paid resource ask for it that way; a GET carries no body, so it can produce the challenge and never a completed purchase. A product that is not on sale answers neither method with a challenge: it is refused, so that a catalog built from these challenges never carries a product nobody can buy.",
@@ -988,10 +1008,10 @@ export const API_ROUTES = Object.freeze({
 
   get_order_status: {
     method: "GET",
-    path: "/v0/orders/:order_id/status",
+    path: "/x402/orders/:order_id/status",
     auth: "order_id",
     description:
-      "What became of a purchase, for the agent that made it: where the order stands, what it sold for, and the goods once they are the buyer's. It is the route an agent that bought a product whose goods come later collects them on, and without it half a catalogue takes money and hands back an order nobody can act on. Knowing the order's identifier is the proof (ADR-0011), so this call takes no key: an agent has no account and no registration, and the identifier is handed to exactly one party. Two things follow for whoever mounts it. It is the only route under /v0/orders that is not the merchant's, so a key check attached to that prefix would shut the agent out of the one route that is its own, and nothing about this table would look wrong. And an identifier that names no order must be answered exactly as any other unknown one is, or the refusal becomes a way of counting the orders behind it.",
+      "What became of a purchase, for the agent that made it: where the order stands, what it sold for, and the goods once they are the buyer's. It is the route an agent that bought a product whose goods come later collects them on, and without it half a catalogue takes money and hands back an order nobody can act on. Knowing the order's identifier is the proof (ADR-0011), so this call takes no key: an agent has no account and no registration, and the identifier is handed to exactly one party. No answer of ours hands the agent this address either — it is built from the order's identifier and the address the agent already bought at, which is why it is written the way a stranger would write it and carries no version to guess at. Two things follow for whoever mounts it. Which door a call is behind is read off auth and never off the address, whatever the prefixes happen to agree on today. And an identifier that names no order must be answered exactly as any other unknown one is, or the refusal becomes a way of counting the orders behind it.",
     response: { document: AgentOrderStatusSchema },
   },
 }) satisfies Readonly<Record<string, RouteDefinition>>;

@@ -16,7 +16,7 @@ set out to remove.
 
 The first registry release makes that hypothetical old client real. It carries
 contract version `"1"`; the `/v0/` path prefix remains written literally into
-the routes and is not derived from it.
+the merchant's routes and is not derived from it.
 
 ## Decision
 
@@ -42,30 +42,48 @@ the routes and is not derived from it.
    make one part of an otherwise closed generated contract silently open and
    move the compatibility rule from the version boundary into every consumer.
 
-4. **The path prefix and the contract version are separate on purpose** and
-   neither is derived from the other. `/v0/` names the shape of the surface —
-   which calls exist at which addresses; `CONTRACT_VERSION` names the
-   vocabulary and documents flowing through it. A vocabulary can grow many
-   times under one surface, and the day the surface itself changes shape is the
-   day the prefix moves.
+4. **`/v0/` names the merchant's API and nothing else.** It is versioned for
+   the reason a classic API is: an engineer writes a shop's code against those
+   addresses, and the number is what lets that code keep working while the
+   shapes underneath it change. The prefix and `CONTRACT_VERSION` are still
+   separate and neither is derived from the other — the prefix names which
+   calls exist at which addresses, the version names the vocabulary and
+   documents flowing through them, and a vocabulary can grow many times under
+   one surface. The day that surface changes shape is the day its prefix moves.
 
-   The prefix travels further than our own surface: the purchase address is
-   the identity a resource is listed under in external catalogs, so moving
-   the prefix retires one listed resource and introduces another — the old
-   entry stops answering `402` and is eventually removed, the new one earns
-   its own bootstrap settle and starts its ranking afresh
-   (`docs/research/04-spike-bazaar-listing.md`). That is chosen rather than
-   suffered: to an agent, an incompatibly changed wire *is* a different
-   resource, and an address that survived its own breaking change would
-   break buyers silently instead of visibly.
+5. **The storefront carries no version, and its stability is the point.** The
+   catalog an agent browses, the address it buys at and the door it comes back
+   to for its own order live at `/x402/…` with nothing in them to move. They are
+   not a client library anybody pins; they are a product identity. A discovery
+   catalog keys a listing on the address it was given, and a stranger's agent
+   builds that address from a base and an identifier it read elsewhere, so the
+   address has to outlive every dialect we speak. Protocol evolution rides in
+   band instead, in the `x402Version` field the challenge already carries, which
+   is where a client that needs to know reads it. The paid storefront genre is
+   versionless in practice as well as in principle, and the walk of the live
+   discovery catalog that establishes it is dated and recorded in
+   `docs/research/04-spike-bazaar-listing.md`.
+
+   Rejected: a version segment on the storefront, on the argument that an
+   incompatibly changed wire *is* a different resource to an agent and should
+   therefore be a different address. It is a promise made to catalogs we do not
+   run. Every move retires a listed resource and introduces another — the old
+   entry stops answering `402` and is eventually removed, the new one earns its
+   own bootstrap settle and starts its ranking from zero — and paying that to
+   announce something the challenge could have said in a field buys nothing.
 
 ## Consequences
 
 - Gained: an installed SDK either reads the whole vocabulary it was built for or
   stops before polling an order; generated schemas and TypeScript tell the same
   truth.
+- Gained: a product's listed address survives our protocol changes, so a listing
+  is earned once rather than re-earned on our schedule.
 - Paid: even an additive informational result requires a contract-version move
   and coordinated gateway delivery. That cost starts with contract `"1"`.
-- Paid, on the day the prefix ever moves: every external listing under the old
-  prefix is a listing to re-earn — a fresh bootstrap settle, a ranking started
-  from zero.
+- Paid: an address that never moves is one we can never retire. A breaking
+  change to the purchase has to be carried at that address or announced in
+  band, and there is no path segment to fall back on.
+- Paid once, by the move itself: anything listed under the old `/v0/items/…`
+  address is a listing to re-earn. Whether any external catalog holds such an
+  entry today is not known here; `pnpm smoke:listing` is what asks.

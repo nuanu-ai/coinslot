@@ -127,8 +127,7 @@ export function makeStandBuyer(options: StandBuyerOptions): StandBuyer {
 
   const request = options.fetch;
   const base = options.baseUrl.replace(/\/+$/, "");
-  const purchasePath = (itemId: string): string =>
-    `/v0/items/${encodeURIComponent(itemId)}/purchase`;
+  const purchasePath = (itemId: string): string => `/x402/${encodeURIComponent(itemId)}/purchase`;
   const purchaseUrl = (itemId: string): string => `${base}${purchasePath(itemId)}`;
 
   /** Everything an answer turns out to carry, read without throwing on any of it. */
@@ -174,7 +173,7 @@ export function makeStandBuyer(options: StandBuyerOptions): StandBuyer {
     purchasePath,
 
     async catalog() {
-      const response = await request(`${base}/v0/catalog`, {
+      const response = await request(`${base}/x402/catalog`, {
         headers: { accept: "application/json" },
       });
       const page = CatalogPageSchema.parse(await response.json());
@@ -220,7 +219,7 @@ export function makeStandBuyer(options: StandBuyerOptions): StandBuyer {
 
     async status(orderId) {
       return answerOf(
-        await request(`${base}/v0/orders/${encodeURIComponent(orderId)}/status`, {
+        await request(`${base}/x402/orders/${encodeURIComponent(orderId)}/status`, {
           headers: { accept: "application/json" },
         }),
       );

@@ -24,6 +24,7 @@ import {
   QuoteAnswerAckSchema,
   ReceiptListSchema,
   type RouteDefinition,
+  type RouteName,
   WorkerPollRequestSchema,
   WorkerPollResponseSchema,
 } from "./api.js";
@@ -896,11 +897,11 @@ describe("the route table", () => {
       "quote_response",
       "quote_answer_ack",
     ],
-    ["list_catalog", "GET", "/v0/catalog", "none", "-", "-", "catalog_page"],
+    ["list_catalog", "GET", "/x402/catalog", "none", "-", "-", "catalog_page"],
     [
       "purchase_item",
       "POST",
-      "/v0/items/:item_id/purchase",
+      "/x402/:item_id/purchase",
       "none",
       "-",
       "purchase_request",
@@ -909,7 +910,7 @@ describe("the route table", () => {
     [
       "get_order_status",
       "GET",
-      "/v0/orders/:order_id/status",
+      "/x402/orders/:order_id/status",
       "order_id",
       "-",
       "-",
@@ -1060,18 +1061,32 @@ describe("the route table", () => {
     }
   });
 
-  it("warns whoever mounts the agent's route that it sits under the merchant's prefix", () => {
-    // The failure this sentence exists to stop: a key check attached to
-    // `/v0/orders` because every other route under it is the merchant's. The
-    // agent has no key, so that check turns the one route an agent can use into
-    // one it can never open, and nothing about the table would look wrong.
+  it("keeps the version in the merchant's prefix and out of the storefront's", () => {
+    // Two genres of address share one table, and which genre a route is in
+    // decides whether its address may ever move. `/v0` is the merchant's API,
+    // versioned for the reason a classic API is: an engineer writes a shop's
+    // code against it. The storefront is the catalog an agent browses, the
+    // address it buys at and the door it comes back to for its own order —
+    // that address is a product identity, listed in catalogs we do not run and
+    // constructed by strangers from a base and an identifier, so it carries no
+    // version at all and the protocol says its own in the challenge instead
+    // (ADR-0006 §5).
     //
-    // This pins that the warning is there and not what it says — prose cannot
-    // be held to its meaning by a test. What holds the behaviour is in the
-    // gateway: every call in the table is made with no key, and the ones that
-    // are not the merchant's must not be turned away.
-    expect(API_ROUTES.get_order_status.description).toContain("/v0/orders");
-    expect(API_ROUTES.get_order_status.path.startsWith("/v0/orders/")).toBe(true);
+    // The list is the classification and the assertion is that the addresses
+    // agree with it, so a storefront route written under `/v0` fails here, and
+    // so does a merchant route put where an agent would find it. A version
+    // segment further along an otherwise versionless storefront address is the
+    // third way in and is checked on its own: `/x402/v1/…` would satisfy the
+    // prefix and break the promise.
+    const storefront: readonly RouteName[] = ["list_catalog", "purchase_item", "get_order_status"];
+
+    for (const [name, route] of Object.entries(API_ROUTES) as [RouteName, RouteDefinition][]) {
+      const agents = storefront.includes(name);
+      expect(route.path.startsWith(agents ? "/x402/" : "/v0/"), name).toBe(true);
+      if (agents) {
+        expect(route.path, name).not.toMatch(/\/v\d+(\/|$)/);
+      }
+    }
   });
 
   it("warns that the paid route has to answer a challenge on any method", () => {
@@ -1206,7 +1221,7 @@ describe("the route table", () => {
 describe("the addresses in the table, expanded and read back", () => {
   it("names the parameters of a path, and none where there are none", () => {
     expect(pathParamsOf("/v0/orders/:order_id/deliver")).toStrictEqual(["order_id"]);
-    expect(pathParamsOf("/v0/catalog")).toStrictEqual([]);
+    expect(pathParamsOf("/x402/catalog")).toStrictEqual([]);
   });
 
   it("round-trips every route in the table", () => {
@@ -1282,7 +1297,7 @@ describe("the addresses in the table, expanded and read back", () => {
     expect(() =>
       expandPath("/v0/orders/:order_id", { order_id: "ord_1", orderId: "ord_2" }),
     ).toThrow(/orderId/);
-    expect(() => expandPath("/v0/catalog", { order_id: "ord_1" })).toThrow(/order_id/);
+    expect(() => expandPath("/x402/catalog", { order_id: "ord_1" })).toThrow(/order_id/);
   });
 });
 

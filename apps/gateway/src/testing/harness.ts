@@ -409,7 +409,7 @@ export async function buyOverHttp(
 ): Promise<Call> {
   const worker = workUntilStopped(worked, behaviour);
   try {
-    const priced = await served.call("POST", `/v0/items/${itemId}/purchase`, {
+    const priced = await served.call("POST", `/x402/${itemId}/purchase`, {
       body: { params: {} },
     });
     const requirements = decodePaymentRequiredHeader(
@@ -419,7 +419,7 @@ export async function buyOverHttp(
       throw new Error(`no payment option was offered for ${itemId}`);
     }
 
-    return await served.call("POST", `/v0/items/${itemId}/purchase`, {
+    return await served.call("POST", `/x402/${itemId}/purchase`, {
       body: { params: {} },
       headers: {
         [PAYMENT_SIGNATURE_HEADER]: encodePaymentSignatureHeader({

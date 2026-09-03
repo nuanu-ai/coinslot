@@ -525,7 +525,7 @@ describe("the HTTP surface, carrying this catalog rather than the portal's", () 
     const address = expandPath(API_ROUTES.purchase_item.path, { item_id: "itm_1a00b2" });
     const purchase = { params: { country: "GB", period: "MONTHLY" } };
 
-    expect(address).toBe("/v0/items/itm_1a00b2/purchase");
+    expect(address).toBe("/x402/itm_1a00b2/purchase");
     expect(verdictOf(PurchaseRequestSchema, purchase)).toBe("accepted");
     // The table's document holds the envelope; the card holds the contents.
     expect(verdictOf(purchaseCheckFor(number), purchase.params)).toBe("accepted");

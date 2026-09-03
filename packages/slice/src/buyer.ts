@@ -164,14 +164,14 @@ export function makeBuyer(options: BuyerOptions): Buyer {
   const base = options.baseUrl.replace(/\/+$/, "");
 
   const statusUrl = (orderId: string): string =>
-    `${base}/v0/orders/${encodeURIComponent(orderId)}/status`;
+    `${base}/x402/orders/${encodeURIComponent(orderId)}/status`;
 
   return {
     address: account.address,
     statusUrl,
 
     async catalog() {
-      const response = await request(`${base}/v0/catalog`, {
+      const response = await request(`${base}/x402/catalog`, {
         headers: { accept: "application/json" },
       });
       const page = CatalogPageSchema.parse(await response.json());
@@ -179,7 +179,7 @@ export function makeBuyer(options: BuyerOptions): Buyer {
     },
 
     async challenge(itemId) {
-      const response = await request(`${base}/v0/items/${encodeURIComponent(itemId)}/purchase`, {
+      const response = await request(`${base}/x402/${encodeURIComponent(itemId)}/purchase`, {
         headers: { accept: "application/json" },
       });
       const header = response.headers.get("payment-required");
@@ -195,7 +195,7 @@ export function makeBuyer(options: BuyerOptions): Buyer {
     },
 
     async buy(itemId, params) {
-      const response = await payFetch(`${base}/v0/items/${encodeURIComponent(itemId)}/purchase`, {
+      const response = await payFetch(`${base}/x402/${encodeURIComponent(itemId)}/purchase`, {
         method: "POST",
         headers: { "content-type": "application/json", accept: "application/json" },
         body: JSON.stringify({ params }),

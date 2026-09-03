@@ -188,7 +188,7 @@ describe("what a key can see", () => {
     const { served, harnessed } = await started();
     const { cardA, cardB } = await twoMerchants(served, harnessed);
 
-    const answered = await served.call("GET", "/v0/catalog");
+    const answered = await served.call("GET", "/x402/catalog");
 
     const ids = (answered.body as { items: { id: string }[] }).items.map((item) => item.id);
     expect(ids).toContain(cardA);
@@ -298,7 +298,7 @@ describe("what a key can do", () => {
     const cardB = await publish(served, b, asked);
 
     // Not awaited: this call is parked on the answer to the price question.
-    const purchase = served.call("POST", `/v0/items/${cardB}/purchase`, { body: { params: {} } });
+    const purchase = served.call("POST", `/x402/${cardB}/purchase`, { body: { params: {} } });
 
     const drawn = await harnessed.gateway.poll(b.id, 10, 2_000);
     const question = drawn.envelopes.find((envelope) => envelope.kind === "quote_request");
@@ -335,7 +335,7 @@ describe("what a key can do", () => {
     const paused = await served.call("POST", "/v0/selling/pause", { headers: keyOf(a) });
     expect(paused.status).toBe(200);
 
-    const catalog = await served.call("GET", "/v0/catalog");
+    const catalog = await served.call("GET", "/x402/catalog");
     const ids = (catalog.body as { items: { id: string }[] }).items.map((item) => item.id);
     expect(ids).not.toContain(cardA);
     expect(ids).toContain(cardB);
@@ -351,8 +351,8 @@ describe("what a key can do", () => {
     const { a, cardA, cardB } = await twoMerchants(served, harnessed);
     await served.call("POST", "/v0/selling/pause", { headers: keyOf(a) });
 
-    const ofA = await served.call("POST", `/v0/items/${cardA}/purchase`, { body: { params: {} } });
-    const ofB = await served.call("POST", `/v0/items/${cardB}/purchase`, { body: { params: {} } });
+    const ofA = await served.call("POST", `/x402/${cardA}/purchase`, { body: { params: {} } });
+    const ofB = await served.call("POST", `/x402/${cardB}/purchase`, { body: { params: {} } });
 
     expect(ofA.status).toBe(409);
     expect((ofA.body as { error: { code: string } }).error.code).toBe("not_selling");
@@ -413,7 +413,7 @@ describe("whose envelope a worker draws", () => {
     const { served, harnessed } = await started();
     const { a, b, cardB } = await twoMerchants(served, harnessed);
 
-    const priced = await served.call("POST", `/v0/items/${cardB}/purchase`, {
+    const priced = await served.call("POST", `/x402/${cardB}/purchase`, {
       body: { params: {} },
     });
     expect(priced.status).toBe(402);

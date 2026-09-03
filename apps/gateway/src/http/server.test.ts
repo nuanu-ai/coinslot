@@ -109,10 +109,12 @@ describe("the surface is the table", () => {
   it("puts the merchant's door on the merchant's calls and on no other", async () => {
     // The check that has to run over the whole table rather than over one
     // route. Every call is made with no key at all: the merchant's are turned
-    // away and nothing else is, so a door attached to an address prefix — the
-    // natural mistake under `/v0/orders`, where every route but one is the
-    // merchant's — turns the agent's own route into one it can never open, and
-    // this test dies the moment it does.
+    // away and nothing else is, so a door attached to an address prefix turns
+    // some route into one its own caller can never open, and this test dies the
+    // moment it does. The prefixes and the doors line up in today's table, which
+    // is what makes the mistake inviting rather than what makes it safe: the
+    // alignment is not written down anywhere and the next route need not keep
+    // it.
     //
     // What is asserted for a route that takes no key is that it was not turned
     // away, rather than that it did not answer 401. The difference is the whole
@@ -155,7 +157,7 @@ describe("the surface is the table", () => {
     });
     const orderId = (bought.body as { order_id: string }).order_id;
 
-    const answered = await served.call("GET", `/v0/orders/${orderId}/status`);
+    const answered = await served.call("GET", `/x402/orders/${orderId}/status`);
 
     expect(answered.status, JSON.stringify(answered.body)).toBe(200);
     expect((answered.body as { order_id: string }).order_id).toBe(orderId);
@@ -210,6 +212,37 @@ describe("the surface is the table", () => {
     expect(answered.status).toBe(200);
     expect(answered.body).toStrictEqual({ ok: true });
   });
+
+  it("has nothing at the versioned addresses the storefront used to answer at", async () => {
+    // The storefront moved out from under `/v0` and the old addresses were
+    // removed rather than redirected. A redirect would be the expensive
+    // mistake: a discovery catalog keys a listing on the address it was given,
+    // so an old address that still answered would go on being listed, and the
+    // identity this product is found under would be two strings instead of
+    // one. What an agent holding a stale address gets is the same answer any
+    // other address nobody serves gets — no such call here — which is a fact
+    // it can act on rather than a door that half works.
+    const { served } = await started();
+    const itemId = await publish(served, syncCard);
+
+    const gone = [
+      ["GET", `/v0/items/${itemId}/purchase`],
+      ["POST", `/v0/items/${itemId}/purchase`],
+      ["GET", "/v0/catalog"],
+      ["GET", "/v0/orders/ord_whatever/status"],
+    ] as const;
+
+    for (const [method, path] of gone) {
+      const answered = await served.call(method, path, {
+        ...(method === "POST" ? { body: { params: {} } } : {}),
+      });
+      expect(answered.status, `${method} ${path}`).toBe(404);
+      expect(
+        (answered.body as { error?: { code?: string } })?.error?.code,
+        `${method} ${path}`,
+      ).toBe("no_such_route");
+    }
+  });
 });
 
 describe("what a call answers with", () => {
@@ -236,7 +269,7 @@ describe("what a call answers with", () => {
     const { port } = server.address() as AddressInfo;
 
     try {
-      const answered = await fetch(`http://127.0.0.1:${port}/v0/catalog`);
+      const answered = await fetch(`http://127.0.0.1:${port}/x402/catalog`);
       expect(answered.status).toBe(500);
       expect((await answered.json()) as { error: { code: string } }).toMatchObject({
         error: { code: "gateway_failed" },
@@ -318,7 +351,7 @@ describe("the merchant's door", () => {
 
   it("asks nobody for a key on the calls an agent makes", async () => {
     const { served } = await started();
-    expect((await served.call("GET", "/v0/catalog")).status).toBe(200);
+    expect((await served.call("GET", "/x402/catalog")).status).toBe(200);
   });
 });
 
@@ -406,7 +439,7 @@ describe("the payment challenge", () => {
     const { served, harnessed } = await started();
     const itemId = await publish(served, syncCard);
 
-    const answered = await served.call("GET", `/v0/items/${itemId}/purchase`);
+    const answered = await served.call("GET", `/x402/${itemId}/purchase`);
 
     expect(answered.status).toBe(402);
     const challenge = decodePaymentRequiredHeader(
@@ -427,7 +460,7 @@ describe("the payment challenge", () => {
     const { served, harnessed } = await started();
     const itemId = await publish(served, syncCard);
 
-    const answered = await served.call("POST", `/v0/items/${itemId}/purchase`, {
+    const answered = await served.call("POST", `/x402/${itemId}/purchase`, {
       body: { params: {} },
     });
 
@@ -460,7 +493,7 @@ describe("the payment challenge", () => {
       payload: {},
     });
 
-    const answered = await served.call("POST", `/v0/items/${itemId}/purchase`, {
+    const answered = await served.call("POST", `/x402/${itemId}/purchase`, {
       body: { params: {} },
       headers: { [PAYMENT_SIGNATURE_HEADER]: invented },
     });
@@ -493,7 +526,7 @@ describe("the payment challenge", () => {
       "utf8",
     ).toString("base64");
 
-    const answered = await served.call("POST", `/v0/items/${itemId}/purchase`, {
+    const answered = await served.call("POST", `/x402/${itemId}/purchase`, {
       body: { params: {} },
       headers: { [PAYMENT_SIGNATURE_HEADER]: nonsense },
     });
@@ -506,9 +539,9 @@ describe("the payment challenge", () => {
 
   it("has nothing to sell under an identifier nobody published", async () => {
     const { served } = await started();
-    expect((await served.call("GET", "/v0/items/item_nope/purchase")).status).toBe(404);
+    expect((await served.call("GET", "/x402/item_nope/purchase")).status).toBe(404);
     expect(
-      (await served.call("POST", "/v0/items/item_nope/purchase", { body: { params: {} } })).status,
+      (await served.call("POST", "/x402/item_nope/purchase", { body: { params: {} } })).status,
     ).toBe(404);
   });
 });
@@ -517,7 +550,7 @@ describe("a purchase over HTTP, from the catalog to the goods", () => {
   it("tells the agent the purchase is over when the merchant refuses", async () => {
     const { served, harnessed } = await started();
     const itemId = await publish(served, syncCard);
-    const priced = await served.call("POST", `/v0/items/${itemId}/purchase`, {
+    const priced = await served.call("POST", `/x402/${itemId}/purchase`, {
       body: { params: {} },
     });
     const requirements = decodePaymentRequiredHeader(
@@ -528,7 +561,7 @@ describe("a purchase over HTTP, from the catalog to the goods", () => {
     const worker = workUntilStopped(harnessed, {
       onOrder: () => ({ refused: { code: "out_of_stock", message: "the room is taken" } }),
     });
-    const refused = await served.call("POST", `/v0/items/${itemId}/purchase`, {
+    const refused = await served.call("POST", `/x402/${itemId}/purchase`, {
       body: { params: {} },
       headers: {
         [PAYMENT_SIGNATURE_HEADER]: encodePaymentSignatureHeader({
@@ -561,7 +594,7 @@ describe("what an agent is told when the money is not settled", () => {
     harnessed.facilitator.willSettle({ settled: "unknown", reason: "the facilitator timed out" });
     const itemId = await publish(served, syncCard);
 
-    const priced = await served.call("POST", `/v0/items/${itemId}/purchase`, {
+    const priced = await served.call("POST", `/x402/${itemId}/purchase`, {
       body: { params: {} },
     });
     const requirements = decodePaymentRequiredHeader(
@@ -572,7 +605,7 @@ describe("what an agent is told when the money is not settled", () => {
     const worker = workUntilStopped(harnessed, {
       onOrder: () => ({ delivered: { access_code: "SESAME" } }),
     });
-    const answered = await served.call("POST", `/v0/items/${itemId}/purchase`, {
+    const answered = await served.call("POST", `/x402/${itemId}/purchase`, {
       body: { params: {} },
       headers: {
         [PAYMENT_SIGNATURE_HEADER]: encodePaymentSignatureHeader({
@@ -633,7 +666,7 @@ describe("whose purchase it is", () => {
   };
 
   const challengeFor = async (served: Served, itemId: string) => {
-    const priced = await served.call("POST", `/v0/items/${itemId}/purchase`, {
+    const priced = await served.call("POST", `/x402/${itemId}/purchase`, {
       body: { params: {} },
     });
     expect(priced.status).toBe(402);
@@ -665,11 +698,11 @@ describe("whose purchase it is", () => {
 
     const release = harnessed.facilitator.holdVerification();
     const race = Promise.all([
-      served.call("POST", `/v0/items/${itemId}/purchase`, {
+      served.call("POST", `/x402/${itemId}/purchase`, {
         body: { params: {} },
         headers: { [PAYMENT_SIGNATURE_HEADER]: buyerHeader },
       }),
-      served.call("POST", `/v0/items/${itemId}/purchase`, {
+      served.call("POST", `/x402/${itemId}/purchase`, {
         body: { params: {} },
         headers: { [PAYMENT_SIGNATURE_HEADER]: strangerHeader },
       }),
@@ -759,13 +792,13 @@ describe("whose purchase it is", () => {
     // The buyer takes the order first, and their own payment cannot be checked
     // yet because nothing is answering.
     harnessed.facilitator.willVerify({ verified: "unknown", message: "not asked yet" });
-    await served.call("POST", `/v0/items/${itemId}/purchase`, {
+    await served.call("POST", `/x402/${itemId}/purchase`, {
       body: { params: {} },
       headers: { [PAYMENT_SIGNATURE_HEADER]: paidBy(challenge, BUYER, "0x01") },
     });
 
     harnessed.facilitator.willRefuseVerification("signature", "not a signature at all");
-    const meddling = await served.call("POST", `/v0/items/${itemId}/purchase`, {
+    const meddling = await served.call("POST", `/x402/${itemId}/purchase`, {
       body: { params: {} },
       headers: { [PAYMENT_SIGNATURE_HEADER]: paidBy(challenge, STRANGER, "0x02") },
     });
@@ -798,7 +831,7 @@ describe("whose purchase it is", () => {
     const worker = workUntilStopped(harnessed, {
       onOrder: () => ({ delivered: { access_code: "SESAME" } }),
     });
-    const delivered = await served.call("POST", `/v0/items/${itemId}/purchase`, {
+    const delivered = await served.call("POST", `/x402/${itemId}/purchase`, {
       body: { params: {} },
       headers: { [PAYMENT_SIGNATURE_HEADER]: first },
     });
@@ -811,7 +844,7 @@ describe("whose purchase it is", () => {
     // nothing a second time, and a repeat that needed him would hang here.
     await worker.stop();
 
-    const paid = await served.call("POST", `/v0/items/${itemId}/purchase`, {
+    const paid = await served.call("POST", `/x402/${itemId}/purchase`, {
       body: { params: {} },
       headers: { [PAYMENT_SIGNATURE_HEADER]: repeat },
     });
@@ -839,13 +872,13 @@ describe("whose purchase it is", () => {
     });
     const challenge = await challengeFor(served, itemId);
 
-    const bought = await served.call("POST", `/v0/items/${itemId}/purchase`, {
+    const bought = await served.call("POST", `/x402/${itemId}/purchase`, {
       body: { params: {} },
       headers: { [PAYMENT_SIGNATURE_HEADER]: paidBy(challenge, BUYER, "0x01") },
     });
     expect(bought.status).toBe(200);
 
-    const stranger = await served.call("POST", `/v0/items/${itemId}/purchase`, {
+    const stranger = await served.call("POST", `/x402/${itemId}/purchase`, {
       body: { params: {} },
       headers: { [PAYMENT_SIGNATURE_HEADER]: paidBy(challenge, STRANGER, "0x02") },
     });
@@ -1190,7 +1223,7 @@ describe("the merchant's own catalog and the pause switch", () => {
   const stateOf = (body: unknown, id: string) => cardsOf(body).find((card) => card.id === id);
 
   const buy = (served: Served, itemId: string) =>
-    served.call("POST", `/v0/items/${itemId}/purchase`, { body: { params: {} } });
+    served.call("POST", `/x402/${itemId}/purchase`, { body: { params: {} } });
 
   it("shows the merchant the cards they published, whole, and refuses a caller with no key", async () => {
     const { served } = await started();
@@ -1234,7 +1267,7 @@ describe("the merchant's own catalog and the pause switch", () => {
     const itemId = await publish(served, syncCard);
 
     await served.call("POST", `/v0/cards/${itemId}/pause`, { headers: asMerchant });
-    const listed = await served.call("GET", "/v0/catalog");
+    const listed = await served.call("GET", "/x402/catalog");
 
     expect((listed.body as { items: unknown[] }).items).toStrictEqual([]);
   });
@@ -1256,7 +1289,7 @@ describe("the merchant's own catalog and the pause switch", () => {
     const worker = workUntilStopped(harnessed, {
       onOrder: () => ({ delivered: { access_code: "SESAME" } }),
     });
-    const bought = await served.call("POST", `/v0/items/${itemId}/purchase`, {
+    const bought = await served.call("POST", `/x402/${itemId}/purchase`, {
       body: { params: {} },
       headers: {
         [PAYMENT_SIGNATURE_HEADER]: encodePaymentSignatureHeader({
@@ -1371,7 +1404,7 @@ describe("the merchant's own catalog and the pause switch", () => {
     expect(await harnessed.store.selling(harnessed.merchant.id)).toBe("departed");
     // And the merchant is still gone as far as an agent is concerned.
     expect(
-      (await served.call("POST", `/v0/items/${itemId}/purchase`, { body: { params: {} } })).status,
+      (await served.call("POST", `/x402/${itemId}/purchase`, { body: { params: {} } })).status,
     ).toBe(409);
   });
 
@@ -1411,7 +1444,7 @@ describe("the merchant's receipts", () => {
     const before = await served.call("GET", "/v0/receipts", { headers: asMerchant });
     expect(before.body).toStrictEqual({ receipts: [] });
 
-    const priced = await served.call("POST", `/v0/items/${itemId}/purchase`, {
+    const priced = await served.call("POST", `/x402/${itemId}/purchase`, {
       body: { params: {} },
     });
     const requirements = decodePaymentRequiredHeader(
@@ -1422,7 +1455,7 @@ describe("the merchant's receipts", () => {
     const worker = workUntilStopped(harnessed, {
       onOrder: () => ({ delivered: { access_code: "SESAME" } }),
     });
-    const bought = await served.call("POST", `/v0/items/${itemId}/purchase`, {
+    const bought = await served.call("POST", `/x402/${itemId}/purchase`, {
       body: { params: {} },
       headers: {
         [PAYMENT_SIGNATURE_HEADER]: encodePaymentSignatureHeader({
@@ -1474,14 +1507,19 @@ describe("a product that is declared and a product that is not", () => {
     const { served } = await started();
     const itemId = await publish(served, syncCard);
 
-    const answered = await served.call("GET", `/v0/items/${itemId}/purchase`);
+    const answered = await served.call("GET", `/x402/${itemId}/purchase`);
 
     expect(answered.status).toBe(402);
     const challenge = decodePaymentRequiredHeader(
       answered.headers.get(PAYMENT_REQUIRED_HEADER) ?? "",
     );
     expect(challenge.extensions?.bazaar).toBeTypeOf("object");
-    expect(challenge.resource.url).toBe(`http://localhost:3000/v0/items/${itemId}/purchase`);
+    // This exact string is the product's identity in every catalog that lists
+    // it, so it is pinned character for character rather than matched loosely.
+    // It carries no version segment, and that is the point of the address
+    // rather than an accident of it: a listing outlives the protocol, which
+    // says its own version in the challenge above and not in the path.
+    expect(challenge.resource.url).toBe(`http://localhost:3000/x402/${itemId}/purchase`);
   });
 
   it("stops answering a challenge for a card its merchant took off sale", async () => {
@@ -1492,7 +1530,7 @@ describe("a product that is declared and a product that is not", () => {
     const itemId = await publish(served, syncCard);
     await paused(served, itemId);
 
-    const answered = await served.call("GET", `/v0/items/${itemId}/purchase`);
+    const answered = await served.call("GET", `/x402/${itemId}/purchase`);
 
     expect(answered.status).toBe(409);
     expect(answered.headers.get(PAYMENT_REQUIRED_HEADER)).toBeNull();
@@ -1505,7 +1543,7 @@ describe("a product that is declared and a product that is not", () => {
     const stopped = await served.call("POST", "/v0/selling/pause", { headers: asMerchant });
     expect(stopped.status).toBe(200);
 
-    const answered = await served.call("GET", `/v0/items/${itemId}/purchase`);
+    const answered = await served.call("GET", `/x402/${itemId}/purchase`);
 
     expect(answered.status).toBe(409);
     expect(answered.headers.get(PAYMENT_REQUIRED_HEADER)).toBeNull();
@@ -1520,7 +1558,7 @@ describe("a product that is declared and a product that is not", () => {
     });
     expect(resumed.status).toBe(200);
 
-    expect((await served.call("GET", `/v0/items/${itemId}/purchase`)).status).toBe(402);
+    expect((await served.call("GET", `/x402/${itemId}/purchase`)).status).toBe(402);
   });
 
   it("says who is selling, reading the name off the merchant who published it", async () => {
@@ -1531,7 +1569,7 @@ describe("a product that is declared and a product that is not", () => {
     await setServiceName(harnessed.store, harnessed.merchant.id, "The pilot merchant", Date.now());
     const itemId = await publish(served, syncCard);
 
-    const answered = await served.call("GET", `/v0/items/${itemId}/purchase`);
+    const answered = await served.call("GET", `/x402/${itemId}/purchase`);
 
     expect(
       decodePaymentRequiredHeader(answered.headers.get(PAYMENT_REQUIRED_HEADER) ?? "").resource
@@ -1561,9 +1599,9 @@ describe("a product that is declared and a product that is not", () => {
         ).headers.get(PAYMENT_REQUIRED_HEADER) ?? "",
       ).resource.url;
 
-    const plain = await urlOf("GET", `/v0/items/${itemId}/purchase`);
+    const plain = await urlOf("GET", `/x402/${itemId}/purchase`);
 
-    expect(await urlOf("GET", `/v0/items/${itemId}/purchase?utm=abc`)).toBe(plain);
-    expect(await urlOf("POST", `/v0/items/${itemId}/purchase`)).toBe(plain);
+    expect(await urlOf("GET", `/x402/${itemId}/purchase?utm=abc`)).toBe(plain);
+    expect(await urlOf("POST", `/x402/${itemId}/purchase`)).toBe(plain);
   });
 });

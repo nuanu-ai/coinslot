@@ -145,7 +145,7 @@ const sellerInTheChallenge = async (
   served: Served,
   itemId: string,
 ): Promise<{ serviceName?: string; extensions: unknown }> => {
-  const answered = await served.call("GET", `/v0/items/${itemId}/purchase`);
+  const answered = await served.call("GET", `/x402/${itemId}/purchase`);
   expect(answered.status).toBe(402);
   const challenge = decodePaymentRequiredHeader(
     answered.headers.get(PAYMENT_REQUIRED_HEADER) ?? "",

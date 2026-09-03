@@ -1161,14 +1161,14 @@ export function overTheNetwork(
 
   const payFetch = wrapFetchWithPayment(traced, client);
   const purchaseUrl = (itemId: string): string =>
-    `${settings.baseUrl}/v0/items/${encodeURIComponent(itemId)}/purchase`;
+    `${settings.baseUrl}/x402/${encodeURIComponent(itemId)}/purchase`;
   const discovery = endpoints.discovery ?? DISCOVERY_ENDPOINT;
 
   return {
     buyerAddress: account.address,
 
     async catalog() {
-      const at = `${settings.baseUrl}/v0/catalog`;
+      const at = `${settings.baseUrl}/x402/catalog`;
       const answered = await fetch(at, { headers: { accept: "application/json" } });
       if (!answered.ok) {
         throw new Error(`${at} answered ${answered.status}`);

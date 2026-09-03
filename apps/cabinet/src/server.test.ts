@@ -586,7 +586,7 @@ const publish = async (gateway: Served, card: Card): Promise<string> => {
 
 /** Whether an agent could buy this product right now. */
 const purchasable = async (gateway: Served, itemId: string): Promise<boolean> =>
-  (await gateway.call("POST", `/v0/items/${itemId}/purchase`, { body: { params: {} } })).status ===
+  (await gateway.call("POST", `/x402/${itemId}/purchase`, { body: { params: {} } })).status ===
   402;
 
 /**
@@ -2065,18 +2065,18 @@ describe("the cards screen", () => {
     await running.browser.signIn();
 
     const screen = await running.browser.get("/cards");
-    const shown = /https:\/\/shop\.example\.com(\/v0\/items\/\S+?\/purchase)/.exec(
+    const shown = /https:\/\/shop\.example\.com(\/x402\/\S+?\/purchase)/.exec(
       readable(screen.html),
     );
 
-    expect(shown?.[1], "the cards screen names the address").toBe(`/v0/items/${itemId}/purchase`);
+    expect(shown?.[1], "the cards screen names the address").toBe(`/x402/${itemId}/purchase`);
     // And it is not a template that happens to match: an agent asking at that
     // very path is answered with the payment challenge rather than a 404.
     expect(await purchasable(running.gateway, itemId)).toBe(true);
     // Text and not a link. Pressing it asks without paying, which is answered
     // in a header with no page behind it — a merchant who clicked would read a
     // blank window as their card being broken.
-    expect(screen.html).not.toContain('href="https://shop.example.com/v0/items/');
+    expect(screen.html).not.toContain('href="https://shop.example.com/x402/');
   });
 
   it("shows each card with its key, price, delivery and state", async () => {
@@ -2165,7 +2165,7 @@ describe("the cards screen", () => {
     // The negative control: the switch is per card, so the other one still
     // sells and is still the only thing in the public catalog.
     expect(await purchasable(gateway, esim)).toBe(true);
-    expect((await gateway.call("GET", "/v0/catalog")).body).toMatchObject({
+    expect((await gateway.call("GET", "/x402/catalog")).body).toMatchObject({
       items: [{ title: "eSIM Europe, 5 GB for 30 days" }],
     });
   });
