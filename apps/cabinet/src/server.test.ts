@@ -586,8 +586,7 @@ const publish = async (gateway: Served, card: Card): Promise<string> => {
 
 /** Whether an agent could buy this product right now. */
 const purchasable = async (gateway: Served, itemId: string): Promise<boolean> =>
-  (await gateway.call("POST", `/x402/${itemId}/purchase`, { body: { params: {} } })).status ===
-  402;
+  (await gateway.call("POST", `/x402/${itemId}/purchase`, { body: { params: {} } })).status === 402;
 
 /**
  * Takes the name buyers read off the merchant every test in this file signs in
