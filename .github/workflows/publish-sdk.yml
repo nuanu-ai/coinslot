@@ -150,17 +150,23 @@ jobs:
         run: |
           set -euo pipefail
 
+          # The registry records a publish some time after `changeset publish`
+          # reports it, and the two packages are not recorded together: on
+          # both 0.2.0 and 0.2.1 the SDK appeared at once and the contracts
+          # package one to two minutes later (`npm view <package> time`). A
+          # twenty-second wait failed both releases with a package that was
+          # already there, and the rerun found nothing left to publish.
           expect_version() {
             local selector="$1"
             local expected="$2"
             local actual=""
 
-            for attempt in {1..10}; do
+            for attempt in {1..60}; do
               if actual="$(npm view "$selector" version 2>/dev/null)" && [ "$actual" = "$expected" ]; then
                 return 0
               fi
-              if [ "$attempt" -lt 10 ]; then
-                sleep 2
+              if [ "$attempt" -lt 60 ]; then
+                sleep 5
               fi
             done
 
