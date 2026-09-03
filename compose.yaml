@@ -76,6 +76,8 @@
 #   COINSLOT_PAYMENT_NETWORK  the chain payments use         eip155:84532
 #   CDP_API_KEY_ID             Coinbase facilitator key ID   absent
 #   CDP_API_KEY_SECRET         Coinbase facilitator secret   absent
+#   TEST_PURCHASE_BUYER_KEY    the wallet a merchant's test  absent
+#                              purchase is paid from
 #   COINSLOT_SURFACE_MODE     what the static pages say       sandbox
 #   COINSLOT_MERCHANT_KEY   the key the mock merchant        csk_test_local-sandbox-merchant-key
 #                           sells with
@@ -275,6 +277,14 @@ services:
       # hands this service.
       CDP_API_KEY_ID: "${CDP_API_KEY_ID-}"
       CDP_API_KEY_SECRET: "${CDP_API_KEY_SECRET-}"
+      # The wallet this gateway buys its merchants' own cards with when a
+      # merchant asks for a test purchase (ADR-0023). Absent on a laptop — the
+      # scripted facilitator settles against nothing, so the walk signs with a
+      # key made for it and thrown away — and needed on the test site, where
+      # the route refuses in words until it is set. On a live chain it changes
+      # nothing: the route refuses there whatever this holds. Same dash, same
+      # reason as the two above.
+      TEST_PURCHASE_BUYER_KEY: "${TEST_PURCHASE_BUYER_KEY-}"
       # A challenge has to name somewhere for the money to go or it cannot be
       # built at all, so this is here to give the document a shape where the
       # merchant selling has set no address of their own — which is what a stack
