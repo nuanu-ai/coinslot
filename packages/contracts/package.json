@@ -2,7 +2,14 @@
   "name": "@nuanu-ai/coinslot-contracts",
   "version": "0.2.0",
   "type": "module",
-  "description": "Coinslot public contract schemas — card, order, price hook, receipt",
+  "description": "The Coinslot wire contract as code: the schemas for cards, orders, price checks and receipts that the gateway and the merchant SDK both read.",
+  "keywords": [
+    "x402",
+    "agent-commerce",
+    "zod-schemas",
+    "json-schema"
+  ],
+  "homepage": "https://coinslot.nuanu.ai/docs/",
   "license": "UNLICENSED",
   "repository": {
     "type": "git",
