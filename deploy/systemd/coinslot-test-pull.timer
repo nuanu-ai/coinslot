@@ -1,0 +1,12 @@
+[Unit]
+Description=Check GitHub for a releasable Coinslot test revision
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=5min
+RandomizedDelaySec=30s
+Persistent=true
+Unit=coinslot-test-pull.service
+
+[Install]
+WantedBy=timers.target

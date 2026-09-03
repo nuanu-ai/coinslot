@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
-# Installed outside the checkout and forced by the GitHub Actions SSH key.
+# Installed outside the checkout. A forced SSH key may call either channel;
+# the VM pull agent may call only the local test-channel door.
 #
 # There is no rollback and there are no release directories (ADR-0016).
 #
@@ -43,7 +44,20 @@ esac
 # request is read, so the key that can deploy the test site cannot deploy the
 # live one whatever it asks for. The marker records which command ran, so what
 # is running is identifiable by name as well as by revision.
-if [[ "${requested_command}" =~ ^release-test\ ([0-9a-f]{40})$ ]]; then
+if [[ "$#" == 2 ]]; then
+  [[ -z "${requested_command}" ]] || fail 'a local release cannot carry an SSH command'
+  [[ "${allowed_channel}" == 'test' ]] || fail 'local releases are limited to the test channel'
+  [[ "$2" =~ ^[0-9a-f]{40}$ ]] || fail 'local test release expected a 40-character lowercase SHA'
+  readonly channel='test'
+  readonly revision="$2"
+  readonly released_as="release-test ${revision}"
+  readonly project='coinslot-test'
+  readonly deployment="${HOME}/coinslot-test"
+  readonly site='test.coinslot.nuanu.ai'
+  readonly port='8443'
+elif [[ "$#" != 1 ]]; then
+  fail 'expected one forced-SSH channel or a local test channel and SHA'
+elif [[ "${requested_command}" =~ ^release-test\ ([0-9a-f]{40})$ ]]; then
   readonly channel='test'
   readonly revision="${BASH_REMATCH[1]}"
   readonly released_as="release-test ${revision}"

@@ -1,0 +1,23 @@
+[Unit]
+Description=Pull an exact green Coinslot main revision into the test channel
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=dmitry
+Group=dmitry
+SupplementaryGroups=docker
+ExecStart=/home/dmitry/.local/libexec/coinslot-pull-agent /home/dmitry/.local/libexec/coinslot-release /var/lib/coinslot/test-pull.state /home/dmitry/coinslot-test/.coinslot-revision
+StateDirectory=coinslot
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/dmitry/.cache /home/dmitry/coinslot-test -/home/dmitry/.docker
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+TimeoutStartSec=30min
