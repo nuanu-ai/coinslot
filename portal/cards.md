@@ -421,7 +421,7 @@ required fields first.
 
 | Field | Type | Required | Example |
 | --- | --- | --- | --- |
-| `id` | string | not yours to fill in: we issue it at publication | `itm_9f2c4a` |
+| `id` | string | not yours to fill in: we issue it at publication | `item_f9290a94590540088e90afef0fdfd175` |
 | `merchant_item_id` | string | required | `access-monthly` |
 | `title` | string | required | `One month of access to the service` |
 | `description` | string, up to 500 characters | required | `Access for 30 days from delivery, renewal not included` |
