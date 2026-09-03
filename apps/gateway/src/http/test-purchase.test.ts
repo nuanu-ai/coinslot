@@ -282,9 +282,9 @@ describe("a merchant walks a test purchase of their own card", () => {
     expect(handled).toHaveLength(1);
     expect(document.order_id).toBe(handled[0]?.id);
     const orders = await served.call("GET", "/v0/orders", { headers: keyOf(harnessed.merchant) });
-    expect(
-      (orders.body as { orders: { id: string }[] }).orders.map((order) => order.id),
-    ).toContain(document.order_id);
+    expect((orders.body as { orders: { id: string }[] }).orders.map((order) => order.id)).toContain(
+      document.order_id,
+    );
   });
 
   it("carries the parameters the merchant's own card asks for", async () => {
@@ -368,11 +368,20 @@ describe("a walk that does not finish is a document", () => {
     expect(document.outcome).toBe("stopped");
     expect(document.order_id).toBeNull();
     expect(document.delivered).toBeNull();
-    // The card is off sale, so it is out of the catalog too, and the sentence
-    // is the storefront's rather than one we wrote about it.
+    // A paused card is out of the public catalog as well, which is a fact worth
+    // its own step: it is the difference between a card an agent cannot buy and
+    // a card no agent would ever find.
     expect(stepNamed(document, "catalog")?.ok).toBe(false);
-    expect(stepNamed(document, "price")?.said).toBe("this product is not on sale at the moment");
     expect(document.steps.at(-1)?.ok).toBe(false);
+
+    // And the sentence is the storefront's own, carried over word for word
+    // rather than paraphrased by us: the same call made by hand comes back with
+    // exactly the sentence the step is carrying. Pinning the words themselves
+    // would only pin our own prose, which is what this comparison avoids.
+    const refused = await served.call("POST", `/x402/${itemId}/purchase`, { body: { params: {} } });
+    const { error } = refused.body as { error: { code: string; message: string } };
+    expect(error.code).toBe("not_selling");
+    expect(stepNamed(document, "price")?.said).toBe(error.message);
   });
 
   it("stops at the price when the parameters are not what the card asks for", async () => {
@@ -387,7 +396,13 @@ describe("a walk that does not finish is a document", () => {
     const document = walked(answered.body);
     expect(document.outcome).toBe("stopped");
     expect(stepNamed(document, "price")?.ok).toBe(false);
-    expect(stepNamed(document, "price")?.said).toContain("card asks for");
+
+    // This refusal carries findings beside its sentence, and the sentence is
+    // still what reaches the merchant, word for word off the same door.
+    const refused = await served.call("POST", `/x402/${itemId}/purchase`, { body: { params: {} } });
+    const { error } = refused.body as { error: { code: string; message: string } };
+    expect(error.code).toBe("params_do_not_fit");
+    expect(stepNamed(document, "price")?.said).toBe(error.message);
   });
 
   it("says where it stopped when nobody is running the merchant's worker", async () => {
@@ -430,14 +445,21 @@ describe("what the door refuses before any walk begins", () => {
     expect(missing.body).toStrictEqual(answered.body);
   });
 
-  it("refuses on a gateway where the money is real", async () => {
+  it("refuses on a gateway where the money is real, and buys nothing", async () => {
     // The buyer is ours and so is what it spends. A test purchase on the live
     // site would be us spending real money whenever somebody pressed a button.
-    const { harnessed, served } = await started({
+    //
+    // A wallet is configured here on purpose. Without one this gateway would
+    // refuse anyway, for having no buyer, and the test would pass with the
+    // world guard removed — so the buyer exists, is funded as far as the
+    // configuration is concerned, and the only thing left to say no is where
+    // the money would come from.
+    const { harnessed, served, storefront } = await started({
       PAYMENT_NETWORK: "eip155:8453",
       FACILITATOR_URL: CDP_FACILITATOR_URL,
       CDP_API_KEY_ID: "key-id",
       CDP_API_KEY_SECRET: "key-secret",
+      TEST_PURCHASE_BUYER_KEY: `0x${"11".repeat(32)}`,
     });
     const live = { authorization: `Bearer ${theMerchantKey("live")}` };
     const itemId = await publish(served, nowCard, live);
@@ -447,14 +469,16 @@ describe("what the door refuses before any walk begins", () => {
     expect(answered.status).toBe(409);
     const { error } = answered.body as { error: { code: string; message: string } };
     expect(error.code).toBe("test_purchase_refused");
-    expect(error.message).toContain("real");
+    // And the promise under the refusal: nothing was bought. Not one call
+    // reached the storefront, so no order was opened and no payment signed.
+    expect(storefront.seen).toStrictEqual([]);
   });
 
   it("says the stand has no test buyer rather than failing at the payment", async () => {
     // A gateway that settles through a real facilitator needs a funded wallet
     // of ours to buy with. Without one the honest answer is at the door, in
-    // words, and not a signature that goes nowhere.
-    const { harnessed, served } = await started({
+    // words naming what is missing, and not a signature that goes nowhere.
+    const { harnessed, served, storefront } = await started({
       FACILITATOR_URL: "https://x402.org/facilitator",
     });
     const itemId = await publish(served, nowCard);
@@ -465,13 +489,17 @@ describe("what the door refuses before any walk begins", () => {
     const { error } = answered.body as { error: { code: string; message: string } };
     expect(error.code).toBe("test_purchase_refused");
     expect(error.message).toContain("TEST_PURCHASE_BUYER_KEY");
+    expect(storefront.seen).toStrictEqual([]);
   });
 
   it("refuses a card priced above what the test buyer may spend at once", async () => {
     // Test funds are free and a faucet is not infinite. The refusal names both
     // numbers, so the merchant knows what to publish instead.
     const { harnessed, served } = await started({ TEST_PURCHASE_MAX_USD: "2.00" });
-    const itemId = await publish(served, { ...nowCard, price: { amount: "9.00", currency: "USD" } });
+    const itemId = await publish(served, {
+      ...nowCard,
+      price: { amount: "9.00", currency: "USD" },
+    });
 
     const answered = await walk(harnessed, served, itemId, { worker: false });
 
@@ -514,7 +542,11 @@ describe("what the door refuses before any walk begins", () => {
     const { harnessed, served } = await started({ TEST_PURCHASE_PER_HOUR: "1" });
     const seller = await harnessed.addMerchant("A second merchant");
     const mine = await publish(served, nowCard);
-    const theirs = await publish(served, { ...nowCard, merchant_item_id: "room-202" }, keyOf(seller));
+    const theirs = await publish(
+      served,
+      { ...nowCard, merchant_item_id: "room-202" },
+      keyOf(seller),
+    );
 
     await walk(harnessed, served, mine);
     const refused = await walk(harnessed, served, mine, { worker: false });
