@@ -423,36 +423,86 @@ promise that one round of fixes is enough.
 
 The other half of checking yourself is missing, and it is the half worth more.
 Whether your handler holds against repeats — whether a second delivery appears
-when the same order arrives twice — cannot be checked from here, because
-nothing on our surface raises a test order to try it against. The check says so
-in its own output instead of reporting a pass, and it claims nothing about your
-side. Until that changes, holding against repeats is yours to prove against
-your own delivery system, and what has to hold is that a second order produces
-no second delivery and no fresh goods — the buyer keeps what the first delivery
-carried ([Telling a repeat apart](/orders#telling-a-repeat-apart)).
+when the same order arrives twice — cannot be checked from here. The test
+purchase on step 5 raises one order and raises it once, and nothing else on our
+surface sends the same order again to try your handler against it. The check
+says so in its own output instead of reporting a pass, and it claims nothing
+about your side. Until that changes, holding against repeats is yours to prove
+against your own delivery system, and what has to hold is that a second order
+produces no second delivery and no fresh goods — the buyer keeps what the first
+delivery carried ([Telling a repeat apart](/orders#telling-a-repeat-apart)).
 
 ## 5. Walk a test purchase
 
-The first purchase of your product on the configured test channel is made by
-our sandbox buyer rather than by a live agent — a program that walks the whole
-path: it finds the card, asks the price, pays and takes delivery. It pays with
-test funds, and afterwards the whole test path can be seen working.
+What is left to prove is that a stranger's agent could actually buy this
+product, and you prove it yourself, whenever you are ready. In your cabinet, on
+the Cards screen, every card that is on sale carries a "Test purchase" control.
+Pressing it sends a buyer of ours down the path an agent takes: it reads the
+public catalogue, makes the unpaid call that opens an order and answers with a
+price, signs the payment that price asks for and presents it, and comes back to
+the order's own address for the goods. The buyer is ours and so is what it
+spends, which is why the walk lives on the test address and costs you nothing.
+Where your card asks the buyer for something, the control carries a box for
+each question that card declares, with the card's own words above it, and you
+fill them in before you press.
 
-During the pilot we start that purchase on your signal: say you are ready, and
-we run it with you watching, so that you see what happens at every step. The
-order it leaves carries `test: true`, because the test address settles on a
-test chain — the flag follows the chain the payment settled on and not the key
-you called with.
+The same walk is one call if you would rather make it from a terminal or a
+script. It takes the key you already have and the catalogue identifier the
+publish on step 2 returned:
 
-It all came together if the order reached your handler, the sandbox buyer
-received the goods, and the purchase left a receipt behind it.
+```sh
+curl -X POST "https://test.coinslot.nuanu.ai/v0/cards/$ITEM_ID/test-purchase" \
+  -H "Authorization: Bearer $COINSLOT_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{ "params": {} }'
+```
+
+`ITEM_ID` is our catalogue `id` and not your `merchant_item_id`: they are two
+different strings, and only one of them is in that address. The `params` are
+the ones your own card declares, written exactly as an agent would write them,
+and `{ "params": {} }` is the whole body for a card that declares none.
+
+What comes back — on the page and in the answer to that call — is a transcript
+rather than a yes or a no. It names the four doors in the order the buyer went
+through them, and for each one it carries the whole address that was called,
+whether the door gave the buyer what it went there for, and what came of it in
+words. Where the storefront refused, those words are the storefront's own,
+exactly as an agent would have read them. Beside the doors it carries the order
+the walk opened and the goods precisely as the buyer received them, which is
+what you read against the result your card declares it delivers. A walk that
+did not finish is that same transcript with fewer doors in it and never an
+error: "it stopped at the price, and the storefront said the product is not on
+sale" is the answer you came for, and a failure would throw it away.
+
+The order the walk leaves behind is an ordinary order of yours. It reaches your
+handler, it appears on your Orders screen, it leaves a receipt when its goods
+are released, and it carries `test: true` — the flag follows the chain the
+payment settled on rather than the key you called with, and the test address
+settles on a test chain.
+
+It all came together when three things agree. Your own log shows the order
+arriving at your handler and your answer going back. The transcript's outcome
+is the one your card's mode allows: `delivered` for a card whose goods come
+back in the answer to the purchase, with the goods on the page matching what
+the card promised, and `accepted` for a card whose goods come later, which
+means the money moved and you took the order on. And your Orders screen carries
+that same order identifier, marked as a test purchase, standing where the same
+mode says it should stand — delivered, or open and awaiting fulfilment until
+you deliver.
+
+Two ceilings sit on this and both are ours rather than yours, because the
+wallet is ours. A card priced above what our test buyer pays in one purchase is
+refused before the walk starts, with both numbers named, and there is a limit
+on how many walks one merchant may make within an hour, which lets go as the
+hour moves. Each is refused in words that say which of the two it was.
 
 ## 6. Prove the sale; measure external discovery separately
 
 The publish call on step 2 puts the card into that Coinslot channel's own
-catalogue before this purchase. The purchase is the proof that an agent can
-buy it: the order reaches your handler, the buyer receives the declared goods,
-and the sale leaves a receipt.
+catalogue before this purchase. The purchase you walked on step 5 is the proof
+that an agent can buy it: the order reaches your handler, the buyer receives
+the declared goods, and the sale leaves a receipt. The transcript is that proof
+written down, and it is yours — nobody has to be watching for it to count.
 
 A settled payment is also the event an external discovery catalogue such as
 Coinbase Bazaar may index. That is a different surface from Coinslot's own
@@ -485,8 +535,6 @@ not touch your code.
 - The surface of the other order transports: the request to an address of
   yours, and the cursor that pulls batches.
 - The half of the check that would send one order twice and watch for a second
-  delivery. Nothing on our surface raises that order to send, so this check
-  still cannot exercise your delivery system's idempotency from outside.
-- Where to say that you are ready for a test purchase: we have no channel for
-  that yet.
-- Starting the test purchase with a command of your own — after the pilot.
+  delivery. A test purchase raises one order and nothing on our surface sends
+  that order again, so this check still cannot exercise your delivery system's
+  idempotency from outside.

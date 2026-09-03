@@ -41,6 +41,8 @@ import {
   type RegisteredMerchant,
   RegisteredMerchantSchema,
   SellerNameSchema,
+  type TestPurchase,
+  TestPurchaseSchema,
 } from "@nuanu-ai/coinslot-contracts";
 /** What a call came to, in the two shapes a page has to draw differently. */
 export type Answer<T> =
@@ -51,11 +53,35 @@ export type Answer<T> =
    * a gateway that answered, and a page that folded the two would tell a
    * merchant their catalog is empty when the truth is that nothing answered.
    */
-  | { readonly ok: false; readonly status: number; readonly why: string };
+  | {
+      readonly ok: false;
+      readonly status: number;
+      readonly why: string;
+      /**
+       * Whether the gateway said the same call can go through later.
+       *
+       * Read off the refusal envelope rather than worked out from the status,
+       * because the envelope is where the answer is: a merchant shown a delay
+       * as a dead end goes looking for a fault in their own integration, and
+       * one shown a dead end as a delay waits for something that will never
+       * change. Absent where nothing readable came back at all, which is a
+       * third thing again and is not a claim either way.
+       */
+      readonly retryable?: boolean;
+    };
 
 export interface GatewayClient {
   cards(): Promise<Answer<MerchantCardList>>;
   pauseCard(itemId: string, paused: boolean): Promise<Answer<MerchantCard>>;
+  /**
+   * Buys one of this merchant's own cards with the gateway's test buyer, and
+   * answers with the transcript of the walk.
+   *
+   * The parameters are the card's own, which is why they are handed in rather
+   * than assembled here: what a purchase of a card needs is declared on that
+   * card and nowhere else. A card that declares none is walked with `{}`.
+   */
+  testPurchase(itemId: string, params: Record<string, unknown>): Promise<Answer<TestPurchase>>;
   setSelling(selling: boolean): Promise<Answer<MerchantCardList>>;
   orders(open: boolean): Promise<Answer<OrderList>>;
   receipts(): Promise<Answer<ReceiptList>>;
@@ -116,6 +142,24 @@ export interface Registrar {
  */
 const ANSWER_WITHIN_MS = 10_000;
 
+/**
+ * How long the cabinet waits for a walked test purchase.
+ *
+ * Longer than every other call here, and for a reason that belongs to the call
+ * rather than to anybody's patience: this one is four HTTP requests made on the
+ * other side, out of the gateway's front door and back into it, and the gateway
+ * gives each of them a deadline of its own. Giving up first would replace the
+ * one answer the merchant pressed the button for — which door their integration
+ * stopped at, and what that door said — with a sentence of ours about the
+ * gateway being slow.
+ *
+ * The number is chosen and not derived. What the walk can take is a multiple of
+ * deadlines in the gateway's configuration, and nothing on this side can read
+ * them; this is comfortably above the four they add up to where they are left
+ * at their defaults.
+ */
+const WALK_WITHIN_MS = 60_000;
+
 /** What one call needs beyond its route and the shape of its answer. */
 interface Sending {
   /** The values for a path that names parameters, such as `:key_id`. */
@@ -123,6 +167,11 @@ interface Sending {
   readonly query?: string;
   /** A document to send, for the routes that take one. */
   readonly body?: unknown;
+  /**
+   * How long to wait for this one call, where the client's own deadline is the
+   * wrong number for it. Left out, the client's is used.
+   */
+  readonly answerWithinMs?: number;
 }
 
 /**
@@ -151,7 +200,7 @@ const caller =
           ...(sending.body === undefined ? {} : { "content-type": "application/json" }),
         },
         ...(sending.body === undefined ? {} : { body: JSON.stringify(sending.body) }),
-        signal: AbortSignal.timeout(answerWithinMs),
+        signal: AbortSignal.timeout(sending.answerWithinMs ?? answerWithinMs),
       });
     } catch (thrown) {
       // Nothing answered. Said as its own thing, because "the gateway is not
@@ -169,7 +218,7 @@ const caller =
     }
 
     if (!answered.ok) {
-      return { ok: false, status: answered.status, why: await reasonIn(answered) };
+      return { ok: false, status: answered.status, ...(await reasonIn(answered)) };
     }
 
     const document = schema.parse(await answered.json());
@@ -197,6 +246,12 @@ export const gatewayFor = (
     pauseCard: (itemId, paused) =>
       call(paused ? API_ROUTES.pause_card : API_ROUTES.resume_card, MerchantCardSchema, {
         values: { item_id: itemId },
+      }),
+    testPurchase: (itemId, params) =>
+      call(API_ROUTES.test_purchase, TestPurchaseSchema, {
+        values: { item_id: itemId },
+        body: { params },
+        answerWithinMs: WALK_WITHIN_MS,
       }),
     setSelling: (selling) =>
       call(selling ? API_ROUTES.resume_selling : API_ROUTES.pause_selling, MerchantCardListSchema),
@@ -291,14 +346,22 @@ export const registrarFor = (
  * fallback is the point: an error text is a claim like any other, and where
  * there is none to read this says the status instead of inventing one.
  */
-const reasonIn = async (answered: Response): Promise<string> => {
+const reasonIn = async (answered: Response): Promise<{ why: string; retryable?: boolean }> => {
+  const nothingToRead = { why: `the gateway answered ${answered.status}` };
   try {
-    const body = (await answered.json()) as { error?: { message?: unknown } };
+    const body = (await answered.json()) as {
+      error?: { message?: unknown; retryable?: unknown };
+    };
     const message = body.error?.message;
-    return typeof message === "string" && message !== ""
-      ? message
-      : `the gateway answered ${answered.status}`;
+    if (typeof message !== "string" || message === "") {
+      return nothingToRead;
+    }
+    // The flag travels only when it is really there and really a boolean. A
+    // missing one read as false would turn every proxy's error page into a
+    // definitive "no", which is the one reading this cannot make on its own.
+    const retryable = body.error?.retryable;
+    return typeof retryable === "boolean" ? { why: message, retryable } : { why: message };
   } catch {
-    return `the gateway answered ${answered.status}`;
+    return nothingToRead;
   }
 };

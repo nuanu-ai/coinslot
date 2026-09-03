@@ -11,14 +11,17 @@
  * weaker thing. `words.ts` carries those cases and the reasons.
  */
 
-import type { SurfaceMode } from "@coinslot/core";
+import { SITES, type SurfaceMode } from "@coinslot/core";
 import {
   API_ROUTES,
   expandPath,
   type MerchantCard,
   type MerchantCardList,
   type OrderList,
+  type ParamSpec,
+  type ParamType,
   type ReceiptList,
+  type TestPurchase,
 } from "@nuanu-ai/coinslot-contracts";
 import { escaped, page, state, type Tab, table } from "./html.js";
 import type { PayoutWallet } from "./payout-wallet.js";
@@ -29,6 +32,8 @@ import {
   needsAttention,
   ORDER_WORDS,
   SELLING_WORDS,
+  TEST_PURCHASE_STEP_WORDS,
+  TEST_PURCHASE_WORDS,
 } from "./words.js";
 
 /**
@@ -158,6 +163,126 @@ const cardControl = (base: string, entry: MerchantCard): string => {
 };
 
 /**
+ * Whether this cabinet offers a test purchase at all.
+ *
+ * The buyer that walks one belongs to us and so does what it spends, so the
+ * gateway refuses every test purchase where the money is real (ADR-0023). A
+ * button drawn there would be the last step of an integration offered as a
+ * control that cannot work, so the screen does not draw it and says instead
+ * where the walk does happen. The gateway is still the lock: this is the
+ * courtesy in front of it, not the rule.
+ */
+const walksTestPurchases = (mode: SurfaceMode): boolean => mode !== "live";
+
+/**
+ * The control that walks a test purchase of one card, with the card's own
+ * questions on it.
+ *
+ * The boxes come from the card's `params` and from nowhere else. That is the
+ * whole design: a list written out here would work for the cards somebody had
+ * in mind when they wrote it and quietly ask the wrong thing of every other
+ * card, and a merchant would find out from a purchase refused for parameters
+ * they were never given a box for.
+ *
+ * A card that declares nothing gets a button and no boxes, because there is
+ * nothing to ask. The type is shown beside each question because it is part of
+ * the same declaration and because without it a merchant cannot know what to
+ * type into a box that wants a number or a yes-or-no.
+ *
+ * Only on a card that is on sale. A paused card refuses the purchase at the
+ * price call, so the walk's ending is known before it starts, and the one thing
+ * the merchant would have to do first — put the card back on sale — is the
+ * control sitting right beside this one.
+ */
+const cardWalk = (viewer: Viewer, entry: MerchantCard): string => {
+  if (entry.selling !== "open" || !walksTestPurchases(viewer.mode)) {
+    return "";
+  }
+
+  const asks = Object.entries(entry.card.params ?? {}).map(([name, field]) => {
+    const box = `walk-${entry.id}-${name}`;
+    const needed = field.required === true;
+    return `<label for="${escaped(box)}">${escaped(field.title ?? name)}${
+      needed ? '<span class="need">required</span>' : ""
+    }<span class="kind">${escaped(field.type)}</span></label>
+<input id="${escaped(box)}" name="${escaped(name)}" type="text" autocomplete="off"${needed ? " required" : ""}>`;
+  });
+
+  return `<form class="walk" method="post" action="${escaped(viewer.base)}/cards/${encodeURIComponent(entry.id)}/test-purchase">
+${asks.join("\n")}
+<button type="submit">Test purchase</button></form>`;
+};
+
+/**
+ * The values a merchant typed, read as this card's own declaration says to read
+ * them.
+ *
+ * The other half of the form above, and it is in the same file for that reason:
+ * the names in the boxes and the names read back out of them are one agreement,
+ * and two files is where an agreement like that comes apart.
+ *
+ * Two decisions in here are worth naming. A box left empty on a question the
+ * card says is optional is left out of the purchase entirely, because that is
+ * what optional means — sending an empty string instead would be answering a
+ * question the merchant chose not to answer. And what was typed is passed
+ * through exactly as typed, with no space taken off either end: these values
+ * reach the merchant's own handler, and the portal's promise about a purchase
+ * parameter is that it arrives unchanged.
+ *
+ * Only the names the card declares are read. A field posted under any other
+ * name is not part of this card's purchase and is dropped here rather than sent
+ * on to be refused.
+ */
+export const paramsFromForm = (
+  spec: ParamSpec,
+  typed: Record<string, unknown>,
+): Record<string, unknown> => {
+  const values: Record<string, unknown> = {};
+
+  for (const [name, field] of Object.entries(spec)) {
+    const written = typed[name];
+    if (typeof written !== "string") {
+      continue;
+    }
+    if (written === "" && field.required !== true) {
+      continue;
+    }
+    values[name] = readAs(field.type, written);
+  }
+
+  return values;
+};
+
+/**
+ * One typed value as the declared type.
+ *
+ * A form posts strings and a card can declare a number or a yes-or-no, so
+ * without this a merchant whose card asks for a number could never walk a
+ * purchase of it from here — the storefront would refuse every attempt for a
+ * reason the merchant could do nothing about.
+ *
+ * What does not read as the declared type is passed on as it was typed, rather
+ * than turned into a null or a nought. The storefront's own words about what it
+ * expected and what it got are a better answer than a value this cabinet
+ * invented on the merchant's behalf.
+ */
+const readAs = (type: ParamType, written: string): unknown => {
+  switch (type) {
+    case "string":
+      return written;
+    case "number":
+    case "integer": {
+      const number = Number(written);
+      return written.trim() !== "" && Number.isFinite(number) ? number : written;
+    }
+    case "boolean":
+      if (written === "true") return true;
+      if (written === "false") return false;
+      return written;
+  }
+};
+
+/**
  * The address an agent buys one card at.
  *
  * Built from the route table rather than written out here, for the reason the
@@ -212,7 +337,7 @@ export const cardsScreen = (viewer: Viewer, cards: MerchantCardList, origin: str
 <td class="amount">${escaped(money(entry.card.price))}</td>
 <td class="quiet">${escaped(FULFILLMENT_WORDS[entry.card.fulfillment])}</td>
 <td>${state(SELLING_WORDS[entry.selling])}</td>
-<td class="control">${cardControl(base, entry)}</td>
+<td class="control">${cardControl(base, entry)}${cardWalk(viewer, entry)}</td>
 </tr>`,
   );
 
@@ -258,10 +383,30 @@ ${table(
       " trying from a terminal, not for opening here. A card that is off sale is refused at that" +
       " address instead of being offered.",
   )}</span></div>
+  <div class="note"><span class="mark">&#8627;</span><span>${escaped(walkNote(viewer.mode))}</span></div>
 `;
 
   return framed({ viewer, tab: "cards", title: "Product cards", selling: cards.selling, body });
 };
+
+/**
+ * What a test purchase is, and on a live cabinet where one is walked instead.
+ *
+ * The sentence for the live site is the one worth being careful about. A
+ * merchant reading a cards screen with no such control has to be able to tell
+ * "we do not offer this" from "this is missing", and the difference is where
+ * the money comes from: the buyer is ours, so the walk exists where the money
+ * is test money and the address of that site is in the sentence rather than
+ * left to be guessed.
+ */
+const walkNote = (mode: SurfaceMode): string =>
+  walksTestPurchases(mode)
+    ? "A test purchase buys one of your own cards with a buyer of ours, through the same addresses" +
+      " a stranger's agent would use, and comes back with what every door on the way answered." +
+      " Nothing it spends is yours: the buyer is ours and it pays with test funds."
+    : "Test purchases are not walked here. Ours is the wallet one is paid for out of, so they are" +
+      ` walked where the money is test money — on the test site, ${SITES.test} — and what is` +
+      " published here is published with this environment's own key.";
 
 /**
  * What the merchant's selling word means for the orders they already have.
@@ -281,6 +426,160 @@ const sellingNote = (selling: MerchantCardList["selling"]): string => {
     case "open":
       return "A pause takes the card off sale without abandoning orders: the ones you already accepted play out as usual. No new orders arrive while it is paused.";
   }
+};
+
+/**
+ * What the whole walk came to, in the sentence a merchant reads first.
+ *
+ * Three sentences because there are three different next moves, and the middle
+ * one is the one that has to be got right: a card whose goods come later cannot
+ * end holding them, so "the money moved and you took the order on" is a success
+ * with a different word rather than a walk that half failed.
+ */
+const outcomeSentence = (walk: TestPurchase): string => {
+  switch (walk.outcome) {
+    case "delivered":
+      return (
+        "The purchase went through. Our buyer walked the same path a stranger's agent walks," +
+        " paid at the address on your card, and came away holding the goods your own code" +
+        " delivered. There is nothing left to do."
+      );
+    case "accepted":
+      return (
+        "The money moved and your code took the order on, so the goods are owed rather than" +
+        " handed over. That is the whole of what a card whose goods come later can do inside a" +
+        " purchase: the buyer collects them at the order's own address once you have delivered" +
+        " them, and until you do, the order is open and the deadline on the card is running."
+      );
+    case "stopped":
+      return (
+        "The walk did not get through. The last step below is where it stopped, and beside it" +
+        " are the storefront's own words about why — the same words a stranger's agent would" +
+        " have read."
+      );
+  }
+};
+
+/**
+ * The order the walk opened, and the way to the screen it is on.
+ *
+ * There is no page for one order, so the link goes to the list; the identifier
+ * beside it is what a merchant searches that list with. Null is a real answer
+ * and is said as one: a walk that stopped at the price never opened an order,
+ * and a merchant told nothing would go looking for one that does not exist.
+ */
+const walkedOrder = (base: string, walk: TestPurchase): string =>
+  walk.order_id === null
+    ? `<p class="quiet">${escaped(
+        "No order was opened. The walk stopped before there was one, so there is nothing to look" +
+          " up and nothing was charged.",
+      )}</p>`
+    : `<p>The walk opened <a href="${escaped(base)}/orders">${escaped(walk.order_id)}</a>. ${escaped(
+        "It is an ordinary order of yours — it reached your code, it sits among your orders and it" +
+          " leaves a receipt behind it — and its money is test money, which is what the test mark" +
+          " beside it says.",
+      )}</p>`;
+
+/**
+ * The goods, exactly as the buyer received them.
+ *
+ * Printed as the JSON that came back rather than laid out field by field. This
+ * is the one thing on the page a merchant checks against what their card
+ * declares it delivers, and a rendering of our own would be the place that
+ * comparison quietly stops being exact.
+ */
+const walkedGoods = (walk: TestPurchase): string => {
+  if (walk.delivered !== null) {
+    return `<pre class="delivered">${escaped(JSON.stringify(walk.delivered, null, 2))}</pre>`;
+  }
+  return `<p class="quiet">${escaped(
+    walk.outcome === "accepted"
+      ? "The buyer is holding none yet, and on this card it should not be: the goods come later," +
+          " and the buyer collects them at the order's own address once you have delivered them."
+      : "The buyer is holding none. The walk did not reach a delivery.",
+  )}</p>`;
+};
+
+/**
+ * The page a merchant is answered with when they walk a test purchase.
+ *
+ * Answered straight from the post rather than after a redirect, which this
+ * cabinet otherwise only does for a new key, and for a cousin of the same
+ * reason: the transcript exists for the length of one answer and this cabinet
+ * keeps no database to put it in, so a redirect would send the merchant to a
+ * page that could no longer show them what happened. What it costs is that
+ * reloading asks the browser to send the form again, which walks another
+ * purchase — the page says so.
+ */
+export const testPurchaseScreen = (
+  viewer: Viewer,
+  cards: MerchantCardList,
+  entry: MerchantCard,
+  walk: TestPurchase,
+): string => {
+  const { base } = viewer;
+
+  const rows = walk.steps.map(
+    (step) => `<tr class="${step.ok ? "" : "needs-you"}">
+<td>${escaped(TEST_PURCHASE_STEP_WORDS[step.step])}</td>
+<td>${state(step.ok ? { text: "yes", tone: "ok" } : { text: "no", tone: "warn" })}</td>
+<td><div class="buy">${wrappable(step.address)}</div></td>
+<td>${escaped(step.said)}</td>
+</tr>`,
+  );
+
+  const body = `
+  <div class="lede">
+    <div>
+      <h1>Test purchase</h1>
+      <p>${escaped(outcomeSentence(walk))}</p>
+    </div>
+    <div class="actions">${state(TEST_PURCHASE_WORDS[walk.outcome])}</div>
+  </div>
+  <div class="note"><span class="mark">&#8627;</span><span>${escaped(
+    `This is a walk of "${entry.card.title}", bought with a buyer of ours at the addresses below.` +
+      " Every one of them is an address of the public storefront, which is what makes this" +
+      " evidence about the door your buyers knock on rather than about our own internals.",
+  )}</span></div>
+${table(
+  ["Step", "Went through", "The address the buyer called", "What came of it"],
+  rows,
+  // A walk that took no step at all cannot reach this page: the document is
+  // refused by the contract before it is drawn. The line is here because the
+  // table wants one, and it says the honest thing rather than nothing.
+  "This walk recorded no steps, which is not something it can do — nothing here can be read as a purchase that was tried.",
+)}
+  <div class="lede">
+    <div>
+      <h2>The order</h2>
+      ${walkedOrder(base, walk)}
+    </div>
+  </div>
+  <div class="lede">
+    <div>
+      <h2>The goods</h2>
+      <p>${escaped(
+        "What the buyer came away holding, exactly as it arrived. This is the thing to read" +
+          " against what your card declares it delivers.",
+      )}</p>
+    </div>
+  </div>
+  ${walkedGoods(walk)}
+  <div class="note"><span class="mark">&#8627;</span><span>${escaped(
+    "Reloading this page asks your browser to send the form again, which walks another purchase" +
+      " rather than showing you this one. There is a ceiling on how many one merchant may walk" +
+      " in an hour, and the gateway says so in words when it is reached.",
+  )}</span></div>
+  <p class="quiet"><a href="${escaped(base)}/cards">Back to your cards</a></p>
+`;
+
+  return framed({
+    viewer,
+    tab: "cards",
+    title: "Test purchase",
+    selling: cards.selling,
+    body,
+  });
 };
 
 export const ordersScreen = (
