@@ -277,4 +277,20 @@ done <"${smoke_paths_file}"
 # because a probe of the public name from this host is not a probe of the same
 # journey either.
 write_marker origin-verified
+
+# SHA-tagged images older than a day are build cache, not rollback artifacts:
+# repairing a release delivers and rebuilds its exact commit again. Compose's
+# project label scopes collection to these two stacks, so base images and
+# another service's images stay resident. Collection is best-effort because a
+# host that is already serving a verified candidate must not be reported as a
+# failed release only because garbage collection failed afterward.
+for release_image_project in coinslot coinslot-test; do
+  if ! docker image prune -a -f \
+    --filter 'until=24h' \
+    --filter "label=com.docker.compose.project=${release_image_project}"; then
+    printf 'coinslot release warning: image retention failed for %s\n' \
+      "${release_image_project}" >&2
+  fi
+done
+
 printf 'deployed=%s channel=%s\n' "${revision}" "${channel}"
