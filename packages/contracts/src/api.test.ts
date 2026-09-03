@@ -795,6 +795,15 @@ describe("the route table", () => {
     ["list_merchant_cards", "GET", "/v0/cards", "merchant_key", "-", "-", "merchant_card_list"],
     ["pause_card", "POST", "/v0/cards/:item_id/pause", "merchant_key", "-", "-", "merchant_card"],
     ["resume_card", "POST", "/v0/cards/:item_id/resume", "merchant_key", "-", "-", "merchant_card"],
+    [
+      "test_purchase",
+      "POST",
+      "/v0/cards/:item_id/test-purchase",
+      "merchant_key",
+      "-",
+      "purchase_request",
+      "test_purchase",
+    ],
     ["pause_selling", "POST", "/v0/selling/pause", "merchant_key", "-", "-", "merchant_card_list"],
     [
       "resume_selling",
