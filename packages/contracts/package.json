@@ -1,6 +1,6 @@
 {
   "name": "@nuanu-ai/coinslot-contracts",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "Coinslot public contract schemas — card, order, price hook, receipt",
   "license": "UNLICENSED",
