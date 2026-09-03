@@ -1,6 +1,6 @@
 {
   "name": "@nuanu-ai/coinslot",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "description": "Sell your existing products to AI agents: publish product cards to an x402 storefront and fill the paid orders from your own service.",
   "keywords": [

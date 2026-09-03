@@ -1,5 +1,18 @@
 # @nuanu-ai/coinslot
 
+## 0.2.1
+
+### Patch Changes
+
+- The package pages on npm say what the packages are. Nothing in the code
+  changes: the README of each package is rewritten for somebody meeting Coinslot
+  on the registry — what the merchant SDK sells and the two addresses it can be
+  pointed at, and why the contracts package exists and who installs it directly —
+  and both manifests gain a description written for the same reader, keywords,
+  and a link to the documentation.
+- Updated dependencies
+  - @nuanu-ai/coinslot-contracts@0.2.1
+
 ## 0.2.0
 
 ### Minor Changes
