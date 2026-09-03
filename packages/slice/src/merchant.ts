@@ -126,9 +126,9 @@ export function startMerchant(baseUrl: string, apiKey: string): MockMerchant {
     async publishCatalog() {
       for (const card of CATALOG) {
         const result = await client.catalog.publish(card);
-        if (!("ok" in result)) {
+        if (!result.ok) {
           throw new Error(
-            `publishing ${card.merchant_item_id} was refused: ${JSON.stringify(result.errors)}`,
+            `publishing ${card.merchant_item_id} was refused (${result.error.code}): ${JSON.stringify(result.error.problems)}`,
           );
         }
       }

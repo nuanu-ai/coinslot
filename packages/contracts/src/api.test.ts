@@ -445,6 +445,13 @@ describe("what answering for an order comes back as", () => {
     expect(OrderCallResponseSchema.safeParse({}).success).toBe(false);
   });
 
+  it("refuses a failure with nothing said about why", () => {
+    // The other half of the shape, and the more expensive one to leave open: a
+    // merchant handed "no" and no reason has nothing to branch on, nothing to
+    // print and nothing to write down about an order somebody paid for.
+    expect(OrderCallResponseSchema.safeParse({ ok: false }).success).toBe(false);
+  });
+
   it("refuses a success with no word for which success it was", () => {
     // Unlike taking an order on, delivering and refusing have words, and the
     // merchant has to write down which one happened.
@@ -1353,19 +1360,22 @@ describe("the merchant key's header, held in one place so both sides cannot drif
 
 describe("the envelope every call refuses in", () => {
   const refused = {
-    error: { code: "no_such_order", message: "there is no such order" },
+    error: { code: "no_such_order", message: "there is no such order", retryable: false },
   };
 
-  it("accepts a refusal with a code and words", () => {
+  it("accepts a refusal with a code, words and the answer about calling again", () => {
     expect(ErrorEnvelopeSchema.parse(refused)).toStrictEqual(refused);
   });
 
-  for (const field of ["code", "message"]) {
+  for (const field of ["code", "message", "retryable"]) {
     it(`refuses one with no ${field}, and says which is missing`, () => {
-      // Both are required and both absences are expensive. A refusal with no
-      // code is one nothing can branch on; a refusal with no words is one only
-      // its author can read, and whoever prints it prints an empty space where
-      // the reason belongs.
+      // All three are required and all three absences are expensive. A refusal
+      // with no code is one nothing can branch on; a refusal with no words is
+      // one only its author can read, and whoever prints it prints an empty
+      // space where the reason belongs. A refusal that will not say whether
+      // calling again could work leaves the caller to guess, and both guesses
+      // cost: one is a loop against a door that will never open, the other is
+      // an abandoned call that would have gone through.
       const without = Object.fromEntries(
         Object.entries(refused.error).filter(([name]) => name !== field),
       );
@@ -1385,14 +1395,25 @@ describe("the envelope every call refuses in", () => {
     );
   });
 
-  it("lets a refusal say more about itself, beside the code and the sentence", () => {
-    // Three refusals on this surface do: where an order ended, whether the
-    // payment layer might vouch for a second attempt, which fields of a
-    // document did not fit. A reader that does not recognise the extra field
-    // still reads the two that are always there.
+  it("refuses an answer about calling again that is not an answer", () => {
+    // The flag is a fact with two values and no third. A string, or the word
+    // "maybe" spelled as null, is a caller reading truthiness out of whatever
+    // arrived — and "maybe" read as true is the retry loop this field exists
+    // to prevent.
+    for (const said of ["false", 0, null, "maybe"]) {
+      expect(
+        ErrorEnvelopeSchema.safeParse({ error: { ...refused.error, retryable: said } }).success,
+        JSON.stringify(said),
+      ).toBe(false);
+    }
+  });
+
+  it("lets a refusal say more about itself, beside the three that are always there", () => {
+    // Two refusals on this surface do: where an order ended, and which fields
+    // of a document did not fit. A reader that does not recognise the extra
+    // field still reads the three that are always there.
     for (const detail of [
       { status: "rejected" },
-      { retryable: true },
       { problems: [{ path: ["params", "email"], code: "required", message: "missing" }] },
     ]) {
       const parsed = ErrorEnvelopeSchema.parse({ error: { ...refused.error, ...detail } });
@@ -1440,7 +1461,9 @@ describe("the envelope every call refuses in", () => {
     // behind its gateway stops being able to read a refusal at all — the
     // parse fails, and what it had was a perfectly good sentence explaining
     // why its call did not go through.
-    const unfamiliar = { error: { code: "something_nobody_has_named_yet", message: "and yet" } };
+    const unfamiliar = {
+      error: { code: "something_nobody_has_named_yet", message: "and yet", retryable: false },
+    };
 
     expect(ErrorEnvelopeSchema.parse(unfamiliar)).toStrictEqual(unfamiliar);
     expect(ERROR_CODES).not.toContain("something_nobody_has_named_yet");

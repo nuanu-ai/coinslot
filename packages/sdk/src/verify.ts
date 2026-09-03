@@ -22,7 +22,7 @@
 
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
-import type { PublishError } from "@nuanu-ai/coinslot-contracts";
+import type { Problem } from "@nuanu-ai/coinslot-contracts";
 import { checkCard } from "./check-card.js";
 import { describeProblems } from "./schema.js";
 
@@ -68,10 +68,13 @@ export const VERIFY_EXIT = Object.freeze({
  * And a card carries no marker for "published, not yet in catalogs", which is
  * the state the portal says these orders are raised against.
  *
- * Behind all four sits a question the portal lists as open: whether the
- * sandbox is a separate environment, a separate key, or only that flag on the
- * order. Inventing a route or a field here would answer it, and this is not
- * the place where that is answered.
+ * What is missing is not an environment to run it in. There are two sites, the
+ * test one settles against test funds, and a key says which it belongs to
+ * (ADR-0020) — so a merchant already has somewhere to try their integration
+ * without spending anything. What is missing is a way to make an order happen
+ * there: no route raises one, and the four absences above are the whole of what
+ * would have to exist first. Inventing a route or a field here would be
+ * designing that, and this is not the place where it is designed.
  */
 export const IDEMPOTENCY_IS_NOT_BUILDABLE = [
   "The idempotency run needs a test order, and nothing on the surface can ask for one:",
@@ -82,9 +85,10 @@ export const IDEMPOTENCY_IS_NOT_BUILDABLE = [
   "  - nothing in the contract says how an order's test flag comes to be true",
   "  - a card carries no marker for published-but-not-yet-in-catalogs, which is",
   "    the state the documentation raises these orders against",
-  "Behind all four is an open question — whether the sandbox is a separate",
-  "environment, a separate key, or only that flag on the order — and inventing a",
-  "route or a field here would be answering it.",
+  "The test site is not what is missing: it exists, it settles against test",
+  "funds, and a csk_test_ key belongs to it. What is missing is a way to make",
+  "an order happen there, and inventing a route or a field here would be",
+  "designing one.",
 ].join("\n");
 
 /** The code a finding carries when the file held no card to check at all. */
@@ -102,7 +106,7 @@ interface CardFile {
    * other by hand across a directory of cards.
    */
   readonly name: string;
-  readonly problems: readonly PublishError[];
+  readonly problems: readonly Problem[];
 }
 
 const nameOf = (file: string, card: unknown): string => {

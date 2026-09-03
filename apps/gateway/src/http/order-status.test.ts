@@ -80,7 +80,7 @@ const publish = async (
 ): Promise<string> => {
   const answered = await served.call("POST", "/v0/catalog/publish", { body: card, headers });
   expect(answered.status, JSON.stringify(answered.body)).toBe(200);
-  return (answered.body as { ok: { id: string } }).ok.id;
+  return (answered.body as { id: string }).id;
 };
 
 /** An order of a card whose goods come later, taken on by its merchant and not yet delivered. */
@@ -241,7 +241,7 @@ describe("an identifier that names nothing", () => {
 
     expect(first.status).toBe(404);
     expect(first.body).toStrictEqual({
-      error: { code: "no_such_order", message: "there is no such order" },
+      error: { code: "no_such_order", message: "there is no such order", retryable: false },
     });
     expect(second.body).toStrictEqual(first.body);
   });

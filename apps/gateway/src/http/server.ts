@@ -628,6 +628,88 @@ function hold(schema: ZodType, value: unknown): Held {
 }
 
 /**
+ * Whether making the same call again could get past each refusal.
+ *
+ * `Record<ErrorCode, boolean>` and not a partial one: a code added to the
+ * contract without an answer here stops the build, which is the only way this
+ * table stays true. Guessing a default would make the silence look like an
+ * answer, and the guess would be wrong in whichever direction it was made.
+ *
+ * The rule is conservative and deliberately lopsided. True is claimed only
+ * where repeating this very call is genuinely the way through — not where a
+ * retry might coincide with somebody else fixing something. A merchant putting
+ * a paused card back on sale, an invitation being issued, a key being granted:
+ * those all end in a call that works, and none of them is the retry doing it.
+ * So they are false, along with everything definitive and everything merely
+ * arguable. What that costs is a caller who stops one call early; what the
+ * other direction costs is a loop against a door that will never open, and the
+ * bill for that arrives before anybody notices.
+ *
+ * Two codes are not decided here at all. `payment_not_verified` and
+ * `payment_not_taken` carry what the payment layer said about this particular
+ * payment, passed in beside the sentence — see {@link refusal}.
+ */
+const RETRYABLE: Readonly<Record<ErrorCode, boolean>> = {
+  // The call fell over inside us and nothing was decided. The one refusal here
+  // that says nothing about the call and everything about our own moment, so
+  // it is the one a second attempt genuinely gets past.
+  gateway_failed: true,
+
+  // Not a "no" but a "not yet": the order is open and still waiting for its
+  // price, and the same call is what the caller makes again to get the
+  // document once it has one. Marking this false would tell an agent to stop
+  // asking about an order that is about to be priced.
+  order_not_priced_yet: true,
+
+  // Everything the caller sent. The same bytes, the same header and the same
+  // query produce the same answer for as long as they are the same.
+  body_too_large: false,
+  body_undecodable: false,
+  charset_unsupported: false,
+  encoding_unsupported: false,
+  malformed_body: false,
+  malformed_query: false,
+  params_do_not_fit: false,
+  call_refused: false,
+
+  // Who the caller is, and what they hold. A key is granted or an invitation
+  // issued by somebody else doing something, never by the call being repeated.
+  not_authorised: false,
+  no_such_key: false,
+  not_invited: false,
+  not_a_cabinet_key: false,
+  key_made_for_a_cabinet: false,
+  key_opened_this_call: false,
+
+  // What is being asked about, and whether it is there. A route that does not
+  // exist and an order or a product that does not will not appear between two
+  // calls; a merchant who has left has left.
+  no_such_route: false,
+  no_such_item: false,
+  no_such_order: false,
+  merchant_departed: false,
+
+  // A card that is not on sale. Arguable, and false under the rule: the
+  // merchant may put it back, and that is the merchant acting rather than the
+  // retry working. An agent polling a paused card until it returns is a loop
+  // this gateway would be starting on its behalf.
+  not_selling: false,
+
+  // Where the order already is. An order that ended before it was priced is
+  // over; a payment already presented for another order stays presented; an
+  // order that belongs to another payment is not this caller's to pay.
+  order_closed_before_it_was_priced: false,
+  payment_already_spent: false,
+  not_this_purchase: false,
+
+  // Said by the payment layer about this payment, not by this table. The
+  // values here are the floor for a caller that reads the table rather than
+  // the answer; what actually ships is what the layer said.
+  payment_not_verified: false,
+  payment_not_taken: false,
+};
+
+/**
  * How this gateway says no, and the only way it does.
  *
  * The shape is the contract's — `ErrorEnvelopeSchema` — and so is the code:
@@ -644,13 +726,12 @@ function hold(schema: ZodType, value: unknown): Held {
  * a sentence — so a caller can always find out that it was refused and always
  * have something to print.
  *
- * `detail` is for the refusals that know more about themselves than the two
- * required fields: where an order ended, whether the payment layer might
- * vouch for a second attempt, which fields of a document did not fit. It goes
- * inside the envelope beside the code and the sentence rather than beside the
- * envelope, because a reader that does not recognise it must still be able to
- * read the two that are always there — and because a body carrying anything at
- * the top level but `error` is not a refusal at all.
+ * `detail` is for the refusals that know more about themselves than the three
+ * required fields: where an order ended, which fields of a document did not
+ * fit. It goes inside the envelope beside the code and the sentence rather
+ * than beside the envelope, because a reader that does not recognise it must
+ * still be able to read the three that are always there — and because a body
+ * carrying anything at the top level but `error` is not a refusal at all.
  *
  * It is spread first, so the code and the sentence win. Spread last it would
  * be a way of replacing them: a detail that happened to carry a `message` —
@@ -658,6 +739,16 @@ function hold(schema: ZodType, value: unknown): Held {
  * a validator — would silently become the refusal's own sentence, and the one
  * the caller was meant to read would be gone with nothing to say it ever
  * existed. The type does not catch it, because `unknown` fits a string.
+ *
+ * `retryable` is the one field of the envelope a caller may set, and it is
+ * taken out of the detail by name rather than left to the spread, so that it
+ * is a decision here and not an accident of ordering. Two refusals need it:
+ * the payment layer, and only the payment layer, knows whether the payment it
+ * would not vouch for might be vouched for on a second look, and whether a
+ * charge that is mid-flight will accept a hand-over once it reports. Those
+ * are facts about one call and not about a code, and a table could only
+ * guess at them. Everything else takes the code's own answer from
+ * {@link RETRYABLE}.
  *
  * Every refusal this gateway sends goes through here. Three of them used to be
  * written out as object literals with findings and no sentence at all, which
@@ -667,7 +758,10 @@ function hold(schema: ZodType, value: unknown): Held {
 export function refusal(
   code: ErrorCode,
   message: string,
-  detail?: Readonly<Record<string, unknown>>,
+  detail?: Readonly<Record<string, unknown>> & { readonly retryable?: boolean },
 ): ErrorEnvelope {
-  return { error: { ...detail, code, message } };
+  const { retryable, ...rest } = detail ?? {};
+  return {
+    error: { ...rest, code, message, retryable: retryable ?? RETRYABLE[code] },
+  };
 }

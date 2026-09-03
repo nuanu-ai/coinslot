@@ -16,12 +16,26 @@ raw receipt are the merchant's bookkeeping, not the buyer's business.
 ## Decision
 
 Every error the gateway sends travels in one envelope:
-`{ error: { code, message, ... } }`. On our side the vocabulary of
-codes is closed — a refusal is built by one function that takes a code
-from `ERROR_CODES`, and the compiler refuses a word that is not in the
-dictionary. On the wire the code stays an open string, so a reader
-parses an unfamiliar code as the failure it is and loses only the
-meaning, never the message.
+`{ error: { code, message, retryable, ... } }`. On our side the
+vocabulary of codes is closed — a refusal is built by one function that
+takes a code from `ERROR_CODES`, and the compiler refuses a word that
+is not in the dictionary. On the wire the code stays an open string, so
+a reader parses an unfamiliar code as the failure it is and loses only
+the meaning, never the message.
+
+`retryable` answers one question — could this same call succeed if it
+were made again — and it is required, because both readings of a
+missing flag are expensive and a caller left to guess turns one of them
+into a retry loop and the other into an abandoned call. It is a fact
+about the refusal and not an instruction: how long to wait and whether
+to bother stay with the caller, who knows what the call was worth. The
+gateway assigns it per code, in a table the compiler forces every code
+to appear in, and the rule is conservative — true only where repeating
+the call is itself the way through, false for everything settled and
+everything merely arguable. Two refusals carry what the payment layer
+said about one payment instead, because a table cannot know it. This
+closes the gap the SDK had been papering over: it was claiming every
+refusal retryable, having no way to tell a defect from a locked door.
 
 A purchase answers with the same order document the status route
 serves. What an agent learns once — what it bought, the price it was

@@ -19,6 +19,7 @@ import {
   type HandlerAnswer,
   type LiveOrder,
   type Money,
+  type OrderCallResponse,
   type PublishResult,
   type Refusal,
 } from "@nuanu-ai/coinslot";
@@ -168,6 +169,26 @@ export const makeStandMerchant = (feed: Feed): StandMerchant => {
     });
   };
 
+  /**
+   * How a delivery or a refusal answered, in the fields the log reads.
+   *
+   * A call the gateway would not take is named under `error` as well as carried
+   * whole, for the reason the worker's problems are: the log colours a line off
+   * that field, and without it the one refused delivery sits in the stream
+   * looking like every other line. The finding leads where the refusal carries
+   * any — the code is the word a merchant's own program branches on, and the
+   * finding is the thing their handler has to change.
+   */
+  const answerRead = (result: OrderCallResponse): Record<string, unknown> => {
+    if (result.ok) return { result };
+    const first = result.error.problems?.[0];
+    const said =
+      first === undefined || first.path.length === 0
+        ? (first?.message ?? result.error.message)
+        : `${first.path.join(".")}: ${first.message}`;
+    return { error: `${result.error.code} — ${said}`, result };
+  };
+
   /** Hands over the goods for an order taken on earlier, and says how it went. */
   const handOver = async (order: LiveOrder): Promise<void> => {
     try {
@@ -180,7 +201,7 @@ export const makeStandMerchant = (feed: Feed): StandMerchant => {
       const result = await order.deliver(delivery);
       feed.got("merchant", "The gateway answered that delivery.", {
         order_id: order.id,
-        result,
+        ...answerRead(result),
       });
     } catch (error: unknown) {
       feed.sent("merchant", "That promised delivery could not be completed.", {
@@ -397,7 +418,7 @@ export const makeStandMerchant = (feed: Feed): StandMerchant => {
         feed.sent("merchant", "The handler refused an order it had already accepted.", {
           order_id: orderId,
           refusal: moods.refusal,
-          result,
+          ...answerRead(result),
         });
       } catch (error: unknown) {
         feed.sent("merchant", "That refusal could not be completed.", {

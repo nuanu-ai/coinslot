@@ -73,8 +73,8 @@ afterEach(async () => {
 
 const published = async (harnessed: Harness, card: Card): Promise<string> => {
   const result = await harnessed.gateway.publishCard(harnessed.merchant.id, card);
-  if (!("ok" in result)) throw new Error(`publishing failed: ${JSON.stringify(result.errors)}`);
-  return result.ok.id;
+  if (!result.ok) throw new Error(`publishing failed: ${JSON.stringify(result.error.problems)}`);
+  return result.id;
 };
 
 /** An order priced and waiting for a payment. */

@@ -33,14 +33,19 @@
  * juggling identifiers would come back.
  *
  * One rule runs through the whole surface and it is worth stating once. What
- * the contract gives a call a failure branch for is returned, never thrown: a
- * card that was not accepted comes back as its findings, and an order call
- * that did not go through comes back as an error with a flag saying whether
- * repeating it could help. A merchant's integration code is expected to read
- * those and branch on them. What is thrown is what has no branch to be read
- * on: a client built wrong, a handler registered twice, and a call that
- * produced no answer of the kind the route promises where the route has
- * nowhere to put one.
+ * the contract gives a call a failure branch for is returned, never thrown,
+ * and every one of those answers is the same envelope: `ok` says which it was,
+ * a card that was not published comes back with its findings under `problems`,
+ * and an order call that did not go through comes back as an error with a flag
+ * saying whether repeating it could help. A merchant's integration code is
+ * expected to read those and branch on them.
+ *
+ * What is thrown is what has no branch to be read on, and it is two kinds. A
+ * client built wrong — no key, an address that is not one, a handler
+ * registered twice — is a `TypeError` at the line that is wrong, before
+ * anything leaves the process. A call that went out and produced no answer of
+ * the kind its route promises, where the route has nowhere to put one, is a
+ * `CoinslotError` carrying the same code vocabulary the returned failures use.
  *
  * The one place that rule needed a decision rather than a reading is a
  * `deliver` or a `refuse` whose answer never arrived, or arrived in words this
@@ -48,18 +53,18 @@
  * saying whether calling again could change the outcome is exactly the shape
  * of "the connection dropped, call again" — so it comes back through that
  * branch, under a code this package produces and the gateway never sends. The
- * two codes and what separates them are written down beside them below.
+ * three codes and what separates them are written down beside them below.
  */
 
 import type {
   Acceptance,
+  CallError,
   CardInput,
   Delivery,
   HandlerAnswer,
   Money,
   Order,
   OrderAcceptResponse,
-  OrderCallError,
   OrderCallResponse,
   OrderWithStatus,
   PublishResult,
@@ -103,21 +108,24 @@ export interface ClientOptions {
   readonly apiKey: string | undefined;
 
   /**
-   * Where the gateway is.
+   * Where the gateway is: `https://test.coinslot.nuanu.ai` while the merchant
+   * is building, `https://coinslot.nuanu.ai` once they are live.
    *
-   * Optional, and there is no default behind it. Nothing in the contract or in
-   * any decision says where the gateway lives — the documentation lists it
-   * among the things not yet settled — so this package has no address to fall
-   * back on and will not invent one.
+   * Optional, and there is deliberately no default behind it. Both addresses
+   * are settled and this package still refuses to pick one, because which of
+   * them a process talks to is not a convenience — it is the difference
+   * between a sale and a rehearsal (ADR-0020). A default would be right for
+   * whoever wrote it and wrong for somebody's production the first time a
+   * deployment inherited it, and that is a mistake nothing downstream can
+   * catch: every answer from the other site parses perfectly.
    *
    * Leaving it out builds a client, exactly as the quickstart's first step
    * says it does, and every call that would have to reach the gateway fails
-   * with a sentence naming what is missing. That is where the failure belongs:
-   * the documentation tells the merchant that the first call is what checks
-   * whether they can reach us, and an address nobody has chosen yet is one of
-   * the things such a call finds out. Giving a wrong address, on the other
-   * hand, is refused here and now — a value that is not an address at all
-   * cannot become one later.
+   * with a sentence naming what is missing and both addresses to choose
+   * between. That is where the failure belongs: the documentation tells the
+   * merchant that the first call is what checks whether they can reach us.
+   * Giving a wrong address, on the other hand, is refused here and now — a
+   * value that is not an address at all cannot become one later.
    */
   readonly baseUrl?: string | undefined;
 }
@@ -419,23 +427,104 @@ const CODE_FOR: Readonly<Record<Reach, string>> = {
 };
 
 /**
- * Whether calling again could change the outcome, which is what the contract's
- * flag actually asks. It could, in all three cases: none of them is a state of
- * the order, and none will still be true in a minute if a network settled or a
- * proxy went away.
+ * What is thrown where a route has no failure branch to hand a merchant back.
  *
- * The sentence about repeating safely is only added where the contract says
- * the call may be repeated: delivering is idempotent by the order's
- * identifier, and taking an order on happens again on every redelivery.
- * Refusing is documented as neither, so nothing is claimed about it.
+ * Three of this client's calls answer with a document or with nothing at all —
+ * publishing a card, reading one order, listing them — so a call that produced
+ * no document has nowhere in the contract to be returned. It is thrown, and
+ * this is what it is thrown as.
+ *
+ * It carries what the returned failures carry, because the two are the same
+ * facts about the same calls and a merchant should not have to learn a second
+ * vocabulary for the half of them that throws. `code` is the gateway's own word
+ * where the gateway refused in words we recognise, and otherwise one of the
+ * three this package produces — `call_did_not_reach_us`, `answer_not_understood`,
+ * `outcome_unknown`. `failedCall` below makes that same choice for the order
+ * calls, so a refusal has one name on both roads. `route` is the call it
+ * happened on, under the name the
+ * contract's own table gives it, so a `catch` can say which of three it was
+ * without reading the sentence.
+ *
+ * What is not this: a client built wrong. A missing key, a `baseUrl` that is
+ * not an address, a handler registered twice and a kind nothing delivers are
+ * mistakes in the merchant's own code, made before anything left the process,
+ * and they stay `TypeError`. A merchant catching this class is catching calls
+ * that went out.
  */
-const failedCall = (repeatIsSafe: boolean, failure: TransportFailure): OrderCallError => ({
-  code: CODE_FOR[failure.reach],
-  message: repeatIsSafe
-    ? `${whatIsKnown(failure)}: ${failure.reason} — this call may be made again without doing its work twice`
-    : `${whatIsKnown(failure)}: ${failure.reason}`,
-  retryable: true,
-});
+export class CoinslotError extends Error {
+  /** Why the call did not go through, for the code that branches on it. */
+  readonly code: string;
+
+  /** The call it happened on, named as the contract's route table names it. */
+  readonly route: string;
+
+  /**
+   * Whether making the same call again could get past this.
+   *
+   * Here for the same reason the code is: the calls that throw and the calls
+   * that return are the same calls failing the same ways, and a merchant who
+   * had to work out from a `catch` what a returned error would have told them
+   * outright is being charged twice for one lesson. The gateway's own answer
+   * where the gateway refused in words, and true where nothing readable came
+   * back — which is a statement about what this package knows, not a promise
+   * that the call will work.
+   */
+  readonly retryable: boolean;
+
+  constructor(code: string, route: string, message: string, retryable: boolean) {
+    super(message);
+    this.name = "CoinslotError";
+    this.code = code;
+    this.route = route;
+    this.retryable = retryable;
+  }
+}
+
+/**
+ * What an order call hands back when it produced no answer of its own.
+ *
+ * `code` is the gateway's own word where the gateway refused in words we
+ * recognise, and otherwise one of the three this package produces for a
+ * silence. The two halves of the answer have to say the same thing: a refusal
+ * quoted in the message and filed under `answer_not_understood` is the message
+ * arguing with the code, and the code is the half a program reads. It is the
+ * same choice `document` makes for the calls that throw, so one refusal has one
+ * name whether the merchant catches it or branches on it.
+ *
+ * `retryable` says whether calling again could change the outcome, and it has
+ * two sources because there are two situations. Where the gateway refused in
+ * words, the answer is the gateway's own: it is the side that knows whether
+ * the door is shut or was merely shut a moment ago, and this package does not
+ * improve on what it was told. Where no answer arrived, or none that could be
+ * read, there is nothing to defer to and the answer is true — none of those
+ * three is a state of the order, and none will still be true in a minute if a
+ * network settled or a proxy went away.
+ *
+ * The fallback is `true` and not `false` on purpose. It is reached only when
+ * this package could not read an answer, which is a statement about our
+ * knowledge and not about the order; saying "do not call again" there would be
+ * this package inventing the one fact the merchant came for.
+ *
+ * The sentence about repeating safely is added where two things hold at once:
+ * the contract says the call may be repeated — delivering is idempotent by the
+ * order's identifier, and taking an order on happens again on every
+ * redelivery, while refusing is documented as neither — and calling again
+ * could get anywhere. Offering "you may safely repeat this" under a refusal
+ * that will answer the same way for ever is an invitation to do something
+ * pointless, and it reads as encouragement.
+ */
+const failedCall = (repeatIsSafe: boolean, failure: TransportFailure): CallError => {
+  const retryable = failure.refusal?.retryable ?? true;
+
+  return {
+    code: failure.refusal?.code ?? CODE_FOR[failure.reach],
+    message:
+      repeatIsSafe && retryable
+        ? `${whatIsKnown(failure)}: ${failure.reason} — this call may be made again without doing its work twice`
+        : `${whatIsKnown(failure)}: ${failure.reason}`,
+    retryable,
+  };
+};
 
 /**
  * The reporter a client gets when the merchant registered none.
@@ -548,7 +637,7 @@ export const createClient = (options: ClientOptions): CoinslotClient => {
   const reachable = (): void => {
     if (gateway.baseUrl === "") {
       throw new TypeError(
-        "this client has no gateway address: pass baseUrl to createClient. There is no default — where the gateway lives is not settled yet, and this package will not invent a hostname",
+        "this client has no gateway address: pass baseUrl to createClient — https://test.coinslot.nuanu.ai while you are building, https://coinslot.nuanu.ai once you are live. There is no default on purpose: which of the two you talk to is the difference between a sale and a rehearsal, and an address this package chose for you would point somebody's production at the wrong one without a word",
       );
     }
   };
@@ -690,7 +779,22 @@ export const createClient = (options: ClientOptions): CoinslotClient => {
 
     const answer = await callRoute(gateway, route, options_);
 
-    if (!answer.ok) throw new Error(answer.failure.reason);
+    if (!answer.ok) {
+      const { failure } = answer;
+
+      // The gateway's own word wherever it wrote one, and one of ours only
+      // where it did not. A refusal we recognise carries the reason a merchant
+      // can act on, and replacing it with "we could not read the answer" would
+      // throw away the one thing they came here for. The same holds for its
+      // answer about calling again — this is the rule `failedCall` applies for
+      // the calls that return, applied here so the two roads agree.
+      throw new CoinslotError(
+        failure.refusal?.code ?? CODE_FOR[failure.reach],
+        failure.route,
+        failure.reason,
+        failure.refusal?.retryable ?? true,
+      );
+    }
 
     return answer.document;
   };

@@ -139,8 +139,8 @@ describe("an effect that must be written down, asked for at the birth of an orde
       result: { activation_code: { type: "string" } },
       fulfillment: "async",
     });
-    if (!("ok" in published)) throw new Error("the card would not publish");
-    const offered = await open.gateway.beginPurchase(published.ok.id, {});
+    if (!published.ok) throw new Error("the card would not publish");
+    const offered = await open.gateway.beginPurchase(published.id, {});
     if (offered.step !== "pay") throw new Error("no price was offered");
 
     // The same order again, as a record that does not exist yet, born asking
@@ -175,9 +175,9 @@ describe("an order whose next clock could not be started", () => {
       result: { activation_code: { type: "string" } },
       fulfillment: "async",
     });
-    if (!("ok" in published)) throw new Error("the card would not publish");
+    if (!published.ok) throw new Error("the card would not publish");
 
-    const offered = await open.gateway.beginPurchase(published.ok.id, {});
+    const offered = await open.gateway.beginPurchase(published.id, {});
     if (offered.step !== "pay") throw new Error("no price was offered");
     const orderId = offered.order.order.id;
 
@@ -208,8 +208,8 @@ describe("who an order belongs to", () => {
       result: { activation_code: { type: "string" } },
       fulfillment: "async",
     });
-    if (!("ok" in published)) throw new Error("the card would not publish");
-    const offered = await harnessed.gateway.beginPurchase(published.ok.id, {});
+    if (!published.ok) throw new Error("the card would not publish");
+    const offered = await harnessed.gateway.beginPurchase(published.id, {});
     if (offered.step !== "pay") throw new Error("no price was offered");
     return offered.order.order.id;
   };
@@ -290,8 +290,8 @@ describe("an event held to the hand-over the order is waiting on", () => {
       result: { activation_code: { type: "string" } },
       fulfillment: "async",
     });
-    if (!("ok" in published)) throw new Error("the card would not publish");
-    const offered = await harnessed.gateway.beginPurchase(published.ok.id, {});
+    if (!published.ok) throw new Error("the card would not publish");
+    const offered = await harnessed.gateway.beginPurchase(published.id, {});
     if (offered.step !== "pay") throw new Error("no price was offered");
     const orderId = offered.order.order.id;
     await harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");

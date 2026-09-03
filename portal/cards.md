@@ -137,15 +137,23 @@ Where that order has already ended — its deadline ran out while the handler wa
 being fixed — the refusal names the ending as well as the fields, rather than
 inviting another attempt at a sale there is nothing left to deliver against.
 
-Where a handler has got everything wrong at once, the refusal is held to a
-single line rather than allowed to grow into a paragraph nobody reads. A field
-your card declares and your handler got wrong is one item in that line, and
-where there are more items than fit, the refusal names the first few and says
-how many are left. Every field your card never declared goes into a single item
-listing all of them at once, and that item is cut at a fixed length with the
-cut marked, so a handler that sent a hundred names nobody asked for is told the
-first several of them and that the text went on, without a count of what was
+Where a handler has got everything wrong at once, the refusal's sentence is held
+to a single line rather than allowed to grow into a paragraph nobody reads. A
+field your card declares and your handler got wrong is one item in that line,
+and where there are more items than fit, the sentence names the first few and
+says how many are left. Every field your card never declared goes into a single
+item listing all of them at once, and that item is cut at a fixed length with
+the cut marked, so a handler that sent a hundred names nobody asked for is told
+the first several of them and that the text went on, without a count of what was
 left out.
+
+That cut is the sentence's alone. The same findings travel beside it as a list,
+and the list leaves nothing out. A field your card declares and your handler got
+wrong is one finding there, carrying the path to it, a code and words a person
+can act on. The fields your card never declared are one finding between them,
+with an empty path — there is no path to a name the card never had — and all of
+those names inside its own words ([when a closing call does not go
+through](/orders#when-a-closing-call-does-not-go-through)).
 
 Every field of the result is required until you mark it `required: false`. The
 result is a promise, and a delivery missing a promised field does not go
@@ -255,9 +263,10 @@ fields of the question and of the answer are the same for both, and what
 differs is only where your code stands. The forms below are working ones and
 can change before the pilot.
 
-The question travels the same channel as the orders: you put a price handler
-beside the order handler, in the same process. Nothing of yours faces outward —
-no address, no open ports. This is the transport we serve.
+The question travels the same channel as the orders: you put a price handler —
+the one you register under `on('quote', …)` — beside the order handler, in the
+same process. Nothing of yours faces outward — no address, no open ports. This
+is the transport we serve.
 
 ```ts
 coinslot.on('quote', async (q) => {
@@ -431,6 +440,11 @@ code is read by us and by the agent; the reason is read by the person who works
 on the case afterwards. What happens to the order after a refusal is on [Orders
 and fulfillment modes](/orders); here is the vocabulary of codes.
 
+These are the words you send us about an order you cannot fill, and they are a
+different set from the ones we send you when a call of yours does not go through
+at all ([when a closing call does not go
+through](/orders#when-a-closing-call-does-not-go-through)).
+
 The set is open, and a code of your own is fine where none of the common ones
 fits. Three we understand the same way every time, and those are the ones to
 prefer.
@@ -454,7 +468,15 @@ Two of us: the check we ship, run on your side, and we ourselves before the
 card goes into the catalogues. Both sides look at the same thing — whether an
 agent can assemble a correct purchase from this card — and both read the card
 by the same contract, so a card the first accepts is not turned away by the
-second.
+second for anything about the card itself.
+
+They answer in the same shape as well. The check hands you a list of findings,
+each naming the field it is about and what is wrong with it; a publish we refuse
+carries that same list under `problems`, inside the `error` its answer comes
+back with, and that error's code is `card_rejected`. Two findings can stand in
+our list that no check on your side can see, and both are about you rather than
+the card: no name set for buyers to read, and no wallet set for your sales to be
+paid into ([publishing a card](/quickstart)).
 
 ## Updating a card, and taking one off sale
 

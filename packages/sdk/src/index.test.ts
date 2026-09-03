@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { CONTRACT_VERSION } from "@nuanu-ai/coinslot-contracts";
 import { describe, expect, it } from "vitest";
+import * as sdk from "./index.js";
 import { contractVersion, speaksContract } from "./index.js";
 
 const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
@@ -43,6 +44,35 @@ describe("@nuanu-ai/coinslot", () => {
     expect(contractVersion).toBe(CONTRACT_VERSION);
     expect(speaksContract(CONTRACT_VERSION)).toBe(true);
     expect(speaksContract(`${CONTRACT_VERSION}-foreign`)).toBe(false);
+  });
+
+  it("hands a merchant this much surface and no more", () => {
+    // Everything named here is area a merchant is obliged to learn and we are
+    // obliged to keep, so the list is the decision and this is where it is
+    // recorded. It caught a real widening: the verify command's own insides —
+    // its exit codes, its "not JSON" finding code, the runner itself — were
+    // exported beside `checkCard`, and nothing a merchant writes calls any of
+    // them. The command is run from a terminal and `checkCard` is called from
+    // code; neither needs the other's constants.
+    //
+    // Runtime exports only, because that is what a module has at runtime. The
+    // types beside them are held by the compiler instead: `portal-fences.test.ts`
+    // compiles the documentation's examples against this entry point, and
+    // `pnpm outside` type-checks it from a project installed off the tarball.
+    expect(Object.keys(sdk).sort()).toStrictEqual([
+      "ANSWER_NOT_UNDERSTOOD",
+      "CALL_DID_NOT_REACH_US",
+      "CARD_REJECTED",
+      "CoinslotError",
+      "ORDER_EVENT_TYPES",
+      "OUTCOME_UNKNOWN",
+      "RECOMMENDED_REFUSAL_CODES",
+      "WORKER_PROBLEM_KINDS",
+      "checkCard",
+      "contractVersion",
+      "createClient",
+      "speaksContract",
+    ]);
   });
 
   it("declares no third-party dependency of its own", () => {

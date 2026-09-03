@@ -141,7 +141,7 @@ export function handlersFor(gateway: Gateway): Partial<Record<RouteName, Mounted
       checksItsOwnBody: true,
       serve: async (call) => {
         const published = await gateway.publishCard(merchantOf(call), call.body);
-        return { status: "ok" in published ? OK : UNPROCESSABLE, document: published };
+        return { status: published.ok ? OK : UNPROCESSABLE, document: published };
       },
     },
 
@@ -739,8 +739,16 @@ async function answerPurchase(
       // The machine would not take a payment on this order and said why. The
       // one way here today is an order whose charge never reported back: a
       // second one would be the buyer's money spent on a guess about the first,
-      // and only the payment layer can end that.
-      return written(response, CONFLICT, refusal("payment_not_taken", attempt.why));
+      // and only the payment layer can end that. Whether it will end is the
+      // machine's to say and not this table's — a hand-over refused while a
+      // charge is mid-flight is one the machine takes once that charge reports,
+      // and telling the caller it never would is wrong about the one case here
+      // that resolves itself.
+      return written(
+        response,
+        CONFLICT,
+        refusal("payment_not_taken", attempt.why, { retryable: attempt.retryable }),
+      );
 
     case "pay": {
       const price = attempt.order.order.price;

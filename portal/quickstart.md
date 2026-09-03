@@ -99,8 +99,8 @@ const published = await coinslot.catalog.publish({
   result: { access_url: 'string' },
 })
 
-if ('errors' in published) {
-  console.error(published.errors)
+if (!published.ok) {
+  console.error(published.error.problems)
 }
 ```
 
@@ -114,14 +114,33 @@ from a card with no purchase parameter on it at all and adds a field at a time,
 each under the need for it; the long spelling of all three is there, and what
 you write is opened out into it when the card arrives.
 
-An invalid card raises no exception. In place of `ok` the call answers with
-`errors`: a list of the fields at fault, each with an explanation of what is
-wrong with it, and never an empty list. Where there is an `ok`, the card was
-accepted, and our catalogue identifier is inside it.
+An invalid card raises no exception. Every answer to this call carries `ok`,
+and it is either true or false: true means the card was accepted and our
+catalogue `id` is there beside it, false means the answer carries an `error`
+instead. The error has a code to branch on — `card_rejected` where we would not
+publish the card — a sentence you can print, and `problems`: the findings
+standing between this card and the catalogue, each with a code, words a person
+can act on, and the path to the field it is about where it is about one. That
+list is never empty.
+
+Not every finding is about the card. A name for buyers to read that you have
+not set, or a wallet for your sales to be paid into, arrives in the same list,
+so one answer names everything you have to fix instead of handing it to you a
+round trip at a time. Sending the same card again gets the same refusal, and
+the error says as much: its `retryable` flag is false, because what changes the
+answer is fixing what the findings name.
 
 A call that fails for some other reason — a key we do not accept, an address
-that does not answer — does throw. The `errors` answer is about the card and
-nothing else.
+that does not answer — does throw, as a `CoinslotError`. It carries a `code`.
+Where we refused the call in words, that word is the code: a key we will not
+take arrives as `not_authorised`, not as something about the network. Where no
+answer arrived, or none these tools could read, it is one of the three words
+they use for that. It is the same vocabulary either way, and the same one the
+returned errors carry. It also carries `retryable`, answering the same question
+it answers on a returned error, and `route`, the name of the call it happened
+on, so a `catch` can tell what happened without reading the sentence. A client
+built wrong — no key, an address that is not an address — is a `TypeError` at
+the line that is wrong, before anything leaves your process.
 
 The field `merchant_item_id` is your own identifier for the product, the same
 one it has in your database. We issue our catalogue `id` beside it, but your
@@ -163,7 +182,10 @@ measurement, described on step 6.
 
 We hold the orders in a queue on our side, and you take them from it with a
 subscription. You do not have to accept incoming connections: your side opens
-the subscription, so neither a public address nor an open port is needed.
+the subscription, so neither a public address nor an open port is needed. It
+goes out over ordinary HTTPS to the address you gave the client on step 1 — a
+request we hold open until something arrives — so what your outbound rules have
+to allow is that one host.
 
 You declare what your process answers with `on`, once for each kind of message,
 and then open the subscription with `start`. Three kinds travel down that one
@@ -211,8 +233,9 @@ before trusting a green run: a test key rehearses, a live key sells.
 
 In the asynchronous mode the handler answers at once that the order is
 accepted, and confirms the delivery itself with a separate call, later and from
-anywhere in your code. That call is made on the order you kept, so an
-identifier of ours never has to be passed anywhere:
+anywhere in your code. Write the order's `id` into your own record of the job —
+the row or the queue task the delivery is driven from — and make that call
+against the identifier you saved:
 
 ```ts
 coinslot.on('order', async (order) => {
@@ -223,8 +246,8 @@ coinslot.on('order', async (order) => {
 
 await coinslot.start()
 
-// later, once the delivery is finished, on the order you kept:
-await order.deliver({ access_url: url })
+// later, once the delivery is finished, against the id you wrote down:
+await coinslot.orders.forId(savedId).deliver({ access_url: url })
 ```
 
 An `accepted` can name the time you expect the delivery to take, where you know
@@ -243,15 +266,20 @@ purchase cover both. Both numbers are ours to set rather than the card's, and
 both are what the system you are connecting to runs with ([Time ran
 out](/orders)).
 
-If your process has restarted in the meantime, the object you kept is gone. The
-open orders are then read back from us, and the delivery is made on those
-instead — [Finding out where an order stands](/orders).
+The order your handler was given carries that same `deliver` call, and inside
+the handler it is the shorter thing to write. Between the handler and the
+delivery, though, your process can restart, be deployed over, or hand the job to
+another instance, and the object survives none of those; the identifier in your
+own record survives all three, and `coinslot.orders.forId` turns it back into an
+order that can be delivered against. If your own record is gone as well, the
+open orders can be read back from us — [Finding out where an order
+stands](/orders).
 
 The call `deliver` is idempotent by the order's identifier. Call it twice and
 the second call succeeds as well, marked as already delivered, and no second
-delivery appears. Success is the same flag in both cases, so you do not have to
-branch on the word inside it. Repeating the call after a dropped connection is
-therefore safe. What such a repeat has to carry is on [Telling a repeat
+delivery appears. `ok` is true in both cases, so you do not have to branch on
+the word inside it. Repeating the call after a dropped connection is therefore
+safe. What such a repeat has to carry is on [Telling a repeat
 apart](/orders#telling-a-repeat-apart).
 
 If the delivery did not work out and you have already taken the order on, say
@@ -271,9 +299,12 @@ money on a refusal in each mode is in the table of modes on [Orders and
 fulfillment modes](/orders), and the refusal codes are in the [card
 reference](/cards).
 
-Errors from `deliver` and `refuse` are returned rather than thrown, and they
-carry a flag saying whether repeating the call is worth anything ([what the
-errors are](/orders)).
+Failures of `deliver` and `refuse` are returned rather than thrown, in the same
+envelope the publish call answers in: `ok` is false and one `error` beside it
+carries a code, a sentence and a flag saying whether repeating the call could
+change the outcome. Which codes arrive when, and what each of them means for
+your next move, is on [When a closing call does not go
+through](/orders#when-a-closing-call-does-not-go-through).
 
 We read a refusal as a final "this cannot be delivered", so express a temporary
 failure on your side by throwing rather than by refusing. The order then counts
@@ -309,8 +340,8 @@ batches. Both work with the same order object, so moving between them does not
 mean rewriting the delivery. Neither is open during the pilot.
 
 If a product's price is worked out on the fly, the price question comes down
-the same channel. You put the price handler beside the order handler, in the
-same process:
+the same channel. You put the price handler — the one you register under
+`on('quote', …)` — beside the order handler, in the same process:
 
 ```ts
 coinslot.on('quote', async (q) => {
@@ -354,12 +385,15 @@ problem handler stays quiet. The first order reaches it on step 5.
 
 ## 4. Check the card
 
-Before calling us, run your cards through the check. It reads a card the way we
-read it at publication and reports what the contract can see from the card
-alone: a result that promises nothing, a deadline on a card whose mode never
-uses one, a field of the wrong shape. What it cannot see is your delivery, so a
-purchase parameter your delivery needs and the card does not name goes through
-unremarked. That one is yours to catch.
+The check we ship is what goes in front of every publish from here on. Calling
+us is the short loop while you are fixing one card by hand; once publishing
+lives in a script or in your build, running the check first is what keeps a card
+that cannot be published from getting as far as the call. It reads a card the
+way we read it at publication and reports what the contract can see from the
+card alone: a result that promises nothing, a deadline on a card whose mode
+never uses one, a field of the wrong shape. What it cannot see is your delivery,
+so a purchase parameter your delivery needs and the card does not name goes
+through unremarked. That one is yours to catch.
 
 ```sh
 npx coinslot verify card.json
@@ -377,8 +411,9 @@ those reasons rather than checking nothing quietly. It raises no order and it
 does not need your handler running.
 
 The same check is also a function the package exports, which takes a card you
-have already parsed. That is the one to call where the cards are assembled in
-code rather than kept in files.
+have already parsed and hands its findings back in the shape a refused publish
+carries them in. That is the one to call where the cards are assembled in code
+rather than kept in files.
 
 There is no silent "invalid": every finding is explained in words, and all but
 one point at a field — a file that is not JSON at all is a finding about the
@@ -438,10 +473,11 @@ not touch your code.
   side will need something to check a request against to know that it came from
   us. A price handler has neither question — the subscription channel is
   authenticated when it connects.
-- The exact names of an order's fields, and the shape of a refusal.
+- The exact names of an order's fields, and of the two fields a handler's
+  refusal carries. Their shapes are settled and described on these pages; the
+  spelling can still change before the pilot, in a new package and contract
+  version.
 - The names of the fields a card sets deadlines in.
-- The subscription's network coordinates: where it connects and what to open
-  for it in your outbound rules.
 - The parameter that lets one subscription work on several orders at once: its
   name and its default.
 - How to take orders outside Node. We document the subscription's wire protocol

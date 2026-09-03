@@ -26,8 +26,8 @@ const SHORT = {
 const publishedShort = async (harnessed: Harness): Promise<string> => {
   const result = await harnessed.gateway.publishCard(harnessed.merchant.id, SHORT);
   expect(PublishResultSchema.safeParse(result).success).toBe(true);
-  if (!("ok" in result)) throw new Error(`publishing failed: ${JSON.stringify(result.errors)}`);
-  return result.ok.id;
+  if (!result.ok) throw new Error(`publishing failed: ${JSON.stringify(result.error.problems)}`);
+  return result.id;
 };
 
 describe("the canon behind the door", () => {

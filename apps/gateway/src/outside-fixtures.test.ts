@@ -220,7 +220,7 @@ describe("a purchase from the outside", () => {
         },
       });
       expect(published.status).toBe(200);
-      const itemId = (published.body as { ok: { id: string } }).ok.id;
+      const itemId = (published.body as { id: string }).id;
 
       // The agent finds it. Nothing here needs a key.
       const catalog = await gateway.call("GET", "/x402/catalog");
@@ -319,7 +319,7 @@ describe("a purchase from the outside", () => {
         },
       });
       expect(published.status).toBe(200);
-      const itemId = (published.body as { ok: { id: string } }).ok.id;
+      const itemId = (published.body as { id: string }).id;
 
       const catalog = await gateway.call("GET", "/x402/catalog");
       expect(
@@ -493,7 +493,9 @@ describe("a purchase from the outside", () => {
       });
       expect(early.status).toBe(422);
       expect(
-        (early.body as { errors: { code: string }[] }).errors.map((finding) => finding.code).sort(),
+        (early.body as { error: { problems: { code: string }[] } }).error.problems
+          .map((finding) => finding.code)
+          .sort(),
       ).toStrictEqual(["no_payout_wallet", "no_seller_name"]);
 
       const named = await gateway.call("POST", "/v0/seller-name", {
@@ -523,7 +525,7 @@ describe("a purchase from the outside", () => {
         body: card,
       });
       expect(published.status).toBe(200);
-      const itemId = (published.body as { ok: { id: string } }).ok.id;
+      const itemId = (published.body as { id: string }).id;
 
       // What a crawler asks for, and what it is told about the seller. This is
       // the whole reason a merchant is made to choose a name: without one the

@@ -393,7 +393,7 @@ describe("the stage-one gate: a sandbox purchase, green from catalog to receipt"
     expect(invented.state).toBeNull();
     expect(invented.delivered).toBeNull();
     expect(invented.body).toStrictEqual({
-      error: { code: "no_such_order", message: "there is no such order" },
+      error: { code: "no_such_order", message: "there is no such order", retryable: false },
     });
 
     const another = await buyer.status("ord_nor_this_one");
@@ -420,7 +420,7 @@ describe("the stage-one gate: a sandbox purchase, green from catalog to receipt"
       price_check: "handler",
     };
     const published = await merchant.client.catalog.publish(unpriceable);
-    if (!("ok" in published)) {
+    if (!published.ok) {
       throw new Error(`publishing the unpriceable card was refused: ${JSON.stringify(published)}`);
     }
 
@@ -547,7 +547,7 @@ describe("the same slice when the merchant's own code cannot fill the order", ()
     // synchronous mode the charge is executed only after the goods come back.
     // No goods, no charge.
     const published = await merchant.client.catalog.publish(UNSTAFFED_NUMBER);
-    if (!("ok" in published)) {
+    if (!published.ok) {
       throw new Error(`publishing the unstaffed card was refused: ${JSON.stringify(published)}`);
     }
 

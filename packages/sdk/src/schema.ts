@@ -15,7 +15,7 @@
  * shape a merchant reads.
  */
 
-import type { PublishError } from "@nuanu-ai/coinslot-contracts";
+import type { Problem } from "@nuanu-ai/coinslot-contracts";
 
 /**
  * One finding of a schema, as much of it as this package reads.
@@ -39,15 +39,15 @@ export const UNNAMED_FINDING = "invalid";
  * A schema's findings, in the shape the publish call answers in.
  *
  * One shape for both sides is the point. A merchant who ran the check locally
- * and a merchant who published and was refused read the same object — a path
- * to the field, a code for their code, a sentence for the person fixing it —
- * so neither of the two has a reader of its own.
+ * and a merchant who published and was refused read the same object under the
+ * same word — a path to the field, a code for their code, a sentence for the
+ * person fixing it — so neither of the two has a reader of its own.
  *
  * The path is flattened to text because that is what the contract carries. An
  * index inside an array arrives as a number and would otherwise be a number in
  * one finding and a name in the next.
  */
-export const problemsOf = (issues: readonly SchemaIssue[]): PublishError[] =>
+export const problemsOf = (issues: readonly SchemaIssue[]): Problem[] =>
   issues.map((issue) => ({
     path: issue.path.map(String),
     code: issue.code ?? UNNAMED_FINDING,
@@ -62,7 +62,7 @@ export const problemsOf = (issues: readonly SchemaIssue[]): PublishError[] =>
  * rather than with a blank where the field would be, so that "this is about
  * the card" and "the path went missing" do not look the same.
  */
-export const describeProblems = (problems: readonly PublishError[]): string =>
+export const describeProblems = (problems: readonly Problem[]): string =>
   problems
     .map((problem) =>
       problem.path.length === 0
