@@ -2,7 +2,16 @@
   "name": "@nuanu-ai/coinslot",
   "version": "0.2.0",
   "type": "module",
-  "description": "Coinslot merchant SDK — the fulfillment worker and the integration check",
+  "description": "Sell your existing products to AI agents: publish product cards to an x402 storefront and fill the paid orders from your own service.",
+  "keywords": [
+    "x402",
+    "agent-commerce",
+    "ai-agents",
+    "merchant-sdk",
+    "stablecoin-payments",
+    "usdc"
+  ],
+  "homepage": "https://coinslot.nuanu.ai/docs/",
   "license": "UNLICENSED",
   "repository": {
     "type": "git",
