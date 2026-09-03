@@ -613,72 +613,6 @@ const environmentSchema = z.object({
   // malformed one that stops a stack whose facilitator asks for neither.
   CDP_API_KEY_ID: emptyIsAbsent(z.string().min(1)),
   CDP_API_KEY_SECRET: emptyIsAbsent(z.string().min(1)),
-
-  /**
-   * The wallet this gateway's own test buyer pays with, or nothing at all.
-   *
-   * It is the one credential here that spends rather than opens: a merchant on
-   * the test site asks for a test purchase of their own card, and this key
-   * signs it. So it is a throwaway wallet holding test funds and no more, and
-   * on a deployment that settles against nothing it is not needed at all —
-   * there the buyer signs with a key made for that one walk and thrown away,
-   * because nothing it signs reaches a chain.
-   *
-   * The name follows `SMOKE_BUYER_KEY` and `STAND_BUYER_KEY`, which are the two
-   * places a buyer's key is already read from an environment in this
-   * repository, with the prefix saying which buyer this one is.
-   *
-   * Held to the shape of a private key rather than to "not empty", for the
-   * reason `PAY_TO_ADDRESS` is: a truncated paste that starts the process is a
-   * failure that arrives at a merchant's first test purchase, and the same
-   * check written here arrives in front of whoever pasted it. Set to nothing
-   * reads as never set, which is Compose's spelling of "not for this stack".
-   */
-  TEST_PURCHASE_BUYER_KEY: emptyIsAbsent(
-    z
-      .string()
-      .regex(
-        /^0x[0-9a-fA-F]{64}$/,
-        "must be a private key: 0x followed by 64 hexadecimal characters, or empty for a stack with no test buyer",
-      ),
-  ),
-
-  /**
-   * The most one test purchase may ask the test buyer to pay, in dollars.
-   *
-   * Test funds are free and a faucet is not, so a merchant who published a card
-   * at nine hundred dollars must not be able to empty the site's buyer by
-   * pressing a button. Five dollars covers the pilot's own cards with room over
-   * — the two the slice sells are three and eight, and the first live sale was
-   * three and a half — and it is a chosen number rather than a measured one:
-   * nobody here has measured what a Base Sepolia faucet gives in a day.
-   *
-   * It is written as an amount rather than a number of cents because that is
-   * how every price in this system is written, and it is compared against the
-   * challenge in the token's own smallest unit, so no float ever decides
-   * whether a payment is inside it.
-   */
-  TEST_PURCHASE_MAX_USD: z
-    .string({ error: absentOrWrong("must be an amount in dollars, such as 5.00") })
-    .regex(/^\d+(?:\.\d+)?$/, "must be an amount in dollars, such as 5.00")
-    .refine((value) => Number(value) > 0, "must be more than nothing")
-    .default("5.00"),
-
-  /**
-   * How many test purchases one merchant may walk within a moving hour.
-   *
-   * The ceiling is per merchant rather than per site on purpose: counted
-   * together, one merchant retrying a broken handler would lock every other
-   * merchant on the test site out of the one thing the site is for. Five is
-   * enough to fix a handler and try again a few times, and caps one merchant at
-   * five times the amount above.
-   *
-   * It is counted in this process and forgotten when it restarts. That is the
-   * honest bound for a guard on a test site's faucet: the alternative is a
-   * table on disk, a schema, and a migration, for a number whose whole job is
-   * to stop a button being held down.
-   */
-  TEST_PURCHASE_PER_HOUR: countAbove(5),
 });
 
 /**
@@ -724,22 +658,6 @@ export interface WorkerConfig {
   readonly pollMaxEnvelopes: number;
 }
 
-/**
- * What this gateway's own test buyer may do, for the merchant proving their own
- * integration on the test site.
- *
- * The three sit together because they are one policy: who buys, how much they
- * may spend at once, and how often one merchant may ask them to.
- */
-export interface TestPurchaseConfig {
-  /** The wallet the test buyer signs with, or nothing where none is configured. */
-  readonly buyerKey: string | null;
-  /** The most one test purchase may pay, in dollars, written as an amount. */
-  readonly maxUsd: string;
-  /** How many test purchases one merchant may walk within a moving hour. */
-  readonly perHour: number;
-}
-
 export interface PaymentConfig {
   readonly facilitatorUrl: string;
   readonly network: string;
@@ -773,7 +691,6 @@ export interface GatewayConfig {
   readonly redelivery: RedeliveryConfig;
   readonly worker: WorkerConfig;
   readonly payment: PaymentConfig;
-  readonly testPurchase: TestPurchaseConfig;
   /**
    * Whether this deployment's money is real, derived from the chain and from
    * nothing else. It decides the prefix on every key it issues and the `test`
@@ -1033,11 +950,6 @@ export function loadConfig(environment: Record<string, string | undefined>): Gat
       payTo,
       cdpApiKeyId: environmentValues.CDP_API_KEY_ID ?? null,
       cdpApiKeySecret: environmentValues.CDP_API_KEY_SECRET ?? null,
-    },
-    testPurchase: {
-      buyerKey: environmentValues.TEST_PURCHASE_BUYER_KEY ?? null,
-      maxUsd: environmentValues.TEST_PURCHASE_MAX_USD,
-      perHour: environmentValues.TEST_PURCHASE_PER_HOUR,
     },
     environment: derivedEnvironment,
     surfaceMode: surfaceModeOf(network, environmentValues.FACILITATOR_URL),

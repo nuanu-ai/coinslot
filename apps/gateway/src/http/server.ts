@@ -707,16 +707,6 @@ const RETRYABLE: Readonly<Record<ErrorCode, boolean>> = {
   // the answer; what actually ships is what the layer said.
   payment_not_verified: false,
   payment_not_taken: false,
-
-  // One code covers every reason a test purchase is turned away before it
-  // starts, and most of them are settled: a gateway where the money is real has
-  // no test buyer to spend, one with no wallet configured will not grow one
-  // because somebody pressed again, and a card priced over the ceiling is
-  // priced over it. The exception is the ceiling on how many an hour, which is
-  // a "not yet" and says so for itself — that refusal carries its own flag
-  // beside the sentence, which is the mechanism this table's default is the
-  // floor for.
-  test_purchase_refused: false,
 };
 
 /**

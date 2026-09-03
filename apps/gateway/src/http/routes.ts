@@ -15,7 +15,7 @@
  * the order it made, in the document the agent's own door answers with.
  */
 
-import { isSandboxFacilitator, outcomeFor } from "@coinslot/core";
+import { outcomeFor } from "@coinslot/core";
 import type {
   IssueKeyRequest,
   OrderListQuery,
@@ -27,15 +27,12 @@ import type {
   SellerNameRequest,
   WorkerPollRequest,
 } from "@nuanu-ai/coinslot-contracts";
-import { generatePrivateKey } from "viem/accounts";
 import type { Gateway, PurchaseAttempt } from "../app/gateway.js";
 import { agentOrderStatusOf, orderDocumentOf } from "../app/runner.js";
 import type { KeyPurpose } from "../ports/store.js";
 import type { MountedRoute, RouteAnswer, RouteCall } from "./server.js";
 import { refusal } from "./server.js";
-import { tokenOf, walkTestPurchase } from "./test-purchase.js";
 import {
-  atomicUnits,
   PAYMENT_REQUIRED_HEADER,
   PAYMENT_RESPONSE_HEADER,
   PaymentEdge,
@@ -60,13 +57,6 @@ const FORBIDDEN = 403;
 const NOT_FOUND = 404;
 const CONFLICT = 409;
 const UNPROCESSABLE = 422;
-/**
- * One refusal is a ceiling on how often rather than on what, and it is the only
- * one here that a caller gets past by waiting. It is answered under the status
- * that says so, so that a proxy, a log and a client library all read it the same
- * way the sentence does.
- */
-const TOO_MANY = 429;
 
 /**
  * The merchant whose key opened this call.
@@ -143,17 +133,6 @@ export function handlersFor(gateway: Gateway): Partial<Record<RouteName, Mounted
   const { config } = gateway.runtime;
   const edge = new PaymentEdge(config.payment, config.publicBaseUrl, config.payment.timeoutSeconds);
 
-  /**
-   * When each merchant's test purchases were started, for the ceiling on how
-   * many of them one merchant may walk in an hour.
-   *
-   * It lives here, in the process, and a restart forgets it. That is the honest
-   * bound for a guard whose whole job is to stop a button being held down
-   * against a faucet: a table on disk would buy a schema and a migration for a
-   * number nobody reconciles anything from.
-   */
-  const walkedByMerchant = new Map<string, number[]>();
-
   return {
     publish_card: {
       // The card is checked by the flow rather than by the mounting loop, so
@@ -178,8 +157,6 @@ export function handlersFor(gateway: Gateway): Partial<Record<RouteName, Mounted
     pause_card: { serve: (call) => cardPaused(gateway, call, true) },
 
     resume_card: { serve: (call) => cardPaused(gateway, call, false) },
-
-    test_purchase: { serve: (call) => testPurchase(gateway, walkedByMerchant, call) },
 
     pause_selling: { serve: (call) => sellingSet(gateway, call, "paused") },
 
@@ -522,177 +499,6 @@ async function orderStatus(
   }
 
   return { status: OK, document: agentOrderStatusOf(record) };
-}
-
-/** The window the ceiling on test purchases is counted over. */
-const ONE_HOUR_MS = 60 * 60 * 1_000;
-
-/**
- * One amount in the token's smallest unit, or nothing where it cannot be
- * written in that token at all.
- *
- * The gateway's own conversion, so a price this refuses here is a price the
- * challenge would have refused a moment later — and nothing about a ceiling
- * ever becomes a float, which is how a comparison lets a payment through for a
- * rounding reason nobody can see afterwards.
- */
-function inSmallestUnit(amount: string, decimals: number): bigint | null {
-  try {
-    return BigInt(atomicUnits(amount, decimals));
-  } catch {
-    return null;
-  }
-}
-
-/**
- * A merchant buying their own card with this gateway's test buyer, to find out
- * whether a stranger's agent could.
- *
- * Everything decided here is decided before the walk starts, because each of
- * these is a reason no purchase should be attempted at all, and each is said in
- * words: a walk that got as far as the wire answers with its own transcript,
- * and a walk that never should have started answers with a sentence.
- *
- * The order is deliberate. The world first, because on a live gateway there is
- * no card and no ceiling worth discussing — the buyer would be spending our own
- * real money. Then whose card it is, so that nothing below this line can say
- * anything about a card belonging to somebody else. Then whether there is a
- * buyer at all, then what it may spend, and the ceiling on how often last of
- * all, so that a merchant does not spend their hour on calls that were going to
- * be refused anyway.
- */
-async function testPurchase(
-  gateway: Gateway,
-  walkedByMerchant: Map<string, number[]>,
-  call: RouteCall,
-): Promise<RouteAnswer> {
-  const { config } = gateway.runtime;
-  const { response } = call;
-  const merchantId = merchantOf(call);
-  const itemId = call.params.item_id ?? "";
-
-  if (gateway.environment === "live") {
-    // The buyer is ours and so is what it spends. A button that made this
-    // gateway buy on a chain where the money is real would be somebody else
-    // deciding when we spend it.
-    return written(
-      response,
-      CONFLICT,
-      refusal(
-        "test_purchase_refused",
-        "this gateway settles on a chain where the money is real, and a test purchase is paid for out of our own wallet, so there are none here; test purchases are walked on the test site",
-      ),
-    );
-  }
-
-  const offered = await gateway.paidResource(itemId);
-  if (offered === null || offered.stored.merchantId !== merchantId) {
-    // Another merchant's card is answered exactly as a card that is not there.
-    // This call is not a way of buying somebody else's product, and not a way
-    // of finding out what they sell either.
-    return written(response, NOT_FOUND, refusal("no_such_item", "there is no such product"));
-  }
-
-  // A gateway that settles against nothing needs no funded wallet: no payment
-  // it accepts reaches a chain, so the buyer signs with a key made for this one
-  // walk and thrown away afterwards. Everywhere else the wallet has to be
-  // configured, and saying so here is the difference between an answer a person
-  // can act on and a signature that goes nowhere.
-  const buyerKey =
-    config.testPurchase.buyerKey ??
-    (isSandboxFacilitator(config.payment.facilitatorUrl) ? generatePrivateKey() : null);
-  if (buyerKey === null) {
-    return written(
-      response,
-      CONFLICT,
-      refusal(
-        "test_purchase_refused",
-        "this gateway has no test buyer: it settles through a facilitator that charges a real chain, and no wallet is set in TEST_PURCHASE_BUYER_KEY for the buyer to pay from",
-      ),
-    );
-  }
-
-  const token = tokenOf(config.payment.network);
-  if (token === null) {
-    return written(
-      response,
-      CONFLICT,
-      refusal(
-        "test_purchase_refused",
-        `this gateway charges on ${config.payment.network}, and it has no table saying what that chain is paid in, so there is no ceiling a test purchase could be held to`,
-      ),
-    );
-  }
-
-  const ceiling = inSmallestUnit(config.testPurchase.maxUsd, token.decimals);
-  if (ceiling === null) {
-    return written(
-      response,
-      CONFLICT,
-      refusal(
-        "test_purchase_refused",
-        `the ceiling on a test purchase is set to ${config.testPurchase.maxUsd}, which is written to more places than ${token.symbol} carries, so no purchase can be held to it`,
-      ),
-    );
-  }
-
-  const price = inSmallestUnit(offered.stored.card.price.amount, token.decimals);
-  if (price === null) {
-    return written(
-      response,
-      CONFLICT,
-      refusal(
-        "test_purchase_refused",
-        `this card is priced at ${offered.stored.card.price.amount}, which is written to more places than ${token.symbol} carries, so there is no exact amount to charge for it`,
-      ),
-    );
-  }
-  if (price > ceiling) {
-    return written(
-      response,
-      CONFLICT,
-      refusal(
-        "test_purchase_refused",
-        `this card is priced at ${offered.stored.card.price.amount} and this gateway's test buyer pays at most ${config.testPurchase.maxUsd} in one purchase; test funds are free and the faucet behind them is not`,
-      ),
-    );
-  }
-
-  const now = gateway.runtime.clock();
-  const recent = (walkedByMerchant.get(merchantId) ?? []).filter((at) => at > now - ONE_HOUR_MS);
-  if (recent.length >= config.testPurchase.perHour) {
-    walkedByMerchant.set(merchantId, recent);
-    // The one refusal on this route a caller gets past by waiting, and the flag
-    // has to say so: told this was definitive, a cabinet would show a merchant
-    // a dead end where there is a delay.
-    return written(
-      response,
-      TOO_MANY,
-      refusal(
-        "test_purchase_refused",
-        `this merchant has walked ${recent.length} test purchases within the last hour, and this gateway allows ${config.testPurchase.perHour}; the ceiling lets go as the hour moves`,
-        { retryable: true },
-      ),
-    );
-  }
-  walkedByMerchant.set(merchantId, [...recent, now]);
-
-  return {
-    status: OK,
-    document: await walkTestPurchase({
-      // The public address and never the one this request came in on: the whole
-      // point is the door a stranger's agent knocks on, and behind a proxy the
-      // two are not the same address.
-      baseUrl: config.publicBaseUrl,
-      itemId,
-      params: (call.body as PurchaseRequest).params,
-      privateKey: buyerKey,
-      network: config.payment.network,
-      maxAtomic: ceiling,
-      maxUsd: config.testPurchase.maxUsd,
-      callDeadlineMs: config.deadlines.syncBudgetMs,
-    }),
-  };
 }
 
 /**

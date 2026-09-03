@@ -98,12 +98,6 @@ import {
   PublishResultSchema,
 } from "./results.js";
 import { SellingStateSchema } from "./selling.js";
-import {
-  TestPurchaseOutcomeSchema,
-  TestPurchaseSchema,
-  TestPurchaseStepNameSchema,
-  TestPurchaseStepSchema,
-} from "./test-purchase.js";
 
 export type {
   AgentOrderStatus,
@@ -276,20 +270,6 @@ export {
 } from "./results.js";
 export type { SellingState } from "./selling.js";
 export { SELLING_STATES, SellingStateSchema } from "./selling.js";
-export type {
-  TestPurchase,
-  TestPurchaseOutcome,
-  TestPurchaseStep,
-  TestPurchaseStepName,
-} from "./test-purchase.js";
-export {
-  TEST_PURCHASE_OUTCOMES,
-  TEST_PURCHASE_STEPS,
-  TestPurchaseOutcomeSchema,
-  TestPurchaseSchema,
-  TestPurchaseStepNameSchema,
-  TestPurchaseStepSchema,
-} from "./test-purchase.js";
 
 /**
  * The version of the public contract. It grows when the meaning of the fields
@@ -373,10 +353,6 @@ export const schemas = Object.freeze({
   selling_state: SellingStateSchema,
   service_name: ServiceNameSchema,
   tags: TagsSchema,
-  test_purchase: TestPurchaseSchema,
-  test_purchase_outcome: TestPurchaseOutcomeSchema,
-  test_purchase_step: TestPurchaseStepSchema,
-  test_purchase_step_name: TestPurchaseStepNameSchema,
   timestamp: TimestampSchema,
   worker_envelope: WorkerEnvelopeSchema,
   worker_poll_request: WorkerPollRequestSchema,

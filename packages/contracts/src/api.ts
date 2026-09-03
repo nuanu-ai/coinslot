@@ -73,7 +73,6 @@ import { QuoteResponseSchema } from "./quote.js";
 import { ReceiptSchema } from "./receipt.js";
 import { CallErrorSchema, OrderCallResultSchema, PublishResultSchema } from "./results.js";
 import { SellingStateSchema } from "./selling.js";
-import { TestPurchaseSchema } from "./test-purchase.js";
 
 /**
  * An order together with the word for where it stands.
@@ -682,7 +681,6 @@ export const ERROR_CODES = Object.freeze([
   "payment_already_spent",
   "payment_not_taken",
   "payment_not_verified",
-  "test_purchase_refused",
 ] as const);
 
 /** One of the codes this gateway is known to refuse a call with. */
@@ -796,16 +794,6 @@ export const API_ROUTES = Object.freeze({
     description:
       "Puts one card back on sale. Where the merchant has stopped all selling this lifts only this card's own pause, and the card goes on refusing new orders until selling is resumed — the answer says so in both of its words, and that is the case a merchant is most likely to misread.",
     response: { document: MerchantCardSchema },
-  },
-
-  test_purchase: {
-    method: "POST",
-    path: "/v0/cards/:item_id/test-purchase",
-    auth: "merchant_key",
-    description:
-      "Buys one of the merchant's own cards with this gateway's own test buyer, so that the merchant can prove their integration without anybody else being involved. The buyer walks the path a stranger's agent walks and walks it through the public storefront: it reads the catalog, makes the unpaid call that opens an order and answers with a price, signs that challenge and presents it, and comes back to the order's own door for the goods. What comes back is the transcript — every address it called and what each one answered — the order it opened, and the goods exactly as the buyer received them. A walk that did not get through is that same document with fewer steps in it, where the last step says what stopped it in the storefront's own words; it is not an error, because \"the price call was refused because the card is not on sale\" is the answer the merchant came for. The parameters are the ones this card's own params declare, and an empty object is the whole request for a card that declares none. Three things are refused before any walk begins, each in words. A card belonging to another merchant is answered exactly as a card that does not exist, so this call is not a way of buying somebody else's product or of finding out what they sell. A gateway that settles on a chain where the money is real refuses every one of these: the buyer is ours and so is what it spends, and a test purchase there would be us spending real money on somebody else's schedule. And a gateway with no test buyer configured says so rather than failing at the payment. Two ceilings sit on top of that, because test funds are free and a faucet is not infinite: a card priced above this gateway's own per-purchase ceiling is refused with both numbers named, and a merchant who has walked more purchases than the ceiling for one hour allows is refused until the hour has moved. The order this leaves behind is an ordinary order of the merchant's — it reaches their worker, appears among their orders and leaves a receipt — and its money is test money, which is what the test flag on that order and that receipt says.",
-    request: PurchaseRequestSchema,
-    response: { document: TestPurchaseSchema },
   },
 
   pause_selling: {
