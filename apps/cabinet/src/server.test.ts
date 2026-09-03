@@ -26,6 +26,7 @@ import { readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { connect } from "node:net";
+import { SITES } from "@coinslot/core";
 import {
   buyOverHttp,
   type Harness,
@@ -33,12 +34,14 @@ import {
   type Served,
   serve,
   theMerchantKey,
+  workUntilStopped,
 } from "@coinslot/gateway/testing";
 import {
   type Card,
   checksummedAddressOf,
   type MerchantKey,
   type MerchantKeyList,
+  type Order,
   type RegisteredMerchant,
 } from "@nuanu-ai/coinslot-contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -191,6 +194,56 @@ const esimCard: Card = {
   fulfill_deadline_seconds: 14_400,
 };
 
+/**
+ * A card priced under the gateway's ceiling on one test purchase, whose goods
+ * come back in the answer.
+ *
+ * The two cards above are both above that ceiling, and a test purchase of
+ * either is refused before the walk starts — which is a case of its own below
+ * and not the one the happy walk needs.
+ */
+const lockerCard: Card = {
+  merchant_item_id: "locker-day",
+  title: "A locker for the day",
+  description: "One locker by the changing rooms, until closing time",
+  price: { amount: "3.00", currency: "USD" },
+  result: { access_code: { type: "string" } },
+  fulfillment: "sync",
+};
+
+/** A card whose purchase asks the buyer two questions. */
+const tourCard: Card = {
+  merchant_item_id: "tour-morning",
+  title: "A guided tour, mornings",
+  description: "Ninety minutes with a guide, starting at ten",
+  price: { amount: "4.00", currency: "USD" },
+  params: {
+    email: { type: "string", required: true, title: "Where to send the ticket" },
+    party: { type: "integer", title: "How many are coming" },
+  },
+  result: { ticket_code: { type: "string" } },
+  fulfillment: "sync",
+};
+
+/**
+ * A second card that asks a question, and asks a different one.
+ *
+ * It is the negative control for the form the cabinet draws from a card's own
+ * declaration: with one such card on the page, a form built from a list
+ * somebody wrote out by hand would pass every assertion about the first.
+ */
+const bicycleCard: Card = {
+  merchant_item_id: "bike-hour",
+  title: "A bicycle for an hour",
+  description: "One bicycle from the rack by the gate",
+  price: { amount: "2.00", currency: "USD" },
+  params: {
+    returned_at: { type: "string", required: true, title: "When you will bring it back" },
+  },
+  result: { unlock_code: { type: "string" } },
+  fulfillment: "sync",
+};
+
 /** One answer from the cabinet, as a browser would have it. */
 interface Visit {
   readonly status: number;
@@ -304,9 +357,107 @@ interface Starting {
   readonly identity?: (real: Identity) => Identity;
 }
 
+/**
+ * Headers a hop writes for itself and must not carry to the next one.
+ */
+const HOP_HEADERS = new Set([
+  "host",
+  "connection",
+  "content-length",
+  "transfer-encoding",
+  "accept-encoding",
+  "content-encoding",
+]);
+
+/**
+ * A server standing at the gateway's public address, forwarding everything to
+ * the gateway itself.
+ *
+ * It exists because one thing the cabinet can ask the gateway for goes back out
+ * of the front door: a test purchase is walked over real HTTP against
+ * `PUBLIC_BASE_URL`, which is the address a stranger's agent would call. That
+ * address has to be in the gateway's configuration before the gateway is built,
+ * and the port the gateway takes is not known until after — so something has to
+ * be listening at a known address first and be pointed at the gateway
+ * afterwards. Every other test pays one idle socket for it, which is cheaper
+ * than a second way of standing a cabinet up.
+ */
+interface Storefront {
+  readonly url: string;
+  aimAt(gateway: string): void;
+  close(): Promise<void>;
+}
+
+const forwardingTo = async (): Promise<Storefront> => {
+  let gateway: string | null = null;
+
+  const server = createServer((request, response) => {
+    void (async () => {
+      if (gateway === null) {
+        response.statusCode = 502;
+        response.end();
+        return;
+      }
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) {
+        chunks.push(chunk as Buffer);
+      }
+      const body = Buffer.concat(chunks);
+      const headers: Record<string, string> = {};
+      for (const [name, value] of Object.entries(request.headers)) {
+        if (HOP_HEADERS.has(name) || value === undefined) continue;
+        headers[name] = Array.isArray(value) ? (value[0] ?? "") : value;
+      }
+
+      const answered = await fetch(`${gateway}${request.url ?? "/"}`, {
+        method: request.method,
+        headers,
+        ...(body.length === 0 ? {} : { body }),
+      });
+      response.statusCode = answered.status;
+      answered.headers.forEach((value, name) => {
+        if (HOP_HEADERS.has(name)) return;
+        response.setHeader(name, value);
+      });
+      response.end(Buffer.from(await answered.arrayBuffer()));
+    })().catch((thrown: unknown) => {
+      response.statusCode = 502;
+      response.end(String(thrown));
+    });
+  });
+
+  server.listen(0, "127.0.0.1");
+  await new Promise<void>((resolve) => server.once("listening", resolve));
+  const { port } = server.address() as AddressInfo;
+
+  return {
+    url: `http://127.0.0.1:${port}`,
+    aimAt: (at) => {
+      gateway = at;
+    },
+    close: () =>
+      new Promise<void>((resolve, reject) => {
+        server.closeAllConnections();
+        server.close((error) => (error === undefined ? resolve() : reject(error)));
+      }),
+  };
+};
+
 const started = async (options: Starting = {}): Promise<Running> => {
-  const harnessed = await harness({ PAY_TO_ADDRESS: PAY_TO, ...options.gateway });
+  const storefront = await forwardingTo();
+  const harnessed = await harness({
+    PAY_TO_ADDRESS: PAY_TO,
+    // The same facilitator the cabinet below is configured with, so the two
+    // halves of one stack agree about whether anything settles. They did not
+    // before: the cabinet said sandbox and the gateway behind it said test,
+    // which is a shape no deployment has and which makes the gateway ask for a
+    // funded wallet it has no way to be given here.
+    FACILITATOR_URL: "sandbox:scripted",
+    PUBLIC_BASE_URL: storefront.url,
+    ...options.gateway,
+  });
   const gateway = await serve(harnessed);
+  storefront.aimAt(gateway.url);
   const basePath = options.base ?? "";
   const mails: Message[] = [];
   const { browser, url, identity, forgetMerchant, rows } = await visiting(
@@ -332,6 +483,7 @@ const started = async (options: Starting = {}): Promise<Running> => {
         return;
       }
       stopped = true;
+      await storefront.close();
       await gateway.close();
       await harnessed.stop();
     },
@@ -2230,6 +2382,276 @@ describe("the cards screen", () => {
     expect(text).toContain("90.00 USD");
     expect(text).toContain("paused");
     expect(await purchasable(gateway, itemId)).toBe(false);
+  });
+});
+
+/**
+ * The markup of one card's test-purchase form, cut out of the page.
+ *
+ * The assertions about what a form asks for are per card, and a page with two
+ * cards on it carries two forms — so a search of the whole page would find the
+ * other card's boxes and call them this card's.
+ */
+const walkFormFor = (html: string, itemId: string): string => {
+  const at = html.indexOf(`/cards/${itemId}/test-purchase"`);
+  expect(at, `no test purchase form for ${itemId}`).toBeGreaterThan(-1);
+  return html.slice(html.lastIndexOf("<form", at), html.indexOf("</form>", at));
+};
+
+/** The gateway's own answer to the same call, for comparing sentences against. */
+const gatewaySaysAbout = async (
+  gateway: Served,
+  itemId: string,
+): Promise<{ message: string; retryable: boolean }> => {
+  const answered = await gateway.call("POST", `/v0/cards/${itemId}/test-purchase`, {
+    body: { params: {} },
+    headers: asMerchant,
+  });
+  return (answered.body as { error: { message: string; retryable: boolean } }).error;
+};
+
+describe("walking a test purchase from the cards screen", () => {
+  it("offers the walk on a card that is on sale and on no card that is paused", async () => {
+    // A paused card is refused at the price call, so a button on it offers a
+    // merchant a walk whose ending is already known — and hides the one thing
+    // they would have to do first, which is put the card back on sale.
+    const { browser, gateway } = await started();
+    const selling = await publish(gateway, lockerCard);
+    const paused = await publish(gateway, {
+      ...lockerCard,
+      merchant_item_id: "locker-night",
+      title: "A locker overnight",
+    });
+    await browser.signIn();
+    await browser.post(`/cards/${encodeURIComponent(paused)}/pause`);
+
+    const page = (await browser.get("/cards")).html;
+
+    expect(page).toContain(`/cards/${selling}/test-purchase`);
+    expect(page).not.toContain(`/cards/${paused}/test-purchase`);
+
+    // And with all selling stopped, on no card at all — including the one the
+    // merchant never paused themselves. That card still reads paused to a
+    // purchase while its own switch is off, which is the whole reason the
+    // contract carries two fields, and a control drawn from the wrong one of
+    // them offers a walk that is refused at the price call.
+    await browser.post("/selling/pause");
+    expect((await browser.get("/cards")).html).not.toContain("test-purchase");
+  });
+
+  it("asks for the values that card's own params declare, and for nothing else", async () => {
+    const { browser, gateway } = await started();
+    const tour = await publish(gateway, tourCard);
+    const bicycle = await publish(gateway, bicycleCard);
+    await browser.signIn();
+
+    const page = (await browser.get("/cards")).html;
+    const asked = walkFormFor(page, tour);
+
+    expect(asked).toContain('name="email"');
+    expect(asked).toContain('name="party"');
+    // The card's own words for its own questions, and the mark on the one it
+    // says it cannot be bought without.
+    expect(readable(asked)).toMatch(/Where to send the ticket\s+required/);
+    expect(readable(asked)).toContain("How many are coming");
+    expect(readable(asked)).not.toMatch(/How many are coming\s+required/);
+    // The boxes come from this card and not from a list written out here, nor
+    // from the declarations of every card on the page.
+    expect(asked).not.toContain('name="returned_at"');
+    expect(walkFormFor(page, bicycle)).not.toContain('name="email"');
+    // And a card that declares nothing is one press with nothing to fill in.
+    const locker = await publish(gateway, lockerCard);
+    const alone = walkFormFor((await browser.get("/cards")).html, locker);
+    expect(alone).not.toContain("<input");
+  });
+
+  it("walks the purchase and shows every door, the order it opened and the goods", async () => {
+    // The whole promise: a merchant presses one button and comes away holding
+    // evidence about the public storefront rather than our word for it.
+    const { browser, gateway, harnessed } = await started();
+    const itemId = await publish(gateway, lockerCard);
+    await browser.signIn();
+    const handled: Order[] = [];
+
+    const worker = workUntilStopped(harnessed, {
+      onOrder: (order) => {
+        handled.push(order);
+        return { delivered: { access_code: "LOCKER-14" } };
+      },
+    });
+    let walked: Visit;
+    try {
+      walked = await browser.post(`/cards/${encodeURIComponent(itemId)}/test-purchase`);
+    } finally {
+      await worker.stop();
+    }
+
+    expect(walked.status).toBe(200);
+    const text = readable(walked.html);
+    // Every door, at the address a stranger's agent would have called: the
+    // catalog, the purchase — twice, because the price call and the signed
+    // retry are two knocks on the same door — and the order's own status door.
+    const orderId = handled[0]?.id ?? "";
+    expect(text).toContain("/x402/catalog");
+    expect(text.split(`/x402/${itemId}/purchase`)).toHaveLength(3);
+    expect(text).toContain(`/x402/orders/${orderId}/status`);
+    // The outcome, in words that do not read as a walk that stopped.
+    expect(text).toContain("nothing left to do");
+    expect(text).not.toContain("did not get through");
+    // The goods exactly as the buyer received them.
+    expect(text).toContain("access_code");
+    expect(text).toContain("LOCKER-14");
+    // And the order, as a way to the screen the merchant will find it on.
+    expect(text).toContain(orderId);
+    expect(walked.html).toContain('href="/orders"');
+    expect(readable((await browser.get("/orders")).html)).toContain(orderId);
+  });
+
+  it("carries the values the merchant typed into their own card's questions", async () => {
+    const { browser, gateway, harnessed } = await started();
+    const itemId = await publish(gateway, tourCard);
+    await browser.signIn();
+    const handled: Order[] = [];
+
+    const worker = workUntilStopped(harnessed, {
+      onOrder: (order) => {
+        handled.push(order);
+        return { delivered: { ticket_code: "TOUR-3" } };
+      },
+    });
+    try {
+      await browser.post(`/cards/${encodeURIComponent(itemId)}/test-purchase`, {
+        email: "guide@example.com",
+        party: "3",
+      });
+    } finally {
+      await worker.stop();
+    }
+
+    // The number arrives as the number the card declared and not as the text a
+    // form posts, or a card asking for one could never be walked from here.
+    expect(handled[0]?.params).toStrictEqual({ email: "guide@example.com", party: 3 });
+  });
+
+  it("ends a card whose goods come later at accepted, and does not draw that as a failure", async () => {
+    // The ending most easily misread. An asynchronous card cannot hand the
+    // goods over inside the purchase, so a page that called this a walk which
+    // did not get through would send a merchant hunting for a fault on the day
+    // their card worked exactly as it says it does.
+    const { browser, gateway, harnessed } = await started();
+    const itemId = await publish(gateway, {
+      ...esimCard,
+      merchant_item_id: "esim-eu-1",
+      title: "eSIM Europe, 1 GB for 7 days",
+      price: { amount: "2.00", currency: "USD" },
+    });
+    await browser.signIn();
+
+    const worker = workUntilStopped(harnessed, { onOrder: () => ({ accepted: {} }) });
+    let walked: Visit;
+    try {
+      walked = await browser.post(`/cards/${encodeURIComponent(itemId)}/test-purchase`);
+    } finally {
+      await worker.stop();
+    }
+
+    const text = readable(walked.html);
+    expect(walked.status).toBe(200);
+    expect(text).not.toContain("did not get through");
+    expect(text).not.toContain("nothing left to do");
+    expect(text).toContain("the goods are owed");
+    // And no goods are claimed, because on this card there are none yet.
+    expect(text).not.toContain("iccid");
+  });
+
+  it("says where the walk stopped when nobody is running the worker", async () => {
+    // The commonest thing a merchant gets wrong, and the reason the button
+    // exists at all.
+    const { browser, gateway } = await started({
+      gateway: {
+        QUOTE_RESPONSE_MS: "100",
+        SYNC_RESPONSE_MS: "200",
+        SETTLE_RESPONSE_MS: "100",
+        SYNC_BUDGET_MS: "500",
+      },
+    });
+    const itemId = await publish(gateway, lockerCard);
+    await browser.signIn();
+
+    const walked = await browser.post(`/cards/${encodeURIComponent(itemId)}/test-purchase`);
+    const text = readable(walked.html);
+
+    // A walk that did not finish is a page and never an error: "it stopped
+    // here, and this is what the storefront said" is the answer they came for.
+    expect(walked.status).toBe(200);
+    expect(text).toContain("did not get through");
+    expect(text).not.toContain("nothing left to do");
+    // And it claims no goods, because nobody delivered any.
+    expect(text).not.toContain("access_code");
+  });
+
+  it("shows the gateway's own sentence when the walk is refused before it starts", async () => {
+    // A card priced above what the site's test buyer may spend at once. The
+    // sentence names both numbers, and it is carried over word for word rather
+    // than paraphrased here — the same call made by hand comes back with it.
+    const { browser, gateway } = await started();
+    const itemId = await publish(gateway, roomCard);
+    await browser.signIn();
+
+    const refused = await browser.post(`/cards/${encodeURIComponent(itemId)}/test-purchase`);
+    const said = await gatewaySaysAbout(gateway, itemId);
+
+    expect(refused.status).toBe(409);
+    expect(said.retryable).toBe(false);
+    expect(readable(refused.html)).toContain(said.message);
+    // Nothing about waiting, because the envelope says this one does not pass.
+    expect(readable(refused.html)).not.toContain("can be tried again");
+  });
+
+  it("says a refusal passes with time where the envelope says it does", async () => {
+    const { browser, gateway, harnessed } = await started({
+      gateway: { TEST_PURCHASE_PER_HOUR: "1" },
+    });
+    const itemId = await publish(gateway, lockerCard);
+    await browser.signIn();
+
+    const worker = workUntilStopped(harnessed, {
+      onOrder: () => ({ delivered: { access_code: "LOCKER-1" } }),
+    });
+    try {
+      await browser.post(`/cards/${encodeURIComponent(itemId)}/test-purchase`);
+    } finally {
+      await worker.stop();
+    }
+    const refused = await browser.post(`/cards/${encodeURIComponent(itemId)}/test-purchase`);
+    const said = await gatewaySaysAbout(gateway, itemId);
+
+    expect(refused.status).toBe(429);
+    expect(said.retryable).toBe(true);
+    const text = readable(refused.html);
+    expect(text).toContain(said.message);
+    // Told this was final, a merchant would go looking for a fault that is a
+    // delay. How long is not said here: nothing on this side knows.
+    expect(text).toContain("can be tried again");
+  });
+
+  it("offers no test purchase where the money is real, and says where they are walked", async () => {
+    // The buyer belongs to us and so does what it spends, so this walk exists
+    // on the test site and nowhere else. A button here would be a dead end
+    // dressed as the last step of an integration.
+    const { browser, gateway } = await started({
+      cabinet: {
+        PAYMENT_NETWORK: "eip155:8453",
+        FACILITATOR_URL: "https://api.cdp.coinbase.com/platform/v2/x402",
+      },
+    });
+    await publish(gateway, lockerCard);
+    await browser.signIn();
+
+    const page = (await browser.get("/cards")).html;
+
+    expect(page).not.toContain("test-purchase");
+    expect(readable(page)).toContain(SITES.test);
   });
 });
 
