@@ -244,7 +244,11 @@ describe("a card the gateway will not publish", () => {
     let output = "";
     stand = spawn("pnpm", ["exec", "tsx", "src/stand.ts"], {
       cwd: fileURLToPath(new URL("../", import.meta.url)),
-      env: { ...process.env, STAND_PORT: String(standPort) },
+      env: {
+        ...process.env,
+        STAND_BUYER_KEY: `0x${"11".repeat(32)}`,
+        STAND_PORT: String(standPort),
+      },
       stdio: ["ignore", "pipe", "pipe"],
     });
     stand.stdout?.on("data", (chunk) => {
