@@ -17,7 +17,8 @@ open http://localhost:8080
 ```
 
 One origin, one port: the landing at `/`, the merchant documentation at
-`/docs`, the cabinet at `/cabinet`, the gateway at `/v0`, Postgres behind them.
+`/docs`, the cabinet at `/cabinet`, the merchant's own calls at `/v0`, the
+storefront an agent buys at under `/x402`, Postgres behind them.
 A merchant process comes up beside it and publishes two cards — a rented phone
 number sold synchronously, an eSIM sold asynchronously.
 
@@ -179,6 +180,46 @@ above are the machine's — driving it through the three endings is where they
 come from — and the payment arrow deliberately does not say how the agent
 learned it was invited.
 
+## The stand
+
+A purchase has three participants, and the stand is a local console that lets
+one person sit in each of them in turn. It is our own instrument and not a
+product surface: no merchant sees it, it is not a second interface to the
+gateway, and it listens on loopback only.
+
+```
+pnpm stand
+open http://127.0.0.1:8787
+```
+
+It needs a wallet of its own, because the buyer on it signs real payments. Put
+a throwaway test key in `.env.stand` at the root of the repository as
+`STAND_BUYER_KEY=0x…`, sixty-four hexadecimal characters, and never one holding
+anything you would miss; `.env.*` is not committed, and the stand refuses to
+start without a key rather than falling back to one everybody knows.
+`STAND_PORT` moves it off 8787.
+
+The console asks for a gateway address and a merchant key, and keeps the key in
+its own process — the page and the log are handed the environment that key
+names and never the key. Against the stack above the address is
+`http://localhost:8080`.
+
+Three tabs, one per seat. **Catalogue** publishes cards through the real SDK and
+takes them off sale, and every row carries the address an agent buys that card
+at. **Agent** is a stranger's buyer: the public catalogue as an agent reads it,
+the two probes — the GET that quotes a card and opens nothing, the unpaid POST
+that opens an order — and then the challenge, which sits on screen with its
+requirements until you sign it, send something unreadable, or walk away.
+**Orders** is the merchant's own code with you in its chair: a standing answer
+for whatever arrives next, or hold every order and decide each one by hand.
+
+The log runs down the side of all three and is threaded by the order, so a
+purchase told from three seats reads as one conversation. It carries both
+halves of every exchange the console makes, and says what it leaves out: the
+SDK's own polling and the gateway's internal steps are not in it.
+`docs/research/24-stand-boundary.md` is what the stand does and does not prove
+— it is not the gateway's journal, and the payment layer is outside it.
+
 ## Where things are
 
 - `apps/gateway` — the payment edge, the order runner and the queue; ports in
@@ -193,7 +234,7 @@ learned it was invited.
 - `packages/sdk` — what a merchant integrates against; its runtime tree is our
   contracts package and zod, and nothing else.
 - `packages/slice` — a mock merchant and a buyer, driving the offline gate and
-  the two commands above.
+  the two commands above, and the stand.
 - `portal/` — the merchant documentation, a vitepress project of its own with
   its own lockfile, outside the workspace.
 - `docs/decisions/` — the numbered decisions; `docs/research/` — the working
