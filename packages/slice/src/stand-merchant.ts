@@ -473,15 +473,28 @@ export const makeStandMerchant = (feed: Feed): StandMerchant => {
       return true;
     },
     async orders(open) {
+      // Both halves, like every other call this file makes. The console cannot
+      // watch an SDK call from the outside the way it watches its own fetches,
+      // so a call the SDK makes says for itself that it went and what came
+      // back — a line arriving with nothing in front of it is what makes a log
+      // read as though it were out of order.
+      feed.sent(
+        "merchant",
+        open === true
+          ? "Asking the SDK for the orders still owed something."
+          : "Asking the SDK for this merchant's orders.",
+        { open: open === true },
+      );
       const listed = await connectedClient().orders.list(
         open === true ? { open: true } : undefined,
       );
       feed.got(
         "merchant",
-        open === true
-          ? "Read the orders still owed something, through the SDK."
-          : "Read this merchant's orders, through the SDK.",
-        { open: open === true, orders: listed.length },
+        `The gateway answered with ${listed.length} order${listed.length === 1 ? "" : "s"}.`,
+        {
+          open: open === true,
+          orders: listed.length,
+        },
       );
       return listed;
     },

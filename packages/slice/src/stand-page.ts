@@ -272,11 +272,11 @@ const catalogueTab = (state: PageState): string => {
   return `<section class="panel">
   <header>
     <h2>What this merchant sells</h2>
-    <div class="side">${word === null ? "Not read yet." : dot(word.tone, `this merchant is ${word.text}`)}${route("list_merchant_cards")}${form("read_cards", "", "Read again")}${switching}</div>
+    <div class="side">${word === null ? "Not read yet." : dot(word.tone, `this merchant is ${word.text}`)}${route("list_merchant_cards")}${form("read_cards", "", "Read again")}${switching}<span class="tag">cabinet, not SDK</span></div>
   </header>
   ${table}
   <div class="body">
-    <p>Publishing goes through the SDK. Reading this list back, pausing a card and stopping all selling do not — the SDK does not carry them, they are the merchant's cabinet operations, and this console calls them over HTTP with the merchant key for that reason.</p>
+    <p>Publishing is <code>catalog.publish</code> on the SDK. Reading this list back, pausing a card and stopping all selling are not on it — the SDK does not carry them because they are the merchant's cabinet operations — so this console makes those over HTTP with the merchant key, and says so where the buttons are.</p>
   </div>
 </section>
 <section class="panel">
@@ -290,7 +290,7 @@ const catalogueTab = (state: PageState): string => {
         `<form method="post" class="inline">${hidden("action", "template")}${hidden("template", one.key)}<button type="submit" title="${escaped(one.about)}">${escaped(one.label)}</button></form>`,
     ).join("")}</div>
     <p>The first three are the files the portal prints on its own pages, read from disk rather than copied — a button that stops publishing is a documented example that stopped working. The fourth is the shape the public x402 catalogue is full of: a synchronous lookup answering with JSON, at a fraction of a cent. The last two are the pilot's own products.</p>
-    ${form("publish", field("Card (JSON)", `<textarea name="card">${escaped(state.cardDraft)}</textarea>`), "Publish", true)}
+    <div class="actions">${form("publish", field("Card (JSON)", `<textarea name="card">${escaped(state.cardDraft)}</textarea>`), "Publish", true)}<span class="tag">catalog.publish</span></div>
     <p>Publishing the same <code>merchant_item_id</code> again replaces the card. There is no unpublish: the gateway offers publish, pause and resume, so pausing is how a card comes off sale.</p>
   </div>
 </section>`;
