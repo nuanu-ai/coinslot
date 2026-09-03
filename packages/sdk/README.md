@@ -32,8 +32,8 @@ const coinslot = createClient({
 })
 ```
 
-There are two of us. At `https://test.coinslot.nuanu.ai` you build: payments
-settle on a test chain and the money there is not real. At
+There are two addresses, one per world. At `https://test.coinslot.nuanu.ai` you
+build: payments settle on a test chain and the money there is not real. At
 `https://coinslot.nuanu.ai` you sell, and it is. A key issued in one does not
 open the other, and the key says which one you are holding: `csk_test_` for the
 first, `csk_live_` for the second. This package picks neither address for you,
@@ -104,10 +104,10 @@ offline: no key, no address, no order raised, nothing asked of us. The same
 check is exported as `checkCard`, for cards assembled in code rather than kept
 in files.
 
-It never reports a clean pass. The half of self-checking worth more — whether
-your handler holds against a repeat of the same order — needs a test order that
-nothing on our surface can yet raise, so the command says that check did not
-run instead of calling its silence a success.
+That is one half of checking yourself. The other half — whether your handler
+holds against a real order, and against that same order arriving twice — is a
+test purchase on the test site rather than anything this command can do; the
+[quickstart](https://coinslot.nuanu.ai/docs/quickstart) walks you through one.
 
 ## Where the rest of it is written
 
