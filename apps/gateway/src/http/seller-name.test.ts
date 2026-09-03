@@ -354,7 +354,7 @@ const sellerInTheChallenge = async (
   served: Served,
   itemId: string,
 ): Promise<string | undefined> => {
-  const answered = await served.call("GET", `/v0/items/${itemId}/purchase`);
+  const answered = await served.call("GET", `/x402/${itemId}/purchase`);
   expect(answered.status).toBe(402);
   const challenge = decodePaymentRequiredHeader(
     answered.headers.get(PAYMENT_REQUIRED_HEADER) ?? "",
@@ -402,7 +402,7 @@ describe("a card whose merchant is listed under no name", () => {
     const { served, harnessed } = await started();
     const { itemId } = await soldUnderNoName(harnessed, served);
 
-    const answered = await served.call("GET", `/v0/items/${itemId}/purchase`);
+    const answered = await served.call("GET", `/x402/${itemId}/purchase`);
 
     expect(answered.status, JSON.stringify(answered.body)).toBe(409);
     expect((answered.body as { error: { code: string } }).error.code).toBe("not_selling");
@@ -415,7 +415,7 @@ describe("a card whose merchant is listed under no name", () => {
     const { served, harnessed } = await started();
     const { itemId, merchantId } = await soldUnderNoName(harnessed, served);
 
-    const answered = await served.call("POST", `/v0/items/${itemId}/purchase`, {
+    const answered = await served.call("POST", `/x402/${itemId}/purchase`, {
       body: { params: {} },
     });
 
@@ -432,7 +432,7 @@ describe("a card whose merchant is listed under no name", () => {
     const { itemId } = await soldUnderNoName(harnessed, served);
     const sellable = await publish(served, harnessed.merchant.key, cardFor("a-desk", "A desk"));
 
-    const listed = (await served.call("GET", "/v0/catalog")).body as { items: { id: string }[] };
+    const listed = (await served.call("GET", "/x402/catalog")).body as { items: { id: string }[] };
 
     expect(listed.items.map((item) => item.id)).not.toContain(itemId);
     // The other half, or the assertion above would pass against a catalog that
@@ -464,7 +464,7 @@ describe("a card whose merchant is listed under no name", () => {
     const { served, harnessed } = await started({ FACILITATOR_URL: SANDBOX_FACILITATOR });
     const { itemId } = await soldUnderNoName(harnessed, served);
 
-    const answered = await served.call("GET", `/v0/items/${itemId}/purchase`);
+    const answered = await served.call("GET", `/x402/${itemId}/purchase`);
 
     expect(answered.status, JSON.stringify(answered.body)).toBe(409);
     expect((answered.body as { error: { code: string } }).error.code).toBe("not_selling");

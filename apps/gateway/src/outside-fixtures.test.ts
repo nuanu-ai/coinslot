@@ -223,7 +223,7 @@ describe("a purchase from the outside", () => {
       const itemId = (published.body as { ok: { id: string } }).ok.id;
 
       // The agent finds it. Nothing here needs a key.
-      const catalog = await gateway.call("GET", "/v0/catalog");
+      const catalog = await gateway.call("GET", "/x402/catalog");
       expect(catalog.status).toBe(200);
       const offered = (catalog.body as { items: { id: string; price: { amount: string } }[] })
         .items;
@@ -232,7 +232,7 @@ describe("a purchase from the outside", () => {
       expect(offered[0]?.price.amount).toBe("80.00");
 
       // It asks to buy and is told what to pay.
-      const challenged = await gateway.call("POST", `/v0/items/${itemId}/purchase`, {
+      const challenged = await gateway.call("POST", `/x402/${itemId}/purchase`, {
         body: { params: { nights: 1 } },
       });
       expect(challenged.status).toBe(402);
@@ -245,7 +245,7 @@ describe("a purchase from the outside", () => {
 
       // The merchant's worker is running, and the agent pays.
       const worker = aMerchantsWorker(gateway.call, () => ({ access_code: "4417" }));
-      const bought = await gateway.call("POST", `/v0/items/${itemId}/purchase`, {
+      const bought = await gateway.call("POST", `/x402/${itemId}/purchase`, {
         body: { params: { nights: 1 } },
         headers: { "payment-signature": payFor(challenge ?? "") },
       });
@@ -321,13 +321,13 @@ describe("a purchase from the outside", () => {
       expect(published.status).toBe(200);
       const itemId = (published.body as { ok: { id: string } }).ok.id;
 
-      const catalog = await gateway.call("GET", "/v0/catalog");
+      const catalog = await gateway.call("GET", "/x402/catalog");
       expect(
         (catalog.body as { items: { fulfillment: string; fulfill_deadline_seconds: number }[] })
           .items[0],
       ).toMatchObject({ fulfillment: "async", fulfill_deadline_seconds: 86_400 });
 
-      const challenged = await gateway.call("POST", `/v0/items/${itemId}/purchase`, {
+      const challenged = await gateway.call("POST", `/x402/${itemId}/purchase`, {
         body: { params: {} },
       });
       expect(challenged.status).toBe(402);
@@ -335,7 +335,7 @@ describe("a purchase from the outside", () => {
       // The money moves at the purchase here, so the agent is answered with a
       // running order rather than with goods — and told plainly that there are
       // none yet, which is not the same as there being no field for them.
-      const bought = await gateway.call("POST", `/v0/items/${itemId}/purchase`, {
+      const bought = await gateway.call("POST", `/x402/${itemId}/purchase`, {
         body: { params: {} },
         headers: { "payment-signature": payFor(challenged.headers.get("payment-required") ?? "") },
       });
@@ -529,7 +529,7 @@ describe("a purchase from the outside", () => {
       // the whole reason a merchant is made to choose a name: without one the
       // challenge carries no seller at all, and the merchant is absent from
       // every catalogue built from these with nothing anywhere saying why.
-      const probed = await gateway.call("GET", `/v0/items/${itemId}/purchase`);
+      const probed = await gateway.call("GET", `/x402/${itemId}/purchase`);
       expect(probed.status).toBe(402);
       const declared = decodePaymentRequiredHeader(probed.headers.get("payment-required") ?? "");
       expect(
@@ -543,13 +543,13 @@ describe("a purchase from the outside", () => {
       expect(declared.accepts[0]?.payTo).not.toBe(PAY_TO);
 
       // And the sale itself, on their key and their worker.
-      const challenged = await gateway.call("POST", `/v0/items/${itemId}/purchase`, {
+      const challenged = await gateway.call("POST", `/x402/${itemId}/purchase`, {
         body: { params: {} },
       });
       expect(challenged.status).toBe(402);
 
       const worker = aMerchantsWorker(gateway.call, () => ({ door_code: "8812" }), theirKey);
-      const bought = await gateway.call("POST", `/v0/items/${itemId}/purchase`, {
+      const bought = await gateway.call("POST", `/x402/${itemId}/purchase`, {
         body: { params: {} },
         headers: {
           "payment-signature": payFor(challenged.headers.get("payment-required") ?? ""),

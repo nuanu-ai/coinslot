@@ -1,8 +1,9 @@
 # The one door.
 #
 # ADR-0005 §1: locally, Caddy is the only address anybody types. `/` is the
-# landing, `/docs` the portal, `/cabinet` the cabinet and `/v0/*` the gateway,
-# so a merchant's engineer sees one origin and never reasons about ports. The
+# landing, `/docs` the portal, `/cabinet` the cabinet, and `/v0/*` and `/x402/*`
+# are both the gateway — the merchant's API and the storefront an agent buys at
+# — so a merchant's engineer sees one origin and never reasons about ports. The
 # same file describes the server later, which is why nothing below is written
 # twice: every address the routes depend on is one environment variable with a
 # local default, and the deployment overrides the variable rather than editing
@@ -89,10 +90,16 @@
 		X-Frame-Options DENY
 	}
 
-	# The gateway. The contract's own route table is written under /v0
-	# (packages/contracts/src/api.ts), so the prefix is the gateway's, not a
-	# mount point invented here: the path is passed through untouched and the
-	# process behind it sees exactly the URL the agent asked for.
+	# The gateway, at both of the prefixes the contract's own route table is
+	# written under (packages/contracts/src/api.ts): /v0 is the merchant's API
+	# and /x402 is the storefront — the catalog an agent browses, the address it
+	# buys at, and the door it comes back to for its own order. Both are the
+	# gateway's, not mount points invented here: the path is passed through
+	# untouched and the process behind it sees exactly the URL the agent asked
+	# for. A matcher that carried only /v0 would leave every storefront address
+	# falling through to the landing below, which answers a bare 404 — so a
+	# product listed in a discovery catalog would be unbuyable from outside
+	# while every test in this repository stayed green.
 	#
 	# The gateway must be started with PUBLIC_BASE_URL set to this origin. It
 	# puts that address into the payment challenge it sends an agent, and an
@@ -133,7 +140,7 @@
 	# The cabinet is the second process and needs no line of its own. It answers
 	# the same probe under its own prefix, and the block below passes /cabinet/*
 	# through untouched, so /cabinet/healthz already arrives.
-	@gateway path /v0 /v0/* /healthz
+	@gateway path /v0 /v0/* /x402 /x402/* /healthz
 	handle @gateway {
 		reverse_proxy {$COINSLOT_GATEWAY_UPSTREAM:gateway:3000}
 	}

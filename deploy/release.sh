@@ -233,7 +233,7 @@ for path in / /docs/ /cabinet/sign-in; do
     || fail "${path} does not say it is the ${channel} environment"
 done
 
-for path in /healthz /v0/catalog; do
+for path in /healthz /x402/catalog; do
   curl --disable -fsS --noproxy '*' --max-time 15 --resolve "${resolve}" "${base}${path}" >/dev/null \
     || fail "${path} did not answer"
 done

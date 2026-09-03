@@ -235,7 +235,7 @@ check_public_site() {
     printf 'public %s%s says %s\n' "$site" "$path" "$mode"
   done
 
-  for path in /healthz /v0/catalog; do
+  for path in /healthz /x402/catalog; do
     if ! curl --disable --noproxy '*' --fail --silent --show-error \
       --max-time 15 "https://${site}${path}" >/dev/null; then
       printf 'FAIL: public %s%s did not answer\n' "$site" "$path" >&2

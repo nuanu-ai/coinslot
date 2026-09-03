@@ -6,7 +6,7 @@ Status: accepted for the controlled test and live launch; revisit before the fir
 ## Context
 
 An agent that buys an asynchronous product receives an order before the goods
-exist. It needs `GET /v0/orders/:order_id/status` to return later, but the
+exist. It needs `GET /x402/orders/:order_id/status` to return later, but the
 contract originally left authentication undecided and the gateway did not
 mount the route. The pilot eSIM therefore had no usable delivery path for an
 agent that is not an email inbox.

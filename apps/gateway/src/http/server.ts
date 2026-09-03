@@ -16,13 +16,18 @@
  * door nobody chose cannot be opened by editing a list.
  *
  * Which door a call is behind is read off `auth` and off nothing else — never
- * off the address. That is the one rule this file has to keep, and the reason
- * is one route: the agent's order status sits under `/v0/orders`, where every
- * other route is the merchant's. A key check attached to that prefix would shut
- * the only caller that route is for out of it, and nothing about the table
- * would look wrong. So there is no path-scoped middleware here at all, and the
- * function that resolves the door names every mode the contract has — adding
- * one stops the build until somebody says which door it is, rather than
+ * off the address. That is the one rule this file has to keep, and it is worth
+ * keeping precisely because the addresses look like they would do the job. The
+ * table has two prefixes today, `/v0` for the merchant's API and `/x402` for
+ * the storefront, and every route under each of them happens to be behind the
+ * same door. It was not always so: the agent's order status used to sit under
+ * `/v0/orders`, where every other route is the merchant's, and a key check
+ * attached to that prefix would have shut the only caller that route is for out
+ * of it with nothing about the table looking wrong. The addresses agreeing is a
+ * fact about today's table rather than a rule, and the next route written down
+ * is the one that breaks it. So there is no path-scoped middleware here at all,
+ * and the function that resolves the door names every mode the contract has —
+ * adding one stops the build until somebody says which door it is, rather than
  * defaulting it to open.
  *
  * What the table deliberately does not carry, this file supplies: the header the

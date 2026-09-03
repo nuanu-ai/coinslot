@@ -78,10 +78,10 @@ describe("asking the catalog whether it would take our resources", () => {
 
     expect(await run.run("https://coinslot.example")).toBe(0);
     expect(run.asked).toStrictEqual([
-      "GET https://coinslot.example/v0/items/itm_1/purchase",
-      "POST https://coinslot.example/v0/items/itm_1/purchase",
-      "GET https://coinslot.example/v0/items/itm_2/purchase",
-      "POST https://coinslot.example/v0/items/itm_2/purchase",
+      "GET https://coinslot.example/x402/itm_1/purchase",
+      "POST https://coinslot.example/x402/itm_1/purchase",
+      "GET https://coinslot.example/x402/itm_2/purchase",
+      "POST https://coinslot.example/x402/itm_2/purchase",
     ]);
     expect(run.text()).toContain(
       "All 4 probes over the 2 products this catalog listed were accepted.",
@@ -93,8 +93,8 @@ describe("asking the catalog whether it would take our resources", () => {
 
     expect(await run.run("https://coinslot.example", "itm_9")).toBe(0);
     expect(run.asked).toStrictEqual([
-      "GET https://coinslot.example/v0/items/itm_9/purchase",
-      "POST https://coinslot.example/v0/items/itm_9/purchase",
+      "GET https://coinslot.example/x402/itm_9/purchase",
+      "POST https://coinslot.example/x402/itm_9/purchase",
     ]);
   });
 
@@ -106,7 +106,7 @@ describe("asking the catalog whether it would take our resources", () => {
 
     await run.run("https://coinslot.example/", "itm_9");
 
-    expect(run.asked[0]).toBe("GET https://coinslot.example/v0/items/itm_9/purchase");
+    expect(run.asked[0]).toBe("GET https://coinslot.example/x402/itm_9/purchase");
   });
 
   it("reports a refusal as a refusal and prints what was said", async () => {
@@ -200,8 +200,8 @@ describe("asking the catalog whether it would take our resources", () => {
 
     expect(await run.run("https://coinslot.example")).toBe(1);
     expect(run.asked).toStrictEqual([
-      "GET https://coinslot.example/v0/items/itm_2/purchase",
-      "POST https://coinslot.example/v0/items/itm_2/purchase",
+      "GET https://coinslot.example/x402/itm_2/purchase",
+      "POST https://coinslot.example/x402/itm_2/purchase",
     ]);
     expect(run.text()).toContain("no address could be built");
   });
@@ -348,7 +348,7 @@ describe("reading a running gateway's catalog, over a real socket", () => {
 
     // The identifier came off the wire and reached the address a probe is
     // built from, which is the whole of what this way out is for.
-    expect(text).toContain(`${base}/v0/items/itm_1/purchase`);
+    expect(text).toContain(`${base}/x402/itm_1/purchase`);
     expect(text).not.toContain("could not be read");
   });
 
@@ -369,7 +369,7 @@ describe("reading a running gateway's catalog, over a real socket", () => {
 
     const { text } = await run(base);
 
-    expect(text).toContain(`${base}/v0/items/itm_1/purchase`);
+    expect(text).toContain(`${base}/x402/itm_1/purchase`);
     expect(text).not.toContain("could not be read");
   });
 

@@ -8,9 +8,11 @@
  * about that order and no other.
  *
  * Three things are being held here and each of them is a way the route goes
- * wrong quietly. It must ask for no key — the merchant's door attached to the
- * `/v0/orders` prefix, where every other route is the merchant's, would shut
- * the agent out of the one route that is its own. It must read an order
+ * wrong quietly. It must ask for no key — a door attached to an address prefix
+ * rather than read off the route's own `auth` would shut the agent out of the
+ * one route that is its own, and this route has already paid for that once,
+ * from back when it sat under `/v0/orders` beside the merchant's. It must read
+ * an order
  * whoever sold it, without that becoming a way of learning who the merchants
  * are. And it must carry what the buyer is owed and nothing else: an answer
  * assembled from the merchant's own view of the order would hand a stranger the
@@ -100,7 +102,7 @@ const orderTakenOn = async (
 };
 
 const statusOf = async (served: Served, orderId: string, headers?: Record<string, string>) =>
-  served.call("GET", `/v0/orders/${orderId}/status`, headers === undefined ? {} : { headers });
+  served.call("GET", `/x402/orders/${orderId}/status`, headers === undefined ? {} : { headers });
 
 describe("coming back for goods that were not ready", () => {
   it("tells the buyer where an order stands before the merchant has issued anything", async () => {
@@ -173,10 +175,9 @@ describe("the door on the agent's route", () => {
     // An agent has no key, no account and no registration, and the product
     // exists so that it needs none: the call with nothing in the header is
     // answered, which is what the last line here says. The rest is the half
-    // that catches a door attached to the `/v0/orders` prefix — whatever
-    // travels in the authorization header, this route neither opens nor closes
-    // on it. A junk key is refused everywhere else in this gateway and is
-    // ignored here.
+    // that catches a door attached to an address prefix — whatever travels in
+    // the authorization header, this route neither opens nor closes on it. A
+    // junk key is refused everywhere else in this gateway and is ignored here.
     const { served, harnessed } = await started();
     const other = await harnessed.addMerchant("Another merchant");
     const itemId = await publish(served, laterCard);

@@ -124,7 +124,7 @@ const publish = async (served: Served, key: string, card: Card): Promise<string>
 
 /** The address a buyer's agent is actually told to pay for one product. */
 const payToInTheChallenge = async (served: Served, itemId: string): Promise<string | undefined> => {
-  const answered = await served.call("GET", `/v0/items/${itemId}/purchase`);
+  const answered = await served.call("GET", `/x402/${itemId}/purchase`);
   expect(answered.status, JSON.stringify(answered.body)).toBe(402);
   const challenge = decodePaymentRequiredHeader(
     answered.headers.get(PAYMENT_REQUIRED_HEADER) ?? "",
@@ -497,7 +497,7 @@ describe("a card whose merchant has nowhere to be paid", () => {
     const { served, harnessed } = await started();
     const { itemId } = await soldWithNowhereToPay(harnessed, served);
 
-    const answered = await served.call("GET", `/v0/items/${itemId}/purchase`);
+    const answered = await served.call("GET", `/x402/${itemId}/purchase`);
 
     expect(answered.status, JSON.stringify(answered.body)).toBe(409);
     expect((answered.body as { error: { code: string } }).error.code).toBe("not_selling");
@@ -511,7 +511,7 @@ describe("a card whose merchant has nowhere to be paid", () => {
     const { served, harnessed } = await started();
     const { itemId, merchantId } = await soldWithNowhereToPay(harnessed, served);
 
-    const answered = await served.call("POST", `/v0/items/${itemId}/purchase`, {
+    const answered = await served.call("POST", `/x402/${itemId}/purchase`, {
       body: { params: {} },
     });
 
@@ -528,7 +528,7 @@ describe("a card whose merchant has nowhere to be paid", () => {
     const { itemId } = await soldWithNowhereToPay(harnessed, served);
     const sellable = await publish(served, harnessed.merchant.key, cardFor("a-desk", "A desk"));
 
-    const listed = (await served.call("GET", "/v0/catalog")).body as { items: { id: string }[] };
+    const listed = (await served.call("GET", "/x402/catalog")).body as { items: { id: string }[] };
 
     expect(listed.items.map((item) => item.id)).not.toContain(itemId);
     // The other half, or the assertion above would pass against a catalog that
@@ -559,7 +559,7 @@ describe("a card whose merchant has nowhere to be paid", () => {
     const { itemId } = await soldWithNowhereToPay(harnessed, served);
 
     expect(await payToInTheChallenge(served, itemId)).toBe(CONFIGURED_PAY_TO);
-    const listed = (await served.call("GET", "/v0/catalog")).body as { items: { id: string }[] };
+    const listed = (await served.call("GET", "/x402/catalog")).body as { items: { id: string }[] };
     expect(listed.items.map((item) => item.id)).toContain(itemId);
   });
 
@@ -568,7 +568,7 @@ describe("a card whose merchant has nowhere to be paid", () => {
     // whole of the repair, and it takes no republishing.
     const { served, harnessed } = await started();
     const { itemId, key } = await soldWithNowhereToPay(harnessed, served);
-    expect((await served.call("GET", `/v0/items/${itemId}/purchase`)).status).toBe(409);
+    expect((await served.call("GET", `/x402/${itemId}/purchase`)).status).toBe(409);
 
     await setPayoutWallet(served, key, A_WALLET);
 

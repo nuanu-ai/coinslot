@@ -72,7 +72,7 @@ beforeAll(async () => {
     // challenge, no order status — so that no assertion here can be satisfied
     // by an answer this file wrote.
     response.setHeader("content-type", "application/json");
-    response.end(JSON.stringify(request.url === "/v0/catalog" ? { items: [] } : {}));
+    response.end(JSON.stringify(request.url === "/x402/catalog" ? { items: [] } : {}));
   });
   server.listen(0);
   await new Promise<void>((resolve) => server.once("listening", resolve));
@@ -237,10 +237,10 @@ describe("the fetch this buyer was given", () => {
     await watched.buy("itm_1", {});
 
     expect(went).toEqual([
-      "/v0/catalog",
-      "/v0/items/itm_1/purchase",
-      "/v0/orders/ord_1/status",
-      "/v0/items/itm_1/purchase",
+      "/x402/catalog",
+      "/x402/itm_1/purchase",
+      "/x402/orders/ord_1/status",
+      "/x402/itm_1/purchase",
     ]);
   });
 });

@@ -552,9 +552,9 @@ services:
     # need nothing from either of these, do not come up at all. They are the two
     # pages somebody reads while working out why the third is broken.
     #
-    # What that costs when a dependency really is down: /cabinet and /v0 answer
-    # 502 until it is up, and then they work, because Caddy resolves the service
-    # name per request rather than at startup.
+    # What that costs when a dependency really is down: /cabinet, /v0 and /x402
+    # answer 502 until it is up, and then they work, because Caddy resolves the
+    # service name per request rather than at startup.
     depends_on:
       gateway:
         condition: service_healthy
