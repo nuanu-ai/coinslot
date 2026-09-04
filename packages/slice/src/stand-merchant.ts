@@ -178,8 +178,20 @@ const makeDeliverySession = (): DeliverySession => ({
   inFlight: new Set(),
 });
 
-/** Makes a merchant whose handler decisions are changed directly by the stand page. */
-export const makeStandMerchant = (feed: Feed): StandMerchant => {
+/**
+ * Makes a merchant whose handler decisions are changed directly by the stand page.
+ *
+ * `closedOnItsOwn` is called when an order stops being owed anything without
+ * the page having asked for it — a delivery this side had promised and then
+ * made from a timer, and any event the gateway sends about an order. Those are
+ * the moments nobody pressed anything for, so they are the moments a console
+ * drawn from a press goes stale on. The calls the page makes itself need no
+ * telling: whoever pressed the button reads the orders back after it.
+ */
+export const makeStandMerchant = (
+  feed: Feed,
+  closedOnItsOwn: () => void = () => {},
+): StandMerchant => {
   const moods = defaultMoods();
   const taken = new Map<string, LiveOrder>();
   const held = new Map<string, HeldOrder>();
@@ -297,7 +309,12 @@ export const makeStandMerchant = (feed: Feed): StandMerchant => {
       }
       const inFlight = handOver(order.id, order.merchant_item_id);
       session.inFlight.add(inFlight);
-      void inFlight.then(() => session.inFlight.delete(inFlight));
+      void inFlight.then(() => {
+        session.inFlight.delete(inFlight);
+        // The gateway has answered the delivery by now, so what it says about
+        // this order has already changed under whoever is watching.
+        closedOnItsOwn();
+      });
     }, moods.deliverAfterMs);
     session.timers.add(timer);
   };
@@ -446,6 +463,7 @@ export const makeStandMerchant = (feed: Feed): StandMerchant => {
     fresh.on("event", (event) => {
       taken.delete(event.order_id);
       feed.got("gateway", "The gateway sent an event about an order.", event);
+      closedOnItsOwn();
     });
 
     // Eleven kinds arrive here and exactly one of them is the gateway refusing

@@ -83,7 +83,14 @@ if (!/^0x[0-9a-fA-F]{64}$/.test(buyerKey)) {
 }
 
 const feed = makeFeed();
-const merchant = makeStandMerchant(feed);
+// The merchant side closes orders without being asked from the page: a delivery
+// it promised and then made from a timer, and the events the gateway sends. The
+// panels that draw those orders are read at a press, so those are exactly the
+// moments they go stale on — and stale here is not cosmetic, because the Owed
+// panel goes on offering to deliver and refuse an order that is already closed.
+const merchant = makeStandMerchant(feed, () => {
+  refreshOrders();
+});
 
 let apiKey: string | null = null;
 // What the key names about itself, kept beside it so the page can say which
@@ -239,6 +246,25 @@ const readOrders = async (generation: number): Promise<void> => {
   orders = all;
   owed = still;
   ordersRead = true;
+};
+
+/**
+ * Reads the orders back and tells the open pages, for a change nobody pressed.
+ *
+ * Nothing here is awaited by whatever caused it: the caller is a timer or an
+ * event arriving on the subscription, and neither has anywhere to report to.
+ * The stir has to come after the read rather than with it — the log line that
+ * announced the change already stirred every page, and that stir redrew them
+ * from the orders as they were before this call went out.
+ */
+const refreshOrders = (): void => {
+  if (merchant.connected() === null) return;
+  const generation = connectionGeneration;
+  void readOrders(generation)
+    .then(() => {
+      if (connectionIsCurrent(generation)) stir();
+    })
+    .catch(() => undefined);
 };
 
 const readReceipts = async (generation: number): Promise<void> => {

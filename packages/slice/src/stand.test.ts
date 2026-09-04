@@ -421,3 +421,236 @@ describe("the parameters an agent typed", () => {
     expect(parametersBox(await page("/agent"))).toStrictEqual(typed);
   }, 15_000);
 });
+
+const OWED_ORDER = {
+  id: "order-the-stand-owes",
+  merchant_item_id: "the-item-it-was-ordered-from",
+  params: {},
+  price: {
+    amount: "1.00",
+    currency: "USD",
+    at: "2026-09-04T00:00:00Z",
+    as_of: "2026-09-04T00:00:00Z",
+  },
+  test: false,
+} as const;
+
+/**
+ * A gateway holding one order, which it hands over and then waits to be paid
+ * off — with the delivery itself held open until the test lets it through.
+ *
+ * The delivery blocks so the console can be caught in the one state this is
+ * about: an order it has accepted and not yet delivered, read and drawn. What
+ * the open list says is driven by the delivery rather than by a timer, so the
+ * moment the panel is meant to go stale is a moment the test chooses.
+ */
+const gatewayOwedOneOrder = async (): Promise<{
+  port: number;
+  handOverTheOrder: () => void;
+  deliveryBegan: () => boolean;
+  releaseDelivery: () => void;
+}> => {
+  let handing = false;
+  let handed = false;
+  let began = false;
+  let delivered = false;
+  let release: (() => void) | undefined;
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  gateway = createServer(async (request, response) => {
+    for await (const _chunk of request) {
+      // Drained before answering, as the tests above drain.
+    }
+    response.setHeader("content-type", "application/json");
+    if (request.url === "/v0/worker/poll") {
+      const envelopes =
+        handing && !handed
+          ? [
+              {
+                kind: "order",
+                id: "envelope-for-the-owed-order",
+                sent_at: "2026-09-04T00:00:00Z",
+                payload: OWED_ORDER,
+              },
+            ]
+          : [];
+      handed = handed || handing;
+      response.end(JSON.stringify({ contract_version: CONTRACT_VERSION, envelopes }));
+      return;
+    }
+    if (request.url === "/v0/cards") {
+      response.end(JSON.stringify({ selling: "open", cards: [] }));
+      return;
+    }
+    if (request.url?.endsWith("/deliver") === true) {
+      began = true;
+      await released;
+      delivered = true;
+      response.end(JSON.stringify({ ok: true, result: "delivered" }));
+      return;
+    }
+    if (request.url?.startsWith("/v0/orders?") === true || request.url === "/v0/orders") {
+      const open = new URL(request.url, "http://gateway").searchParams.get("open") === "true";
+      const standing = handed && !delivered;
+      const rows =
+        open && !standing
+          ? []
+          : handed
+            ? [{ ...OWED_ORDER, status: delivered ? "delivered" : "in_progress" }]
+            : [];
+      response.end(JSON.stringify({ orders: rows }));
+      return;
+    }
+    response.end(JSON.stringify({ ok: true, result: "accepted" }));
+  });
+  gateway.listen(0, "127.0.0.1");
+  await new Promise<void>((resolve) => gateway?.once("listening", resolve));
+  return {
+    port: (gateway.address() as AddressInfo).port,
+    handOverTheOrder: () => {
+      handing = true;
+    },
+    deliveryBegan: () => began,
+    releaseDelivery: () => release?.(),
+  };
+};
+
+/** Whether the Owed panel is offering to close an order by hand. */
+const offersToDeliverOwed = (page: string): boolean => page.includes('value="deliver_owed"');
+
+describe("an order the stand closed on its own", () => {
+  it("leaves the Owed panel with nothing to press, without anybody pressing Read", async () => {
+    // The promise: the merchant's seat shows the orders the gateway has, not
+    // the ones it had when somebody last pressed something. "Accept, then
+    // deliver after the delay" closes the order from a timer inside this
+    // process, so nothing the operator did is there to bring the screen up to
+    // date afterwards — and the log said the goods had gone and the gateway had
+    // taken them while the panel beside it still offered Deliver now and
+    // Refuse. Pressing either sends a closing call for an order that is
+    // already closed, so the console was inviting the one mistake it exists to
+    // teach you to avoid.
+    const owing = await gatewayOwedOneOrder();
+    const { press, page } = await standFacing(owing.port);
+
+    expect(
+      (
+        await press({
+          action: "moods",
+          order: "accept_then_deliver",
+          quote: "price",
+          deliver_after_ms: "0",
+          price_amount: "1.00",
+          price_currency: "USD",
+          refusal_code: "cannot_fulfill",
+          refusal_message: "not this time",
+          goods: "",
+        })
+      ).status,
+    ).toBe(303);
+
+    owing.handOverTheOrder();
+    await waitUntil(owing.deliveryBegan);
+
+    try {
+      // Read once by hand, while the order is genuinely still owed. Without
+      // this the panel would be empty for the dull reason that it had never
+      // held anything.
+      expect((await press({ action: "read_orders" })).status).toBe(303);
+      expect(offersToDeliverOwed(await page("/orders"))).toBe(true);
+    } finally {
+      owing.releaseDelivery();
+    }
+
+    expect(offersToDeliverOwed(await untilOwedIsEmpty(page))).toBe(false);
+  }, 20_000);
+});
+
+/** How long the Owed panel is given to stop offering an order that is over. */
+const untilOwedIsEmpty = async (page: (tab: string) => Promise<string>): Promise<string> => {
+  const until = Date.now() + 5_000;
+  let drawn = await page("/orders");
+  while (offersToDeliverOwed(drawn) && Date.now() < until) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    drawn = await page("/orders");
+  }
+  return drawn;
+};
+
+/** A gateway holding one open order that is ended by an event rather than by us. */
+const gatewayEndingAnOrderItself = async (): Promise<{
+  port: number;
+  endTheOrder: () => void;
+}> => {
+  let over = false;
+  let told = false;
+  gateway = createServer(async (request, response) => {
+    for await (const _chunk of request) {
+      // Drained before answering, as the tests above drain.
+    }
+    response.setHeader("content-type", "application/json");
+    if (request.url === "/v0/worker/poll") {
+      const envelopes =
+        over && !told
+          ? [
+              {
+                kind: "order_event",
+                id: "envelope-carrying-the-event",
+                sent_at: "2026-09-04T00:00:10Z",
+                payload: {
+                  type: "order.unpaid_after_confirmation",
+                  order_id: OWED_ORDER.id,
+                  at: "2026-09-04T00:00:10Z",
+                },
+              },
+            ]
+          : [];
+      told = told || over;
+      response.end(JSON.stringify({ contract_version: CONTRACT_VERSION, envelopes }));
+      return;
+    }
+    if (request.url === "/v0/cards") {
+      response.end(JSON.stringify({ selling: "open", cards: [] }));
+      return;
+    }
+    if (request.url?.startsWith("/v0/orders") === true) {
+      const open = new URL(request.url, "http://gateway").searchParams.get("open") === "true";
+      response.end(
+        JSON.stringify({
+          orders:
+            open && over
+              ? []
+              : [{ ...OWED_ORDER, status: over ? "expired" : ("in_progress" as const) }],
+        }),
+      );
+      return;
+    }
+    response.end(JSON.stringify({ ok: true, result: "accepted" }));
+  });
+  gateway.listen(0, "127.0.0.1");
+  await new Promise<void>((resolve) => gateway?.once("listening", resolve));
+  return {
+    port: (gateway.address() as AddressInfo).port,
+    endTheOrder: () => {
+      over = true;
+    },
+  };
+};
+
+describe("an order the gateway ended by itself", () => {
+  it("leaves the Owed panel with nothing to press, without anybody pressing Read", async () => {
+    // The promise as above, from the other direction: an event arrives on the
+    // subscription and nobody at the console did anything to cause it, so
+    // nothing they did afterwards is there to bring the screen up to date. The
+    // log wrote the event down and the panel beside it went on offering to
+    // deliver an order that had already ended.
+    const ending = await gatewayEndingAnOrderItself();
+    const { page } = await standFacing(ending.port);
+
+    expect(offersToDeliverOwed(await page("/orders"))).toBe(true);
+
+    ending.endTheOrder();
+
+    expect(offersToDeliverOwed(await untilOwedIsEmpty(page))).toBe(false);
+  }, 20_000);
+});
