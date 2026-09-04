@@ -124,11 +124,13 @@ describe('portal/orders.md, "How an order can end"', () => {
     expect(outcomeFor(order)).toBe("delivered");
   });
 
-  it(`${ENDINGS[1]}: nothing moved, the agent sees a refusal with a reason`, () => {
-    // Four different failures, and the row promises the agent one sentence for
-    // all of them. The machine keeps them apart — the merchant's own metrics
-    // need the difference — and this is where the four are held to the single
-    // word the page gives the buyer.
+  it(`${ENDINGS[1]}: nothing moved, and the agent sees a refusal`, () => {
+    // Four different failures, and the row promises the agent one word for all
+    // of them. The machine keeps them apart — the merchant's own metrics need
+    // the difference — and this is where the four are held to the single word
+    // the page gives the buyer. That word is all the agent gets: nothing in the
+    // contract carries a refusal's reason to it, which is why the page no
+    // longer says it does.
     const noStock = must(newOrder("async", { priceCheck: "merchant" }), {
       kind: "quote_answered",
       at: T0 + 1,

@@ -510,7 +510,7 @@ saying that it did, that closed order becomes a refund you owe.
 | Situation | Where the money is | What the agent sees |
 | --- | --- | --- |
 | You delivered the goods | with you | the goods, the price they were charged and whether the money behind it was real |
-| There is none, the parameters did not fit, the payment failed its check — or you refused in the synchronous mode | never moved | a refusal with a reason; the purchase did not happen |
+| There is none, the parameters did not fit, the payment failed its check — or you refused in the synchronous mode | never moved | a refusal, and that the purchase did not happen; the reason for it stays on your side |
 | You answered "I will not deliver" to a request to confirm | never moved | a refusal, and nothing was charged |
 | Time ran out: no confirmation, no payment or no synchronous delivery arrived | never moved | the order was closed on its deadline |
 | You left | for what was not delivered, [you send it back](/money) | an unpaid order is closed; a paid one waits for your refund |
