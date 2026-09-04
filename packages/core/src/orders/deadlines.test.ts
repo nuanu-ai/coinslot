@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { deadlines, isArmed } from "./deadlines.js";
-import { newOrder, T0, TEST_POLICY, TEST_PRICE } from "./fixtures.js";
+import { must, newOrder, T0, TEST_POLICY, TEST_PRICE } from "./fixtures.js";
 import { transition } from "./machine.js";
 import type { Order } from "./model.js";
 import { moneyInvariantViolations } from "./money.js";
@@ -104,22 +104,44 @@ describe("the deadlines of an order", () => {
     );
   });
 
-  it("measures the synchronous budget from the agent's own purchase", () => {
-    // The synchronous budget is ours and it is the ceiling on how long the
-    // agent waits, so it starts when he asked and not when we got round to
-    // him. An order that spent three seconds in the queue has three seconds
-    // less of it, and the two timestamps below are deliberately different so
-    // that measuring from the wrong one is visible here.
-    const base = newOrder("sync");
-    const order: Order = {
-      ...base,
+  it("starts the synchronous answer from the payment, not from the opening of the order", () => {
+    // This one was shipped and seen. An agent that reads the requirements,
+    // decides, and pays twenty seconds later is inside the life of its price
+    // and buys legitimately — and every synchronous clock used to be anchored
+    // on the unpaid call that opened the order, so the merchant's whole answer
+    // had already run out before there was an order to hand him. He delivered,
+    // the money moved, and the agent was told its purchase was still in
+    // progress and given nothing.
+    //
+    // Before the payment the order is held by the life of its price and by
+    // nothing else; the merchant's clock cannot begin before there is a paid
+    // order to give him. The dispatch is three seconds later again, so that
+    // measuring from the wrong one of the two is visible here.
+    const paid = must(newOrder("sync"), { kind: "payment_verified", at: T0 + 20_000 }).order;
+    const dispatched: Order = {
+      ...paid,
       state: "dispatched",
-      payment: "verified",
-      timestamps: { ...base.timestamps, paidAt: T0 + 1_000, dispatchedAt: T0 + 3_000 },
+      timestamps: { ...paid.timestamps, dispatchedAt: T0 + 23_000 },
     };
+    const due = T0 + 20_000 + TEST_POLICY.deadlines.syncResponseMs;
 
-    expect(at(order, "sync_response")).toBe(T0 + TEST_POLICY.deadlines.syncResponseMs);
-    expect(at(order, "async_fulfillment")).toBeUndefined();
+    expect(paid.timestamps.paidAt).toBe(T0 + 20_000);
+    expect(at(paid, "sync_response")).toBe(due);
+    expect(at(dispatched, "sync_response")).toBe(due);
+    expect(at(dispatched, "async_fulfillment")).toBeUndefined();
+
+    // And the instant the old anchor named is refused as premature, so a timer
+    // left over from it closes nothing: the merchant is still honestly inside
+    // his deadline there.
+    const early = transition(paid, {
+      kind: "deadline_expired",
+      at: T0 + TEST_POLICY.deadlines.syncResponseMs,
+      deadline: "sync_response",
+    });
+
+    expect(early.ok).toBe(false);
+    if (early.ok) throw new Error("an expiry at the old anchor closed the order");
+    expect(early.rejection.code).toBe("deadline_not_yet_due");
   });
 
   it("measures the merchant's fulfillment deadline from the moment money moved", () => {

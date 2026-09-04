@@ -20,13 +20,23 @@
  * never reported back waits for the payment layer to speak, because that is a
  * fact only the payment layer has and another clock would only re-guess it.
  *
- * Three of the clocks start at instants worth naming out loud. The synchronous
- * budget is ours and it is the ceiling on how long the agent waits, so it runs
- * from the purchase itself rather than from the moment the order reached the
- * merchant. The merchant's fulfillment deadline runs from the settle: the
- * buyer's money is at risk from then on, and it is that risk the deadline
- * bounds. And the settle's own deadline runs from the moment the payment was
- * handed over for execution.
+ * Three of the clocks start at instants worth naming out loud. Both of the
+ * clocks on the goods run from the moment the order became paid, which in the
+ * two modes is a different fact about the money: synchronously it is the
+ * payment checking out, because nothing has moved yet and the goods are what
+ * moves it; asynchronously it is the settle, because the buyer's money is at
+ * risk from then on and it is that risk the deadline bounds. And the settle's
+ * own deadline runs from the moment the payment was handed over for execution.
+ *
+ * Neither of the first two runs from the opening of the order, and that is a
+ * lesson rather than a preference. The synchronous one used to, and an agent
+ * that read the price, decided, and paid twenty seconds later — legitimately,
+ * inside the life of its quote — arrived at an order whose whole answer had
+ * already run out before there was anything to hand the merchant. He delivered,
+ * the money moved, and the agent was told its purchase was still in progress
+ * and given nothing. Before the payment an order is held by the life of its
+ * price and by nothing else; the merchant cannot be on a clock for goods
+ * nobody has paid for yet.
  */
 
 import { assertNever } from "../index.js";
@@ -131,23 +141,16 @@ export function deadlines(order: Order): readonly Deadline[] {
  * whether another delivery attempt could still arrive in time.
  */
 export function fulfillmentDeadline(order: Order): readonly Deadline[] {
-  if (order.mode.settle === "after_fulfillment") {
-    return [
-      {
-        kind: "sync_response",
-        at: order.timestamps.createdAt + order.policy.deadlines.syncResponseMs,
-      },
-    ];
+  const paidAt = order.timestamps.paidAt;
+  if (paidAt === null) {
+    return [];
   }
 
-  return order.timestamps.paidAt === null
-    ? []
-    : [
-        {
-          kind: "async_fulfillment",
-          at: order.timestamps.paidAt + order.policy.deadlines.asyncFulfillmentMs,
-        },
-      ];
+  const { syncResponseMs, asyncFulfillmentMs } = order.policy.deadlines;
+
+  return order.mode.settle === "after_fulfillment"
+    ? [{ kind: "sync_response", at: paidAt + syncResponseMs }]
+    : [{ kind: "async_fulfillment", at: paidAt + asyncFulfillmentMs }];
 }
 
 export function isArmed(order: Order, kind: DeadlineKind): boolean {

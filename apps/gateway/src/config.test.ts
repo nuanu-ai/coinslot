@@ -528,20 +528,6 @@ describe("loadConfig", () => {
     ).not.toThrow();
   });
 
-  it("refuses a price wait that leaves the merchant no time to deliver", () => {
-    // The synchronous deadline runs from the purchase itself, so the wait for
-    // the price is spent out of it. A price wait as long as the whole answer
-    // leaves nothing behind it, and every synchronous sale of a card with a
-    // price check would run out of time however fast the merchant answered.
-    // Equal is already too much, so this is the boundary as well as the case.
-    // Both numbers are named — they are the two an operator has to move apart —
-    // along with which wait each of them is.
-    const refused = refusalFor({ QUOTE_RESPONSE_MS: "8000", SYNC_RESPONSE_MS: "8000" });
-    for (const owed of ["merchant's price", "8000ms", "synchronous answer", "nothing to deliver"]) {
-      expect(refused, refused).toContain(owed);
-    }
-  });
-
   it("gives one address for the gateway however the variable was written", () => {
     // A path is joined onto this string. Written with a trailing slash it
     // produced an address with two slashes in the middle — a second spelling of
@@ -603,21 +589,22 @@ describe("loadConfig", () => {
     }
   });
 
-  it("names both arithmetic problems at once when both are wrong", () => {
-    // Both, and not the first one found. An operator who fixed the budget and
-    // restarted into the second refusal would be reading the configuration one
-    // mistake per deploy.
+  it("names every problem at once when more than one is wrong", () => {
+    // All of them, and not the first one found. An operator who fixed the
+    // budget and restarted into the next refusal would be reading the
+    // configuration one mistake per deploy.
     const refused = refusalFor({
-      QUOTE_RESPONSE_MS: "9000",
       SYNC_RESPONSE_MS: "9000",
       SETTLE_RESPONSE_MS: "5000",
       SYNC_BUDGET_MS: "10000",
+      FACILITATOR_URL: SANDBOX_FACILITATOR,
+      CDP_API_KEY_ID: "key-id",
     });
 
     expect(refused, refused).toContain("synchronous budget");
     expect(refused, refused).toContain("10000ms");
-    expect(refused, refused).toContain("merchant's price");
-    expect(refused, refused).toContain("9000ms");
+    expect(refused, refused).toContain("14000ms");
+    expect(refused, refused).toContain("CDP_API_KEY_ID");
   });
 });
 

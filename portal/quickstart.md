@@ -257,14 +257,15 @@ running on it — it started when the buyer was charged, at the moment of
 purchase, before the order reached you. A card that names none is held to a day.
 
 A synchronous card carries no such field: how long to wait for a synchronous
-answer is set by us, as one number for everybody, and it is eight seconds. They
-are not eight seconds for your handler — the clock starts when the agent buys,
-so the price question and the payment check are spent out of them before your
-code is reached. They are not the agent's whole wait either: the charge executes
-after your answer, and the ten seconds we promise the agent for a synchronous
-purchase cover both. Both numbers are ours to set rather than the card's, and
-both are what the system you are connecting to runs with ([Time ran
-out](/orders)).
+answer is set by us, as one number for everybody, and it is eight seconds. The
+clock starts when the payment checked out, so they are the eight seconds your
+handler has, less the trip the order makes to reach you and the trip your answer
+makes coming back: the price question is asked and answered on the call before
+the payment, and the check itself runs before the eight begin. They are not the
+agent's whole wait: the check comes first and the charge executes after your
+answer, and the ten seconds we promise the agent for a synchronous purchase
+cover all three. Both numbers are ours to set rather than the card's, and both
+are what the system you are connecting to runs with ([Time ran out](/orders)).
 
 The order your handler was given carries that same `deliver` call, and inside
 the handler it is the shorter thing to write. Between the handler and the

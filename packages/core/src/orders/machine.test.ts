@@ -754,14 +754,19 @@ describe("when the time runs out", () => {
     // merchant is still honestly inside his deadline of: in the asynchronous
     // mode that would mark a refund due against somebody who is not late.
     const dispatched = reach("dispatched");
+    // The instant read off the order rather than written in: this clock starts
+    // when the payment was taken, and a boundary spelled from T0 would be
+    // asserting where the fixture happened to pay rather than where the
+    // deadline is.
+    const due = (dispatched.timestamps.paidAt ?? 0) + TEST_POLICY.deadlines.syncResponseMs;
     const early = transition(dispatched, {
       kind: "deadline_expired",
-      at: T0 + 1_000,
+      at: due - 1,
       deadline: "sync_response",
     });
     const onTime = transition(dispatched, {
       kind: "deadline_expired",
-      at: T0 + 10_000,
+      at: due,
       deadline: "sync_response",
     });
 

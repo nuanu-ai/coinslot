@@ -708,14 +708,23 @@ export interface GatewayConfig {
  * The arithmetic between the numbers, checked here because nowhere later is
  * anybody looking.
  *
- * Both of these are configurations that fail on a sale rather than at startup,
- * and both fail quietly: the first breaks a promise the portal made to the
- * agent, and the second sells a synchronous product that can never be
- * delivered in time. Refusing to start is the loud version of the same news.
+ * This is a configuration that fails on a sale rather than at startup, and
+ * fails quietly: it breaks a promise the portal made to the agent. Refusing to
+ * start is the loud version of the same news.
+ *
+ * There used to be a second check here, and what it was worth is worth saying.
+ * It refused a price wait as long as the synchronous answer, on the ground
+ * that the price question was spent out of that answer — which was true only
+ * because the answer's clock was wrongly anchored on the opening of the order.
+ * The two waits are on separate calls and there is no arithmetic between them:
+ * the price is asked and answered on the unpaid call, and the merchant's own
+ * clock does not start until a payment has checked out. The check went with
+ * the anchoring it described, rather than staying on to refuse a configuration
+ * that now works.
  */
 function arithmeticProblems(deadlines: DeadlineConfig): string[] {
   const problems: string[] = [];
-  const { syncResponseMs, settleResponseMs, syncBudgetMs, quoteResponseMs } = deadlines;
+  const { syncResponseMs, settleResponseMs, syncBudgetMs } = deadlines;
 
   // `docs/research/16-order-state-machine.md`: in the synchronous mode the
   // agent's worst case is the merchant's answer plus the charge, because the
@@ -725,15 +734,6 @@ function arithmeticProblems(deadlines: DeadlineConfig): string[] {
     problems.push(
       `the synchronous budget is ${syncBudgetMs}ms and the answer (${syncResponseMs}ms) and ` +
         `the charge (${settleResponseMs}ms) inside it come to ${worstCase}ms`,
-    );
-  }
-
-  // The synchronous deadline runs from the purchase itself, so whatever is
-  // spent waiting for a price is spent out of it.
-  if (quoteResponseMs >= syncResponseMs) {
-    problems.push(
-      `the wait for the merchant's price is ${quoteResponseMs}ms out of the ${syncResponseMs}ms ` +
-        "synchronous answer, which leaves nothing to deliver in",
     );
   }
 

@@ -965,6 +965,18 @@ export class Gateway {
     payment: string,
     fingerprint: string,
   ): Promise<PurchaseAttempt> {
+    // When this call arrived, read before anything on the network is asked.
+    // Everything the agent is promised for a synchronous purchase is counted
+    // from here and never from the moment the order was opened — the order was
+    // opened by the unpaid call, and an agent that reads the requirements and
+    // takes ten seconds to decide would otherwise present a perfectly good
+    // payment against a ceiling that had already run out. That was shipped: it
+    // was charged, the merchant delivered, and it was answered that its
+    // purchase was in progress and given nothing. The payment check is inside
+    // this budget rather than in front of it, because the agent is waiting
+    // through it.
+    const arrivedAt = this.runtime.clock();
+
     const before = await this.runtime.store.orderById(orderId);
     if (before === null) {
       return { step: "no_such_item" };
@@ -1055,10 +1067,10 @@ export class Gateway {
     // racing one order carry two owners and park on two keys, so neither takes
     // the other's goods; the same buyer's two concurrent calls share one key
     // and both are woken. The wait is what is left of the promised ceiling,
-    // counted from the purchase itself, and never longer.
+    // counted from the arrival of this call, and never longer.
     const key = purchaseOf(orderId, owner);
     const waits = before.order.mode.settle === "after_fulfillment";
-    const spent = this.runtime.clock() - before.order.timestamps.createdAt;
+    const spent = this.runtime.clock() - arrivedAt;
     const left = Math.max(this.runtime.config.deadlines.syncBudgetMs - spent, 0);
     const parked = waits ? this.runner.purchases.wait(key, left) : null;
 

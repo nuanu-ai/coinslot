@@ -166,18 +166,15 @@ const PINS: readonly Pin[] = [
     is: deadlines.syncResponseMs,
   },
   {
+    // The anchor holds the moment as well as the number. The page said these
+    // seconds ran from the moment the agent bought, and the gateway counted
+    // them that way — from the unpaid call that opened the order, so an agent
+    // that took its time deciding was charged and delivered on a clock that had
+    // already run out. Both were wrong together, which is why this pin quotes
+    // the moment and not just the eight.
     what: "the same, where the page explains what the clock covers",
     page: "portal/orders.md",
-    anchor: /The (\w+) seconds run from the moment the agent buys/,
-    reads: "seconds",
-    is: deadlines.syncResponseMs,
-  },
-  {
-    // The one sentence that counts the seconds without naming the unit, because
-    // the sentence before it named them: "come out of the same eight".
-    what: "the same, in the worked case of a delivery that finished late",
-    page: "portal/orders.md",
-    anchor: /come out of the same (\w+),/,
+    anchor: /The (\w+) seconds run from the moment the payment checked out/,
     reads: "seconds",
     is: deadlines.syncResponseMs,
   },
@@ -196,16 +193,16 @@ const PINS: readonly Pin[] = [
     is: deadlines.syncResponseMs,
   },
   {
-    what: "the same, said again where the page warns it is not the handler's own",
+    what: "the same, said again where the page says whose seconds they are",
     page: "portal/quickstart.md",
-    anchor: /They are not (\w+) seconds for your handler/,
+    anchor: /they are the (\w+) seconds your handler has/,
     reads: "seconds",
     is: deadlines.syncResponseMs,
   },
   {
     what: "the same, on the page about what goes wrong",
     page: "portal/failures.md",
-    anchor: /(\w+) seconds, counted from the moment the agent buys/,
+    anchor: /(\w+) seconds, counted from the moment the payment checked out/,
     reads: "seconds",
     is: deadlines.syncResponseMs,
   },

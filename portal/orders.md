@@ -539,11 +539,12 @@ applies that the agent is never shown ([The product card](/cards)). The
 confirmation mode has a deadline of its own — an hour, where the card names none
 — and it arrives together with the mode.
 
-The eight seconds run from the moment the agent buys rather than from the
-moment your handler is called, so asking your price and checking the payment
-come out of them first. They are not the whole of the agent's wait either:
-executing the charge happens after your answer, on a clock of its own, and the
-two together fit inside the ten seconds we promise the agent for a synchronous
+The eight seconds run from the moment the payment checked out rather than from
+the moment the agent first asked, so asking your price — which happens on the
+call before the payment — and checking the payment itself are behind them rather
+than inside them. They are not the whole of the agent's wait: the check comes
+first and executing the charge comes after your answer, on a clock of its own,
+and all three fit inside the ten seconds we promise the agent for a synchronous
 purchase.
 
 | Situation | Time ran out — what happened |
@@ -635,10 +636,10 @@ delivery. The hard case is a delivery that began before the deadline and
 finished after it, by which time the purchase is closed as a refusal with
 nothing charged.
 
-A synchronous answer has eight seconds, counted from the moment the agent
-bought — asking your price and checking the payment come out of the same eight,
-and so does whatever the agent spends deciding to pay. Say your handler began
-the delivery in the seventh second and finished in the tenth. By that second the
+A synchronous answer has eight seconds, counted from the moment the payment
+checked out — asking your price is behind them, and so is whatever the agent
+spent deciding to pay. Say your handler began the delivery in the seventh second
+and finished in the tenth. By that second the
 agent has already had a refusal and spent nothing, but the access you gave out
 has not gone anywhere.
 

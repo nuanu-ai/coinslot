@@ -138,6 +138,53 @@ describe("a synchronous purchase", () => {
     expect(receipt?.price.amount).toBe("80.00");
   });
 
+  it("answers with the goods when the agent took its time deciding to pay", async () => {
+    // Seen on the stand against the live test gateway. The agent read the
+    // requirements, signed, and presented the payment ten seconds after the
+    // order was opened — well inside the life of the price it was quoted. It
+    // was charged, the merchant delivered, and it was answered that its
+    // purchase was in progress, holding nothing: every clock the synchronous
+    // mode runs on was counted from the unpaid call that opened the order
+    // rather than from the paid one, so there was none of the ceiling left to
+    // wait in and none of the merchant's answer left to deliver in.
+    //
+    // Twenty seconds here, longer than the ceiling itself, so that a budget
+    // measured from the wrong end is not merely short but empty.
+    //
+    // The handler takes a moment, and that is the whole of what makes this a
+    // test rather than a coincidence. A merchant's handler is another process
+    // across a network and cannot answer inside the same turn of the event
+    // loop; this one takes twenty milliseconds, which is a four-hundredth of
+    // the ceiling and a great deal more than the nothing the old arithmetic
+    // left. An instantaneous handler would win against a budget of zero and
+    // the test would pass on the broken gateway.
+    const harnessed = await started();
+    const itemId = await published(harnessed, syncCard);
+
+    const offered = await harnessed.gateway.beginPurchase(itemId, { nights: 1 });
+    if (offered.step !== "pay") throw new Error("no price was offered");
+
+    harnessed.advance(20_000);
+
+    const worker = workUntilStopped(harnessed, {
+      onOrder: async () => {
+        await new Promise((wake) => setTimeout(wake, 20));
+        return { delivered: { access_code: "SESAME" } };
+      },
+    });
+    const bought = await harnessed.gateway.payPurchase(
+      offered.order.order.id,
+      "PAYMENT",
+      "PAYMENT",
+    );
+    await worker.stop();
+
+    expect(bought.step).toBe("settled");
+    if (bought.step !== "settled") throw new Error(`the purchase came back ${bought.step}`);
+    expect(bought.delivery).toStrictEqual({ access_code: "SESAME" });
+    expect(bought.order.order.state).toBe("delivered");
+  });
+
   it("charges nothing when the merchant refuses", async () => {
     // "A refusal before the charge" is the literal reading of the mode, and the
     // one thing a merchant is promised about refusing.
