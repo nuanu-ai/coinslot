@@ -506,9 +506,15 @@ export const makeStandMerchant = (feed: Feed): StandMerchant => {
       const listed = await connectedClient().orders.list(
         open === true ? { open: true } : undefined,
       );
+      // Which question this answers is said out loud. Both lists are asked for
+      // on connect and they come back in either order, so two lines reading
+      // "The gateway answered with 0 orders." and "…with 7 orders." arrive back
+      // to back with nothing on either of them saying which was which.
       feed.got(
         "merchant",
-        `The gateway answered with ${listed.length} order${listed.length === 1 ? "" : "s"}.`,
+        open === true
+          ? `The gateway answered with ${listed.length} order${listed.length === 1 ? "" : "s"} still owed something.`
+          : `The gateway answered with ${listed.length} order${listed.length === 1 ? "" : "s"}.`,
         {
           open: open === true,
           orders: listed.length,
