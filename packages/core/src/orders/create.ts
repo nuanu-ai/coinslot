@@ -53,7 +53,17 @@ export function createOrder(input: CreateOrderInput): CreateOrderResult {
         ok: false,
         rejection: {
           code: "selling_paused",
-          message: "the merchant's cards are paused, so no new order is taken",
+          // The sentence names the product and not the merchant, because
+          // "paused" arrives here with three different causes folded into it
+          // and the caller does the folding: one card taken off sale, the whole
+          // catalog stopped, or a merchant who cannot be paid at all. It used
+          // to say the merchant's cards were paused, and a buyer refused at a
+          // single paused card was told something false about a merchant who
+          // was selling everything else. What is true in all three is the only
+          // thing the agent can act on anyway — this product cannot be bought
+          // right now — and it is the same sentence the challenge is refused
+          // with a step earlier, so the two doors agree.
+          message: "this product is not on sale at the moment, so no new order is taken",
         },
       };
     case "departed":
