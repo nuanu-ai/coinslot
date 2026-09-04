@@ -50,6 +50,71 @@ afterEach(async () => {
   gateway = undefined;
 });
 
+/**
+ * A stand of its own, pointed at one gateway, with the posting done for you.
+ *
+ * The two tests below both drive the console through several presses and then
+ * read what it drew, and neither is about how a child process is started.
+ */
+const standFacing = async (
+  gatewayPort: number,
+): Promise<{
+  press: (fields: Record<string, string>) => Promise<Response>;
+  page: (tab: string) => Promise<string>;
+}> => {
+  const standPort = await freePort();
+  let output = "";
+  stand = spawn("pnpm", ["exec", "tsx", "src/stand.ts"], {
+    cwd: fileURLToPath(new URL("../", import.meta.url)),
+    env: {
+      ...process.env,
+      STAND_BUYER_KEY: `0x${"11".repeat(32)}`,
+      STAND_PORT: String(standPort),
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  stand.stdout?.on("data", (chunk) => {
+    output += String(chunk);
+  });
+  stand.stderr?.on("data", (chunk) => {
+    output += String(chunk);
+  });
+  await waitUntil(() => output.includes(`http://127.0.0.1:${standPort}`));
+
+  const standUrl = `http://127.0.0.1:${standPort}`;
+  const press = (fields: Record<string, string>): Promise<Response> =>
+    fetch(standUrl, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded", origin: standUrl },
+      body: new URLSearchParams(fields),
+      redirect: "manual",
+    });
+
+  const connected = await press({
+    action: "connect",
+    address: `http://127.0.0.1:${gatewayPort}`,
+    api_key: "csk_test_the-key-the-stand-connects-with",
+  });
+  if (connected.status !== 303) throw new Error(`the stand would not connect: ${connected.status}`);
+
+  return { press, page: (tab) => fetch(standUrl + tab).then((answer) => answer.text()) };
+};
+
+/** What the parameters box on the agent tab is holding, read back as JSON. */
+const parametersBox = (page: string): unknown => {
+  const box = page.indexOf('<textarea name="params"');
+  if (box < 0) throw new Error("the page is not offering a parameters box");
+  const from = page.indexOf(">", box) + 1;
+  const text = page
+    .slice(from, page.indexOf("</textarea>", from))
+    .replaceAll("&quot;", '"')
+    .replaceAll("&#39;", "'")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&amp;", "&");
+  return JSON.parse(text);
+};
+
 describe("the stand buyer's key", () => {
   it("refuses to start when no test-wallet key was supplied", async () => {
     const standPort = await freePort();
@@ -303,5 +368,56 @@ describe("a card the gateway will not publish", () => {
 
     expect(reported.marked).toBe(true);
     expect((reported.payload as { error: { code: string } }).error.code).toBe("card_rejected");
+  }, 15_000);
+});
+
+/** A gateway that answers everything the console reads on connecting, and nothing else. */
+const quietGateway = async (): Promise<{ port: number }> => {
+  gateway = createServer(async (request, response) => {
+    for await (const _chunk of request) {
+      // Drained before answering, as the tests above drain.
+    }
+    response.setHeader("content-type", "application/json");
+    if (request.url === "/v0/worker/poll") {
+      response.end(JSON.stringify({ contract_version: CONTRACT_VERSION, envelopes: [] }));
+      return;
+    }
+    if (request.url === "/v0/cards") {
+      response.end(JSON.stringify({ selling: "open", cards: [] }));
+      return;
+    }
+    if (request.url?.startsWith("/v0/orders") === true) {
+      response.end(JSON.stringify({ orders: [] }));
+      return;
+    }
+    response.end(JSON.stringify({}));
+  });
+  gateway.listen(0, "127.0.0.1");
+  await new Promise<void>((resolve) => gateway?.once("listening", resolve));
+  return { port: (gateway.address() as AddressInfo).port };
+};
+
+describe("the parameters an agent typed", () => {
+  it("are still there after asking what the product costs", async () => {
+    // The promise: what you typed is what the next press sends. Asking the
+    // price is a GET that carries no parameters, so nothing about it needs
+    // them — but the box they were typed into is on the form that press
+    // submits, and a console that threw them away sent the buyer back to a
+    // placeholder and priced, opened and paid for a purchase with fields
+    // nobody meant. Losing typing is not a cosmetic fault when the next
+    // button along spends money.
+    const { port } = await quietGateway();
+    const { press, page } = await standFacing(port);
+
+    // Choosing fills the box from the card's declaration; here there is no
+    // card to declare anything, so the placeholder is the empty object and
+    // what the person then typed is unmistakably theirs.
+    expect((await press({ action: "choose", item_id: "remote-item" })).status).toBe(303);
+    expect(parametersBox(await page("/agent"))).toStrictEqual({});
+
+    const typed = { city: "Bali", nights: 2 };
+    expect((await press({ action: "ask_price", params: JSON.stringify(typed) })).status).toBe(303);
+
+    expect(parametersBox(await page("/agent"))).toStrictEqual(typed);
   }, 15_000);
 });

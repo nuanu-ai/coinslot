@@ -666,6 +666,11 @@ const doAction = async (form: URLSearchParams): Promise<void> => {
 
     case "ask_price": {
       const on = requireExchange();
+      // The GET carries no parameters and needs none. The box they were typed
+      // into is on the form this button submits, though, so throwing them away
+      // here sends the buyer back to the placeholder — and the next button
+      // along spends money on whatever the box is holding.
+      paramsDraft = form.get("params") ?? paramsDraft;
       const buyer = buyerFor();
       const askedAtPurchase =
         publicItems.find((one) => one.id === on.itemId)?.price_checked_at_purchase === true;
