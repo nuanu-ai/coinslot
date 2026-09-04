@@ -290,7 +290,11 @@ const catalogueTab = (state: PageState): string => {
         `<form method="post" class="inline">${hidden("action", "template")}${hidden("template", one.key)}<button type="submit" title="${escaped(one.about)}">${escaped(one.label)}</button></form>`,
     ).join("")}</div>
     <p>The first three are the files the portal prints on its own pages, read from disk rather than copied — a button that stops publishing is a documented example that stopped working. The fourth is the shape the public x402 catalogue is full of: a synchronous lookup answering with JSON, at a fraction of a cent. The last two are the pilot's own products.</p>
-    <div class="actions">${form("publish", field("Card (JSON)", `<textarea name="card">${escaped(state.cardDraft)}</textarea>`), "Publish", true)}<span class="tag">catalog.publish</span></div>
+    <form method="post">
+      ${hidden("action", "publish")}
+      ${field("Card (JSON)", `<textarea name="card">${escaped(state.cardDraft)}</textarea>`)}
+      <div class="actions submit"><button type="submit" class="primary">Publish</button><span class="tag">catalog.publish</span></div>
+    </form>
     <p>Publishing the same <code>merchant_item_id</code> again replaces the card. There is no unpublish: the gateway offers publish, pause and resume, so pausing is how a card comes off sale.</p>
   </div>
 </section>`;
