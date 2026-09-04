@@ -901,6 +901,14 @@ const queueAction = (form: URLSearchParams): Promise<boolean> => {
       if (shuttingDown) return false;
       recordActionError(error);
     }
+    // Every line the action wrote to the log stirred the open pages while it was
+    // still running, so a page that took one of those stirs redrew itself from
+    // the state as it stood halfway through — and, being a reload, it can take
+    // the place of the answer to the press that started all this. One stir at
+    // the end, when the action has finished and everything it read is in, is
+    // what makes the console settle on what is true rather than on whichever
+    // line arrived last.
+    if (!shuttingDown) stir();
     return !shuttingDown;
   });
   actionTail = queued.then(() => undefined);
