@@ -531,6 +531,49 @@ describe("the payment challenge", () => {
     expect(challenge.error).toMatch(/did not name an order this gateway is holding/);
   });
 
+  it("says so when a payment header could not be read at all", async () => {
+    // A header that will not decode is answered the same way as one naming an
+    // order we are not holding — a fresh price the agent can pay against — and
+    // it used to be answered the same way as no header at all: a bare 402 with
+    // nothing on it. An agent presenting a payment and getting back a price
+    // with no word about the payment has no way to tell that its own encoding
+    // is what went wrong, and every retry it makes fails the same way. The
+    // error line is where a challenge says why this call did not return the
+    // resource (ADR-0021), so it says it here.
+    const { served } = await started();
+    const itemId = await publish(served, syncCard);
+
+    const answered = await served.call("POST", `/x402/${itemId}/purchase`, {
+      body: { params: {} },
+      headers: { [PAYMENT_SIGNATURE_HEADER]: "this-is-not-a-payment" },
+    });
+
+    expect(answered.status).toBe(402);
+    const challenge = decodePaymentRequiredHeader(
+      answered.headers.get(PAYMENT_REQUIRED_HEADER) ?? "",
+    );
+    expect(challenge.error).toMatch(/could not be read/);
+  });
+
+  it("says nothing about a payment when none was presented", async () => {
+    // The other half of the line above, and the reason it is a test rather
+    // than an assumption: an agent opening its first purchase presented
+    // nothing, so a challenge telling it that its payment could not be read
+    // would be a claim about a payment that never existed.
+    const { served } = await started();
+    const itemId = await publish(served, syncCard);
+
+    const answered = await served.call("POST", `/x402/${itemId}/purchase`, {
+      body: { params: {} },
+    });
+
+    expect(answered.status).toBe(402);
+    const challenge = decodePaymentRequiredHeader(
+      answered.headers.get(PAYMENT_REQUIRED_HEADER) ?? "",
+    );
+    expect(challenge.error).toBeUndefined();
+  });
+
   it("reads a payment that is not one without falling over", async () => {
     // The decoder is a base64 JSON parse with no schema behind it, so a header
     // naming a real order and carrying nothing else reaches every line that

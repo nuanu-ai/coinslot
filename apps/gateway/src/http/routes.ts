@@ -635,7 +635,7 @@ async function purchase(
 
   const presented = presentedPayment(request.headers);
 
-  if (presented !== null && presented.orderId !== null) {
+  if (presented !== null && presented !== "unreadable" && presented.orderId !== null) {
     const named = await gateway.orderById(presented.orderId);
     if (named !== null) {
       return answerPurchase(
@@ -658,9 +658,19 @@ async function purchase(
     edge,
     response,
     attempt,
+    // Why this call did not return the resource, in the shortest words that are
+    // true (ADR-0021). Three cases arrive here and they are not one: nothing was
+    // presented, which needs no explaining; something was presented and could
+    // not be decoded; and something decoded that named an order we are not
+    // holding. The middle one used to be answered as the first — a price with no
+    // word about the payment — and an agent whose encoding is what went wrong
+    // could not tell that from an ordinary opening challenge, so it retried the
+    // same broken header.
     presented === null
       ? undefined
-      : "the payment did not name an order this gateway is holding, so here is a fresh price",
+      : presented === "unreadable"
+        ? "the payment could not be read, so here is a fresh price"
+        : "the payment did not name an order this gateway is holding, so here is a fresh price",
   );
 }
 

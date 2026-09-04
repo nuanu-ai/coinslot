@@ -466,15 +466,24 @@ function stably(value: unknown): string {
 /**
  * What an agent presented, if anything, and which order it says it is for.
  *
- * A payment that will not decode is the same as no payment: the agent is
- * answered with a fresh challenge rather than an error about our parser, which
- * is the answer that lets it try again.
+ * A payment that will not decode is answered the way a payment naming an order
+ * we are not holding is: with a fresh challenge rather than an error about our
+ * parser, because that is the answer that lets the agent try again. It is not,
+ * though, the same as no payment at all, and the two used to come back here as
+ * one `null`. An agent that presented something and got back a bare price has
+ * no way to tell that its own encoding is what went wrong, and every retry it
+ * makes fails the same way. So "there was none" is `null` and "there was one
+ * and nothing could be read out of it" says so, and the caller has the words to
+ * put on the challenge.
  */
-export function presentedPayment(headers: Record<string, string | string[] | undefined>): {
-  readonly raw: string;
-  readonly payload: PaymentPayload;
-  readonly orderId: string | null;
-} | null {
+export function presentedPayment(headers: Record<string, string | string[] | undefined>):
+  | {
+      readonly raw: string;
+      readonly payload: PaymentPayload;
+      readonly orderId: string | null;
+    }
+  | "unreadable"
+  | null {
   const header =
     headerValue(headers, PAYMENT_SIGNATURE_HEADER) ??
     headerValue(headers, PAYMENT_SIGNATURE_HEADER_V1);
@@ -486,7 +495,7 @@ export function presentedPayment(headers: Record<string, string | string[] | und
   try {
     payload = decodePaymentSignatureHeader(header);
   } catch {
-    return null;
+    return "unreadable";
   }
 
   const named = payload.accepted?.extra?.[ORDER_ID_IN_EXTRA];
