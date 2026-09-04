@@ -98,21 +98,39 @@ export interface StandMerchant {
   refuseOwed(orderId: string): Promise<void>;
 }
 
-// The worker dispatches handlers serially, so waiting longer blocks every other
-// order and quote without making the timeout scenario more truthful.
-const SILENCE_PAST_DEADLINES_MS = 5_100;
+/**
+ * How long the silent moods stay silent, and why it is this long.
+ *
+ * The deadline this mood has to outlast is the order's own: a synchronous
+ * purchase is answered within `SYNC_RESPONSE_MS`, eight seconds counted from
+ * the payment. `HANDLER_ANSWER_MS` is a different number and it is the one that
+ * is easy to mistake for this: three seconds is how long the gateway waits for
+ * one delivery attempt before calling that attempt unanswered and sending the
+ * order round again, so an answer arriving in the fifth second is late for the
+ * attempt and still well inside the order's deadline — the goods go out and the
+ * purchase settles. Waiting anything short of eight seconds therefore delivers
+ * and calls it a timeout, which is the one thing this mood must not do.
+ *
+ * The worker dispatches handlers serially, so every second spent here blocks
+ * every other order and quote. This is the shortest wait that is honestly past
+ * the deadline, and no longer.
+ */
+const SILENCE_PAST_DEADLINES_MS = 9_500;
 
 /**
  * How long the handler will hold an order open for a person.
  *
- * Short, and the reason is worth knowing before anybody designs around this:
- * the gateway gives a handler about three seconds to answer
- * (`HANDLER_ANSWER_MS`), and a synchronous purchase is answered inside eight
- * (`SYNC_RESPONSE_MS`). Holding an order for a person therefore runs past what
- * the order can survive almost at once — the gateway stops waiting and the
- * order expires while this side is still holding it. That is worth watching
- * once, which is why holding exists at all; it is not worth waiting two minutes
- * for, and a held order blocks the worker's serial dispatch the whole time.
+ * Short, and the reason is worth knowing before anybody designs around this.
+ * Three clocks run at once: the gateway waits about three seconds for one
+ * delivery attempt (`HANDLER_ANSWER_MS`) before calling it unanswered and
+ * sending the order round again, the goods themselves are due within eight
+ * seconds of the payment (`SYNC_RESPONSE_MS`), and the agent is promised an
+ * answer within ten (`SYNC_BUDGET_MS`). Holding an order for a person therefore
+ * runs past what the order can survive almost at once — the gateway stops
+ * waiting and the order expires while this side is still holding it. That is
+ * worth watching once, which is why holding exists at all; it is not worth
+ * waiting two minutes for, and a held order blocks the worker's serial dispatch
+ * the whole time.
  *
  * The ceiling refuses rather than falling silent, because a refusal names
  * itself in the order's own record and a silence looks like a crash.
