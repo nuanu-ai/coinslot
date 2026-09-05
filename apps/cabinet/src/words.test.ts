@@ -36,9 +36,9 @@ describe("the words a merchant reads", () => {
 
   it("covers every outcome a receipt can carry with the order's own words", () => {
     // A receipt's outcomes are a subset of the order's on purpose, so one map
-    // serves both screens. A merchant reading "awaiting fulfilment" beside an
-    // order and something else beside its receipt would go looking for two
-    // different situations.
+    // serves both screens. A merchant reading "in progress" beside an order
+    // and something else beside its receipt would go looking for two different
+    // situations.
     for (const outcome of ReceiptOutcomeSchema.options) {
       expect(ORDER_WORDS[outcome]?.text, outcome).toBeTruthy();
     }
@@ -62,6 +62,18 @@ describe("the words a merchant reads", () => {
     expect(needsAttention("in_progress")).toBe(false);
     expect(needsAttention("delivered")).toBe(false);
     expect(needsAttention("payment_unresolved")).toBe(false);
+  });
+
+  it("does not name a duty for an order that may be nobody's yet", () => {
+    // `in_progress` folds an order the merchant has been handed with one that
+    // an unpaid request opened a second ago and that closes unanswered half a
+    // minute later, and nothing over this API tells the two apart. A word
+    // about fulfilment or delivery reads as the first for both: on the orders
+    // screen an order nobody had paid for stood as one the merchant owed goods
+    // on, and then closed on its time limit without ever reaching them.
+    expect(ORDER_WORDS.in_progress.text).not.toMatch(/fulfil|deliver|accept|owe/i);
+    // And it still reads as something under way rather than as an ending.
+    expect(ORDER_WORDS.in_progress.tone).toBe("busy");
   });
 
   it("does not turn a payment we never heard about into a refusal", () => {

@@ -2328,7 +2328,7 @@ describe("the orders screen", () => {
 
     const text = readable((await browser.get("/orders?open=true")).html);
 
-    expect(text).toContain("awaiting fulfilment");
+    expect(text).toContain("in progress");
     expect(text).not.toContain("owed money or goods");
     expect(text).toContain("None of them owes a refund");
   });
@@ -2466,7 +2466,7 @@ describe("the receipts screen", () => {
     const text = readable((await browser.get("/receipts")).html);
 
     expect(text).not.toContain("Refund due");
-    expect(text).not.toContain("Awaiting fulfilment");
+    expect(text).not.toContain("In progress");
     expect(text).not.toContain("nothing outstanding");
     // The sentence itself, not only the explanation under it. A page that says
     // nothing is missing and then explains what is missing has still told a

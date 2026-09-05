@@ -5,9 +5,9 @@
  * English sentences: `refund_due`, `delivered_unpaid`, `payment_unresolved`.
  * This file is the one place they become something a person reads, and it is
  * one place rather than three so that a state does not have one name on the
- * orders screen and another on the receipts screen. A merchant who saw
- * "awaiting fulfilment" beside an order and "not delivered yet" beside its
- * receipt would reasonably go looking for two different situations.
+ * orders screen and another on the receipts screen. A merchant who saw "in
+ * progress" beside an order and "not delivered yet" beside its receipt would
+ * reasonably go looking for two different situations.
  *
  * Every map is total over its vocabulary, and a test walks each vocabulary
  * through it. That is not tidiness: a status with no word here would reach a
@@ -18,12 +18,16 @@
  * Two of the words are deliberately weaker than the design they came from, and
  * both are the fifth gate. The design's orders table says "accepted, awaiting
  * delivery"; nothing an agent or a merchant reads over this API can tell an
- * order the merchant has taken on from one that was created a second ago,
- * because `in_progress` folds them on purpose (`order-status.ts` argues it),
- * so the cabinet says the weaker thing it can stand behind. And
- * `payment_unresolved` is rendered as a question rather than as a failure,
- * because the fact behind it is that we asked the payment network and heard
- * nothing — not that nothing was charged.
+ * order the merchant has taken on from one that a request opened moments ago
+ * and never paid for, because `in_progress` folds them on purpose
+ * (`order-status.ts` argues it), so the cabinet says the weaker thing it can
+ * stand behind. "Awaiting fulfilment" stood here first and was not weak
+ * enough: it names a duty, and the order it named one for was a purchase
+ * nobody had paid for, which read on the orders screen as goods the merchant
+ * owed and then closed on its own deadline without ever having reached them.
+ * "In progress" is true of both. And `payment_unresolved` is rendered as a
+ * question rather than as a failure, because the fact behind it is that we
+ * asked the payment network and heard nothing — not that nothing was charged.
  */
 
 import type { Fulfillment, OrderStatus, SellingState } from "@nuanu-ai/coinslot-contracts";
@@ -45,7 +49,7 @@ export interface Word {
  * merchant's.
  */
 export const ORDER_WORDS: Readonly<Record<OrderStatus, Word>> = Object.freeze({
-  in_progress: { text: "awaiting fulfilment", tone: "busy" },
+  in_progress: { text: "in progress", tone: "busy" },
   delivered: { text: "delivered", tone: "ok" },
   rejected: { text: "refused", tone: "quiet" },
   payment_unresolved: { text: "payment outcome unknown", tone: "warn" },
