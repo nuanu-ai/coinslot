@@ -124,12 +124,14 @@ const ANSWERED: Record<OrderState, readonly OrderEventKind[]> = {
   // means nothing here". Which of the two a caller gets is the subject of the
   // settle-in-flight tests below.
   fulfilled: [...ORDER_EVENT_KINDS],
-  // Closed as a success. A redelivered order and a redelivered acceptance are
-  // ordinary here and are answered with the state he is in; a refusal is not,
-  // and an order that ended in goods may not take one.
+  // Closed as a success. A redelivered acceptance is ordinary here and is
+  // answered with the state he is in. The hand-over that would have carried it
+  // is not: the worker's poll gives out exactly what this row takes, so a
+  // delivered order taking `order_dispatched` is the gateway putting a
+  // finished purchase back in front of a handler. A refusal is heard and
+  // refused — an order that ended in goods may not take one.
   delivered: [
     "purchase_repeated",
-    "order_dispatched",
     "handler_accepted",
     "handler_delivered",
     "deliver_called",
@@ -903,18 +905,28 @@ describe("delivering twice, and delivering late", () => {
 });
 
 describe("the same order delivered to the handler twice", () => {
-  it("takes a repeat of an order already delivered as a no-op", () => {
-    // Canon: the answer to a repeat is the current state, and what is compared
-    // is the effect — no second fulfillment — rather than the bytes of the
-    // two answers.
+  it("refuses to be handed out again once it is delivered", () => {
+    // The hand-over is the gateway's question, not the merchant's: the poll
+    // gives a worker exactly the orders whose `order_dispatched` this machine
+    // takes, so a delivered order that answered it — with nothing to do, even
+    // — was the machine asking for a finished purchase to be worked on again.
+    // The refusal is `event_not_applicable`, which is the kind the poll
+    // finishes the envelope on rather than putting back on the stream; a
+    // retryable one would have the order circling instead.
     const delivered = reach("delivered");
-    const redispatched = must(delivered, { kind: "order_dispatched", at: T0 + 50 });
-    const accepted = must(redispatched.order, { kind: "handler_accepted", at: T0 + 51 });
+    const refused = transition(delivered, { kind: "order_dispatched", at: T0 + 50 });
+
+    expect(refused.ok).toBe(false);
+    if (refused.ok) throw new Error("a delivered order took the hand-over");
+    expect(refused.rejection.code).toBe("event_not_applicable");
+    expect(refused.rejection.retryable).toBe(false);
+
+    // What does not change: a merchant who is holding the order anyway,
+    // because a redelivery raced past this, is still answered with the state
+    // it is in rather than sent looking for goods he has already handed over.
+    const accepted = must(delivered, { kind: "handler_accepted", at: T0 + 51 });
 
     expect(accepted.order.state).toBe("delivered");
-    expect(kinds(redispatched.effects)).toStrictEqual([]);
-    // The answer is the current state, and it is the only thing that happens:
-    // no goods released, no receipt written, no second charge.
     expect(accepted.effects).toStrictEqual([
       { kind: "answer_merchant", answer: { ok: true, result: "already_delivered" } },
     ]);

@@ -29,6 +29,21 @@
  * could not be honoured. A rejection of the transition is the machine saying
  * that this event has no meaning in this state at all — a stale message off
  * the queue, or a bug. Neither is ever thrown.
+ *
+ * A no-op is not free, and this is the lesson the delivered state was taught
+ * on the stand. Taking an event and changing nothing looks harmless from in
+ * here, but what a state takes is read outside as permission to act: the
+ * worker's poll hands a merchant exactly those orders whose `order_dispatched`
+ * the machine accepts, so a closed state that took the hand-over quietly had
+ * the gateway sending an order it had already settled and closed back to a
+ * handler, minutes after the buyer had the goods. Deliveries stay at least
+ * once and a repeat can still reach a merchant through a genuine race, so
+ * nothing about his duty to recognise one changes; what changed is that we no
+ * longer cause one knowingly. Where an event has nothing to do here, the
+ * honest answer is that it has no meaning here. The one closed state that
+ * still takes a hand-over is `refund_due`, and there it is not a no-op at all:
+ * late goods close the debt, so the order is worth putting in front of the
+ * merchant again.
  */
 
 import { assertNever } from "../index.js";
@@ -952,9 +967,11 @@ function fromDelivered(order: Order, event: StateEvent): TransitionResult {
       // exactly true of it rather than merely safe to say.
       return answer(order, { ok: true, result: "already_delivered" });
     case "order_dispatched":
-      // The order came round again off the queue. Nothing is owed on it and
-      // what must not appear is a second fulfillment.
-      return ok(order);
+      // A hand-over of an order that is closed. The gateway gives a worker
+      // exactly what this arm takes, so accepting it — even with nothing to
+      // do — is the machine telling the gateway to send a finished purchase
+      // back to a handler. The header says what that cost on the stand.
+      return notApplicable(order, event);
     case "refuse_called":
       return closedToMerchant(order);
     case "merchant_departed":

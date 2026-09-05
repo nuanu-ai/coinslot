@@ -162,9 +162,27 @@ describe("one eSIM, bought and provisioned, with the provisioner down at first",
     ]);
     expect(outcomeFor(accepted.order)).toBe("in_progress");
 
+    // The queue delivers at least once, and here is what that costs. A third
+    // delivery was already on its way when the second was taken on, so the
+    // order arrives at a second worker of the merchant's while the first is
+    // still provisioning. The order is open, so this hand-over is an ordinary
+    // one: it is counted, and the worker is told the work is his.
+    const duplicate = step(accepted.order, { kind: "order_dispatched", at: NOON + 10 * MINUTE });
+
+    expect(duplicate.order.dispatch.attempts).toBe(3);
+
+    const acceptedAgain = step(duplicate.order, {
+      kind: "handler_accepted",
+      at: NOON + 10 * MINUTE + SECOND,
+    });
+
+    expect(acceptedAgain.effects).toStrictEqual([
+      { kind: "answer_merchant", answer: { ok: true, result: "accepted" } },
+    ]);
+
     // Twenty minutes later the profile exists and the merchant says so. Well
     // inside his four hours.
-    const delivered = step(accepted.order, { kind: "deliver_called", at: NOON + 20 * MINUTE });
+    const delivered = step(acceptedAgain.order, { kind: "deliver_called", at: NOON + 20 * MINUTE });
 
     expect(delivered.order.state).toBe("delivered");
     expect(delivered.effects).toStrictEqual([
@@ -175,18 +193,17 @@ describe("one eSIM, bought and provisioned, with the provisioner down at first",
     expect(outcomeFor(delivered.order)).toBe("delivered");
     expect(deadlines(delivered.order)).toStrictEqual([]);
 
-    // The queue delivers at least once, so the same order turns up again and
-    // the handler takes it on a second time. Nothing else happens to the order,
-    // and he is told the state it is in rather than that the work is his: there
-    // is no second profile to issue.
-    const duplicate = step(delivered.order, { kind: "order_dispatched", at: NOON + 21 * MINUTE });
-    const answeredAgain = step(duplicate.order, {
-      kind: "handler_accepted",
-      at: NOON + 21 * MINUTE + SECOND,
+    // The second worker finishes a minute later and calls in with the profile
+    // it made. The order is closed by then, and it is told the state the order
+    // is in rather than that its delivery landed: the buyer keeps the profile
+    // the first one carried, and no second one is written down against the
+    // order.
+    const answeredAgain = step(delivered.order, {
+      kind: "handler_delivered",
+      at: NOON + 21 * MINUTE,
     });
 
     expect(answeredAgain.order.state).toBe("delivered");
-    expect(duplicate.effects).toStrictEqual([]);
     expect(answeredAgain.effects).toStrictEqual([
       { kind: "answer_merchant", answer: { ok: true, result: "already_delivered" } },
     ]);

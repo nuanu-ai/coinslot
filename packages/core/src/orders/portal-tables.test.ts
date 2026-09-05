@@ -502,10 +502,26 @@ describe("portal/failures.md", () => {
   });
 
   it(`${FAILURES[4]}: no second fulfillment and no second charge`, () => {
-    const again = must(reach("delivered"), { kind: "order_dispatched", at: T0 + 50 });
-    const accepted = must(again.order, { kind: "handler_accepted", at: T0 + 51 });
+    // The race the row is written for. A redelivery goes out while the first
+    // handler is still working — the order is open, so the second hand-over is
+    // taken and counted — and the two of them then answer the same order one
+    // after the other. It is the second answer that the row is a promise
+    // about: the buyer keeps the goods the first one carried, and the money
+    // does not move again.
+    const open = paidAsync();
+    const again = must(open, { kind: "order_dispatched", at: T0 + 5 });
 
-    expect(outcomeFor(accepted.order)).toBe("delivered");
+    expect(again.order.dispatch.attempts).toBe(open.dispatch.attempts + 1);
+
+    const delivered = must(again.order, { kind: "deliver_called", at: T0 + 6 });
+    const repeat = must(delivered.order, { kind: "deliver_called", at: T0 + 7 });
+
+    expect(outcomeFor(repeat.order)).toBe("delivered");
+    // Nothing but the answer: no goods released a second time, no receipt
+    // written over the first and nothing sent for execution.
+    expect(repeat.effects).toStrictEqual([
+      { kind: "answer_merchant", answer: { ok: true, result: "already_delivered" } },
+    ]);
   });
 
   it(`${FAILURES[5]}: the repeat gets what is already there`, () => {

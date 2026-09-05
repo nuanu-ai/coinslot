@@ -1328,11 +1328,12 @@ export class Gateway {
           );
         }
         // The machine will not record the hand-over, so nobody is given the
-        // order. Not every ending refuses it — an order that is delivered or
-        // owes a refund is handed over again and answered from where it stands,
-        // which is what makes a repeat safe — but where the machine says the
-        // hand-over has no meaning, passing it on would ask a merchant to work
-        // on a purchase that is over.
+        // order. One ending does not refuse it — an order that owes a refund is
+        // handed over again, because late goods still close the debt — but
+        // everywhere else passing it on would ask a merchant to work on a
+        // purchase that is over. A delivered order is refused here for that
+        // reason and reaches this line, which is where the second delivery seen
+        // on the stand used to leave from.
         finished.push(delivery.handle);
         continue;
       }
