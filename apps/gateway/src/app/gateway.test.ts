@@ -1835,6 +1835,63 @@ describe("the worker's stream", () => {
       1,
     );
   });
+
+  it("hands nobody an order the late answer already closed", async () => {
+    // Seen on the live test gateway. A synchronous order went out; the handler
+    // answered six seconds later, past the three we wait before deciding
+    // nobody answered, so a redelivery was already on its way. The late answer
+    // was taken — goods released, charge executed, the order closed as
+    // delivered — and then the redelivery's turn came and the same order was
+    // handed to the worker a second time, for a purchase that was over.
+    //
+    // Deliveries stay at least once and a genuine race can still put a repeat
+    // in front of a handler, which is why holding against one is still the
+    // merchant's to do. What must not happen is the gateway sending a repeat
+    // out while knowing the order is closed.
+    const harnessed = await started({
+      HANDLER_ANSWER_MS: "20",
+      REDELIVERY_BASE_DELAY_MS: "20",
+      SYNC_RESPONSE_MS: "2000",
+      SETTLE_RESPONSE_MS: "500",
+      SYNC_BUDGET_MS: "3000",
+    });
+    const itemId = await published(harnessed, syncCard);
+    const offered = await harnessed.gateway.beginPurchase(itemId, { nights: 1 });
+    if (offered.step !== "pay") throw new Error("no price was offered");
+    const orderId = offered.order.order.id;
+
+    // The agent's call parks while the merchant works, as it does on the stand.
+    const buying = harnessed.gateway.payPurchase(orderId, "PAYMENT", "PAYMENT");
+
+    const handed = await harnessed.gateway.poll(harnessed.merchant.id, 10, 1_000);
+    expect(handed.envelopes.filter((each) => each.kind === "order")).toHaveLength(1);
+
+    // We give up on that hand-over and put a fresh delivery on the stream.
+    // Waiting for it is what makes the rest of this a test: with no redelivery
+    // actually waiting there, a poll that hands out nothing proves nothing.
+    await vi.waitFor(
+      async () =>
+        expect(await harnessed.queue.holdsOrder(harnessed.merchant.id, orderId)).toBe(true),
+      { timeout: 2_000, interval: 5 },
+    );
+
+    // The handler's answer arrives anyway and is taken: the goods go to the
+    // buyer and the charge goes through.
+    await harnessed.gateway.answerOrder(harnessed.merchant.id, orderId, {
+      delivered: { access_code: "SESAME" },
+    });
+    const bought = await buying;
+    expect(bought.step).toBe("settled");
+    if (bought.step !== "settled") throw new Error(`the purchase came back ${bought.step}`);
+    expect(bought.order.order.state).toBe("delivered");
+
+    // The redelivery's turn. Nobody is handed a purchase that is over, and the
+    // envelope is finished rather than left circling.
+    const again = await harnessed.gateway.poll(harnessed.merchant.id, 10, 200);
+
+    expect(again.envelopes.filter((each) => each.kind === "order")).toStrictEqual([]);
+    expect(await harnessed.queue.holdsOrder(harnessed.merchant.id, orderId)).toBe(false);
+  });
 });
 
 describe("the merchant's calls", () => {
