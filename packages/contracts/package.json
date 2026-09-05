@@ -1,6 +1,6 @@
 {
   "name": "@nuanu-ai/coinslot-contracts",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "type": "module",
   "description": "The Coinslot wire contract as code: the schemas for cards, orders, price checks and receipts that the gateway and the merchant SDK both read.",
   "keywords": [
