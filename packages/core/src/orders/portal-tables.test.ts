@@ -128,9 +128,15 @@ describe('portal/orders.md, "How an order can end"', () => {
     // Four different failures, and the row promises the agent one word for all
     // of them. The machine keeps them apart — the merchant's own metrics need
     // the difference — and this is where the four are held to the single word
-    // the page gives the buyer. That word is all the agent gets: nothing in the
-    // contract carries a refusal's reason to it, which is why the page no
-    // longer says it does.
+    // the page gives the buyer.
+    //
+    // The row's other half — that a refusal of the merchant's own reaches the
+    // agent with his code and his message — is not held here, and saying where
+    // it is held is cheaper than leaving somebody to look. The words live on
+    // the closure this machine writes, and the document that carries them to
+    // the agent is built in the gateway, which this package does not see:
+    // `apps/gateway/src/http/order-status.test.ts` is where the promise is
+    // read against the answer an agent actually gets.
     const noStock = must(newOrder("async", { priceCheck: "merchant" }), {
       kind: "quote_answered",
       at: T0 + 1,

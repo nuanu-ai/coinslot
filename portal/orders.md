@@ -510,8 +510,8 @@ saying that it did, that closed order becomes a refund you owe.
 | Situation | Where the money is | What the agent sees |
 | --- | --- | --- |
 | You delivered the goods | with you | the goods, the price they were charged and whether the money behind it was real |
-| There is none, the parameters did not fit, the payment failed its check — or you refused in the synchronous mode | never moved | a refusal, and that the purchase did not happen; the reason for it stays on your side |
-| You answered "I will not deliver" to a request to confirm | never moved | a refusal, and nothing was charged |
+| There is none, the parameters did not fit, the payment failed its check — or you refused in the synchronous mode | never moved | a refusal, and that the purchase did not happen; where the refusal was yours, your code and your message arrive with it |
+| You answered "I will not deliver" to a request to confirm | never moved | a refusal with your code and your message, and that nothing was charged |
 | Time ran out: no confirmation, no payment or no synchronous delivery arrived | never moved | the order was closed on its deadline |
 | You left | for what was not delivered, [you send it back](/money) | an unpaid order is closed; a paid one waits for your refund |
 | The money was charged and no delivery happened | with you | the order is waiting for a refund |
@@ -524,6 +524,14 @@ play out in the ordinary way. Only leaving closes the ones that are open.
 A status says exactly what the system knows. Where there is no answer from you
 yet, that is what the status says, and the agent does not read not knowing as a
 refusal.
+
+Where the refusal was yours, the two words you wrote travel with the status: the
+code the agent branches on and the message it can show. That holds in every
+mode, so an order you refused after the buyer was already charged carries them
+as well as one refused before any money moved. Nothing else on this table
+carries them, and the difference is worth knowing when you read a status back: a
+product the price check reported as gone, a payment that failed its check and a
+deadline that ran out have no words behind them, because nobody wrote any.
 
 ## Time ran out
 

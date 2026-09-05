@@ -64,6 +64,16 @@ A refusal in itself is an ordinary answer from a handler: there is none, the
 parameters do not fit, the delivery is impossible. The buyer gets a clear
 answer, and you are not left with an order to sort out by hand later.
 
+Both parts of that answer are yours. The code and the message you send travel to
+the buyer's agent with the order's status, unchanged, in every mode — the code
+is what the agent branches on to decide whether to try different parameters or
+go elsewhere, and the message is what it has to show a person. So write the
+message for a stranger rather than for your own logs, and prefer one of the
+common codes where it fits ([the vocabulary](/cards#refusal-codes)). Nothing
+else about the order reaches the agent this way: a deadline that passed, a
+price check that reported the product gone and a payment we would not vouch for
+all close an order without any words behind them, because nobody wrote any.
+
 This is also how the mode gets chosen: if refusals at delivery happen to you
 regularly, catch them earlier, in the answer to the question about price and
 availability, before the money. What happens to the money on orders that need a

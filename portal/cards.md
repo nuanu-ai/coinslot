@@ -435,10 +435,12 @@ required fields first.
 
 ## Refusal codes
 
-A handler's refusal carries a short code and a reason a person can read. The
-code is read by us and by the agent; the reason is read by the person who works
-on the case afterwards. What happens to the order after a refusal is on [Orders
-and fulfillment modes](/orders); here is the vocabulary of codes.
+A handler's refusal carries a short code and a reason a person can read. Both go
+to the buyer's agent, with the order's status and word for word: the code is
+what it branches on, the reason is what it shows a person. Write the reason for
+that stranger rather than for your own logs. What happens to the order after a
+refusal is on [Orders and fulfillment modes](/orders); here is the vocabulary of
+codes.
 
 These are the words you send us about an order you cannot fill, and they are a
 different set from the ones we send you when a call of yours does not go through

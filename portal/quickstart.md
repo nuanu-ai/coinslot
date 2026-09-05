@@ -316,6 +316,11 @@ as never having reached you and comes again, after a delay ([The handler
 crashed without answering](/failures)). What you threw goes to your problem
 handler and no further — the agent never sees it.
 
+A refusal is the opposite, and the difference matters for what you write in one:
+the code and the message you refuse with reach the buyer's agent unchanged, with
+the order's status. The code is what it branches on and the message is what it
+shows a person, so neither is a place for an internal note.
+
 Besides the purchase parameters, the order carries the sale price — the amount,
 the currency, the moment that price was fixed for this sale and the `as_of` of
 the price it was worked out from — and a `test` flag that tells a test order
