@@ -3874,6 +3874,25 @@ describe("what the cabinet writes down about what people do", () => {
     expect(said).not.toContain("hunter2-typed-in-the-wrong-box");
     expect(said).toContain(PERSON);
   });
+
+  it("does not say a confirmation link went out, because this end never finds out", async () => {
+    // The postman is the only thing that learns whether the provider took the
+    // message, and a send that fails is a line in the log rather than an error
+    // on anybody's screen (ADR-0009). So a line here saying the link was sent
+    // is a claim this code cannot make: on the test cabinet it stood directly
+    // under the postman's own line saying the provider had refused it, and
+    // whoever read the log went looking in a mailbox for a message nobody had
+    // been given. What this end knows is that somebody asked.
+    const { browser } = await started();
+    await browser.signIn();
+
+    const said = await logged(async () => {
+      await browser.post("/confirm");
+    });
+
+    expect(said).toContain(PERSON);
+    expect(said).not.toMatch(/was sent|has been sent|went out/i);
+  });
 });
 
 describe("the key the cabinet signs in with", () => {

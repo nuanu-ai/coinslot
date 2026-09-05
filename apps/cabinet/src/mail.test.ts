@@ -133,6 +133,29 @@ describe("a cabinet with a mail provider", () => {
     expect(document.text).toBe(MESSAGE.body);
   });
 
+  it("says the provider took it, so the log can be read for an address that worked", async () => {
+    // The only outcome anybody upstream can be told about. Nothing above this
+    // file waits for a send and nothing branches on one, so a log that wrote
+    // down failures alone would leave a reader unable to tell a message that
+    // went to the provider from one that was never asked for at all.
+    const sending = await provider();
+    const postman = postmanFor({
+      mailUrl: sending.url,
+      mailApiKey: "re_a_real_looking_key",
+      mailFrom: "Coinslot <no-reply@mail.example.com>",
+    });
+
+    const said = await logged(async () => {
+      await postman(MESSAGE);
+    });
+
+    expect(said).toContain("dmitry@example.com");
+    expect(said).not.toMatch(/refused|could not be sent/);
+    // And not the link. A provider is in force here, so the one person who is
+    // meant to hold it is the one who was sent it.
+    expect(said).not.toContain("token=abc");
+  });
+
   it("does not throw when the provider refuses, because somebody is mid-registration", async () => {
     // Every send in this cabinet happens beside something a person just did
     // successfully. A provider's bad afternoon must not become a red page on
@@ -150,6 +173,11 @@ describe("a cabinet with a mail provider", () => {
     });
 
     expect(said).toContain("422");
+    // And the refusal is the whole of what the log says about this message. A
+    // second line beside it claiming the message went out is worse than no
+    // line at all: it sends whoever is reading to a mailbox that will never
+    // hold it.
+    expect(said).not.toMatch(/handed to the mail provider|was sent/);
   });
 
   it("does not throw when nothing answers at all", async () => {

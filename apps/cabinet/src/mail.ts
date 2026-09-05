@@ -20,7 +20,10 @@
  * because a mail filter between a merchant and their own cabinet is a merchant
  * who has to be rescued by a person at a terminal, which is the thing that
  * decision exists to stop needing. So a send that fails is a line in the log and
- * not an error on somebody's screen.
+ * not an error on somebody's screen — and so is a send that works, because with
+ * nothing above this file able to tell the two apart, this log is the whole of
+ * what anybody can ever find out about a message. A caller may say that a link
+ * was asked for; only this file may say what became of it.
  */
 
 /**
@@ -121,6 +124,14 @@ function throughResend(config: MailConfig): Postman {
         );
         return;
       }
+      // The other half of the same sentence, and the reason it is here: every
+      // caller of this carries on regardless, so this log is the only account
+      // of what became of a message. With the refusals written down alone,
+      // nothing distinguishes an address the provider took from an address
+      // nobody ever asked about. "Handed to" and not "sent": there is no inbox
+      // here and no bounce handler, so what the provider did with it after
+      // this is not something this process ever learns.
+      console.log(`[cabinet] a message to ${message.to} was handed to the mail provider`);
     } catch (thrown) {
       // `String` and not the object: an exception from `fetch` prints its causes
       // too, and a request that failed mid-flight has the whole document it was

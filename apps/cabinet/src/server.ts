@@ -864,7 +864,12 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
     const person = whoIs(request);
     if (!person.confirmed) {
       await identity.askToConfirm(person.email);
-      console.log(`[cabinet] a confirmation link was sent to ${person.email}`);
+      // What happened here is that somebody asked. Whether a message reached a
+      // provider is the postman's to say and it says it (`mail.ts`), which is
+      // the only place that knows: a send that fails is a line in the log
+      // rather than an error on anybody's screen, so a line here saying the
+      // link went out would sit directly under the one saying it had not.
+      console.log(`[cabinet] ${person.email} asked for a confirmation link`);
     }
     response.redirect(303, `${base}/cards`);
   });
