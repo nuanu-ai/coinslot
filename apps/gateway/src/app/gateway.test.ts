@@ -185,6 +185,82 @@ describe("a synchronous purchase", () => {
     expect(bought.order.order.state).toBe("delivered");
   });
 
+  it("waits out the whole ceiling, with the payment check on top of it", async () => {
+    // The same hole as the test above, one payment check narrower, and found
+    // the same way: on the live test gateway, after the fix above was
+    // deployed. The agent bought in one go, the facilitator took a second to
+    // vouch for the payment, the merchant's handler answered six seconds after
+    // that, and the charge went through on chain — and the agent was answered
+    // that its purchase was in progress while the goods were already written
+    // down against the order.
+    //
+    // Both clocks the goods run on start when the payment checked out: the
+    // merchant's answer has `sync_response` from there and the charge has its
+    // own `settle_response` after that, so the machine may legitimately still
+    // be deciding until the check and then the whole ceiling have gone by. The
+    // park was counting the ceiling from the arrival of the call with the
+    // check inside it, and so gave up exactly one round trip to the
+    // facilitator early.
+    //
+    // The numbers are a tenth of the deployed ones and the shape is the live
+    // one: the merchant answers inside his eight, the charge inside its two,
+    // and the two together inside the ten. The check is given half the ceiling
+    // rather than the tenth it took on the stand, because the length of the
+    // check is exactly the width of the hole — half puts the two answers
+    // further apart than any scheduling noise around them.
+    //
+    // What the harness clock reads is what the gateway measures the budget
+    // against, and the park's own timer is real: so the check's cost is a jump
+    // of the clock, and the merchant's is a wait in real time that the park
+    // has to sit through.
+    const harnessed = await started({
+      QUOTE_RESPONSE_MS: "50",
+      SYNC_RESPONSE_MS: "800",
+      SETTLE_RESPONSE_MS: "200",
+      SYNC_BUDGET_MS: "1000",
+    });
+    const itemId = await published(harnessed, syncCard);
+
+    // A payment layer that takes its time to vouch, and a charge that takes
+    // its own to execute. Neither is instant anywhere except in a test.
+    const layer = harnessed.facilitator;
+    const vouchesFor = layer.verify.bind(layer);
+    const executes = layer.settle.bind(layer);
+    layer.verify = async (charge) => {
+      harnessed.advance(500);
+      return vouchesFor(charge);
+    };
+    layer.settle = async (charge) => {
+      harnessed.advance(150);
+      return executes(charge);
+    };
+
+    const offered = await harnessed.gateway.beginPurchase(itemId, { nights: 1 });
+    if (offered.step !== "pay") throw new Error("no price was offered");
+
+    const worker = workUntilStopped(harnessed, {
+      onOrder: async () => {
+        await new Promise((wake) => setTimeout(wake, 700));
+        harnessed.advance(600);
+        return { delivered: { access_code: "SESAME" } };
+      },
+    });
+    const bought = await harnessed.gateway.payPurchase(
+      offered.order.order.id,
+      "PAYMENT",
+      "PAYMENT",
+    );
+    await worker.stop();
+
+    expect(bought.step).toBe("settled");
+    if (bought.step !== "settled") throw new Error(`the purchase came back ${bought.step}`);
+    expect(bought.delivery).toStrictEqual({ access_code: "SESAME" });
+    expect(bought.order.order.state).toBe("delivered");
+    // The money moved, which is the half of this an agent cannot see from the
+    // goods alone: the ceiling has to cover the charge as well as the answer.
+    expect(harnessed.facilitator.settles).toHaveLength(1);
+  });
+
   it("charges nothing when the merchant refuses", async () => {
     // "A refusal before the charge" is the literal reading of the mode, and the
     // one thing a merchant is promised about refusing.

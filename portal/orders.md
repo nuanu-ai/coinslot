@@ -542,10 +542,12 @@ confirmation mode has a deadline of its own — an hour, where the card names no
 The eight seconds run from the moment the payment checked out rather than from
 the moment the agent first asked, so asking your price — which happens on the
 call before the payment — and checking the payment itself are behind them rather
-than inside them. They are not the whole of the agent's wait: the check comes
-first and executing the charge comes after your answer, on a clock of its own,
-and all three fit inside the ten seconds we promise the agent for a synchronous
-purchase.
+than inside them. They are not the whole of the agent's wait: executing the
+charge comes after your answer, on a clock of its own, and the two together fit
+inside the ten seconds we promise the agent for a synchronous purchase. Those
+ten start where your eight do, at the moment the payment checked out, so the
+check is on top of them and not inside: what the agent waits for is the check,
+and then the ten.
 
 | Situation | Time ran out — what happened |
 | --- | --- |
@@ -638,9 +640,10 @@ nothing charged.
 
 A synchronous answer has eight seconds, counted from the moment the payment
 checked out — asking your price is behind them, and so is whatever the agent
-spent deciding to pay. Say your handler began the delivery in the seventh second
-and finished in the tenth. By that second the agent has already had a refusal
-and spent nothing, but the access you gave out has not gone anywhere.
+spent deciding to pay, and so is the check on that payment. Say your handler
+began the delivery in the seventh second and finished in the tenth. By that
+second the agent has already had a refusal and spent nothing, but the access you
+gave out has not gone anywhere.
 
 Work already done is not lost: a repeat purchase under the same order key
 collects the delivery that was made, this time with the payment. So answering

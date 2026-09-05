@@ -965,18 +965,6 @@ export class Gateway {
     payment: string,
     fingerprint: string,
   ): Promise<PurchaseAttempt> {
-    // When this call arrived, read before anything on the network is asked.
-    // Everything the agent is promised for a synchronous purchase is counted
-    // from here and never from the moment the order was opened — the order was
-    // opened by the unpaid call, and an agent that reads the requirements and
-    // takes ten seconds to decide would otherwise present a perfectly good
-    // payment against a ceiling that had already run out. That was shipped: it
-    // was charged, the merchant delivered, and it was answered that its
-    // purchase was in progress and given nothing. The payment check is inside
-    // this budget rather than in front of it, because the agent is waiting
-    // through it.
-    const arrivedAt = this.runtime.clock();
-
     const before = await this.runtime.store.orderById(orderId);
     if (before === null) {
       return { step: "no_such_item" };
@@ -1037,6 +1025,34 @@ export class Gateway {
       };
     }
 
+    // The moment the payment checked out, and every clock the goods run on is
+    // counted from here. The two on the order are: the merchant's answer has
+    // `sync_response` from the payment, and the charge has its own
+    // `settle_response` after that — so the machine may still be legitimately
+    // deciding until `syncBudgetMs` after this instant, which is what the
+    // start-up check `syncResponseMs + settleResponseMs <= syncBudgetMs` ties
+    // together. The park below waits exactly that long, so that the agent is
+    // never given up on while an answer for it is still on its way.
+    //
+    // What the agent waits is therefore the check and then the ceiling, rather
+    // than the ceiling with the check inside it. Both of the other two
+    // readings have been shipped and both cost an agent its money. Counted
+    // from the moment the order was opened, an agent that read the
+    // requirements and took ten seconds to decide presented a perfectly good
+    // payment against a ceiling that had already run out. Counted from the
+    // arrival of this call — the check inside the budget on the ground that
+    // the agent is waiting through it — the park gave up one round trip to the
+    // facilitator before the machine's own window closed. Both ended the same
+    // way: charged, delivered, and told the purchase was in progress while
+    // holding nothing.
+    //
+    // A few milliseconds later `presentVerifiedPayment` stamps this same
+    // instant as `paidAt` off its own reading of the clock, and the difference
+    // between the two is the store call below. The park may be that much
+    // longer than the machine's window and may not be shorter, so the earlier
+    // of the two readings is the one to count from.
+    const checkedOutAt = this.runtime.clock();
+
     // The owner is who the payment layer says paid, never the address the
     // payment declares of itself: a declared address that did not sign does not
     // verify. Where the layer vouches for a payment without naming a payer, the
@@ -1067,10 +1083,10 @@ export class Gateway {
     // racing one order carry two owners and park on two keys, so neither takes
     // the other's goods; the same buyer's two concurrent calls share one key
     // and both are woken. The wait is what is left of the promised ceiling,
-    // counted from the arrival of this call, and never longer.
+    // counted from the moment the payment checked out, and never longer.
     const key = purchaseOf(orderId, owner);
     const waits = before.order.mode.settle === "after_fulfillment";
-    const spent = this.runtime.clock() - arrivedAt;
+    const spent = this.runtime.clock() - checkedOutAt;
     const left = Math.max(this.runtime.config.deadlines.syncBudgetMs - spent, 0);
     const parked = waits ? this.runner.purchases.wait(key, left) : null;
 

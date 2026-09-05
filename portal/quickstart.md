@@ -262,10 +262,13 @@ clock starts when the payment checked out, so they are the eight seconds your
 handler has, less the trip the order makes to reach you and the trip your answer
 makes coming back: the price question is asked and answered on the call before
 the payment, and the check itself runs before the eight begin. They are not the
-agent's whole wait: the check comes first and the charge executes after your
-answer, and the ten seconds we promise the agent for a synchronous purchase
-cover all three. Both numbers are ours to set rather than the card's, and both
-are what the system you are connecting to runs with ([Time ran out](/orders)).
+agent's whole wait: the charge executes after your answer, and the ten seconds
+we promise the agent for a synchronous purchase cover your answer and that
+charge together. The ten start where your eight do, when the payment checked
+out, so the check sits on top of them rather than inside — the agent waits for
+the check, and then for the ten. Both numbers are ours to set rather than the
+card's, and both are what the system you are connecting to runs with ([Time ran
+out](/orders)).
 
 The order your handler was given carries that same `deliver` call, and inside
 the handler it is the shorter thing to write. Between the handler and the
