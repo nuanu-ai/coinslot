@@ -170,6 +170,70 @@ describe("coming back for goods that were not ready", () => {
   });
 });
 
+describe("a refusal the merchant made", () => {
+  it("carries the merchant's own code and sentence to the agent, at the purchase and afterwards", async () => {
+    // The gap the document used to leave open. A synchronous refusal reached
+    // the agent as the bare word `rejected`, and "there is none" was
+    // indistinguishable from "those parameters do not work" — which want
+    // different next moves. The two words are the merchant's, carried across
+    // unchanged, and both doors that answer with this document carry them: the
+    // purchase that was refused, and the read an agent comes back with later.
+    const { served, harnessed } = await started();
+    const itemId = await publish(served, nowCard);
+
+    const bought = await buyOverHttp(harnessed, served, itemId, {
+      onOrder: () => ({ refused: { code: "out_of_stock", message: "the room is taken" } }),
+    });
+
+    expect(bought.status).toBe(409);
+    const refused = bought.body as AgentOrderStatus;
+    expect(refused.status).toBe("rejected");
+    expect(refused.refusal).toStrictEqual({
+      code: "out_of_stock",
+      message: "the room is taken",
+    });
+
+    const later = await statusOf(served, refused.order_id);
+
+    expect(later.status).toBe(200);
+    expect((later.body as AgentOrderStatus).refusal).toStrictEqual(refused.refusal);
+  });
+
+  it("says nothing about a refusal on an ending nobody refused", async () => {
+    // The negative control, and the fifth gate in a field. An absent `refusal`
+    // has to mean "no merchant refused this order", not "we did not bother" —
+    // so an order that ended in the goods and one that ran out of time both
+    // carry none, and a projection that filled the pair from whatever closure
+    // happened to be on the order would fail here.
+    const { served, harnessed } = await started({
+      QUOTE_RESPONSE_MS: "20",
+      SYNC_RESPONSE_MS: "80",
+      SETTLE_RESPONSE_MS: "40",
+      SYNC_BUDGET_MS: "2000",
+    });
+    const laterItem = await publish(served, laterCard);
+    const nowItem = await publish(served, nowCard);
+
+    const orderId = await orderTakenOn(harnessed, served, laterItem);
+    await served.call("POST", `/v0/orders/${orderId}/deliver`, {
+      body: { activation_code: "LPA:1$example.com$ACTIVATE" },
+      headers: keyOf(harnessed.merchant),
+    });
+    // A synchronous purchase whose handler never answers: the order closes on
+    // its own deadline, and nobody said a word about why.
+    const timedOut = await buyOverHttp(harnessed, served, nowItem, {});
+
+    const delivered = (await statusOf(served, orderId)).body as AgentOrderStatus;
+    const expired = (await statusOf(served, (timedOut.body as AgentOrderStatus).order_id))
+      .body as AgentOrderStatus;
+
+    expect(delivered.status).toBe("delivered");
+    expect(delivered.refusal).toBeUndefined();
+    expect(expired.status).toBe("expired");
+    expect(expired.refusal).toBeUndefined();
+  });
+});
+
 describe("the door on the agent's route", () => {
   it("answers the same to a key, to somebody else's key, and to no key", async () => {
     // An agent has no key, no account and no registration, and the product

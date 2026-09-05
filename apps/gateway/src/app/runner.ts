@@ -1098,6 +1098,7 @@ export function salePriceOf(record: StoredOrder): SalePrice | null {
  */
 export function agentOrderStatusOf(record: StoredOrder): AgentOrderStatus {
   const status = outcomeFor(record.order);
+  const closure = record.order.closure;
 
   return {
     order_id: record.order.id,
@@ -1124,6 +1125,30 @@ export function agentOrderStatusOf(record: StoredOrder): AgentOrderStatus {
     // reads the same whether the charge was real or not, so a buyer with no
     // way to ask would be holding what looks like proof of a payment.
     test: record.order.test,
+    // The merchant's own two words for why they would not sell, where that is
+    // what closed the order. They are copied and not rephrased: the code is
+    // what the agent branches on and the sentence is what it shows a person,
+    // and both belong to whoever wrote them.
+    //
+    // The condition is the closure and not the status word, which is wider
+    // than the one ending this was asked for and is the point. One refusal
+    // reaches the agent under three different words depending on when it
+    // arrived — `rejected` before any money moved, `declined` for a
+    // confirmation that was answered "I will not", `refund_due` where the
+    // charge had already gone through — and the agent's question is the same
+    // in all three. Keying on the word would have withheld the merchant's own
+    // sentence from two of them for no reason a buyer could be told.
+    //
+    // Nothing else fills it, and the omissions are deliberate rather than
+    // unfinished. `unavailable` is a price answer with no words in it at all;
+    // `quote_silent` is a merchant who said nothing; `payment_not_verified`
+    // and `payment_not_settled` are the payment layer's business and reach the
+    // agent at the purchase door in an error envelope that quotes it. A code
+    // invented here for any of those would be this gateway speaking in a
+    // merchant's voice about something the merchant never said.
+    ...(closure?.cause === "merchant_refused"
+      ? { refusal: { code: closure.code, message: closure.message } }
+      : {}),
   };
 }
 
