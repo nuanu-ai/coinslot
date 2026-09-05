@@ -370,15 +370,13 @@ export const PurchaseRequestSchema = z
  * Left out instead, either would be a silence a reader cannot tell from an
  * oversight; present and null, it is a fact.
  *
- * What it leaves out is the part worth saying plainly, because the omission
- * costs the agent something it is entitled to. The status vocabulary folds
- * several of the machine's endings into `rejected` on the argument that the
- * reason travels separately, in the refusal code. No shape in this contract
- * carries that reason to an agent, and this document does not either — so for
- * now an agent told `rejected` cannot tell a product that is gone from a
- * payment that failed its check from parameters that did not fit, and those
- * want three different next moves. Adding a field for the reason would be
- * inventing a channel; leaving the gap unnamed would be worse.
+ * The status vocabulary folds several of the machine's endings into `rejected`
+ * on the argument that the reason travels separately, in the refusal code, and
+ * `refusal` is where it travels. It is optional because most endings have no
+ * refusal behind them, and what remains coarse is said in that field's own
+ * words rather than left to be discovered: a product that was gone and a
+ * payment that failed its check both still arrive as a bare `rejected`,
+ * because neither was worded by anybody.
  */
 export const AgentOrderStatusSchema = z
   .strictObject({
@@ -424,10 +422,38 @@ export const AgentOrderStatusSchema = z
      * the one thing it must never be mistaken for.
      */
     test: z.boolean(),
+
+    /**
+     * Why the merchant would not sell, where a merchant's refusal is what
+     * closed this order — their own code and their own sentence, carried
+     * across word for word.
+     *
+     * It is the shape a merchant's handler answers in (`RefusalSchema`) and
+     * not a copy of it, because it is the same fact travelling one hop
+     * further: what the merchant wrote is what the agent reads, and two
+     * shapes for that would be two chances to say it differently. The code is
+     * what an agent branches on — `out_of_stock`, `invalid_params`,
+     * `cannot_fulfill`, or a word of the merchant's own, so an unfamiliar one
+     * has to fall through to the sentence rather than break a reader. The
+     * sentence is what it can show a person.
+     *
+     * Optional, and what its absence means is the whole of the fifth gate
+     * here. It is absent exactly where no merchant refused this order, and
+     * that covers most of the endings — a deadline that ran out, a charge
+     * that failed its check, a product that was simply gone. Those last two
+     * are worth naming because they still arrive as a bare `rejected`: a
+     * price answer of "not available" carries no words at all, and a payment
+     * this gateway would not vouch for is refused at the door in an error
+     * envelope of its own rather than described here. So an absent pair says
+     * "no refusal to quote", never "there was one and we dropped it", and a
+     * present pair is always somebody's actual answer rather than a word this
+     * gateway picked for them.
+     */
+    refusal: RefusalSchema.optional(),
   })
   .meta({
     description:
-      "What became of one purchase, in the words an agent and a merchant both read: where the order stands, what it was priced at, and the goods once they are the buyer's. It is smaller than the merchant's own view of the same order on purpose — no merchant, no merchant's own key for the product, none of the purchase parameters and nothing about any other order. The price is what the buyer was asked for and not proof that anything was charged: an order that was priced and then ended without a sale still carries it, and the status is what says which happened. A null price means nobody ever named one for this order, and a null delivery means there are no goods here to hand over; both fields are always present, because an absent field is a silence a reader cannot tell from an oversight. Two omissions are worth knowing about. \"rejected\" covers a product that was gone, a payment that failed its check and parameters that did not fit, and nothing in this contract yet carries that reason to an agent. And a null delivery is not a promise that no goods were ever made: a purchase whose charge failed or went unanswered can leave goods the buyer has not paid for, and this document withholds them rather than describing them. Every answer says whether the money behind the purchase was real: a gateway settling against nothing produces every other field here exactly as a real charge would, so a reader taking this for proof of a payment has to read that word first.",
+      'What became of one purchase, in the words an agent and a merchant both read: where the order stands, what it was priced at, the goods once they are the buyer\'s, and why the merchant would not sell where that is what ended it. It is smaller than the merchant\'s own view of the same order on purpose — no merchant, no merchant\'s own key for the product, none of the purchase parameters and nothing about any other order. The price is what the buyer was asked for and not proof that anything was charged: an order that was priced and then ended without a sale still carries it, and the status is what says which happened. A null price means nobody ever named one for this order, and a null delivery means there are no goods here to hand over; both fields are always present, because an absent field is a silence a reader cannot tell from an oversight. "refusal" is the exception and is present only where a merchant refused: their own short code to branch on and their own sentence to show, carried across unchanged. The code is an open set — "out_of_stock", "invalid_params" and "cannot_fulfill" are read the same way by everybody, and a merchant whose reason fits none of them sends their own word, so an unfamiliar code has to fall through to the sentence rather than break a reader. An absent "refusal" means there is no refusal to quote and never that one was dropped, which leaves two endings still coarse: "rejected" also covers a product that was gone and a payment that failed its check, and neither of those was worded by anybody — the first because a price answer of "not available" carries no words, the second because it is refused at the door in an error envelope instead. A null delivery is likewise not a promise that no goods were ever made: a purchase whose charge failed or went unanswered can leave goods the buyer has not paid for, and this document withholds them rather than describing them. Every answer says whether the money behind the purchase was real: a gateway settling against nothing produces every other field here exactly as a real charge would, so a reader taking this for proof of a payment has to read that word first.',
   });
 
 /**

@@ -49,15 +49,24 @@ export const ORDER_STATUSES = Object.freeze([
    * the agent both are one sentence — a refusal — and folding them was argued
    * on the grounds that the reason travels separately, in the refusal code.
    *
-   * That argument does not stand up yet, and saying so is cheaper than leaving
-   * it to be found. Nothing in this contract carries a refusal's reason to an
-   * agent: the merchant sends one, and the shape an agent reads a status back
-   * in has no field for it. So an agent told `rejected` today cannot tell a
-   * product that was gone from a payment that failed its check from parameters
-   * that did not fit, and the three want different next moves. The word stays
-   * coarse because that is the agent's vocabulary; what is missing is the
-   * channel beside it, and inventing one here would answer a question about
-   * what an agent may be told that nobody has answered.
+   * It does travel, and what it carries is worth being exact about. The
+   * agent's status document has a `refusal` beside this word, and where a
+   * merchant refused the order it holds the two things the merchant actually
+   * wrote: a short code to branch on and a sentence to show. The word here
+   * stays coarse because that is the agent's vocabulary, and the pair beside
+   * it is what makes the coarseness affordable.
+   *
+   * What it does not carry is the other half of the fold, and an agent
+   * planning around this value needs it said. Two endings reach this word with
+   * nobody's words behind them — a product that was gone, and a payment this
+   * gateway would not vouch for — so they arrive as a bare `rejected` and are
+   * not distinguishable from each other here. The first is not worded because
+   * the price answer that reports it is an availability flag and carries no
+   * reason at all; the second is not worded here because it is refused at the
+   * agent's door in an error envelope that says what the payment layer said,
+   * which is a better place for it than a status read afterwards. Inventing
+   * codes of our own for either would be putting words in a mouth that never
+   * opened.
    */
   "rejected",
   /**

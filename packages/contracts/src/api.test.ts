@@ -608,15 +608,56 @@ describe("the status an agent reads", () => {
     }
   });
 
-  it("admits in the exported document what one of its words folds together", () => {
-    // The vocabulary defends folding three endings into "rejected" on the
-    // grounds that the reason travels separately. It does not, yet — no shape
-    // in this contract carries a refusal's reason to an agent — and the reader
-    // who has only the document is the one who would plan around the claim.
+  it("carries the merchant's own words for a refusal they made", () => {
+    // The channel the vocabulary's fold was always argued on: `rejected` is
+    // coarse because the reason travels separately, and this is where it
+    // travels. The two words are the merchant's own — the code an agent
+    // branches on and the sentence it can show — carried across unchanged.
+    const refused = {
+      ...status,
+      status: "rejected",
+      refusal: { code: "out_of_stock", message: "no seats left on that plan" },
+    };
+
+    expect(AgentOrderStatusSchema.parse(refused)).toStrictEqual(refused);
+  });
+
+  it("takes the two words the merchant wrote and nothing beside them", () => {
+    // The pair is the merchant's answer as it stands, not a place for this
+    // gateway to attach its own bookkeeping to somebody else's refusal.
+    for (const pair of [
+      { code: "out_of_stock" },
+      { message: "no seats left on that plan" },
+      { code: "", message: "no seats left on that plan" },
+      { code: "out_of_stock", message: "" },
+      { code: "out_of_stock", message: "no seats", cause: "merchant_refused" },
+    ]) {
+      expect(
+        AgentOrderStatusSchema.safeParse({ ...status, refusal: pair }).success,
+        JSON.stringify(pair),
+      ).toBe(false);
+    }
+  });
+
+  it("leaves the pair out where nobody refused, rather than sending an empty one", () => {
+    // An absent `refusal` is the answer for every ending that is not a
+    // merchant's refusal — a deadline, a charge that failed its check, a
+    // product that was simply gone. A blank pair would read as a merchant who
+    // refused and would not say why, which is a different and worse claim.
+    expect(AgentOrderStatusSchema.parse(status).refusal).toBeUndefined();
+    expect(AgentOrderStatusSchema.safeParse({ ...status, refusal: null }).success).toBe(false);
+  });
+
+  it("says in the exported document what the pair carries and what it still does not", () => {
+    // The reader who has only the document is the one who would plan around
+    // the claim, so the claim has to be exact in both directions: the
+    // merchant's own refusal reaches the agent, and the endings nobody worded
+    // still arrive as a bare `rejected`.
     const description = schemas.agent_order_status.meta()?.description ?? "";
 
     expect(description).toContain("rejected");
-    expect(description).toContain("nothing in this contract yet carries that reason to an agent");
+    expect(description).toContain("refusal");
+    expect(description).toContain("no refusal to quote");
   });
 
   it("answers in the words both sides read, and refuses the machine's own", () => {
