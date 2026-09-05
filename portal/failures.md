@@ -109,8 +109,8 @@ you — the order is marked as needing a refund, and the money for it is already
 with you. Name a deadline of your own and the agent sees it before it buys;
 leave it out and that day applies with no deadline shown to the agent at all
 ([The product card](/cards)). How long to wait for a synchronous answer is set
-by us and no card carries it: eight seconds, counted from the moment the
-payment checked out ([Time ran out](/orders)).
+by us and no card carries it: eight seconds, counted from the moment the payment
+checked out ([Time ran out](/orders)).
 
 It works this way because an order that waits forever is worse than an honest
 refusal: the agent holds its budget tied up and can neither buy from your

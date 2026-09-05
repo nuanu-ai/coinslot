@@ -237,9 +237,8 @@ A synchronous card has no such field, because how long to wait for a synchronous
 answer is set by us, the same for every product: eight seconds. That one runs
 from the moment the payment checked out rather than from the moment the agent
 first asked, so the price question and the payment check are behind it rather
-than inside it. The
-confirmation mode has a deadline of its own — an hour, where the card names none
-— and it arrives together with the mode.
+than inside it. The confirmation mode has a deadline of its own — an hour, where
+the card names none — and it arrives together with the mode.
 
 ## A price worked out at the moment of purchase
 

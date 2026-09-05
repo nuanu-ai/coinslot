@@ -639,9 +639,8 @@ nothing charged.
 A synchronous answer has eight seconds, counted from the moment the payment
 checked out — asking your price is behind them, and so is whatever the agent
 spent deciding to pay. Say your handler began the delivery in the seventh second
-and finished in the tenth. By that second the
-agent has already had a refusal and spent nothing, but the access you gave out
-has not gone anywhere.
+and finished in the tenth. By that second the agent has already had a refusal
+and spent nothing, but the access you gave out has not gone anywhere.
 
 Work already done is not lost: a repeat purchase under the same order key
 collects the delivery that was made, this time with the payment. So answering
