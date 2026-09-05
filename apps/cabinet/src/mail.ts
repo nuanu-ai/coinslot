@@ -20,10 +20,11 @@
  * because a mail filter between a merchant and their own cabinet is a merchant
  * who has to be rescued by a person at a terminal, which is the thing that
  * decision exists to stop needing. So a send that fails is a line in the log and
- * not an error on somebody's screen — and so is a send that works, because with
- * nothing above this file able to tell the two apart, this log is the whole of
- * what anybody can ever find out about a message. A caller may say that a link
- * was asked for; only this file may say what became of it.
+ * not an error on somebody's screen; what a caller gets back is one word about
+ * the door out, and the only screen that reads it draws a note when the answer
+ * is yes and nothing at all when it is no. Delivery is a different question and
+ * this file cannot answer it: there is no inbox here and no bounce handler, so
+ * the furthest anything upstream may go is that a provider took the message.
  */
 
 /**
@@ -46,8 +47,20 @@ export interface Message {
   readonly body: string;
 }
 
+/**
+ * What became of one message at the door out.
+ *
+ * `"accepted"` is the provider taking it and nothing more. `"refused"` is
+ * everything else: a provider that would not have it, a provider that did not
+ * answer at all, and — where a caller passes this word further up — a call
+ * where no message was ever handed over. Two words rather than three because
+ * the one decision anybody makes on this is whether they may tell somebody a
+ * link went out, and all of those say no.
+ */
+export type Handover = "accepted" | "refused";
+
 /** How a message leaves, or is written down instead of leaving. */
-export type Postman = (message: Message) => Promise<void>;
+export type Postman = (message: Message) => Promise<Handover>;
 
 /** What a sender needs to know about itself. */
 export interface MailConfig {
@@ -78,12 +91,18 @@ export function postmanFor(config: MailConfig): Postman {
  * reason to read this is to follow it. Whoever is developing the cabinet copies
  * it out of their terminal, and that is the entire flow with no account
  * anywhere.
+ *
+ * Taken, and not refused for having gone nowhere. The log is the only sink
+ * there is here, so the message reached everything a message can reach — and a
+ * caller told otherwise would hide the note naming the address from the one
+ * person who is about to go and look for the link.
  */
 const toTheLog: Postman = async (message) => {
   console.log(
     `[cabinet] no mail provider is configured, so this message was not sent.` +
       ` To: ${message.to}. Subject: ${message.subject}.\n${message.body}`,
   );
+  return "accepted";
 };
 
 /**
@@ -122,7 +141,7 @@ function throughResend(config: MailConfig): Postman {
         console.error(
           `[cabinet] a message to ${message.to} was refused by the mail provider (${answered.status})`,
         );
-        return;
+        return "refused";
       }
       // The other half of the same sentence, and the reason it is here: every
       // caller of this carries on regardless, so this log is the only account
@@ -132,12 +151,14 @@ function throughResend(config: MailConfig): Postman {
       // here and no bounce handler, so what the provider did with it after
       // this is not something this process ever learns.
       console.log(`[cabinet] a message to ${message.to} was handed to the mail provider`);
+      return "accepted";
     } catch (thrown) {
       // `String` and not the object: an exception from `fetch` prints its causes
       // too, and a request that failed mid-flight has the whole document it was
       // sending hanging off it — including the link, which is the one thing in
       // this file that must not be written down twice.
       console.error(`[cabinet] a message to ${message.to} could not be sent: ${String(thrown)}`);
+      return "refused";
     }
   };
 }

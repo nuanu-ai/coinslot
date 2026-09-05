@@ -387,6 +387,16 @@ td.control {
   line-height: 1.55;
 }
 
+/*
+ * The same box for something that went right. Only the bar changes colour: the
+ * callout is where this cabinet puts a line at the top of a page, and two
+ * layouts for one job would drift. An orange bar beside "Link sent" reads as a
+ * problem, which is the opposite of what the sentence says.
+ */
+.callout.done {
+  border-left-color: var(--ok);
+}
+
 .callout .what {
   font-weight: 500;
   /*

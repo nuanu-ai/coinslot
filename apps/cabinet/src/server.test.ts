@@ -45,7 +45,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { type CabinetConfig, loadConfig } from "./config.js";
 import { type Answer, type GatewayClient, gatewayFor, type Registrar } from "./gateway.js";
 import { type Identity, identityFor } from "./identity.js";
-import type { Message } from "./mail.js";
+import type { Handover, Message, Postman } from "./mail.js";
 import { buildApp } from "./server.js";
 import { readable } from "./testing/html.js";
 
@@ -123,7 +123,7 @@ const THE_MERCHANT = { id: "mer_the_merchant", key: KEY };
  */
 const withIdentity = async (
   config: CabinetConfig,
-  postman: (message: Message) => Promise<void>,
+  postman: Postman,
 ): Promise<{
   identity: Identity;
   forgetMerchant: (email: string) => void;
@@ -302,6 +302,15 @@ interface Starting {
    * whether somebody is locked out of their own cabinet.
    */
   readonly identity?: (real: Identity) => Identity;
+  /**
+   * What the mail provider does with a message this cabinet hands it.
+   *
+   * Taken by default, which is what the sandbox postman answers and what a
+   * provider that is up answers. A test asking for `"refused"` gets the other
+   * half — the afternoon a provider will not take anything — because that is
+   * the case a screen must not call a link sent.
+   */
+  readonly mailTakes?: Handover;
 }
 
 const started = async (options: Starting = {}): Promise<Running> => {
@@ -404,6 +413,7 @@ async function visiting(
   });
   const { identity, forgetMerchant, rows } = await withIdentity(config, async (message) => {
     mails.push(message);
+    return options.mailTakes ?? "accepted";
   });
   const app = buildApp(config, {
     identity: options.identity === undefined ? identity : options.identity(identity),
@@ -2970,7 +2980,7 @@ describe("when something goes wrong that the merchant has to get out of", () => 
       PAYMENT_NETWORK: "eip155:84532",
       FACILITATOR_URL: "sandbox:scripted",
     });
-    const { identity } = await withIdentity(config, async () => undefined);
+    const { identity } = await withIdentity(config, async () => "accepted");
     const app = buildApp(config, {
       identity,
       gatewayFor: () =>
@@ -3591,6 +3601,68 @@ describe("confirming the address on an account", () => {
     expect(mails).toHaveLength(1);
   });
 
+  it("says the link went out, on the page it sends the merchant back to", async () => {
+    // The button used to answer with the same page and say nothing at all, so
+    // somebody who pressed it had no way of telling a message that went from a
+    // control that does nothing — and pressed it again.
+    const { browser } = await started();
+    await browser.signIn();
+
+    const asked = await browser.post("/confirm");
+    const landed = await browser.get(asked.to ?? "");
+
+    expect(readable(landed.html)).toContain(`Link sent to ${PERSON}`);
+    // And not a word about arriving. The provider took it; there is no inbox
+    // here and no bounce handler, so delivery is not something this end learns.
+    expect(readable(landed.html)).not.toMatch(/delivered|arrived|received/i);
+  });
+
+  it("says nothing when the provider would not take the message", async () => {
+    // The screen keeps ADR-0009's half of this: a send that failed is a line in
+    // the log and not an error in front of somebody. What it must not do is
+    // send them to look in a mailbox for a message nobody was ever handed.
+    const { browser } = await started({ mailTakes: "refused" });
+    await browser.signIn();
+
+    const asked = await browser.post("/confirm");
+    const landed = await browser.get(asked.to ?? "");
+
+    expect(landed.status).toBe(200);
+    expect(readable(landed.html)).not.toMatch(/link sent/i);
+  });
+
+  it("does not call an address already confirmed a message that went out", async () => {
+    // Asked of the component rather than through a page, because the route
+    // upstairs never gets this far: it reads the banner's own condition first
+    // and does not ask at all. The answer still has to be right, because it is
+    // what the route would draw a note from — and "nothing was sent" is not one
+    // of the things that note is allowed to mean.
+    const { browser, mails, identity } = await started();
+    await browser.signIn();
+    await browser.post("/confirm");
+    const link = new URL(linkIn(mails));
+    await browser.get(link.pathname + link.search);
+
+    expect(await identity.askToConfirm(PERSON)).toBe("refused");
+    expect(mails).toHaveLength(1);
+  });
+
+  it("says nothing to an address already confirmed, because nothing was sent", async () => {
+    // The control is gone from the page by then, so this is somebody who
+    // reached the route anyway. Nothing is sent, and "nothing was sent" is not
+    // one of the things the note is allowed to mean.
+    const { browser, mails } = await started();
+    await browser.signIn();
+    await browser.post("/confirm");
+    const link = new URL(linkIn(mails));
+    await browser.get(link.pathname + link.search);
+
+    const again = await browser.post("/confirm");
+    const landed = await browser.get(again.to ?? "");
+
+    expect(readable(landed.html)).not.toMatch(/link sent/i);
+  });
+
   it("is not something a page on another site can ask for on a merchant's behalf", async () => {
     const { browser, mails } = await started();
     await browser.signIn();
@@ -3875,14 +3947,14 @@ describe("what the cabinet writes down about what people do", () => {
     expect(said).toContain(PERSON);
   });
 
-  it("does not say a confirmation link went out, because this end never finds out", async () => {
-    // The postman is the only thing that learns whether the provider took the
-    // message, and a send that fails is a line in the log rather than an error
-    // on anybody's screen (ADR-0009). So a line here saying the link was sent
-    // is a claim this code cannot make: on the test cabinet it stood directly
-    // under the postman's own line saying the provider had refused it, and
-    // whoever read the log went looking in a mailbox for a message nobody had
-    // been given. What this end knows is that somebody asked.
+  it("does not say in the log that a confirmation link went out, because the postman does", async () => {
+    // One account of a message and not two. The postman writes down what became
+    // of it, and a line here saying it was sent stood directly under the
+    // postman's own line saying the provider had refused it — so whoever read
+    // the log went looking in a mailbox for a message nobody had been given.
+    // The screen is a different matter: it is drawn from the postman's answer
+    // and only where that answer was yes. What this line says is that somebody
+    // asked, which is what this route knows on its own.
     const { browser } = await started();
     await browser.signIn();
 

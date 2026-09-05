@@ -74,6 +74,18 @@ export interface Chrome {
    * about the question.
    */
   readonly unnamed?: boolean;
+  /**
+   * Whether this page is the one a merchant lands on straight after a
+   * confirmation link was handed to the mail provider.
+   *
+   * True draws one line naming the address it went to. It says nothing about
+   * arriving, because nothing in this process finds that out — there is no
+   * inbox here and no bounce handler — and it is drawn only where a provider
+   * actually took the message: a send that was refused leaves the page exactly
+   * as it was, which is ADR-0009's own rule about not putting a provider's bad
+   * afternoon in front of somebody.
+   */
+  readonly linkSent?: boolean;
   readonly body: string;
 }
 
@@ -187,10 +199,29 @@ ${surface(chrome.mode)}
       </form>
     </div>
   </div>
-${chrome.unnamed === true ? unnamedNote(chrome.base) : ""}${chrome.body}
+${chrome.linkSent === true ? linkSentNote(chrome.who) : ""}${chrome.unnamed === true ? unnamedNote(chrome.base) : ""}${chrome.body}
 </div>
 </body>
 </html>
+`;
+
+/**
+ * The line a merchant lands on after asking for a confirmation link.
+ *
+ * The address is on it because that is the half they cannot check for
+ * themselves: the button is beside their own address in the corner, and a
+ * merchant who registered with a typo needs to read where the message actually
+ * went before they go looking for it. "Sent" and not "delivered", and nothing
+ * about a mailbox beyond going to look in it — a provider took the message, and
+ * that is the last thing this process ever hears about it.
+ *
+ * It goes on the next page they draw, because it is carried by the redirect and
+ * nothing else. A note about one press that outlived the press would be back on
+ * the screen the next morning saying a link had just gone out.
+ */
+const linkSentNote = (who: string): string => `  <div class="callout done">
+    <div class="what">Link sent to ${escaped(who)}. Check your inbox.</div>
+  </div>
 `;
 
 /**

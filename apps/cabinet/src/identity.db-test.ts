@@ -111,6 +111,7 @@ if (databaseUrl === null) {
         pool,
         postman: async (message) => {
           mails.push(message);
+          return "accepted";
         },
       },
     );

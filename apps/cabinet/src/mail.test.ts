@@ -90,7 +90,10 @@ describe("a cabinet with no mail provider", () => {
     const postman = postmanFor({ mailUrl: SANDBOX_MAIL, mailApiKey: null, mailFrom: "x" });
 
     const said = await logged(async () => {
-      await postman(MESSAGE);
+      // Taken, because the log is the only sink there is here: the message
+      // reached everything a message can reach on a laptop, and a caller told
+      // otherwise would hide the link from the one person who has to follow it.
+      await expect(postman(MESSAGE)).resolves.toBe("accepted");
     });
 
     expect(said).toContain("dmitry@example.com");
@@ -134,10 +137,10 @@ describe("a cabinet with a mail provider", () => {
   });
 
   it("says the provider took it, so the log can be read for an address that worked", async () => {
-    // The only outcome anybody upstream can be told about. Nothing above this
-    // file waits for a send and nothing branches on one, so a log that wrote
-    // down failures alone would leave a reader unable to tell a message that
-    // went to the provider from one that was never asked for at all.
+    // Written down as well as answered. The log is what a reader goes through
+    // afterwards, and one that wrote down failures alone would leave them
+    // unable to tell a message that went to the provider from one that was
+    // never asked for at all.
     const sending = await provider();
     const postman = postmanFor({
       mailUrl: sending.url,
@@ -146,7 +149,7 @@ describe("a cabinet with a mail provider", () => {
     });
 
     const said = await logged(async () => {
-      await postman(MESSAGE);
+      await expect(postman(MESSAGE)).resolves.toBe("accepted");
     });
 
     expect(said).toContain("dmitry@example.com");
@@ -169,7 +172,10 @@ describe("a cabinet with a mail provider", () => {
     });
 
     const said = await logged(async () => {
-      await expect(postman(MESSAGE)).resolves.toBeUndefined();
+      // Answered rather than thrown, and the answer is the one word a caller
+      // can act on: nothing here reached anybody, so nothing above may say it
+      // did.
+      await expect(postman(MESSAGE)).resolves.toBe("refused");
     });
 
     expect(said).toContain("422");
@@ -191,7 +197,7 @@ describe("a cabinet with a mail provider", () => {
     });
 
     const said = await logged(async () => {
-      await expect(postman(MESSAGE)).resolves.toBeUndefined();
+      await expect(postman(MESSAGE)).resolves.toBe("refused");
     });
 
     expect(said).toContain("could not be sent");

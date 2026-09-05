@@ -27,6 +27,7 @@
  * driving the real component.
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { type BetterAuthOptions, betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { memoryAdapter } from "better-auth/adapters/memory";
@@ -37,7 +38,7 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import type { Pool } from "pg";
 import type { CabinetConfig } from "./config.js";
 import { MINIMUM_PASSWORD_LENGTH } from "./credentials.js";
-import { type Message, type Postman, postmanFor } from "./mail.js";
+import { type Handover, type Message, type Postman, postmanFor } from "./mail.js";
 import { accounts, credentials, sessions, verifications } from "./schema.js";
 
 /**
@@ -202,8 +203,15 @@ export interface Identity {
   askForANewPassword(email: string): Promise<void>;
   /** Spends a link and sets the password on it. False when the link is spent. */
   setPasswordFrom(token: string, password: string): Promise<boolean>;
-  /** Sends the link that confirms an address, to whoever is signed in. */
-  askToConfirm(email: string): Promise<void>;
+  /**
+   * Sends the link that confirms an address, to whoever is signed in, and says
+   * whether the provider took it.
+   *
+   * `"refused"` covers the address that was already confirmed as well as the
+   * provider that would not have the message, because nothing was sent either
+   * way and the caller's one question is whether it may say a link went out.
+   */
+  askToConfirm(email: string): Promise<Handover>;
   /** Spends a confirmation link. False when it is not one we handed out. */
   confirm(token: string): Promise<boolean>;
 
@@ -269,6 +277,18 @@ export interface IdentityParts {
 export function identityFor(config: CabinetConfig, parts: IdentityParts = {}): Identity {
   const postman = parts.postman ?? postmanFor(config);
   const base = `${config.publicBaseUrl}${config.basePath}`;
+  /**
+   * Where the confirmation send writes what became of it, for the one call that
+   * asked for it.
+   *
+   * The component decides when to send and calls back into a function written
+   * once, here, when this cabinet is built — so a plain variable beside it
+   * would be a single slot shared by everybody pressing the button at the same
+   * moment, and the merchant whose provider refused would read that their link
+   * had gone out. This is per-call by construction, which is the whole reason
+   * it is not an ordinary `let`.
+   */
+  const confirmations = new AsyncLocalStorage<{ handed: Handover }>();
 
   const options = {
     // The component builds no address the cabinet uses — every link in every
@@ -335,7 +355,14 @@ export function identityFor(config: CabinetConfig, parts: IdentityParts = {}): I
       sendOnSignUp: false,
       sendOnSignIn: false,
       sendVerificationEmail: async ({ user, token }) => {
-        await postman(confirmMessage(user.email, `${base}/confirm?token=${token}`));
+        const handed = await postman(confirmMessage(user.email, `${base}/confirm?token=${token}`));
+        // Only the call that asked is told, and only if it is still listening.
+        // The component may reach this from somewhere nobody set a slot up for,
+        // and a send with nobody waiting on it is still a send.
+        const asked = confirmations.getStore();
+        if (asked !== undefined) {
+          asked.handed = handed;
+        }
       },
     },
     user: {
@@ -697,7 +724,16 @@ export function identityFor(config: CabinetConfig, parts: IdentityParts = {}): I
       // that will not answer is a different thing, and the merchant who pressed
       // the button is entitled to be told that something here is broken rather
       // than sent back to a page that looks as though it worked.
-      await orNull(auth.api.sendVerificationEmail({ body: { email: emailAs(email) } }));
+      //
+      // Refused until something says otherwise, which is what a swallowed
+      // refusal has to mean: the callback below never ran, no message was
+      // written, and a slot that started out saying a link had gone would be
+      // this file telling the screen to send somebody to an empty mailbox.
+      const asked: { handed: Handover } = { handed: "refused" };
+      await confirmations.run(asked, async () => {
+        await orNull(auth.api.sendVerificationEmail({ body: { email: emailAs(email) } }));
+      });
+      return asked.handed;
     },
 
     async confirm(token) {

@@ -39,7 +39,14 @@ export {
   type Person,
 } from "./identity.js";
 export { keysScreen, newKeyScreen } from "./keys.js";
-export { isSandboxMail, type Message, type Postman, postmanFor, SANDBOX_MAIL } from "./mail.js";
+export {
+  type Handover,
+  isSandboxMail,
+  type Message,
+  type Postman,
+  postmanFor,
+  SANDBOX_MAIL,
+} from "./mail.js";
 export { cardsScreen, ordersScreen, receiptsScreen, type Viewer } from "./screens.js";
 export { chooseNameScreen, settingsScreen } from "./seller-name.js";
 export { buildApp, type CabinetParts } from "./server.js";

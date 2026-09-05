@@ -860,16 +860,25 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
     // Asked for from the banner every page carries until the address is
     // confirmed. It answers with the same page a merchant was already looking
     // at rather than a screen of its own, because the whole of what happened is
-    // one message going out.
+    // one message going out — with a line on it naming the address, where a
+    // provider took the message. Silence was worse than it looks: the banner
+    // stays up either way, so a merchant who pressed the button had nothing to
+    // tell a message that went from a control that does nothing.
     const person = whoIs(request);
     if (!person.confirmed) {
-      await identity.askToConfirm(person.email);
-      // What happened here is that somebody asked. Whether a message reached a
-      // provider is the postman's to say and it says it (`mail.ts`), which is
-      // the only place that knows: a send that fails is a line in the log
-      // rather than an error on anybody's screen, so a line here saying the
-      // link went out would sit directly under the one saying it had not.
+      const handed = await identity.askToConfirm(person.email);
+      // What this line says is that somebody asked, and that is all it may say.
+      // Whether the message reached a provider is the postman's to write down
+      // and it writes it (`mail.ts`); a second line here would sit directly
+      // under the one saying the provider had refused it.
       console.log(`[cabinet] ${person.email} asked for a confirmation link`);
+      if (handed === "accepted") {
+        // The flag and not the address: a query string is read by every proxy
+        // and every log between here and the browser, and the page has the
+        // address already from whoever is signed in.
+        response.redirect(303, `${base}/cards?link=sent`);
+        return;
+      }
     }
     response.redirect(303, `${base}/cards`);
   });
@@ -1081,11 +1090,19 @@ export function buildApp(config: CabinetConfig, parts: CabinetParts): Express {
     if (!name.ok) {
       return trouble(response, base, name);
     }
-    response
-      .type("html")
-      .send(
-        cardsScreen(viewing(request, base, name.document), cards.document, config.publicBaseUrl),
-      );
+    response.type("html").send(
+      cardsScreen(
+        {
+          ...viewing(request, base, name.document),
+          // Where the press on the confirmation banner lands, and the only
+          // route that reads this. It is spent by being drawn: a merchant who
+          // goes to their cards again tomorrow has no note on the page.
+          linkSent: request.query.link === "sent",
+        },
+        cards.document,
+        config.publicBaseUrl,
+      ),
+    );
   });
 
   app.get(`${base}/orders`, async (request, response) => {
