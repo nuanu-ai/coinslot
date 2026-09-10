@@ -48,7 +48,14 @@ all, so the catalog never carries a product nobody can buy.
 **The declaration's shape follows the request's method**: a GET is declared as
 the probe the crawlers and the catalog's validator make, a POST as the purchase
 an agent makes. A resource declared only as a POST is invisible to the thing
-that lists it — the failure the spike paid for once.
+that lists it — the failure the spike paid for once — and a GET probe that
+declares the POST fails the validator's required check
+`bazaar.info.input.method.matches_request`, measured 2026-09-10
+(`docs/research/26-discovery-method-on-get.md`). The cost is that the probe
+misdescribes the purchase to an agent reading it, and one agent paid the
+probe; a GET that brings a payment is now told the purchase is a POST
+(ADR-0021). The honest shape stays closed until a body-less POST answers a
+challenge, which is an open question.
 
 ## Consequences
 
