@@ -46,20 +46,16 @@ own pause, its merchant's, or a merchant who left — answers no challenge at
 all, so the catalog never carries a product nobody can buy.
 
 **The declaration describes the purchase, whichever way the challenge was
-asked for**: a POST with a JSON body, on the GET a crawler makes as on the
-POST an agent makes. A declaration that described the GET said that paying
-the GET delivers the product, and an agent took it at its word on 2026-09-10.
-What makes the honest shape possible is the door: an unpaid call with no
-document — a GET, or a POST with nothing or an empty document — is answered
-with the challenge, which is how the catalog's validator asks. The validator
-holds the probe to the declaration, so it is asked with the purchase's method
-and accepts (`docs/research/26-discovery-method-on-get.md`, 2026-09-10: three
-of three); asked with GET it stops at the method and says to ask with POST.
-Half the public catalog is declared POST, and thousands of those entries
-carry the shape only the official server writes on a POST request, so the
-crawler probes that way too — but whether it accepts our resource at a real
-listing is measured only by a real listing, and that is the exit condition
-of this paragraph.
+asked for**: a POST with a JSON body, on a crawler's GET as on an agent's
+POST. Declared as the GET, it said that paying the GET delivers the product,
+and an agent took it at its word on 2026-09-10. What makes the honest shape
+possible is the door: an unpaid call with no document — a GET, or a POST
+with nothing or an empty document — is answered with the challenge, which is
+how the catalog's validator asks. The validator holds the probe to the
+declaration, so it is asked with the purchase's method and accepts
+(`docs/research/26-discovery-method-on-get.md`). Whether the crawler accepts
+the resource at a real listing is measured only by one, and that is this
+paragraph's exit condition.
 
 ## Consequences
 
@@ -67,10 +63,11 @@ An agent that has never heard of us can find a product of ours in a catalog it
 already walks; until now nothing in this repository did that. Our own tests
 cannot say whether the facilitator accepts what we emit — they hold the
 declaration to the library's schema and to a shape that was accepted once,
-which is not acceptance; `pnpm smoke:listing` makes the live call, with the
-purchase's method, and reports a probe with no verdict as no verdict. The card schema is shared by the
-publish and read paths on purpose, so a row stored before the description
-ceiling stops being readable until the card is republished. We pay in what a
+which is not acceptance; `pnpm smoke:listing` makes the live call with the
+purchase's method and reports a probe with no verdict as no verdict. The card
+schema is shared by the publish and read paths on purpose, so a row stored
+before the description ceiling stops being readable until the card is
+republished. We pay in what a
 merchant may write: a name in Cyrillic, Greek or Arabic cannot be a listing
 name, and the refusal happens here, where the merchant sees it, not in the
 catalog, where it is silent. The challenge carries the declaration in one
