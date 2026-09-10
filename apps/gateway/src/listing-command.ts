@@ -49,15 +49,19 @@ type CatalogIdentifiers = z.infer<typeof CATALOG_IDENTIFIERS>;
 export const VALIDATE_ENDPOINT = "https://api.cdp.coinbase.com/platform/v2/x402/validate";
 
 /**
- * The two methods our purchase address answers on, and both are asked about.
+ * The method the validator is asked to probe with: the one the declaration
+ * names, which is the purchase.
  *
- * A crawler and the validator itself probe with GET, and the purchase an agent
- * actually makes is a POST — and the two carry different declarations, because
- * a declaration that names a body is only valid on a method that carries one.
- * Checking one of them would leave the other unproven, and it is exactly that
- * asymmetry that made a resource invisible to the catalog once already.
+ * The declaration says POST whichever way the challenge was asked for, and the
+ * validator holds the probe to the declaration: asked with GET it stops at
+ * "declares method POST but was probed with GET — re-run validation with
+ * method=POST", measured 2026-09-10. So it is asked with POST, and what that
+ * proves is the whole path a listing needs — the bare POST answers a
+ * challenge, and the challenge holds up. The GET answer is not asked about;
+ * it is the same challenge, and the one thing the validator would say of it
+ * is that it was asked the wrong way.
  */
-export const PROBED_METHODS = ["GET", "POST"] as const;
+export const PROBED_METHODS = ["POST"] as const;
 
 /** What the endpoint answered, or why there is no answer. */
 export type ValidateAnswer =

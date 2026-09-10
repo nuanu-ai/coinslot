@@ -67,10 +67,10 @@ const accepted: ValidateAnswer = {
 };
 
 describe("asking the catalog whether it would take our resources", () => {
-  it("asks about every card on sale, on both methods, at the address the catalog names", async () => {
-    // Both methods, because they carry different declarations: a crawler probes
-    // with GET and an agent buys with POST. Checking one leaves the other
-    // unproven, and that asymmetry is what made a resource invisible once.
+  it("asks about every card on sale, with the purchase's method, at the address the catalog names", async () => {
+    // The purchase's method, because that is the one the declaration names and
+    // the validator holds the probe to the declaration; asked the other way it
+    // answers only that it was asked the other way.
     const run = aRun({
       catalog: { items: [card("itm_1"), card("itm_2")] },
       answers: () => accepted,
@@ -78,13 +78,11 @@ describe("asking the catalog whether it would take our resources", () => {
 
     expect(await run.run("https://coinslot.example")).toBe(0);
     expect(run.asked).toStrictEqual([
-      "GET https://coinslot.example/x402/itm_1/purchase",
       "POST https://coinslot.example/x402/itm_1/purchase",
-      "GET https://coinslot.example/x402/itm_2/purchase",
       "POST https://coinslot.example/x402/itm_2/purchase",
     ]);
     expect(run.text()).toContain(
-      "All 4 probes over the 2 products this catalog listed were accepted.",
+      "All 2 probes over the 2 products this catalog listed were accepted.",
     );
   });
 
@@ -92,10 +90,7 @@ describe("asking the catalog whether it would take our resources", () => {
     const run = aRun({ answers: () => accepted });
 
     expect(await run.run("https://coinslot.example", "itm_9")).toBe(0);
-    expect(run.asked).toStrictEqual([
-      "GET https://coinslot.example/x402/itm_9/purchase",
-      "POST https://coinslot.example/x402/itm_9/purchase",
-    ]);
+    expect(run.asked).toStrictEqual(["POST https://coinslot.example/x402/itm_9/purchase"]);
   });
 
   it("does not let a trailing slash make a second address for one product", async () => {
@@ -106,7 +101,7 @@ describe("asking the catalog whether it would take our resources", () => {
 
     await run.run("https://coinslot.example/", "itm_9");
 
-    expect(run.asked[0]).toBe("GET https://coinslot.example/x402/itm_9/purchase");
+    expect(run.asked[0]).toBe("POST https://coinslot.example/x402/itm_9/purchase");
   });
 
   it("reports a refusal as a refusal and prints what was said", async () => {
@@ -120,7 +115,7 @@ describe("asking the catalog whether it would take our resources", () => {
 
     expect(await run.run("https://coinslot.example")).toBe(1);
     expect(run.text()).toContain("refused");
-    expect(run.text()).toContain("2 of 2 probes were refused");
+    expect(run.text()).toContain("1 of 1 probes were refused");
     // The endpoint's own words, whole. What it checks is theirs and changes
     // when they change it, so nothing here picks the answer apart.
     expect(run.text()).toContain("bazaar.schema");
@@ -137,7 +132,7 @@ describe("asking the catalog whether it would take our resources", () => {
 
     expect(await run.run("https://coinslot.example")).toBe(1);
     expect(run.text()).toContain("no verdict");
-    expect(run.text()).toContain("2 of 2 probes got no verdict, so nothing is proven about them");
+    expect(run.text()).toContain("1 of 1 probes got no verdict, so nothing is proven about them");
     expect(run.text()).not.toContain("accepted");
     expect(run.text()).not.toContain("refused");
   });
@@ -175,8 +170,9 @@ describe("asking the catalog whether it would take our resources", () => {
 
   it("keeps a refusal and a silence apart in the same run", async () => {
     const run = aRun({
-      answers: (_resource, method) =>
-        method === "GET"
+      catalog: { items: [card("itm_1"), card("itm_2")] },
+      answers: (resource) =>
+        resource.includes("itm_1")
           ? { kind: "answered", status: 200, body: { valid: false } }
           : { kind: "unreachable", why: "timed out" },
     });
@@ -199,10 +195,7 @@ describe("asking the catalog whether it would take our resources", () => {
     });
 
     expect(await run.run("https://coinslot.example")).toBe(1);
-    expect(run.asked).toStrictEqual([
-      "GET https://coinslot.example/x402/itm_2/purchase",
-      "POST https://coinslot.example/x402/itm_2/purchase",
-    ]);
+    expect(run.asked).toStrictEqual(["POST https://coinslot.example/x402/itm_2/purchase"]);
     expect(run.text()).toContain("no address could be built");
   });
 
@@ -253,7 +246,7 @@ describe("asking the catalog whether it would take our resources", () => {
 
     expect(run.text()).toContain("not an https address");
     // A warning and not a refusal: it still asks, and still reports what it got.
-    expect(run.asked).toHaveLength(2);
+    expect(run.asked).toHaveLength(1);
   });
 
   it("says nothing of the kind about an https address", async () => {

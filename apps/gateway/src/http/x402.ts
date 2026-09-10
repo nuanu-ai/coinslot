@@ -183,16 +183,17 @@ export class PaymentEdge {
    *
    * The last part is the discovery declaration, and it is assembled here rather
    * than written out: `bazaarDeclarationOf` decides what a card says about
-   * itself, the protocol's own library turns that into the wire shape, and the
-   * same library then stamps the request's method into the declaration and into
-   * the schema beside it. Nothing in this file writes the format by hand.
+   * itself and the protocol's own library turns that into the wire shape.
+   * Nothing in this file writes the format by hand.
    *
-   * The method matters and is not cosmetic. A declaration that names a body is
-   * only valid on a method that carries one, and a crawler — and the catalog's
-   * own validator — asks with GET. Answering a GET with a body declaration is
-   * how a resource becomes invisible to the thing that lists it, so the two
-   * methods get the two shapes: a GET is declared as the probe it is, and a
-   * POST is declared as the purchase an agent actually makes.
+   * The declaration is the same whichever method the request came in on. It
+   * describes the purchase — a POST with a JSON body — because that is what an
+   * agent reads it for, and an agent reads it off the GET probe: on 2026-09-10
+   * one read a declaration that named GET, paid GET, and met the branch that
+   * reads no payment. The catalog's validator, asked with GET, objects that
+   * the method does not match its probe and says to ask with POST; asked with
+   * POST it is answered by the same declaration on a call that matches
+   * (docs/research/26-discovery-method-on-get.md, ADR-0012).
    */
   challengeFor(
     price: { readonly amount: string; readonly currency: string },
@@ -204,7 +205,6 @@ export class PaymentEdge {
       /** Where this card's own merchant is paid, which is who the agent pays. */
       readonly payoutWallet: string | null;
     },
-    method: "GET" | "POST",
     why?: string,
   ): string {
     const declared = bazaarDeclarationOf(listed.card, {
@@ -228,7 +228,7 @@ export class PaymentEdge {
         ...(declared.resource.tags === undefined ? {} : { tags: [...declared.resource.tags] }),
       },
       accepts: [this.requirementsFor(price, orderId, listed.payoutWallet)],
-      extensions: discoveryExtensionOf(declared, method),
+      extensions: discoveryExtensionOf(declared),
     };
     return encodePaymentRequiredHeader(challenge);
   }
@@ -274,16 +274,16 @@ export class PaymentEdge {
 }
 
 /**
- * One card's declaration in the shape the protocol carries it, for the method
- * this request came in on.
+ * One card's declaration in the shape the protocol carries it.
  *
  * Both steps are the library's. `declareDiscoveryExtension` builds the
  * declaration and the schema it is checked against; `enrichDeclaration` is the
  * hook the official resource server calls on every challenge, and it is what
- * writes the request's method into both halves — the declaration says which
- * method it describes, and the schema beside it is narrowed to that one method.
- * Left out, the declaration would fail the check the catalog runs on it, which
- * demands a method and has none to find.
+ * writes the method into both halves — the declaration says which method it
+ * describes, and the schema beside it is narrowed to that one method. Left
+ * out, the declaration would fail the check the catalog runs on it, which
+ * demands a method and has none to find. The official server hands the hook
+ * the request's method; this hands it the purchase's, whatever the request.
  *
  * The hook wants a transport context, and what it reads out of one is the
  * method and, where it is also given a route pattern, the values of that
@@ -294,26 +294,16 @@ export class PaymentEdge {
  * read. It is there because the hook decides whether it has a transport
  * context at all by looking for the two keys, and one of them is `adapter`.
  */
-function discoveryExtensionOf(
-  declared: BazaarDeclaration,
-  method: "GET" | "POST",
-): Record<string, unknown> {
-  const built = declareDiscoveryExtension(
-    method === "POST"
-      ? {
-          bodyType: "json",
-          input: declared.input,
-          inputSchema: declared.inputSchema,
-          output: declared.output,
-        }
-      : // A crawler's probe carries no body and no parameters of ours, so it is
-        // declared with neither. What it does carry is what the agent gets back,
-        // which is the part a catalog shows.
-        { output: declared.output },
-  );
+function discoveryExtensionOf(declared: BazaarDeclaration): Record<string, unknown> {
+  const built = declareDiscoveryExtension({
+    bodyType: "json",
+    input: declared.input,
+    inputSchema: declared.inputSchema,
+    output: declared.output,
+  });
 
   const enriched = bazaarResourceServerExtension.enrichDeclaration?.(built.bazaar, {
-    method,
+    method: "POST",
     adapter: { getPath: () => "" },
   });
 

@@ -471,37 +471,31 @@ describe("the discovery declaration a challenge carries", () => {
       300,
     );
 
-  const challenge = (method: "GET" | "POST", listed: { serviceName: string | null }) =>
+  const challenge = (listed: { serviceName: string | null }) =>
     decodePaymentRequiredHeader(
-      edge().challengeFor(
-        { amount: "5.00", currency: "USD" },
-        null,
-        {
-          itemId: "itm_4d21bb",
-          card,
-          serviceName: listed.serviceName,
-          payoutWallet: SELLERS_WALLET,
-        },
-        method,
-      ),
+      edge().challengeFor({ amount: "5.00", currency: "USD" }, null, {
+        itemId: "itm_4d21bb",
+        card,
+        serviceName: listed.serviceName,
+        payoutWallet: SELLERS_WALLET,
+      }),
     );
 
-  const declaration = (method: "GET" | "POST") =>
-    challenge(method, { serviceName: "The pilot merchant" }).extensions
-      ?.bazaar as DiscoveryExtension;
+  const declaration = () =>
+    challenge({ serviceName: "The pilot merchant" }).extensions?.bazaar as DiscoveryExtension;
 
   it("names the resource at the address this gateway was configured with", () => {
     // Not the address the request arrived at. Behind a terminator that is
     // http:// and carries whatever query string the caller wrote, and the
     // resource identity is what a listing is keyed on: two spellings would be
     // two listings, or one that flickers between them.
-    expect(challenge("GET", { serviceName: null }).resource.url).toBe(
+    expect(challenge({ serviceName: null }).resource.url).toBe(
       "https://coinslot.example/x402/itm_4d21bb/purchase",
     );
   });
 
   it("says who is selling and what the product is filed under", () => {
-    const { resource } = challenge("POST", { serviceName: "The pilot merchant" });
+    const { resource } = challenge({ serviceName: "The pilot merchant" });
 
     expect(resource.serviceName).toBe("The pilot merchant");
     expect(resource.tags).toStrictEqual(["access", "subscription"]);
@@ -512,7 +506,7 @@ describe("the discovery declaration a challenge carries", () => {
     // This is the catalog's code, not a copy of its rules: what it drops here
     // is what would silently vanish from a listing. A name or a tag it did not
     // hand back would be a merchant trading under a word they did not choose.
-    const { resource } = challenge("POST", { serviceName: "The pilot merchant" });
+    const { resource } = challenge({ serviceName: "The pilot merchant" });
 
     expect(sanitizeResourceServiceMetadata(resource)).toStrictEqual({
       serviceName: "The pilot merchant",
@@ -551,13 +545,19 @@ describe("the discovery declaration a challenge carries", () => {
   });
 
   it("says nothing about a seller nobody has named", () => {
-    const { resource } = challenge("POST", { serviceName: null });
+    const { resource } = challenge({ serviceName: null });
 
     expect("serviceName" in resource).toBe(false);
   });
 
-  it("describes the purchase an agent would actually make", () => {
-    const info = declaration("POST").info as unknown as {
+  it("describes the purchase an agent actually makes, and never the probe", () => {
+    // A GET is the probe a crawler makes, and what the probe gets back is what
+    // an agent reads before it buys. A declaration that named GET there would
+    // say that paying the probe delivers the product, and it does not: the GET
+    // branch reads no payment. An agent took that word literally on 2026-09-10
+    // (docs/research/26-discovery-method-on-get.md). So there is one shape, the
+    // purchase, and the challenge has no way of asking for the other.
+    const info = declaration().info as unknown as {
       input: Record<string, unknown>;
       output?: { example?: unknown };
     };
@@ -568,37 +568,15 @@ describe("the discovery declaration a challenge carries", () => {
     expect(info.output?.example).toStrictEqual({ access_url: "string" });
   });
 
-  it("describes the probe a crawler makes as the probe it is", () => {
-    // A crawler and the catalog's own validator ask with GET, and a body
-    // declaration is only valid on a method that carries a body. Answering a
-    // GET with one would make the resource invisible to the very thing that
-    // lists it.
-    const info = declaration("GET").info as unknown as {
-      input: Record<string, unknown>;
-      output?: { example?: unknown };
-    };
-
-    expect(info.input.method).toBe("GET");
-    expect("bodyType" in info.input).toBe(false);
-    expect("body" in info.input).toBe(false);
-    // What the probe drops is the body and nothing else. It still says what
-    // comes back, because that is the half of the declaration a catalog puts in
-    // front of a reader: a listing with no example is a product an agent cannot
-    // tell apart from any other.
-    expect(info.output?.example).toStrictEqual({ access_url: "string" });
+  it("holds together against its own schema", () => {
+    // The catalog validates the declaration against the schema shipped beside
+    // it, with this very function. A declaration that failed here is one the
+    // catalog would refuse.
+    expect(validateDiscoveryExtension(declaration())).toStrictEqual({ valid: true });
+    expect(
+      validateDiscoveryExtensionSpec(declaration() as unknown as Record<string, unknown>),
+    ).toStrictEqual({ valid: true });
   });
-
-  for (const method of ["GET", "POST"] as const) {
-    it(`holds together against its own schema on ${method}`, () => {
-      // The catalog validates the declaration against the schema shipped
-      // beside it, with this very function. A declaration that failed here is
-      // one the catalog would refuse.
-      expect(validateDiscoveryExtension(declaration(method))).toStrictEqual({ valid: true });
-      expect(
-        validateDiscoveryExtensionSpec(declaration(method) as unknown as Record<string, unknown>),
-      ).toStrictEqual({ valid: true });
-    });
-  }
 
   it("is built on a hook the library still has", () => {
     // The method is written into the declaration by the library's own hook, and
@@ -622,17 +600,12 @@ describe("the discovery declaration a challenge carries", () => {
       const parsed = CardSchema.parse(JSON.parse(JSON.stringify(card)));
       return JSON.stringify(
         decodePaymentRequiredHeader(
-          edge().challengeFor(
-            { amount: "5.00", currency: "USD" },
-            null,
-            {
-              itemId: "itm_4d21bb",
-              card: parsed,
-              serviceName: "A seller",
-              payoutWallet: SELLERS_WALLET,
-            },
-            "POST",
-          ),
+          edge().challengeFor({ amount: "5.00", currency: "USD" }, null, {
+            itemId: "itm_4d21bb",
+            card: parsed,
+            serviceName: "A seller",
+            payoutWallet: SELLERS_WALLET,
+          }),
         ),
       );
     };
@@ -644,12 +617,12 @@ describe("the discovery declaration a challenge carries", () => {
     // The declaration is added beside what was already there, not instead of
     // it: the order identifier travels in `extra` and is what a payment names.
     const forOrder = decodePaymentRequiredHeader(
-      edge().challengeFor(
-        { amount: "5.00", currency: "USD" },
-        "ord_1",
-        { itemId: "itm_4d21bb", card, serviceName: null, payoutWallet: SELLERS_WALLET },
-        "POST",
-      ),
+      edge().challengeFor({ amount: "5.00", currency: "USD" }, "ord_1", {
+        itemId: "itm_4d21bb",
+        card,
+        serviceName: null,
+        payoutWallet: SELLERS_WALLET,
+      }),
     );
 
     expect(forOrder.accepts[0]?.extra?.order_id).toBe("ord_1");
@@ -732,7 +705,7 @@ describe("the shape a live validation once accepted", () => {
     return [`${at}: ${typeof value}`];
   };
 
-  const ourDeclaration = (method: "GET" | "POST") => {
+  const ourDeclaration = () => {
     const card = CardSchema.parse({
       merchant_item_id: "numbers-rent",
       title: "A virtual number",
@@ -759,12 +732,12 @@ describe("the shape a live validation once accepted", () => {
       300,
     );
     const decoded = decodePaymentRequiredHeader(
-      edge.challengeFor(
-        { amount: "2.00", currency: "USD" },
-        null,
-        { itemId: "itm_1", card, serviceName: "Freeland", payoutWallet: SELLERS_WALLET },
-        method,
-      ),
+      edge.challengeFor({ amount: "2.00", currency: "USD" }, null, {
+        itemId: "itm_1",
+        card,
+        serviceName: "Freeland",
+        payoutWallet: SELLERS_WALLET,
+      }),
     );
     const declared = decoded.extensions?.bazaar as DiscoveryExtension | undefined;
     if (declared === undefined) throw new Error("the challenge carried no declaration");
@@ -780,9 +753,7 @@ describe("the shape a live validation once accepted", () => {
     const dialectsIn = (schema: unknown) =>
       skeleton(schema).filter((path) => path.includes("$schema"));
 
-    expect(dialectsIn(ourDeclaration("POST").schema)).toStrictEqual(["$schema: string"]);
-    expect(dialectsIn(acceptedSchemaOnPost)).toStrictEqual(
-      dialectsIn(ourDeclaration("POST").schema),
-    );
+    expect(dialectsIn(ourDeclaration().schema)).toStrictEqual(["$schema: string"]);
+    expect(dialectsIn(acceptedSchemaOnPost)).toStrictEqual(dialectsIn(ourDeclaration().schema));
   });
 });
