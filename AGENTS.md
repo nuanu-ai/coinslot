@@ -1,10 +1,16 @@
 # Coinslot — working discipline
 
 ## Stage
-Stage 0 of the pilot plan (`docs/research/21-pilot-plan.md`): the monorepo
-scaffold, contracts as code, the state machine with tests. Product code is
-being written, so the "Code" section is in force. Decisions live in
-`docs/decisions/`.
+Stage 2 of the pilot plan (`docs/research/21-pilot-plan.md`): all the money
+modes, the cabinet, the separation of the test and the production
+environments, and the listing in Bazaar with coinslot.nuanu.ai as the first
+merchant. The gate is a product that exists whole in prototypes and sells in
+production to ourselves. Product code is being written, so the "Code" section
+is in force. Decisions live in `docs/decisions/`.
+
+A stage opens on Dmitry's word. The architect then changes this paragraph and
+the status of the stage's initiative in the tracker in one commit, so the two
+do not disagree.
 
 The size of a solution is set by the current stage of the plan — not by the
 genre of the task, and not by the density of what is already written around
@@ -65,6 +71,24 @@ operator.
   rest (`pnpm worktrees` lists without removing). A worktree that outlives
   its merge is litter.
 - Never commit: secrets, `.env`, `.claude/settings.local.json`.
+
+## Tracker
+- The work state lives in the tracker (itsaplan, project `COIN`): what is
+  being done, by whom, in what order, what "done" means for each piece, and
+  the record of the hand-over. The repository stays the truth for what the
+  system is and why: code, tests, decisions, research, this charter. Nothing
+  is copied across that line; an issue names the file it rests on.
+- The rules of the tracker are one document there, "Working agreement", and
+  this charter outranks it. An engineer reads it once before the first issue.
+- A branch begins with an issue and an issue ends with the merge:
+  `agent/<topic>` is opened for an issue in Todo, and the issue is Done when
+  the commit is on `main` and the worktree is gone. The hand-over ritual is
+  the issue's checklist, and an item is ticked only after the output that
+  proves it is in the thread.
+- The stages of the pilot plan are the initiatives and the weeks are the
+  cycles; the architect plans both. A question only Dmitry can answer is an
+  issue titled `Decision: …` assigned to him, and the work it blocks says so
+  with a link.
 
 ## Decisions
 - An ADR records a decision that is expensive to reverse: a dependency in a
