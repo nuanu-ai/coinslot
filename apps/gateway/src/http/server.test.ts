@@ -527,6 +527,46 @@ describe("the payment challenge", () => {
     expect(named).toBe(orders[0]?.order.id);
   });
 
+  it("tells a GET that brought a payment that the purchase is a POST", async () => {
+    // A GET reads no payment: it is the probe, and a probe has no body to open
+    // an order with. An agent that paid the probe used to get back the same
+    // bare challenge a crawler gets, and could not tell its payment being
+    // ignored from its payment having failed. One did, on 2026-09-10, and
+    // stopped. The error line is where a challenge says why this call did not
+    // return the resource (ADR-0021), so it says it here — and only here: the
+    // bare probe keeps the words every other shelf uses.
+    const { served, harnessed } = await started();
+    const itemId = await publish(served, syncCard);
+    const probed = await served.call("GET", `/x402/${itemId}/purchase`);
+    const offered = decodePaymentRequiredHeader(probed.headers.get(PAYMENT_REQUIRED_HEADER) ?? "");
+    expect(offered.error).not.toMatch(/POST/);
+
+    const paidProbe = await served.call("GET", `/x402/${itemId}/purchase`, {
+      headers: {
+        [PAYMENT_SIGNATURE_HEADER]: encodePaymentSignatureHeader({
+          x402Version: 2,
+          accepted: offered.accepts[0] ?? {},
+          payload: {
+            signature: "0xsigned",
+            authorization: {
+              from: "0x" + "a".repeat(40),
+              to: PAY_TO,
+              value: "80000000",
+              nonce: "0x01",
+            },
+          },
+        } as never),
+      },
+    });
+
+    expect(paidProbe.status).toBe(402);
+    const told = decodePaymentRequiredHeader(paidProbe.headers.get(PAYMENT_REQUIRED_HEADER) ?? "");
+    expect(told.error).toMatch(/GET/);
+    expect(told.error).toMatch(/POST/);
+    expect(told.error).toMatch(/body/);
+    expect(await harnessed.store.orders(harnessed.merchant.id)).toStrictEqual([]);
+  });
+
   it("prices a fresh order when a payment names one this gateway is not holding", async () => {
     // An agent that built its own requirements rather than accepting ours gets
     // a price we issued, which is the only kind we can check a payment against.

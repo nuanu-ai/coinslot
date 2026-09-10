@@ -28,10 +28,13 @@ resource, in the shortest words that say it, and nothing else. It
 carries no product semantics, no pricing explanation and nothing about
 how this gateway works.
 
-Two challenges fill it today. The GET probe says "payment required",
-which is what the shelf says. A payment naming an order this gateway is
-not holding says so, because that is a reason the caller cannot work out
-and will otherwise read as its payment being rejected.
+Three challenges fill it today. The GET probe says "payment required",
+which is what the shelf says. A GET that brought a payment says that a
+GET carries none and the purchase is a POST with a body, because an
+agent that paid the probe cannot otherwise tell its payment being
+ignored from its payment being rejected. A payment naming an order this
+gateway is not holding says so, because that is a reason the caller
+cannot work out and will otherwise read the same way.
 
 Where a fact about a product has to reach an agent, it goes somewhere an
 agent can branch on it. `price_checked_at_purchase` on the public card is

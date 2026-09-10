@@ -626,7 +626,16 @@ async function purchase(
         // true, has no reader in this field, and is not load-bearing, because
         // an agent signs against the requirements of the call it actually
         // makes and its own ceiling catches a difference. ADR-0021.
-        "payment required",
+        //
+        // Unless the GET brought a payment. A crawler never does, so a payment
+        // here is an agent that took the probe for the purchase — one did, on
+        // 2026-09-10, read a declaration that named GET — and it is about to
+        // be answered with the same bare challenge it started from, which it
+        // cannot tell from its payment having failed. The line is the reason
+        // this call did not return the resource, which is what the line is for.
+        presentedPayment(request.headers) === null
+          ? "payment required"
+          : "a GET carries no payment: the purchase is a POST with a JSON body",
       ),
     );
     return written(response, PAYMENT_REQUIRED, {});
