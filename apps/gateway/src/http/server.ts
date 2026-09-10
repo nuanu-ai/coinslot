@@ -110,11 +110,13 @@ export interface MountedRoute {
    * The body reaches this handler unchecked, because the contract gave this
    * call somewhere in its own answer to say what is wrong with what arrived.
    *
-   * Publishing a card is the one. Its answer is either an identifier or a list
-   * of findings, and that list is how a merchant learns everything wrong with
+   * Publishing a card is one. Its answer is either an identifier or a list of
+   * findings, and that list is how a merchant learns everything wrong with
    * their card at once. Checked generically, the card would come back under
    * the gateway's own refusal shape instead, and the branch the contract
-   * designed for it would never be reached by anybody.
+   * designed for it would never be reached by anybody. The purchase is the
+   * other, for the opposite reason: an unpaid call with no document is not a
+   * mistake there but the probe, and the loop cannot tell the two apart.
    */
   readonly checksItsOwnBody?: boolean;
 }

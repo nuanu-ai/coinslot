@@ -569,6 +569,44 @@ describe("the payment challenge", () => {
     expect(await harnessed.store.orders(harnessed.merchant.id)).toStrictEqual([]);
   });
 
+  it("refuses an unpaid POST whose document is of some other shape, naming the fields", async () => {
+    // An empty document is nothing and gets the probe's answer; a document of
+    // the wrong shape is a mistake, and the agent is told which fields before
+    // it signs anything — the same moment it would learn that its parameters
+    // do not fit the card. Answering it with a price would make the two
+    // neighbouring mistakes two different journeys.
+    const { served, harnessed } = await started();
+    const itemId = await publish(served, syncCard);
+
+    const answered = await served.call("POST", `/x402/${itemId}/purchase`, {
+      body: { parameters: {} },
+    });
+
+    expect(answered.status).toBe(400);
+    expect((answered.body as { error: { code: string } }).error.code).toBe("malformed_body");
+    expect(JSON.stringify(answered.body)).toContain("params");
+    expect(await harnessed.store.orders(harnessed.merchant.id)).toStrictEqual([]);
+  });
+
+  it("refuses a body it could not read as JSON by saying so, not by pricing it", async () => {
+    // The body parser leaves a body under any other content-type unread, and
+    // unread looks the same as absent. Absent is the probe; a body that was
+    // sent and not read is a mistake, and the words name the mistake rather
+    // than a field that is missing from a document that was never read.
+    const { served, harnessed } = await started();
+    const itemId = await publish(served, syncCard);
+
+    const answered = await served.call("POST", `/x402/${itemId}/purchase`, {
+      body: { params: {} },
+      headers: { "content-type": "text/plain" },
+    });
+
+    expect(answered.status).toBe(400);
+    expect((answered.body as { error: { code: string } }).error.code).toBe("malformed_body");
+    expect((answered.body as { error: { message: string } }).error.message).toMatch(/content-type/);
+    expect(await harnessed.store.orders(harnessed.merchant.id)).toStrictEqual([]);
+  });
+
   it("refuses a paid POST whose document is not the purchase, naming the fields", async () => {
     // A payment is what makes the document matter: with one on the call the
     // gateway is about to open an order, and a document that is not the

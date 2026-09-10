@@ -567,28 +567,116 @@ function answeredOrder(
 }
 
 /**
+ * The challenge and nothing else: the answer to a call that is not a purchase.
+ * `why` is the error line, and it is the reason this call did not return the
+ * resource (ADR-0021).
+ */
+async function probeAnswer(
+  gateway: Gateway,
+  edge: PaymentEdge,
+  response: RouteCall["response"],
+  itemId: string,
+  why: string,
+): Promise<RouteAnswer> {
+  const offered = await gateway.paidResource(itemId);
+  if (offered === null) {
+    return written(response, NOT_FOUND, refusal("no_such_item", "there is no such product"));
+  }
+  if (offered.selling !== "open") {
+    // A card that is off sale answers no challenge, and the reason is not
+    // tidiness. A challenge carries the declaration a discovery catalog is
+    // built from; kept up here, a paused card would go on inviting an agent
+    // to pay for something every purchase of which comes back refused. The
+    // word an agent gets is the same word the order machine would have given
+    // it a moment later.
+    //
+    // What a catalog does with a resource that stops answering is its own
+    // business and we have not measured it: the CDP documentation says such a
+    // resource is eventually removed, and `docs/research/04-spike-bazaar-listing.md`
+    // records that as read rather than as timed.
+    return written(
+      response,
+      CONFLICT,
+      refusal("not_selling", "this product is not on sale at the moment"),
+    );
+  }
+  response.setHeader(
+    PAYMENT_REQUIRED_HEADER,
+    edge.challengeFor(
+      { amount: offered.stored.card.price.amount, currency: offered.stored.card.price.currency },
+      null,
+      {
+        itemId: offered.stored.id,
+        card: offered.stored.card,
+        serviceName: offered.serviceName,
+        payoutWallet: offered.payoutWallet,
+      },
+      // What every other paid resource on this shelf says here, and no more.
+      // Measured 2026-09-01 across eighteen hosts in the public catalogue
+      // (docs/research/25-what-the-challenge-says.md): fourteen of the
+      // fifteen challenges that came back carry an error line, and thirteen
+      // of those are the words below. Nobody puts anything about their
+      // product in it, and nothing reads it — the catalogue's own record
+      // drops the field. What used to be here explained that this price is
+      // the published one and a purchase is priced when it is made; that is
+      // true, has no reader in this field, and is not load-bearing, because
+      // an agent signs against the requirements of the call it actually
+      // makes and its own ceiling catches a difference. ADR-0021.
+      //
+      // Unless the GET brought a payment. A crawler never does, so a payment
+      // here is an agent that took the probe for the purchase — one did, on
+      // 2026-09-10, read a declaration that named GET — and it is about to
+      // be answered with the same bare challenge it started from, which it
+      // cannot tell from its payment having failed. The line is the reason
+      // this call did not return the resource, which is what the line is for.
+      // "Not read", not "carries none": the request did carry one.
+      why,
+    ),
+  );
+  return written(response, PAYMENT_REQUIRED, {});
+}
+
+/** Whether a body was sent at all, whatever the parser made of it. */
+const declaresABody = (headers: Record<string, string | string[] | undefined>): boolean =>
+  headers["transfer-encoding"] !== undefined ||
+  Number(
+    Array.isArray(headers["content-length"])
+      ? headers["content-length"][0]
+      : (headers["content-length"] ?? 0),
+  ) > 0;
+
+/** A document that says nothing: what the validator's own probe carries. */
+const isEmptyDocument = (body: unknown): boolean =>
+  typeof body === "object" &&
+  body !== null &&
+  !Array.isArray(body) &&
+  Object.keys(body).length === 0;
+
+/**
  * Buying one product.
  *
- * An unpaid call that is not a purchase produces the challenge and never a
- * purchase: a GET, which carries no body, and a POST whose body is not the
- * purchase document — nothing, an empty document, a document of some other
- * shape. There is nothing to open an order with, and the address answers such
- * calls at all because that is how everything outside our design asks for a
- * paid resource: the validators and crawlers that list one, and the whole
- * world built on the official x402 server, which answers an unpaid call with
- * the challenge before it reads a body. A paywall that held the validator's
- * empty document as a purchase kept every POST probe of ours out of the
- * catalog (docs/research/26-discovery-method-on-get.md).
+ * An unpaid call that carries no document produces the challenge and never a
+ * purchase: a GET, which carries no body, and a POST with nothing or with an
+ * empty document. There is nothing to open an order with, and the address
+ * answers such calls at all because that is how everything outside our design
+ * asks for a paid resource: the validators and crawlers that list one — the
+ * catalog's validator sends a POST declaring a JSON body and carrying none —
+ * and the whole world built on the official x402 server, which answers an
+ * unpaid call with the challenge before it reads a body. A paywall that held
+ * the validator's empty document as a purchase kept every POST probe of ours
+ * out of the catalog (docs/research/26-discovery-method-on-get.md). A document
+ * of some other shape is not nothing: it is refused with the fields, before
+ * the agent signs anything, at the same moment it would learn that its
+ * parameters do not fit the card.
  *
  * A POST with the purchase document is the purchase. Without a payment it
  * opens an order, has it priced, and answers with what that order costs. With
  * one it looks up the order the payment names and drives it. A payment naming
  * an order we are not holding is answered with a fresh challenge rather than
  * an error: the agent then pays against a price this gateway actually issued,
- * which is the only kind it can check. A payment with no document beside it,
- * naming no order of ours, is the one call refused for its body: an order is
- * about to be opened for it and there is nothing to open it with, so it is
- * told which fields, in the mounting loop's own words.
+ * which is the only kind it can check. A payment naming no order of ours and
+ * carrying no document is refused for its body too: an order is about to be
+ * opened for it and there is nothing to open it with.
  */
 async function purchase(
   gateway: Gateway,
@@ -597,69 +685,49 @@ async function purchase(
 ): Promise<RouteAnswer> {
   const itemId = params.item_id ?? "";
   const presented = presentedPayment(request.headers);
-  const held = hold(PurchaseRequestSchema, body);
-  const document = held.ok ? (held.value as PurchaseRequest) : null;
 
-  if (request.method === "GET" || (presented === null && document === null)) {
-    const offered = await gateway.paidResource(itemId);
-    if (offered === null) {
-      return written(response, NOT_FOUND, refusal("no_such_item", "there is no such product"));
-    }
-    if (offered.selling !== "open") {
-      // A card that is off sale answers no challenge, and the reason is not
-      // tidiness. A challenge carries the declaration a discovery catalog is
-      // built from; kept up here, a paused card would go on inviting an agent
-      // to pay for something every purchase of which comes back refused. The
-      // word an agent gets is the same word the order machine would have given
-      // it a moment later.
-      //
-      // What a catalog does with a resource that stops answering is its own
-      // business and we have not measured it: the CDP documentation says such a
-      // resource is eventually removed, and `docs/research/04-spike-bazaar-listing.md`
-      // records that as read rather than as timed.
-      return written(
-        response,
-        CONFLICT,
-        refusal("not_selling", "this product is not on sale at the moment"),
-      );
-    }
-    response.setHeader(
-      PAYMENT_REQUIRED_HEADER,
-      edge.challengeFor(
-        { amount: offered.stored.card.price.amount, currency: offered.stored.card.price.currency },
-        null,
-        {
-          itemId: offered.stored.id,
-          card: offered.stored.card,
-          serviceName: offered.serviceName,
-          payoutWallet: offered.payoutWallet,
-        },
-        // What every other paid resource on this shelf says here, and no more.
-        // Measured 2026-09-01 across eighteen hosts in the public catalogue
-        // (docs/research/25-what-the-challenge-says.md): fourteen of the
-        // fifteen challenges that came back carry an error line, and thirteen
-        // of those are the words below. Nobody puts anything about their
-        // product in it, and nothing reads it — the catalogue's own record
-        // drops the field. What used to be here explained that this price is
-        // the published one and a purchase is priced when it is made; that is
-        // true, has no reader in this field, and is not load-bearing, because
-        // an agent signs against the requirements of the call it actually
-        // makes and its own ceiling catches a difference. ADR-0021.
-        //
-        // Unless the GET brought a payment. A crawler never does, so a payment
-        // here is an agent that took the probe for the purchase — one did, on
-        // 2026-09-10, read a declaration that named GET — and it is about to
-        // be answered with the same bare challenge it started from, which it
-        // cannot tell from its payment having failed. The line is the reason
-        // this call did not return the resource, which is what the line is for.
-        // "Not read", not "carries none": the request did carry one.
-        presented === null
-          ? "payment required"
-          : "this GET is not read for payment: the purchase is a POST with a JSON body",
+  if (request.method === "GET") {
+    return probeAnswer(
+      gateway,
+      edge,
+      response,
+      itemId,
+      // Unless the GET brought a payment. A crawler never does, so a payment
+      // here is an agent that took the probe for the purchase — one did, on
+      // 2026-09-10, read a declaration that named GET — and it is about to
+      // be answered with the same bare challenge it started from, which it
+      // cannot tell from its payment having failed. "Not read", not "carries
+      // none": the request did carry one.
+      presented === null
+        ? "payment required"
+        : "this GET is not read for payment: the purchase is a POST with a JSON body",
+    );
+  }
+
+  // The parser leaves a body under any content-type but JSON unread, and
+  // unread arrives looking the same as absent. Absent is the probe; a body
+  // that was sent and not read is a mistake, and the words name the mistake
+  // rather than a field missing from a document that was never read.
+  if (body === undefined && declaresABody(request.headers)) {
+    return written(
+      response,
+      BAD_REQUEST,
+      refusal(
+        "malformed_body",
+        "this call's body was not read because its content-type is not application/json, so send it as JSON",
       ),
     );
-    return written(response, PAYMENT_REQUIRED, {});
   }
+
+  // Nothing, or an empty document, and no payment: the probe on the purchase's
+  // own method, which is how the catalog's validator asks. A document of some
+  // other shape is not nothing — it is a mistake, and the agent is told which
+  // fields below, before it signs anything.
+  if (presented === null && (body === undefined || isEmptyDocument(body))) {
+    return probeAnswer(gateway, edge, response, itemId, "payment required");
+  }
+
+  const held = hold(PurchaseRequestSchema, body);
 
   if (presented !== null && presented !== "unreadable" && presented.orderId !== null) {
     const named = await gateway.orderById(presented.orderId);
@@ -677,19 +745,19 @@ async function purchase(
     }
   }
 
-  if (document === null) {
+  if (!held.ok) {
     return written(
       response,
       BAD_REQUEST,
       refusal(
         "malformed_body",
         "this call's body is not the document this call takes, and the problems say which fields and why",
-        { problems: held.ok ? [] : held.problems },
+        { problems: held.problems },
       ),
     );
   }
 
-  const attempt = await gateway.beginPurchase(itemId, document.params);
+  const attempt = await gateway.beginPurchase(itemId, (held.value as PurchaseRequest).params);
   return answerPurchase(
     gateway,
     edge,
