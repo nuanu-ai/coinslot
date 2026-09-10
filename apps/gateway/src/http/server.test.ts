@@ -548,14 +548,37 @@ describe("the payment challenge", () => {
     expect(await harnessed.store.orders(harnessed.merchant.id)).toStrictEqual([]);
   });
 
-  it("still refuses a POST whose document is not the purchase, naming the fields", async () => {
-    // A missing document and a wrong one are two answers: the first is the
-    // probe, the second is a mistake the agent can fix, and it is told which.
+  it("answers an unpaid POST that carries an empty document the same way", async () => {
+    // This is the validator's own probe, byte for byte: a POST declaring a
+    // JSON body and carrying none, which the body parser hands over as an
+    // empty document. Held as the purchase it was refused with a 400, and the
+    // stand was refused by the catalog on 2026-09-10 for exactly that. An
+    // unpaid call is the probe whatever it carries; the document is read when
+    // there is a payment to read it for, or when it is the purchase and can
+    // be priced as one.
+    const { served, harnessed } = await started();
+    const itemId = await publish(served, syncCard);
+
+    const answered = await served.call("POST", `/x402/${itemId}/purchase`, { body: {} });
+
+    expect(answered.status).toBe(402);
+    const challenge = decodePaymentRequiredHeader(
+      answered.headers.get(PAYMENT_REQUIRED_HEADER) ?? "",
+    );
+    expect(challenge.accepts[0]?.extra?.[ORDER_ID_IN_EXTRA]).toBeUndefined();
+    expect(await harnessed.store.orders(harnessed.merchant.id)).toStrictEqual([]);
+  });
+
+  it("refuses a paid POST whose document is not the purchase, naming the fields", async () => {
+    // A payment is what makes the document matter: with one on the call the
+    // gateway is about to open an order, and a document that is not the
+    // purchase is a mistake the agent can fix, so it is told which fields.
     const { served, harnessed } = await started();
     const itemId = await publish(served, syncCard);
 
     const answered = await served.call("POST", `/x402/${itemId}/purchase`, {
       body: { nope: 1 },
+      headers: { [PAYMENT_SIGNATURE_HEADER]: "this-is-not-a-payment" },
     });
 
     expect(answered.status).toBe(400);

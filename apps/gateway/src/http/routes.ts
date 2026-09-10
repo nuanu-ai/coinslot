@@ -469,9 +469,9 @@ export function handlersFor(gateway: Gateway): Partial<Record<RouteName, Mounted
     },
 
     purchase_item: {
-      // The document is held by the route, because a POST that brought none is
-      // not a mistake there: it is the probe, and the loop cannot tell the two
-      // apart.
+      // The document is held by the route, because an unpaid POST that brought
+      // none — or brought something else — is not a mistake there: it is the
+      // probe, and the loop cannot tell the two apart.
       checksItsOwnBody: true,
       serve: (call) => purchase(gateway, edge, call),
     },
@@ -569,22 +569,26 @@ function answeredOrder(
 /**
  * Buying one product.
  *
- * A call that brought no document and no payment produces the challenge and
- * never a purchase: there is nothing to open an order with. That is a GET,
- * which carries no body, and a POST that carries none. The address answers
- * such calls at all because that is how everything outside our design asks
- * for a paid resource — the validators and crawlers that list one, and the
- * whole world built on the official x402 server, which answers an unpaid call
- * with the challenge before it reads a body. A paywall that refused the
- * bare POST kept every POST probe of ours out of the catalog
- * (docs/research/26-discovery-method-on-get.md).
+ * An unpaid call that is not a purchase produces the challenge and never a
+ * purchase: a GET, which carries no body, and a POST whose body is not the
+ * purchase document — nothing, an empty document, a document of some other
+ * shape. There is nothing to open an order with, and the address answers such
+ * calls at all because that is how everything outside our design asks for a
+ * paid resource: the validators and crawlers that list one, and the whole
+ * world built on the official x402 server, which answers an unpaid call with
+ * the challenge before it reads a body. A paywall that held the validator's
+ * empty document as a purchase kept every POST probe of ours out of the
+ * catalog (docs/research/26-discovery-method-on-get.md).
  *
- * A POST with a document is the purchase. Without a payment it opens an
- * order, has it priced, and answers with what that order costs. With one it
- * looks up the order the payment names and drives it. A payment naming an
- * order we are not holding is answered with a fresh challenge rather than an
- * error: the agent then pays against a price this gateway actually issued,
- * which is the only kind it can check.
+ * A POST with the purchase document is the purchase. Without a payment it
+ * opens an order, has it priced, and answers with what that order costs. With
+ * one it looks up the order the payment names and drives it. A payment naming
+ * an order we are not holding is answered with a fresh challenge rather than
+ * an error: the agent then pays against a price this gateway actually issued,
+ * which is the only kind it can check. A payment with no document beside it,
+ * naming no order of ours, is the one call refused for its body: an order is
+ * about to be opened for it and there is nothing to open it with, so it is
+ * told which fields, in the mounting loop's own words.
  */
 async function purchase(
   gateway: Gateway,
@@ -593,27 +597,10 @@ async function purchase(
 ): Promise<RouteAnswer> {
   const itemId = params.item_id ?? "";
   const presented = presentedPayment(request.headers);
+  const held = hold(PurchaseRequestSchema, body);
+  const document = held.ok ? (held.value as PurchaseRequest) : null;
 
-  // Held here rather than by the mounting loop, in the loop's own words, so
-  // that a document that is not the purchase stays the mistake it was.
-  let asked: PurchaseRequest["params"] = {};
-  if (body !== undefined) {
-    const held = hold(PurchaseRequestSchema, body);
-    if (!held.ok) {
-      return written(
-        response,
-        BAD_REQUEST,
-        refusal(
-          "malformed_body",
-          "this call's body is not the document this call takes, and the problems say which fields and why",
-          { problems: held.problems },
-        ),
-      );
-    }
-    asked = (held.value as PurchaseRequest).params;
-  }
-
-  if (request.method === "GET" || (body === undefined && presented === null)) {
+  if (request.method === "GET" || (presented === null && document === null)) {
     const offered = await gateway.paidResource(itemId);
     if (offered === null) {
       return written(response, NOT_FOUND, refusal("no_such_item", "there is no such product"));
@@ -690,7 +677,19 @@ async function purchase(
     }
   }
 
-  const attempt = await gateway.beginPurchase(itemId, asked);
+  if (document === null) {
+    return written(
+      response,
+      BAD_REQUEST,
+      refusal(
+        "malformed_body",
+        "this call's body is not the document this call takes, and the problems say which fields and why",
+        { problems: held.ok ? [] : held.problems },
+      ),
+    );
+  }
+
+  const attempt = await gateway.beginPurchase(itemId, document.params);
   return answerPurchase(
     gateway,
     edge,
