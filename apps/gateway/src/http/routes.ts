@@ -27,11 +27,12 @@ import type {
   SellerNameRequest,
   WorkerPollRequest,
 } from "@nuanu-ai/coinslot-contracts";
+import { PurchaseRequestSchema } from "@nuanu-ai/coinslot-contracts";
 import type { Gateway, PurchaseAttempt } from "../app/gateway.js";
 import { agentOrderStatusOf, orderDocumentOf } from "../app/runner.js";
 import type { KeyPurpose } from "../ports/store.js";
 import type { MountedRoute, RouteAnswer, RouteCall } from "./server.js";
-import { refusal } from "./server.js";
+import { hold, refusal } from "./server.js";
 import {
   PAYMENT_REQUIRED_HEADER,
   PAYMENT_RESPONSE_HEADER,
@@ -52,6 +53,7 @@ import {
  * what it ran into is the state of the world.
  */
 const OK = 200;
+const BAD_REQUEST = 400;
 const PAYMENT_REQUIRED = 402;
 const FORBIDDEN = 403;
 const NOT_FOUND = 404;
@@ -466,7 +468,13 @@ export function handlersFor(gateway: Gateway): Partial<Record<RouteName, Mounted
       }),
     },
 
-    purchase_item: { serve: (call) => purchase(gateway, edge, call) },
+    purchase_item: {
+      // The document is held by the route, because a POST that brought none is
+      // not a mistake there: it is the probe, and the loop cannot tell the two
+      // apart.
+      checksItsOwnBody: true,
+      serve: (call) => purchase(gateway, edge, call),
+    },
 
     get_order_status: { serve: (call) => orderStatus(gateway, call) },
   };
@@ -561,18 +569,22 @@ function answeredOrder(
 /**
  * Buying one product.
  *
- * A GET produces the challenge and never a purchase: it carries no body, so it
- * has no parameters and there is nothing to open an order with. That is the
- * whole reason the address answers on GET at all — the validators and crawlers
- * that list a paid resource ask for it that way, and a paywall bound to one
- * method makes the resource invisible to them.
+ * A call that brought no document and no payment produces the challenge and
+ * never a purchase: there is nothing to open an order with. That is a GET,
+ * which carries no body, and a POST that carries none. The address answers
+ * such calls at all because that is how everything outside our design asks
+ * for a paid resource — the validators and crawlers that list one, and the
+ * whole world built on the official x402 server, which answers an unpaid call
+ * with the challenge before it reads a body. A paywall that refused the
+ * bare POST kept every POST probe of ours out of the catalog
+ * (docs/research/26-discovery-method-on-get.md).
  *
- * A POST is the purchase. Without a payment it opens an order, has it priced,
- * and answers with what that order costs. With one it looks up the order the
- * payment names and drives it. A payment naming an order we are not holding is
- * answered with a fresh challenge rather than an error: the agent then pays
- * against a price this gateway actually issued, which is the only kind it can
- * check.
+ * A POST with a document is the purchase. Without a payment it opens an
+ * order, has it priced, and answers with what that order costs. With one it
+ * looks up the order the payment names and drives it. A payment naming an
+ * order we are not holding is answered with a fresh challenge rather than an
+ * error: the agent then pays against a price this gateway actually issued,
+ * which is the only kind it can check.
  */
 async function purchase(
   gateway: Gateway,
@@ -580,8 +592,28 @@ async function purchase(
   { params, body, request, response }: RouteCall,
 ): Promise<RouteAnswer> {
   const itemId = params.item_id ?? "";
+  const presented = presentedPayment(request.headers);
 
-  if (request.method === "GET") {
+  // Held here rather than by the mounting loop, in the loop's own words, so
+  // that a document that is not the purchase stays the mistake it was.
+  let asked: PurchaseRequest["params"] = {};
+  if (body !== undefined) {
+    const held = hold(PurchaseRequestSchema, body);
+    if (!held.ok) {
+      return written(
+        response,
+        BAD_REQUEST,
+        refusal(
+          "malformed_body",
+          "this call's body is not the document this call takes, and the problems say which fields and why",
+          { problems: held.problems },
+        ),
+      );
+    }
+    asked = (held.value as PurchaseRequest).params;
+  }
+
+  if (request.method === "GET" || (body === undefined && presented === null)) {
     const offered = await gateway.paidResource(itemId);
     if (offered === null) {
       return written(response, NOT_FOUND, refusal("no_such_item", "there is no such product"));
@@ -635,15 +667,13 @@ async function purchase(
         // cannot tell from its payment having failed. The line is the reason
         // this call did not return the resource, which is what the line is for.
         // "Not read", not "carries none": the request did carry one.
-        presentedPayment(request.headers) === null
+        presented === null
           ? "payment required"
           : "this GET is not read for payment: the purchase is a POST with a JSON body",
       ),
     );
     return written(response, PAYMENT_REQUIRED, {});
   }
-
-  const presented = presentedPayment(request.headers);
 
   if (presented !== null && presented !== "unreadable" && presented.orderId !== null) {
     const named = await gateway.orderById(presented.orderId);
@@ -661,7 +691,6 @@ async function purchase(
     }
   }
 
-  const asked = (body as PurchaseRequest | undefined)?.params ?? {};
   const attempt = await gateway.beginPurchase(itemId, asked);
   return answerPurchase(
     gateway,

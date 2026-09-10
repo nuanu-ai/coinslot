@@ -500,6 +500,43 @@ describe("the payment challenge", () => {
     expect(named).toBe(orders[0]?.order.id);
   });
 
+  it("answers a POST that brought no document as it answers a GET: a price, and no order", async () => {
+    // The catalog's validator asks with a POST that carries nothing, and so
+    // does everything built on the official x402 server: an unpaid call is
+    // answered with the challenge before any body is read. Ours refused that
+    // call with a 400 for the document it did not bring, which kept every
+    // POST probe of ours out of the catalog
+    // (docs/research/26-discovery-method-on-get.md).
+    const { served, harnessed } = await started();
+    const itemId = await publish(served, syncCard);
+
+    const answered = await served.call("POST", `/x402/${itemId}/purchase`);
+
+    expect(answered.status).toBe(402);
+    const challenge = decodePaymentRequiredHeader(
+      answered.headers.get(PAYMENT_REQUIRED_HEADER) ?? "",
+    );
+    expect(challenge.accepts[0]?.amount).toBe("80000000");
+    expect(challenge.accepts[0]?.extra?.[ORDER_ID_IN_EXTRA]).toBeUndefined();
+    expect(await harnessed.store.orders(harnessed.merchant.id)).toStrictEqual([]);
+  });
+
+  it("still refuses a POST whose document is not the purchase, naming the fields", async () => {
+    // A missing document and a wrong one are two answers: the first is the
+    // probe, the second is a mistake the agent can fix, and it is told which.
+    const { served, harnessed } = await started();
+    const itemId = await publish(served, syncCard);
+
+    const answered = await served.call("POST", `/x402/${itemId}/purchase`, {
+      body: { nope: 1 },
+    });
+
+    expect(answered.status).toBe(400);
+    expect((answered.body as { error: { code: string } }).error.code).toBe("malformed_body");
+    expect(JSON.stringify(answered.body)).toContain("params");
+    expect(await harnessed.store.orders(harnessed.merchant.id)).toStrictEqual([]);
+  });
+
   it("tells a GET that brought a payment that the purchase is a POST", async () => {
     // A GET reads no payment: it is the probe, and a probe has no body to open
     // an order with. An agent that paid the probe used to get back the same

@@ -612,7 +612,7 @@ function declaresCompression(request: Request): boolean {
 
 type Held = { ok: true; value: unknown } | { ok: false; problems: readonly unknown[] };
 
-function hold(schema: ZodType, value: unknown): Held {
+export function hold(schema: ZodType, value: unknown): Held {
   const parsed = schema.safeParse(value);
   if (parsed.success) {
     return { ok: true, value: parsed.data };
