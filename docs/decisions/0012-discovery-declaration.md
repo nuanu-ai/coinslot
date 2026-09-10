@@ -17,11 +17,11 @@ Almost everything a declaration wants is already in a card.
 
 **The declaration is a projection of a card**, in
 `packages/contracts/src/card.ts`, beside the projection an agent reads in our
-own catalog. It yields the material — the resource block, an example purchase
-body, the JSON Schema that body is held to, an example delivery — and the wire
-format is assembled at the edge by the protocol's own library, never by hand.
-`@x402/extensions` is a dependency of the gateway alone: ADR-0003 §8 holds the
-contracts package to zod, because that tree is the merchant SDK's tree.
+own catalog: the resource block, an example purchase body, the JSON Schema
+that body is held to, an example delivery. The wire format is assembled at the
+edge by the protocol's own library, never by hand; `@x402/extensions` is the
+gateway's dependency alone, since ADR-0003 §8 holds the contracts package to
+zod for the merchant SDK's sake.
 
 **The resource address is pinned from `PUBLIC_BASE_URL` and the route table**,
 not read off the request: behind our own reverse proxy the request arrives as
@@ -30,15 +30,13 @@ on that address — two spellings are two listings for one product.
 
 **The seller's listing name belongs to the merchant; the tags belong to the
 card.** A per-card name would be one seller appearing as several, so the name
-is a column on the merchants table, set by the merchant themselves over the API
-or by `merchant listed-as` at a terminal. It is null by default and never
-filled in from the display name beside it — that one may be written in any
-alphabet, this one goes out to strangers under the catalog's ASCII rule.
-Merchant-written text is held on the way in to the catalog's own limits,
-checked with the catalog's own code where that code is runnable, because the
-catalog drops what breaks its rules without telling anybody. The description's
-ceiling of 500 is honoured rather than verified; the numbers, their sources
-and their status are recorded in the spike note.
+is a column on the merchants table, set by the merchant over the API or by
+`merchant listed-as` at a terminal. It is null by default and never filled in
+from the display name, which may be written in any alphabet where this one
+goes out under the catalog's ASCII rule. Merchant-written text is held on the
+way in to the catalog's own limits, with the catalog's own code where that
+code is runnable, because the catalog drops what breaks its rules without
+telling anybody; the numbers and their status are in the spike note.
 
 **Every card is declared, and only while it is for sale.** There is no opt-in
 flag: a merchant who published a card is selling it, and a card off sale — its
@@ -60,18 +58,16 @@ paragraph's exit condition.
 ## Consequences
 
 An agent that has never heard of us can find a product of ours in a catalog it
-already walks; until now nothing in this repository did that. Our own tests
-cannot say whether the facilitator accepts what we emit — they hold the
-declaration to the library's schema and to a shape that was accepted once,
-which is not acceptance; `pnpm smoke:listing` makes the live call with the
-purchase's method and reports a probe with no verdict as no verdict. The card
-schema is shared by the publish and read paths on purpose, so a row stored
-before the description ceiling stops being readable until the card is
-republished. We pay in what a
-merchant may write: a name in Cyrillic, Greek or Arabic cannot be a listing
-name, and the refusal happens here, where the merchant sees it, not in the
-catalog, where it is silent. The challenge carries the declaration in one
-header that grows with the card; the measurements live in the spike note.
+already walks. Our own tests cannot say whether the catalog accepts what we
+emit — they hold the declaration to the library's schema and to a shape that
+was accepted once, which is not acceptance; `pnpm smoke:listing` makes the
+live call with the purchase's method and reports a probe with no verdict as
+no verdict. The card schema is shared by the publish and read paths on
+purpose, so a row stored before the description ceiling stops being readable
+until the card is republished. We pay in what a merchant may write: a name in
+Cyrillic, Greek or Arabic cannot be a listing name, and the refusal happens
+here, where the merchant sees it, not in the catalog, where it is silent. The
+challenge carries the declaration in one header that grows with the card.
 
 Rejected: an opt-in flag on the card — it would make the default invisibility,
 the state this change exists to leave. Reusing the merchant's display name as
