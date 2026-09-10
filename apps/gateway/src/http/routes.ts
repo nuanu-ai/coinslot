@@ -615,7 +615,6 @@ async function purchase(
           serviceName: offered.serviceName,
           payoutWallet: offered.payoutWallet,
         },
-        "GET",
         // What every other paid resource on this shelf says here, and no more.
         // Measured 2026-09-01 across eighteen hosts in the public catalogue
         // (docs/research/25-what-the-challenge-says.md): fourteen of the
@@ -794,7 +793,6 @@ async function answerPurchase(
             serviceName: offered.serviceName,
             payoutWallet: offered.payoutWallet,
           },
-          "POST",
           why,
         ),
       );

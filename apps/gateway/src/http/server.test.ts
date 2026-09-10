@@ -482,6 +482,33 @@ describe("the payment challenge", () => {
     expect(await harnessed.store.orders(harnessed.merchant.id)).toStrictEqual([]);
   });
 
+  it("names, on a GET, the method and body a purchase is made with", async () => {
+    // The declaration a GET carries is what an agent reads before it buys, and
+    // the promise is that a purchase made the way it says opens an order. A
+    // declaration naming GET would send the agent back to the probe, which
+    // reads no payment; one went there on 2026-09-10.
+    const { served, harnessed } = await started();
+    const itemId = await publish(served, syncCard);
+
+    const probed = await served.call("GET", `/x402/${itemId}/purchase`);
+    const declared = decodePaymentRequiredHeader(probed.headers.get(PAYMENT_REQUIRED_HEADER) ?? "")
+      .extensions?.bazaar as {
+      info: { input: { method: string; bodyType?: string; body?: unknown } };
+    };
+    expect(declared.info.input.bodyType).toBe("json");
+
+    const bought = await served.call(declared.info.input.method, `/x402/${itemId}/purchase`, {
+      body: declared.info.input.body,
+    });
+
+    expect(bought.status).toBe(402);
+    const named = decodePaymentRequiredHeader(bought.headers.get(PAYMENT_REQUIRED_HEADER) ?? "")
+      .accepts[0]?.extra?.[ORDER_ID_IN_EXTRA];
+    const orders = await harnessed.store.orders(harnessed.merchant.id);
+    expect(orders).toHaveLength(1);
+    expect(named).toBe(orders[0]?.order.id);
+  });
+
   it("prices a POST against an order it opened, and says which order", async () => {
     const { served, harnessed } = await started();
     const itemId = await publish(served, syncCard);

@@ -52,10 +52,11 @@ export const VALIDATE_ENDPOINT = "https://api.cdp.coinbase.com/platform/v2/x402/
  * The two methods our purchase address answers on, and both are asked about.
  *
  * A crawler and the validator itself probe with GET, and the purchase an agent
- * actually makes is a POST — and the two carry different declarations, because
- * a declaration that names a body is only valid on a method that carries one.
- * Checking one of them would leave the other unproven, and it is exactly that
- * asymmetry that made a resource invisible to the catalog once already.
+ * actually makes is a POST. The declaration is the same on both, but the
+ * answers are not — a GET is a challenge with no order behind it, a POST with
+ * no body is a refusal — and the catalog has its own view of each. Checking
+ * one would leave the other unproven, and it is exactly that asymmetry that
+ * made a resource invisible to the catalog once already.
  */
 export const PROBED_METHODS = ["GET", "POST"] as const;
 
