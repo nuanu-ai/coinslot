@@ -45,17 +45,21 @@ flag: a merchant who published a card is selling it, and a card off sale — its
 own pause, its merchant's, or a merchant who left — answers no challenge at
 all, so the catalog never carries a product nobody can buy.
 
-**The declaration's shape follows the request's method**: a GET is declared as
-the probe the crawlers and the catalog's validator make, a POST as the purchase
-an agent makes. A resource declared only as a POST is invisible to the thing
-that lists it — the failure the spike paid for once — and a GET probe that
-declares the POST fails the validator's required check
-`bazaar.info.input.method.matches_request`, measured 2026-09-10
-(`docs/research/26-discovery-method-on-get.md`). The cost is that the probe
-misdescribes the purchase to an agent reading it, and one agent paid the
-probe; a GET that brings a payment is now told the purchase is a POST
-(ADR-0021). The honest shape stays closed until a body-less POST answers a
-challenge, which is an open question.
+**The declaration describes the purchase, whichever way the challenge was
+asked for**: a POST with a JSON body, on the GET a crawler makes as on the
+POST an agent makes. A declaration that described the GET said that paying
+the GET delivers the product, and an agent took it at its word on 2026-09-10.
+What makes the honest shape possible is the door: an unpaid call with no
+document — a GET, or a POST with nothing or an empty document — is answered
+with the challenge, which is how the catalog's validator asks. The validator
+holds the probe to the declaration, so it is asked with the purchase's method
+and accepts (`docs/research/26-discovery-method-on-get.md`, 2026-09-10: three
+of three); asked with GET it stops at the method and says to ask with POST.
+Half the public catalog is declared POST, and thousands of those entries
+carry the shape only the official server writes on a POST request, so the
+crawler probes that way too — but whether it accepts our resource at a real
+listing is measured only by a real listing, and that is the exit condition
+of this paragraph.
 
 ## Consequences
 
@@ -63,8 +67,8 @@ An agent that has never heard of us can find a product of ours in a catalog it
 already walks; until now nothing in this repository did that. Our own tests
 cannot say whether the facilitator accepts what we emit — they hold the
 declaration to the library's schema and to a shape that was accepted once,
-which is not acceptance; `pnpm smoke:listing` makes the live call and reports
-a probe with no verdict as no verdict. The card schema is shared by the
+which is not acceptance; `pnpm smoke:listing` makes the live call, with the
+purchase's method, and reports a probe with no verdict as no verdict. The card schema is shared by the
 publish and read paths on purpose, so a row stored before the description
 ceiling stops being readable until the card is republished. We pay in what a
 merchant may write: a name in Cyrillic, Greek or Arabic cannot be a listing
