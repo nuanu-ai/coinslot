@@ -1,0 +1,2 @@
+#!/bin/sh
+printf '%s\n' '<html data-coinslot-surface="test"></html>'

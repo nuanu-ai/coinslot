@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+previous=''
+current=''
+for argument in "$@"; do
+  previous="$current"
+  current="$argument"
+done
+mkdir -p "$current"
+cp -R "${previous%/}/." "${current%/}/"

@@ -1,0 +1,20 @@
+The commands a release host answers with, standing in for the real ones while
+deploy/release.sh runs for real in a test.
+
+These are files in the repository rather than scripts a test writes into a
+temporary directory, and that is the whole point of the directory. macOS scans
+every newly created executable the first time it is executed: about a quarter
+of a second each, once per file, cached afterwards for the life of that file.
+A test that wrote five of these per case paid that scan ten times a run — some
+1.4 s per case, which under a full `pnpm test` with every core busy grew past
+vitest's five-second default and made the suite look flaky. Checked in, the
+scan happens once per checkout and never again.
+
+Each of them is parameterised by environment rather than by being generated
+with paths baked in; release-retention.test.ts sets them:
+
+  FAKE_DOCKER_LOG        every docker argument list is appended here
+  FAKE_ENV_FILE          the server .env path `stat` expects to be asked about
+  FAKE_MARKER            the .coinslot-revision file `docker image prune` reads
+  FAKE_VERIFIED_MARKER   the exact marker line that must be in it by then
+  FAKE_PRUNE_FAILURE     "1" makes `docker image prune` fail

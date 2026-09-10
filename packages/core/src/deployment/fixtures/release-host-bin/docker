@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%q ' "$@" >>"${FAKE_DOCKER_LOG}"
+printf '\n' >>"${FAKE_DOCKER_LOG}"
+
+if [[ "$1" == 'compose' ]]; then
+  if [[ " $* " == *' config --format json '* ]]; then
+    printf '%s\n' '{}'
+  fi
+  exit 0
+fi
+
+if [[ "$1" == 'run' ]]; then
+  exit 0
+fi
+
+if [[ "$1 $2" == 'image prune' ]]; then
+  grep -qx "${FAKE_VERIFIED_MARKER}" "${FAKE_MARKER}"
+  [[ "${FAKE_PRUNE_FAILURE:-0}" != '1' ]] || exit 37
+  exit 0
+fi
+
+exit 91
