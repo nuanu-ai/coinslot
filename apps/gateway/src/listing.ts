@@ -11,6 +11,10 @@
  * from the internet. From a laptop it is not, and the command reports what it
  * actually saw rather than a pass.
  *
+ * Each resource is also fetched from here, with the plain unpaid GET an agent
+ * reading it by hand sends, because the validator is only ever asked with the
+ * method a purchase uses and so never looks at that door at all.
+ *
  * No database, no key, no wallet, nothing spent. What this file does is only
  * the wiring; the command is in `listing-command.ts`, where the one thing that
  * has to be right — that a probe with no verdict is never reported as a pass —

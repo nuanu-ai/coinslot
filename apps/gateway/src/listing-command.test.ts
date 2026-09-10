@@ -19,8 +19,10 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { CatalogPage } from "@nuanu-ai/coinslot-contracts";
+import { encodePaymentRequiredHeader } from "@x402/core/http";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  type DoorAnswer,
   overTheNetwork,
   type Reach,
   runListingCheck,
@@ -38,12 +40,34 @@ const card = (id: string): CatalogPage["items"][number] => ({
   fulfillment: "sync",
 });
 
-/** A run: what the two ways out answered, and everything the command said. */
+/**
+ * A challenge as the door sets it, declaring the method a purchase is made
+ * with. Encoded by the same library that reads it, so nothing here is a
+ * hand-rolled copy of somebody else's wire format.
+ */
+const challengeNaming = (method: string): string =>
+  encodePaymentRequiredHeader({
+    x402Version: 2,
+    resource: { url: "https://coinslot.example/x402/itm_1/purchase" },
+    accepts: [],
+    extensions: { bazaar: { info: { input: { method, bodyType: "json" } } } },
+  });
+
+/** A door keeping its promise: a price, and the purchase named as a POST. */
+const priced: DoorAnswer = {
+  kind: "answered",
+  status: 402,
+  challenge: challengeNaming("POST"),
+};
+
+/** A run: what the ways out answered, and everything the command said. */
 function aRun(options: {
   readonly catalog?: CatalogPage | Error;
   readonly answers?: (resource: string, method: string) => ValidateAnswer;
+  readonly door?: (resource: string) => DoorAnswer;
 }) {
   const asked: string[] = [];
+  const knocked: string[] = [];
   const said: string[] = [];
   const reach: Reach = {
     catalog: async () => {
@@ -55,9 +79,13 @@ function aRun(options: {
       asked.push(`${method} ${resource}`);
       return options.answers?.(resource, method) ?? { kind: "answered", status: 200, body: {} };
     },
+    door: async (resource) => {
+      knocked.push(`GET ${resource}`);
+      return options.door?.(resource) ?? priced;
+    },
   };
   const run = (...argv: string[]) => runListingCheck(argv, reach, (line) => said.push(line));
-  return { run, asked, text: () => said.join("\n") };
+  return { run, asked, knocked, text: () => said.join("\n") };
 }
 
 const accepted: ValidateAnswer = {
@@ -82,7 +110,7 @@ describe("asking the catalog whether it would take our resources", () => {
       "POST https://coinslot.example/x402/itm_2/purchase",
     ]);
     expect(run.text()).toContain(
-      "All 2 probes over the 2 products this catalog listed were accepted.",
+      "All 4 probes over the 2 products this catalog listed were accepted.",
     );
   });
 
@@ -115,7 +143,7 @@ describe("asking the catalog whether it would take our resources", () => {
 
     expect(await run.run("https://coinslot.example")).toBe(1);
     expect(run.text()).toContain("refused");
-    expect(run.text()).toContain("1 of 1 probes were refused");
+    expect(run.text()).toContain("1 of 2 probes were refused");
     // The endpoint's own words, whole. What it checks is theirs and changes
     // when they change it, so nothing here picks the answer apart.
     expect(run.text()).toContain("bazaar.schema");
@@ -132,8 +160,8 @@ describe("asking the catalog whether it would take our resources", () => {
 
     expect(await run.run("https://coinslot.example")).toBe(1);
     expect(run.text()).toContain("no verdict");
-    expect(run.text()).toContain("1 of 1 probes got no verdict, so nothing is proven about them");
-    expect(run.text()).not.toContain("accepted");
+    expect(run.text()).toContain("1 of 2 probes got no verdict, so nothing is proven about them");
+    expect(run.text()).not.toContain("were accepted");
     expect(run.text()).not.toContain("refused");
   });
 
@@ -168,6 +196,108 @@ describe("asking the catalog whether it would take our resources", () => {
     expect(await run.run("https://coinslot.example")).toBe(1);
   });
 
+  it("knocks on the door itself, with the plain unpaid GET an agent's own fetch is", async () => {
+    // The validator is only ever asked with POST, so nothing in its answer says
+    // the deployed door answers a GET at all — and a GET is what an agent
+    // reading the resource by hand sends. One did, on 2026-09-10.
+    const run = aRun({ answers: () => accepted });
+
+    expect(await run.run("https://coinslot.example")).toBe(0);
+    expect(run.knocked).toStrictEqual(["GET https://coinslot.example/x402/itm_1/purchase"]);
+    expect(run.text()).toContain("All 2 probes");
+  });
+
+  it("counts a door that answers an unpaid GET with anything but a price as a refusal", async () => {
+    // The goods where a price belongs, or a stub, or a redirect: whatever it
+    // is, the deployment is not selling the way the contract says it does. The
+    // code path has a test of its own; this is the door that is actually up.
+    const run = aRun({
+      answers: () => accepted,
+      door: () => ({ kind: "answered", status: 200, challenge: null }),
+    });
+
+    expect(await run.run("https://coinslot.example")).toBe(1);
+    expect(run.text()).toContain("refused");
+    expect(run.text()).toContain("1 of 2 probes were refused");
+  });
+
+  it("counts a door whose challenge names GET as the purchase as a refusal", async () => {
+    // The 2026-09-10 incident, whole: the declaration on a GET said the
+    // purchase was a GET, an agent paid with one, and a GET reads no payment —
+    // no order, no receipt, the buyer's reserve left hanging. The validator
+    // cannot see this, because it is never asked with GET.
+    const run = aRun({
+      answers: () => accepted,
+      door: () => ({ kind: "answered", status: 402, challenge: challengeNaming("GET") }),
+    });
+
+    expect(await run.run("https://coinslot.example")).toBe(1);
+    expect(run.text()).toContain("1 of 2 probes were refused");
+  });
+
+  it("counts a challenge that names no purchase method at all as a refusal", async () => {
+    // A challenge that lost its declaration is a resource no catalog can list
+    // and no agent can buy from without guessing.
+    const run = aRun({
+      answers: () => accepted,
+      door: () => ({
+        kind: "answered",
+        status: 402,
+        challenge: encodePaymentRequiredHeader({
+          x402Version: 2,
+          resource: { url: "https://coinslot.example/x402/itm_1/purchase" },
+          accepts: [],
+        }),
+      }),
+    });
+
+    expect(await run.run("https://coinslot.example")).toBe(1);
+    expect(run.text()).toContain("1 of 2 probes were refused");
+  });
+
+  it("says nothing was proven when the door itself could not be reached", async () => {
+    // Same line the validator's silence gets, and for the same reason: an
+    // unreachable door says nothing about the resource behind it, and a run
+    // that printed a tick here would be the claim this command exists not to
+    // make.
+    const run = aRun({
+      answers: () => accepted,
+      door: () => ({ kind: "unreachable", why: "fetch failed: ECONNREFUSED" }),
+    });
+
+    expect(await run.run("https://coinslot.example")).toBe(1);
+    expect(run.text()).toContain("no verdict");
+    expect(run.text()).toContain("1 of 2 probes got no verdict");
+    expect(run.text()).toContain("ECONNREFUSED");
+  });
+
+  it("counts a door whose challenge cannot be read as a refusal", async () => {
+    // The door is ours, and it answered: a 402 whose challenge will not decode
+    // is a readable answer that breaks the promise — a proxy rewriting the
+    // header, a version we stopped speaking — and a finding about our door,
+    // not a silence about it. Silence is reserved for a door that never
+    // answered at all.
+    const run = aRun({
+      answers: () => accepted,
+      door: () => ({ kind: "answered", status: 402, challenge: "not a challenge" }),
+    });
+
+    expect(await run.run("https://coinslot.example")).toBe(1);
+    expect(run.text()).toContain("1 of 2 probes were refused");
+    expect(run.text()).toContain("would not decode");
+  });
+
+  it("counts a door that priced nothing to read as a refusal", async () => {
+    const run = aRun({
+      answers: () => accepted,
+      door: () => ({ kind: "answered", status: 402, challenge: null }),
+    });
+
+    expect(await run.run("https://coinslot.example")).toBe(1);
+    expect(run.text()).toContain("1 of 2 probes were refused");
+    expect(run.text()).toContain("set no PAYMENT-REQUIRED header");
+  });
+
   it("keeps a refusal and a silence apart in the same run", async () => {
     const run = aRun({
       catalog: { items: [card("itm_1"), card("itm_2")] },
@@ -178,8 +308,8 @@ describe("asking the catalog whether it would take our resources", () => {
     });
 
     expect(await run.run("https://coinslot.example")).toBe(1);
-    expect(run.text()).toContain("1 of 2 probes got no verdict");
-    expect(run.text()).toContain("1 of 2 probes were refused");
+    expect(run.text()).toContain("1 of 4 probes got no verdict");
+    expect(run.text()).toContain("1 of 4 probes were refused");
   });
 
   it("reports an identifier it cannot build an address from, and keeps going", async () => {
@@ -229,6 +359,7 @@ describe("asking the catalog whether it would take our resources", () => {
     expect(await run.run("https://coinslot.example/?utm=abc")).toBe(2);
     expect(run.text()).toContain("query");
     expect(run.asked).toStrictEqual([]);
+    expect(run.knocked).toStrictEqual([]);
 
     const hashed = aRun({ answers: () => accepted });
     expect(await hashed.run("https://coinslot.example/#top")).toBe(2);
@@ -266,16 +397,17 @@ describe("asking the catalog whether it would take our resources", () => {
   });
 });
 
-describe("reading a running gateway's catalog, over a real socket", () => {
+describe("reading a running gateway over a real socket", () => {
   /**
-   * Everything above fakes the way out, which leaves the one part that talks to
-   * a gateway untested: what it accepts, and what it prints when the answer is
-   * not a catalog. This serves the answers over a real socket instead — the
-   * server is this process, on a port the operating system picks, and it is
-   * closed after every case.
+   * Everything above fakes the ways out, which leaves the parts that talk to a
+   * gateway untested: what a catalog answer has to look like, what is printed
+   * when the answer is not a catalog, and whether the door's own challenge is
+   * really read off the wire. This serves the answers over a real socket
+   * instead — the server is this process, on a port the operating system
+   * picks, and it is closed after every case.
    *
-   * The real way out is used for the catalog and never for the probe, and that
-   * split is the whole reason this reads the way it does. The probe goes to
+   * The real way out is used for the gateway and never for the validator, and
+   * that split is the whole reason this reads the way it does. The probe goes to
    * Coinbase's validation endpoint, and a suite that reached it would stop
    * being free, deterministic and able to run without a network — which
    * `vitest.config.ts` says in as many words is what `pnpm test` has to be.
@@ -285,15 +417,20 @@ describe("reading a running gateway's catalog, over a real socket", () => {
    * `pnpm smoke:listing` is where that call belongs.
    */
   let server: Server | null = null;
+  /** What actually arrived, so a case can hold the command to the call it made. */
+  let arrived: string[] = [];
 
   const serving = async (answer: {
     readonly status?: number;
     readonly body: string;
     readonly type?: string;
+    readonly headers?: Readonly<Record<string, string>>;
   }): Promise<string> => {
-    server = createServer((_request, response) => {
+    server = createServer((request, response) => {
+      arrived.push(`${request.method} ${request.url}`);
       response.writeHead(answer.status ?? 200, {
         "content-type": answer.type ?? "application/json",
+        ...answer.headers,
       });
       response.end(answer.body);
     });
@@ -308,6 +445,7 @@ describe("reading a running gateway's catalog, over a real socket", () => {
       server.close(() => closed());
     });
     server = null;
+    arrived = [];
   });
 
   const card = (id: string) => ({
@@ -396,5 +534,28 @@ describe("reading a running gateway's catalog, over a real socket", () => {
     expect(code).toBe(1);
     expect(text).toContain("503");
     expect(text).toContain("Nothing was checked.");
+  });
+
+  it("reads the door's own challenge off the wire", async () => {
+    // The one part of the GET check no fake can prove: that the command really
+    // sends a GET to the resource and really reads the header the door sets on
+    // it. Get the header's name wrong and every offline case above still
+    // passes, while every run against a deployment reports a door that priced
+    // nothing. The catalog is skipped by naming the product, so this server can
+    // answer as the door for every request it gets.
+    const base = await serving({
+      status: 402,
+      body: "{}",
+      headers: { "PAYMENT-REQUIRED": challengeNaming("POST") },
+    });
+
+    const said: string[] = [];
+    const reach: Reach = { ...overTheNetwork(), validate: async () => accepted };
+    const code = await runListingCheck([base, "itm_1"], reach, (line) => said.push(line));
+
+    expect(code).toBe(0);
+    // The request as it left, not as the report describes it: an unpaid GET at
+    // the resource's own address, which is the fetch an agent makes.
+    expect(arrived).toStrictEqual(["GET /x402/itm_1/purchase"]);
   });
 });
