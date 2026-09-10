@@ -634,9 +634,10 @@ async function purchase(
         // be answered with the same bare challenge it started from, which it
         // cannot tell from its payment having failed. The line is the reason
         // this call did not return the resource, which is what the line is for.
+        // "Not read", not "carries none": the request did carry one.
         presentedPayment(request.headers) === null
           ? "payment required"
-          : "a GET carries no payment: the purchase is a POST with a JSON body",
+          : "this GET is not read for payment: the purchase is a POST with a JSON body",
       ),
     );
     return written(response, PAYMENT_REQUIRED, {});
