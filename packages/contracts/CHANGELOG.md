@@ -1,5 +1,11 @@
 # @nuanu-ai/coinslot-contracts
 
+## 0.3.1
+
+### Patch Changes
+
+- 99c959c: The purchase route's description says that the address answers on GET as well as on POST, that an unpaid call with no document gets the challenge and a GET is never read for payment, and that the challenge describes the purchase.
+
 ## 0.3.0
 
 ### Minor Changes
