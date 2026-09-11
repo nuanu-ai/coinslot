@@ -27,8 +27,11 @@
  *   exists nowhere. That rewrite is the one place Stryker loads TypeScript,
  *   and it calls `parseConfigFileTextToJson`, which the workspace's
  *   TypeScript 7 no longer exports. Its only job is to fix `extends` and
- *   `references` paths that would leave the sandbox; none of ours do, and
- *   vitest never reads a tsconfig. It runs only when the named file is among
+ *   `references` paths that would leave the sandbox; none of ours do, every
+ *   `extends` here points at `tsconfig.base.json` inside the copy. Vite does
+ *   read the nearest tsconfig for each `.ts` file it transforms, and would
+ *   fail the dry run aloud with a `TSCONFIG_ERROR` if one pointed outside
+ *   the sandbox. It runs only when the named file is among
  *   the files Stryker copies, so a name that matches nothing skips it, and
  *   Stryker needs no TypeScript of its own: a second TypeScript in the graph
  *   made pnpm re-resolve gateway's production peers (`viem`, `@x402/*`) into
