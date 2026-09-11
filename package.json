@@ -25,11 +25,14 @@
     "outside": "./scripts/outside.sh",
     "buy": "pnpm --filter @coinslot/slice run buy",
     "stand": "pnpm --filter @coinslot/slice run stand",
-    "changeset": "changeset"
+    "changeset": "changeset",
+    "mutate": "node scripts/mutate.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.10",
     "@changesets/cli": "^3.0.1",
+    "@stryker-mutator/core": "10.0.0",
+    "@stryker-mutator/vitest-runner": "10.0.0",
     "@types/node": "^26.3.0",
     "typescript": "7.0.2",
     "vitest": "^4.1.11"
