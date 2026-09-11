@@ -13,11 +13,14 @@
  *
  * So this file takes the workspace config as it is and adds one thing: an
  * alias for every workspace package, built from its `exports` map, pointing
- * at the copy inside the sandbox. It is loaded only by `scripts/mutate.mjs`;
- * `pnpm test` keeps reading `vitest.config.ts` and never sees it.
+ * at the copy inside the sandbox. A package is a directory under `packages/`
+ * or `apps/` that holds a `package.json`, the definition `scripts/mutate.mjs`
+ * uses at its door; a stray file beside the packages is not one. This file is
+ * loaded only by `scripts/mutate.mjs`; `pnpm test` keeps reading
+ * `vitest.config.ts` and never sees it.
  */
 
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { defineConfig, mergeConfig } from "vitest/config";
 import workspace from "../vitest.config.js";
@@ -28,17 +31,20 @@ const exact = (specifier: string): RegExp =>
   new RegExp(`^${specifier.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}$`);
 
 const alias = ["packages", "apps"].flatMap((group) =>
-  readdirSync(path.join(root, group)).flatMap((name) => {
-    const dir = path.join(root, group, name);
-    const manifest = JSON.parse(readFileSync(path.join(dir, "package.json"), "utf8")) as {
-      name: string;
-      exports?: Record<string, string>;
-    };
-    return Object.entries(manifest.exports ?? {}).map(([subpath, target]) => ({
-      find: exact(path.posix.join(manifest.name, subpath)),
-      replacement: path.join(dir, target),
-    }));
-  }),
+  readdirSync(path.join(root, group), { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => path.join(root, group, entry.name))
+    .filter((dir) => existsSync(path.join(dir, "package.json")))
+    .flatMap((dir) => {
+      const manifest = JSON.parse(readFileSync(path.join(dir, "package.json"), "utf8")) as {
+        name: string;
+        exports?: Record<string, string>;
+      };
+      return Object.entries(manifest.exports ?? {}).map(([subpath, target]) => ({
+        find: exact(path.posix.join(manifest.name, subpath)),
+        replacement: path.join(dir, target),
+      }));
+    }),
 );
 
 export default mergeConfig(workspace, defineConfig({ resolve: { alias } }));

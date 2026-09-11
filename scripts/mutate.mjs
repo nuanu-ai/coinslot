@@ -4,7 +4,13 @@
  * Stryker's mutation report for one workspace package, with the working tree
  * left alone.
  *
- * Usage: pnpm mutate <package>       (a directory name under packages/ or apps/)
+ * Usage: pnpm mutate <package>
+ *
+ * A package is a directory under `packages/` or `apps/` that holds a
+ * `package.json`, and <package> is its name, exactly as `ls` prints it. The
+ * door accepts nothing else: not a path, not `.` or `..`, which `basename`
+ * would let through. `scripts/stryker.vitest.config.ts` lists the packages by
+ * the same definition; if it changes, it changes in both.
  *
  * Stryker is a triage tool here, not a gate: the run prints the clear-text
  * table and writes the JSON report, and someone reads the survivors. It is
@@ -40,8 +46,10 @@
  *   the rest, an `.env` and every agent worktree under `.claude/worktrees/`
  *   included, and a killed run leaves that copy on the disk. `ignorePatterns`
  *   is therefore what `git ls-files --ignored` names at the moment of the
- *   run, so the two cannot drift. Untracked files that git does not ignore
- *   are copied, as they would be run by `pnpm test`.
+ *   run, so the two cannot drift. Each entry is a literal path, so the
+ *   characters minimatch reads as a pattern are escaped in it. Untracked
+ *   files that git does not ignore are copied, as they would be run by
+ *   `pnpm test`.
  * - Everything Stryker writes goes to the sdb disk: the sandbox
  *   (`tempDirName`) and the report (`jsonReporter.fileName`) are absolute
  *   paths under STORAGE, because the root disk is small and because a file
@@ -76,7 +84,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Stryker } from "@stryker-mutator/core";
@@ -84,17 +92,24 @@ import { Stryker } from "@stryker-mutator/core";
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const STORAGE = "/home/dmitry/.codex-project-storage/stryker";
 
+/** The workspace packages: directories under packages/ and apps/ that hold a package.json. */
+function workspacePackages() {
+  return ["packages", "apps"].flatMap((group) =>
+    readdirSync(path.join(ROOT, group), { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => ({ name: entry.name, dir: path.join(group, entry.name) }))
+      .filter(({ dir }) => existsSync(path.join(ROOT, dir, "package.json"))),
+  );
+}
+
 const name = process.argv[2];
-const packageDir =
-  name === undefined || path.basename(name) !== name
-    ? undefined
-    : ["packages", "apps"]
-        .map((group) => path.join(group, name))
-        .find((dir) => existsSync(path.join(ROOT, dir, "package.json")));
+const packageDir = workspacePackages().find((p) => p.name === name)?.dir;
 
 if (packageDir === undefined) {
   console.error(
-    "Usage: pnpm mutate <package>, where <package> is the name of a directory under packages/ or apps/",
+    `Usage: pnpm mutate <package>, where <package> is one of: ${workspacePackages()
+      .map((p) => p.name)
+      .join(", ")}`,
   );
   process.exit(2);
 }
@@ -140,7 +155,7 @@ function takeLock() {
   process.exit(3);
 }
 
-/** What `.gitignore` names, as Stryker's ignore patterns anchored at the root. */
+/** What `.gitignore` names, as Stryker's ignore patterns anchored at the root, taken literally. */
 function ignoredByGit() {
   return execFileSync(
     "git",
@@ -149,7 +164,7 @@ function ignoredByGit() {
   )
     .split("\0")
     .filter(Boolean)
-    .map((entry) => `/${entry.replace(/\/$/, "")}`);
+    .map((entry) => `/${entry.replace(/\/$/, "").replace(/[[\]{}()*?!+@|\\]/g, "\\$&")}`);
 }
 
 process.chdir(ROOT);
