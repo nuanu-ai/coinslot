@@ -23,11 +23,16 @@
  *
  * Why each option is what it is:
  *
- * - TypeScript 5 for Stryker. The sandbox rewrites `tsconfig.json` through
- *   TypeScript's own API, and it calls `parseConfigFileTextToJson`, which
- *   TypeScript 7 no longer exports. `pnpm.packageExtensions` in the root
- *   `package.json` gives `@stryker-mutator/core` a TypeScript 5 of its own;
- *   the workspace's `tsc` stays what it is.
+ * - The tsconfig rewrite is switched off, by naming a `tsconfigFile` that
+ *   exists nowhere. That rewrite is the one place Stryker loads TypeScript,
+ *   and it calls `parseConfigFileTextToJson`, which the workspace's
+ *   TypeScript 7 no longer exports. Its only job is to fix `extends` and
+ *   `references` paths that would leave the sandbox; none of ours do, and
+ *   vitest never reads a tsconfig. It runs only when the named file is among
+ *   the files Stryker copies, so a name that matches nothing skips it, and
+ *   Stryker needs no TypeScript of its own: a second TypeScript in the graph
+ *   made pnpm re-resolve gateway's production peers (`viem`, `@x402/*`) into
+ *   several flavours, which a test tool has no business doing.
  * - The runner named in `plugins`. The default `@stryker-mutator/*` glob is
  *   resolved next to the installed `core`, and under pnpm nothing else is
  *   installed there.
@@ -179,6 +184,7 @@ const stryker = new Stryker({
   plugins: ["@stryker-mutator/vitest-runner"],
   testRunner: "vitest",
   vitest: { configFile: "scripts/stryker.vitest.config.ts" },
+  tsconfigFile: "stryker.tsconfig-rewrite-off.json",
   mutate: [`${packageDir}/src/**/!(*.test|fixtures).ts`],
   ignorePatterns: ignoredByGit(),
   coverageAnalysis: "perTest",

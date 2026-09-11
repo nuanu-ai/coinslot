@@ -36,14 +36,5 @@
     "@types/node": "^26.3.0",
     "typescript": "7.0.2",
     "vitest": "^4.1.11"
-  },
-  "pnpm": {
-    "packageExtensions": {
-      "@stryker-mutator/core": {
-        "dependencies": {
-          "typescript": "^5.9.3"
-        }
-      }
-    }
   }
 }
