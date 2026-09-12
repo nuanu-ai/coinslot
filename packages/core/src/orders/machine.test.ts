@@ -891,6 +891,20 @@ describe("delivering twice, and delivering late", () => {
     expect(effects).toStrictEqual([{ kind: "release_goods_to_agent" }, { kind: "issue_receipt" }]);
   });
 
+  it("tells a merchant refusing a debt that his refusal stands", () => {
+    // Portal: repeating a call after a broken connection is safe. The order is
+    // exactly where his refusal put it, so the second refusal is answered as
+    // the first was, `ok: true`. An error here would have his code retrying or
+    // escalating an order on which he has nothing left to do.
+    const debt = reach("refund_due");
+    const { order, effects } = must(debt, sampleEvent("refuse_called"));
+
+    expect(order).toStrictEqual(debt);
+    expect(effects).toStrictEqual([
+      { kind: "answer_merchant", answer: { ok: true, result: "refused" } },
+    ]);
+  });
+
   it("has nothing left to deliver once the refund has gone through", () => {
     const { order, effects } = must(reach("refunded"), { kind: "deliver_called", at: T0 + 999 });
 
