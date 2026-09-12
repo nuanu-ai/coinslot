@@ -843,6 +843,21 @@ describe("delivering twice, and delivering late", () => {
     });
   });
 
+  it("hands the buyer the goods and the receipt when the handler delivers into a debt", () => {
+    // The late delivery can come from the handler as well as from the
+    // merchant's separate call, and the buyer is owed the same either way: he
+    // paid, so the goods go to him and the receipt says so. A debt closed on
+    // paper with nothing handed over loses him the refund and the goods both.
+    const { order, effects } = must(reach("refund_due"), {
+      kind: "handler_delivered",
+      at: T0 + 999,
+    });
+
+    expect(order.state).toBe("delivered");
+    expect(order.closure).toBeNull();
+    expect(effects).toStrictEqual([{ kind: "release_goods_to_agent" }, { kind: "issue_receipt" }]);
+  });
+
   it("has nothing left to deliver once the refund has gone through", () => {
     const { order, effects } = must(reach("refunded"), { kind: "deliver_called", at: T0 + 999 });
 
