@@ -40,7 +40,7 @@
  */
 
 import { assertNever } from "../index.js";
-import type { Deadline, DeadlineKind, Order } from "./model.js";
+import type { Deadline, Order } from "./model.js";
 
 export function deadlines(order: Order): readonly Deadline[] {
   // While the payment is being executed, that is the only thing the order is
@@ -151,8 +151,4 @@ export function fulfillmentDeadline(order: Order): readonly Deadline[] {
   return order.mode.settle === "after_fulfillment"
     ? [{ kind: "sync_response", at: paidAt + syncResponseMs }]
     : [{ kind: "async_fulfillment", at: paidAt + asyncFulfillmentMs }];
-}
-
-export function isArmed(order: Order, kind: DeadlineKind): boolean {
-  return deadlines(order).some((deadline) => deadline.kind === kind);
 }

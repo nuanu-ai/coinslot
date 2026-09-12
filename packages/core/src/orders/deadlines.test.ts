@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deadlines, isArmed } from "./deadlines.js";
+import { deadlines } from "./deadlines.js";
 import { must, newOrder, T0, TEST_POLICY, TEST_PRICE } from "./fixtures.js";
 import { transition } from "./machine.js";
 import type { Order } from "./model.js";
@@ -183,13 +183,6 @@ describe("the deadlines of an order", () => {
 
     expect(deadlines(closed)).toStrictEqual([]);
     expect(deadlines(debt)).toStrictEqual([]);
-  });
-
-  it("answers whether a given deadline is running at all", () => {
-    const order = newOrder("sync");
-
-    expect(isArmed(order, "quote_expiry")).toBe(true);
-    expect(isArmed(order, "sync_response")).toBe(false);
   });
 
   it("uses the order's own policy and invents no numbers of its own", () => {
