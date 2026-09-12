@@ -631,6 +631,25 @@ describe("the mode with confirmation: the question comes before the money", () =
     expect(order.payment).toBe("none");
   });
 
+  it("answers the merchant who refuses the question he was asked", () => {
+    // He called `refuse` about a confirmation request, and a call gets an
+    // answer. Without one his code is left hanging on the wire, or repeats a
+    // refusal that already closed the order and reads the second answer as
+    // the first.
+    const { order, effects } = must(reach("awaiting_confirmation"), {
+      kind: "refuse_called",
+      at: T0 + 2,
+      code: "cannot_fulfill",
+      message: "not this week",
+    });
+
+    expect(order.state).toBe("declined");
+    expect(order.payment).toBe("none");
+    expect(effects).toStrictEqual([
+      { kind: "answer_merchant", answer: { ok: true, result: "refused" } },
+    ]);
+  });
+
   it("refuses goods handed over before the money moved", () => {
     // Portal: the merchant cannot fulfill straight into a confirmation
     // request, because nothing has been charged for it yet.
