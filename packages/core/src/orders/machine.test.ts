@@ -656,6 +656,20 @@ describe("the mode with confirmation: the question comes before the money", () =
     expect(paid.order.payment).toBe("settled");
   });
 
+  it("tells the merchant who confirmed that the charge failed", () => {
+    // Portal: the merchant who said "I will" is told when nobody paid him,
+    // whichever way the payment came to nothing. The event is the only thing
+    // that tells him; the order's state is ours, and he does not poll it.
+    const midCharge = walk(reach("confirmed"), [{ kind: "payment_verified", at: T0 + 3 }]);
+    const { order, effects } = must(midCharge, { kind: "payment_settle_failed", at: T0 + 4 });
+
+    expect(order.state).toBe("rejected");
+    expect(order.payment).toBe("settle_failed");
+    expect(effects).toStrictEqual([
+      { kind: "emit_merchant_event", event: "order.unpaid_after_confirmation" },
+    ]);
+  });
+
   it("lets a merchant who confirmed still refuse while nothing is charged", () => {
     // Portal, "Отказаться после того, как приняли заказ": taking an order on
     // does not bind the merchant while the order is still open.
