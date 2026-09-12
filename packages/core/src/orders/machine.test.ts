@@ -684,6 +684,7 @@ describe("the mode with confirmation: the question comes before the money", () =
 
     expect(order.state).toBe("rejected");
     expect(order.payment).toBe("settle_failed");
+    expect(order.closure).toStrictEqual({ cause: "payment_not_settled" });
     expect(effects).toStrictEqual([
       { kind: "emit_merchant_event", event: "order.unpaid_after_confirmation" },
     ]);
@@ -692,7 +693,7 @@ describe("the mode with confirmation: the question comes before the money", () =
   it("lets a merchant who confirmed still refuse while nothing is charged", () => {
     // Portal, "Отказаться после того, как приняли заказ": taking an order on
     // does not bind the merchant while the order is still open.
-    const { order } = must(reach("confirmed"), {
+    const { order, effects } = must(reach("confirmed"), {
       kind: "refuse_called",
       at: T0 + 3,
       code: "out_of_stock",
@@ -701,6 +702,12 @@ describe("the mode with confirmation: the question comes before the money", () =
 
     expect(order.state).toBe("declined");
     expect(order.payment).toBe("none");
+    // And his call is answered, as it is on the confirmation request: a
+    // refusal that closes the order and says nothing back leaves his code
+    // hanging on the wire.
+    expect(effects).toStrictEqual([
+      { kind: "answer_merchant", answer: { ok: true, result: "refused" } },
+    ]);
   });
 });
 
