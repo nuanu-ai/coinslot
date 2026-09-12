@@ -1576,6 +1576,14 @@ describe("delivering the confirmation request again", () => {
 
     expect(asked.timestamps.confirmationRequestedAt).toBe(T0 + 1);
 
+    // One delay short of the deadline the question still goes out; half a
+    // delay short it no longer fits. The two together say which clock it is:
+    // a shorter one, the payment clock say, would already have closed the
+    // order at the first of them.
+    const inTime = must(asked, { kind: "handler_undelivered", at: due - 1_500 });
+
+    expect(inTime.effects).toStrictEqual([{ kind: "redeliver_order", attempt: 2, delayMs: 1_000 }]);
+
     const { order, effects } = must(asked, { kind: "handler_undelivered", at: due - 500 });
 
     expect(order.state).toBe("expired");
