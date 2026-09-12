@@ -1525,6 +1525,27 @@ describe("delivering the confirmation request again", () => {
     expect(second.effects).toStrictEqual([{ kind: "redeliver_order", attempt: 3, delayMs: 2_000 }]);
   });
 
+  it("stops repeating once the merchant's deadline to answer is too close", () => {
+    // The clock on this leg is the merchant's own deadline to answer, and it
+    // runs from the first time we asked him. A redelivery bounded by nothing
+    // would put the question in front of him again past the moment his
+    // silence has already closed the order; a redelivery bounded by that clock
+    // gives up in time, and the order closes citing it.
+    const asked = reach("awaiting_confirmation");
+    const due = T0 + 1 + TEST_POLICY.deadlines.confirmationResponseMs;
+
+    expect(asked.timestamps.confirmationRequestedAt).toBe(T0 + 1);
+
+    const { order, effects } = must(asked, { kind: "handler_undelivered", at: due - 500 });
+
+    expect(order.state).toBe("expired");
+    expect(order.closure).toStrictEqual({
+      cause: "deadline_expired",
+      deadline: "confirmation_response",
+    });
+    expect(effects).toStrictEqual([]);
+  });
+
   it("closes the order citing the deadline it actually ran out of", () => {
     // The reason is what the merchant and the agent read. Citing a
     // fulfillment deadline on an order that never reached fulfillment is a
