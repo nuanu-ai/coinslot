@@ -690,6 +690,25 @@ describe("the mode with confirmation: the question comes before the money", () =
     ]);
   });
 
+  it("tells the merchant who confirmed that the payment did not verify", () => {
+    // The other way the payment comes to nothing: the buyer's signature does
+    // not hold. The order is rejected, not cancelled, the closure names the
+    // reason so the merchant's reconciliation can read it, and the same event
+    // tells him he is free.
+    const { order, effects } = must(reach("confirmed"), {
+      kind: "payment_verification_failed",
+      at: T0 + 3,
+      reason: "signature",
+    });
+
+    expect(order.state).toBe("rejected");
+    expect(order.payment).toBe("none");
+    expect(order.closure).toStrictEqual({ cause: "payment_not_verified", reason: "signature" });
+    expect(effects).toStrictEqual([
+      { kind: "emit_merchant_event", event: "order.unpaid_after_confirmation" },
+    ]);
+  });
+
   it("lets a merchant who confirmed still refuse while nothing is charged", () => {
     // Portal, "Отказаться после того, как приняли заказ": taking an order on
     // does not bind the merchant while the order is still open.
