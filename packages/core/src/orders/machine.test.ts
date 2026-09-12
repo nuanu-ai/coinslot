@@ -1627,6 +1627,37 @@ describe("an order whose goods are out and whose money is not", () => {
   });
 });
 
+describe("a merchant calling about an order that is already closed", () => {
+  // `retryable` is a claim his code acts on. A `true` there would have a
+  // well-behaved handler repeating a call that gets the same answer forever,
+  // and the answer is the same from every closed state, because the fact it
+  // states is the same.
+  const closed: readonly OrderState[] = [
+    "delivered",
+    "refunded",
+    "failed",
+    "rejected",
+    "declined",
+    "expired",
+    "cancelled",
+  ];
+
+  for (const state of closed) {
+    it(`tells him from ${state} that it is closed, and not to try again`, () => {
+      const before = reach(state);
+      const { order, effects } = must(before, sampleEvent("refuse_called"));
+
+      expect(order).toStrictEqual(before);
+      expect(effects).toStrictEqual([
+        {
+          kind: "answer_merchant",
+          answer: { ok: false, error: "order_already_closed", retryable: false },
+        },
+      ]);
+    });
+  }
+});
+
 describe("events that do not belong where they arrived", () => {
   const illegal: readonly [OrderState, OrderEvent, string][] = [
     ["created", { kind: "payment_verified", at: T0 + 1 }, "a payment before there is a price"],
