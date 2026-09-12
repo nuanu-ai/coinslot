@@ -12,7 +12,7 @@ import {
 } from "./fixtures.js";
 import { transition } from "./machine.js";
 import type { Effect, Order, OrderEvent, OrderEventKind, OrderState, Price } from "./model.js";
-import { ORDER_EVENT_KINDS, ORDER_STATES, PAYMENT_STAGES } from "./model.js";
+import { CLOSED_ORDER_STATES, ORDER_EVENT_KINDS, ORDER_STATES, PAYMENT_STAGES } from "./model.js";
 import { ORDER_OUTCOMES, outcomeFor } from "./outcome.js";
 
 const MERCHANT_PRICE: Price = { amount: "6.50", currency: "USD", asOf: T0 + 1 };
@@ -900,9 +900,9 @@ describe("delivering twice, and delivering late", () => {
 
   it("tells a merchant refusing a debt that his refusal stands", () => {
     // Portal: repeating a call after a broken connection is safe. The order is
-    // exactly where his refusal put it, so the second refusal is answered as
-    // the first was, `ok: true`. An error here would have his code retrying or
-    // escalating an order on which he has nothing left to do.
+    // exactly where his handler's refusal put it, so a refusal called in on top
+    // of it is answered `ok: true`. An error here would have his code retrying
+    // or escalating an order on which he has nothing left to do.
     const debt = reach("refund_due");
     const { order, effects } = must(debt, sampleEvent("refuse_called"));
 
@@ -1680,17 +1680,7 @@ describe("a merchant calling about an order that is already closed", () => {
   // well-behaved handler repeating a call that gets the same answer forever,
   // and the answer is the same from every closed state, because the fact it
   // states is the same.
-  const closed: readonly OrderState[] = [
-    "delivered",
-    "refunded",
-    "failed",
-    "rejected",
-    "declined",
-    "expired",
-    "cancelled",
-  ];
-
-  for (const state of closed) {
+  for (const state of CLOSED_ORDER_STATES) {
     it(`tells him from ${state} that it is closed, and not to try again`, () => {
       const before = reach(state);
       const { order, effects } = must(before, sampleEvent("refuse_called"));
