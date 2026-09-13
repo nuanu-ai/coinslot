@@ -1213,6 +1213,23 @@ describe("while the settle is in flight", () => {
     expect(closed.closure).toStrictEqual({ cause: "payment_outcome_unknown" });
   });
 
+  it("tells no merchant he went unpaid after confirming when he never confirmed", () => {
+    // The portal promises `order.unpaid_after_confirmation` to a merchant who
+    // answered "I will fulfill it" and was then not paid. This order never had
+    // a confirmation round: it went from quoted straight into the charge. A
+    // webhook here would report a confirmation he never gave, and the closure
+    // of a quoted order warrants no effect at all — so the whole list is
+    // asserted empty, not just the absence of one kind.
+    const { order, effects } = must(settling(), {
+      kind: "deadline_expired",
+      at: T0 + 999_999,
+      deadline: "settle_response",
+    });
+
+    expect(order.state).toBe("rejected");
+    expect(effects).toStrictEqual([]);
+  });
+
   it("does not write the same record for a guess as for a known failure", () => {
     // The fifth gate. Both close the purchase and neither charges the buyer,
     // but "the payment layer told us it failed" and "the payment layer never
