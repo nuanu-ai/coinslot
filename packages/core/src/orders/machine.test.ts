@@ -614,9 +614,9 @@ describe("the mode with confirmation: the question comes before the money", () =
 
     expect(order.state).toBe("confirmed");
     expect(order.payment).toBe("none");
-    // The whole record, not only the new instant: a receipt, a dispute and
-    // the cabinet read `createdAt` and `confirmationRequestedAt` off the same
-    // order, and the deadline to pay runs from the instant of his answer.
+    // The whole record, not only the new instant: the deadline to pay runs
+    // from the instant of his answer, and whoever renders the order later
+    // reads the earlier timestamps off the same record.
     expect(order.timestamps).toStrictEqual({ ...asked.timestamps, confirmedAt: T0 + 2 });
     expect(deadlines(order)).toStrictEqual([
       {
