@@ -1069,6 +1069,22 @@ describe("the merchant leaves", () => {
     expect(order.payment).toBe("verified");
   });
 
+  for (const state of ["created", "awaiting_confirmation", "confirmed"] as const) {
+    it(`writes the departure down as an ending from ${state}`, () => {
+      // Nothing is charged in any of these three, so the merchant owes
+      // nothing — but the order is still waiting on him: for a price, for a
+      // confirmation, for the payment he invited. Left open it would keep its
+      // clock running against a merchant who is not there, and in `created`
+      // the quote-silence policy would go on to sell at the card price on his
+      // behalf. The ending is a cancellation that says why, and no clock.
+      const { order } = must(reach(state), { kind: "merchant_departed", at: T0 + 5 });
+
+      expect(order.state).toBe("cancelled");
+      expect(order.closure).toStrictEqual({ cause: "merchant_departed" });
+      expect(deadlines(order)).toStrictEqual([]);
+    });
+  }
+
   it("turns an open order that was charged into a debt", () => {
     // Portal, "Чем заказ может закончиться": for what was not delivered, the
     // merchant refunds — so the debt has to be recorded, not swept into a
