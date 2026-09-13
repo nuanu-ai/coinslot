@@ -601,14 +601,29 @@ describe("the mode with confirmation: the question comes before the money", () =
     expect(order.payment).toBe("none");
   });
 
-  it("gives the agent a deadline to pay once the merchant says he will", () => {
-    const { order, effects } = must(reach("awaiting_confirmation"), {
-      kind: "handler_accepted",
-      at: T0 + 2,
-    });
+  it("gives the agent a deadline to pay once the merchant says he will, and keeps the record", () => {
+    const asked = reach("awaiting_confirmation");
+    // Before the answer the clock running is the merchant's, not the agent's:
+    // nobody has said "I will" yet, so there is no instant to pay from.
+    expect(asked.timestamps.confirmedAt).toBeNull();
+    expect(deadlines(asked).map((deadline) => deadline.kind)).toStrictEqual([
+      "confirmation_response",
+    ]);
+
+    const { order, effects } = must(asked, { kind: "handler_accepted", at: T0 + 2 });
 
     expect(order.state).toBe("confirmed");
     expect(order.payment).toBe("none");
+    // The whole record, not only the new instant: a receipt, a dispute and
+    // the cabinet read `createdAt` and `confirmationRequestedAt` off the same
+    // order, and the deadline to pay runs from the instant of his answer.
+    expect(order.timestamps).toStrictEqual({ ...asked.timestamps, confirmedAt: T0 + 2 });
+    expect(deadlines(order)).toStrictEqual([
+      {
+        kind: "payment_after_confirmation",
+        at: T0 + 2 + TEST_POLICY.deadlines.paymentAfterConfirmationMs,
+      },
+    ]);
     // The agent is invited to pay and the merchant is told his "I will"
     // landed. He answered a question, and an answer with no reply to it is
     // indistinguishable on his side from one that never arrived.
