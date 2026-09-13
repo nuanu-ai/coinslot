@@ -1740,6 +1740,67 @@ describe("an order whose goods are out and whose money is not", () => {
 
     expect(order.state).toBe("delivered_unpaid");
   });
+
+  // The repeat the portal promises will close this order sends a charge of
+  // its own, and that charge can fail or say nothing like any other. What is
+  // written down about it decides whether the buyer can try again, and the
+  // two answers must not be confused: a charge nobody heard from bars the
+  // next repeat, a charge that reported failure does not.
+  function repeatInFlight(): Order {
+    const repeated = walk(reach("delivered_unpaid"), [
+      { kind: "purchase_repeated", at: T0 + 6 },
+      { kind: "payment_verified", at: T0 + 7 },
+    ]);
+
+    expect(repeated.state).toBe("delivered_unpaid");
+    expect(repeated.payment).toBe("settling");
+    return repeated;
+  }
+
+  it("stays an unpaid delivery when the repeat's charge goes silent, and bars the next repeat", () => {
+    // Not the generic close: a purchase whose goods are out would read as
+    // refused, and a late "the money did move" would then mark a refund
+    // instead of releasing what was bought. The merchant was told when the
+    // order first went unpaid, so nothing is emitted here.
+    const { order, effects } = must(repeatInFlight(), {
+      kind: "deadline_expired",
+      at: T0 + 999_999,
+      deadline: "settle_response",
+    });
+
+    expect(order.state).toBe("delivered_unpaid");
+    expect(order.payment).toBe("outcome_unknown");
+    expect(order.closure).toBeNull();
+    expect(effects).toStrictEqual([]);
+
+    const again = transition(order, { kind: "purchase_repeated", at: T0 + 1_000_000 });
+
+    expect(again.ok).toBe(false);
+    if (again.ok) return;
+    expect(again.rejection.code).toBe("settle_in_flight");
+    expect(again.rejection.retryable).toBe(true);
+  });
+
+  it("records the repeat's failed charge as failed and leaves the door open to the next repeat", () => {
+    // The payment layer said plainly that the money did not move. Refusing
+    // that answer would leave the charge "in flight" until its timer ran out,
+    // then write it down as unknown and turn the next repeat away.
+    const { order, effects } = must(repeatInFlight(), {
+      kind: "payment_settle_failed",
+      at: T0 + 8,
+    });
+
+    expect(order.state).toBe("delivered_unpaid");
+    expect(order.payment).toBe("settle_failed");
+    expect(order.closure).toBeNull();
+    expect(effects).toStrictEqual([]);
+
+    const again = must(order, { kind: "purchase_repeated", at: T0 + 9 });
+
+    expect(again.order.state).toBe("delivered_unpaid");
+    expect(again.order.payment).toBe("none");
+    expect(kinds(again.effects)).toStrictEqual(["verify_payment"]);
+  });
 });
 
 describe("a merchant calling about an order that is already closed", () => {
